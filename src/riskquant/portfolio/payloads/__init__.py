@@ -1,6 +1,1 @@
-from riskquant.portfolio.payloads import (
-    base,
-    forward,
-    spot,
-    vanilla_european_option,
-)
+# src\riskquant\portfolio\payloads\__init__.py
