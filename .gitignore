@@ -183,3 +183,6 @@ Desktop.ini
 # CMake
 cmake-build-*/
 
+# Packaging metadata
+*.egg-info/
+
