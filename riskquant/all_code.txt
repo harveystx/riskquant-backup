@@ -1,0 +1,124 @@
+
+
+# ===== FILE: portfolio\blocks\__init__.py =====
+
+from riskquant.portfolio.blocks import (
+    base_block,
+    forward_block,
+    spot_block,
+    vanilla_european_option_block,
+)
+
+
+# ===== FILE: portfolio\blocks\base_block.py =====
+
+# riskquant/portfolio/blocks/base_block.py
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True, slots=True)
+class Block:
+    """
+    Marker base class for instrument payloads.
+    No methods; payloads are compiled into blocks.
+    """
+
+    pass
+
+
+# ===== FILE: portfolio\blocks\forward_block.py =====
+
+# riskquant/portfolio/blocks/forward_block.py
+from dataclasses import dataclass
+
+import numpy as np
+
+from riskquant.portfolio.blocks.base_block import Block
+
+
+@dataclass(frozen=True, slots=True)
+class ForwardBlock(Block):
+    trade_uids: np.ndarray  # (m,) int64
+    qty: np.ndarray  # (m,) float64
+    strike: np.ndarray  # (m,) float64
+    price_uix: np.ndarray  # (m,) int32
+    fx_under_to_settle_uix: np.ndarray  # (m,) int32 or -1
+    fx_trade_to_settle_uix: np.ndarray  # (m,) int32 or -1
+
+
+# ===== FILE: portfolio\blocks\spot_block.py =====
+
+# riskquant/portfolio/blocks/spot_block.py
+from dataclasses import dataclass
+
+import numpy as np
+
+from riskquant.portfolio.blocks.base_block import Block
+
+
+@dataclass(frozen=True, slots=True)
+class SpotBlock(Block):
+    """
+    Compiled spot trades.
+
+    Row order is defined by trade_uids: row i corresponds to trade_uids[i].
+    Indices refer to CompiledPortfolio factor universes:
+      - price_uix indexes CompiledPortfolio.price_factor_ids
+      - fx_uix indexes CompiledPortfolio.fx_factor_ids (or -1 if no FX)
+    """
+
+    trade_uids: np.ndarray  # (m,) int64
+    qty: np.ndarray  # (m,) float64
+    price_uix: np.ndarray  # (m,) int32
+    fx_uix: np.ndarray  # (m,) int32 (-1 => FX_NONE)
+
+
+# ===== FILE: portfolio\blocks\vanilla_european_option_block.py =====
+
+# riskquant/portfolio/blocks/vanilla_european_option_block.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+
+from riskquant.portfolio.blocks.base_block import Block
+
+
+@dataclass(frozen=True, slots=True)
+class VanillaEuropeanOptionBlock(Block):
+    """
+    Compiled block for plain-vanilla option trades.
+
+    This is the *compiled* (array-of-structs -> struct-of-arrays) representation used by
+    fast valuation/simulation kernels.
+
+    Notes
+    -----
+    - All arrays are length m_opt (number of option trades in this block).
+    - price_uix indexes into CompiledPortfolio.price_factor_ids
+    - vol_uix indexes into CompiledPortfolio.vol_factor_ids (pricing-only unless you choose to shock vols)
+    - fx_*_uix index into CompiledPortfolio.fx_factor_ids, with -1 meaning "no FX conversion"
+    - expiry_key is a compact integer key interpreted by the pricer (e.g., days to expiry, bucket id, etc.).
+      Keep this as int32 to avoid Python objects in the hot path.
+    """
+
+    # --- TRADE IDENTITY --- #
+    trade_uids: np.ndarray  # (m_opt,) int64
+
+    # --- ECONOMIC TERMS --- #
+    qty: np.ndarray  # (m_opt,) float64
+    strike: np.ndarray  # (m_opt,) float64
+    is_call: np.ndarray  # (m_opt,) int8  (1=call, 0=put)
+
+    # --- MARKET LINKAGES (UNIVERSE INDICES) --- #
+    price_uix: np.ndarray  # (m_opt,) int32  -> CompiledPortfolio.price_factor_ids
+    vol_uix: np.ndarray  # (m_opt,) int32    -> CompiledPortfolio.vol_factor_ids
+
+    # --- EXPIRY ANCHOR (PRICER INTERPRETS) --- #
+    expiry_key: np.ndarray  # (m_opt,) int32
+
+    # --- OPTIONAL FX LINKAGES (UNIVERSE INDICES) --- #
+    fx_under_to_settle_uix: np.ndarray  # (m_opt,) int32  -> CompiledPortfolio.fx_factor_ids or -1
+    fx_trade_to_settle_uix: np.ndarray  # (m_opt,) int32  -> CompiledPortfolio.fx_factor_ids or -1
