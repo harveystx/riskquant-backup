@@ -1,4 +1,4 @@
-# riskquant/portfolio/ingest.py
+# src/riskquant/portfolio/ingest.py
 
 from __future__ import annotations
 
@@ -57,7 +57,12 @@ def _is_na(x) -> bool:
     return x is None or pd.isna(x)
 
 
-def _require_cols(df: pd.DataFrame, cols: Iterable[str], *, ctx: str) -> None:
+def _require_cols(
+    df: pd.DataFrame,
+    cols: Iterable[str],
+    *,
+    ctx: str,
+) -> None:
     missing = [c for c in cols if c not in df.columns]
     if missing:
         raise ValueError(f"{ctx}: missing required columns:\n {_pl(missing)}")
@@ -75,7 +80,7 @@ def _require_non_na(series: pd.Series, *, ctx: str) -> None:
 
 
 def _parse_optional_date_series_to_ordinal32(
-    s: pd.Series,
+    ser: pd.Series,
     *,
     sentinel: np.int32,
     col_name: str,
@@ -96,7 +101,7 @@ def _parse_optional_date_series_to_ordinal32(
     Output:
       - np.ndarray[int32] length n
     """
-    n = int(len(s))
+    n = int(len(ser))
     out = np.empty(n, dtype=np.int32)
     out.fill(np.int32(sentinel))
 
@@ -105,7 +110,7 @@ def _parse_optional_date_series_to_ordinal32(
         return out
 
     # Work on a view
-    sv = s.to_numpy(copy=False)
+    sv = ser.to_numpy(copy=False)
 
     # Identify non-empty entries
     # Treat "" as empty (common in Excel exports)
@@ -126,7 +131,7 @@ def _parse_optional_date_series_to_ordinal32(
         return out
 
     # Collect non-null values as a Series for dtype-aware conversion
-    v = s.loc[nn_mask]
+    v = ser.loc[nn_mask]
 
     # Case 1: datetime-like column already
     if np.issubdtype(v.dtype, np.datetime64):
@@ -336,7 +341,9 @@ def iter_trades_from_positions_df(
 
     # --- Dates (ordinal32) --- #
     expiry_ord = _parse_optional_date_series_to_ordinal32(
-        expiry_date_s, sentinel=np.int32(NO_EXPIRY_DATE), col_name="expiry_date"
+        expiry_date_s,
+        sentinel=np.int32(NO_EXPIRY_DATE),
+        col_name="expiry_date",
     )
     settle_ord = _parse_optional_date_series_to_ordinal32(
         settlement_date_s,
@@ -487,208 +494,3 @@ def list_spot_trades_from_positions_df(
     cfg: RiskStaticConfig,
 ) -> list[TradeRecord]:
     return list(iter_spot_trades_from_positions_df(positions_df=positions_df, cfg=cfg))
-
-
-# # riskquant/portfolio/ingest.py
-#
-# from __future__ import annotations
-#
-# from typing import Iterator, Tuple, Final, Iterable
-#
-# import numpy as np
-# import pandas as pd
-#
-# from riskquant.config.configs import RiskStaticConfig
-# from riskquant.exceptions import PrettyKeyError
-# from riskquant.portfolio.constants import FX_NONE
-# from riskquant.portfolio.fx import (
-#     get_fx_pair_for_under_to_settle_conversion,
-#     validate_ccys_unique,
-# )
-# from riskquant.portfolio.payloads.spot import SpotPayload
-# from riskquant.portfolio.trades import TradeRecord
-# from riskquant.utils.printer import as_list_str
-#
-# _REQUIRED_SPOT_COLS: Final[Tuple[str, ...]] = (
-#     "uid",
-#     "instrument",
-#     "quantity",
-#     "underlying",
-#     "underlying_ccy",
-#     "settlement_ccy",
-# )
-#
-# _REQUIRED_FORWARD_COLS: Final[Tuple[str, ...]] = (
-#     "uid",
-#     "instrument",
-#     "quantity",
-#     "underlying",
-#     "underlying_ccy",
-#     "strike",
-#     "strike_ccy",
-#     "settlement_ccy",
-#     "settlement_date",
-# )
-#
-#
-# def _pl(x: Iterable) -> str:
-#     return as_list_str(x)
-#
-#
-# def _resolve_quanto_fx_rf_ids(
-#     *,
-#     underlying_ccy: np.ndarray,
-#     settlement_ccy: np.ndarray,
-#     fx_rf_ids: np.ndarray,
-#     rf_name_to_id: dict[str, int],
-# ) -> None:
-#     """Fast in-place FX RF-ID resolution for quanto rows only."""
-#     fx_rf_ids.fill(FX_NONE)
-#
-#     # Is quanto
-#     is_quanto_mask = underlying_ccy != settlement_ccy
-#
-#     # No quanto.
-#     if not np.any(is_quanto_mask):
-#         return
-#
-#     # Index of quanto.
-#     qidx = np.nonzero(is_quanto_mask)[0]
-#
-#     # local bindings for speed increase
-#     fx_name_fn = get_fx_pair_for_under_to_settle_conversion
-#     rf_map = rf_name_to_id
-#
-#     # Loop over all quanto indices.
-#     for i in qidx:
-#         # Get the FX pair
-#         fx_pair_rf_name = fx_name_fn(
-#             underlying_ccy=underlying_ccy[i],
-#             settlement_ccy=settlement_ccy[i],
-#         )
-#
-#         # Get RF ID from RF NAME TO RF ID MAPPING
-#         try:
-#             # Try get ID, else fail.
-#             fx_rf_ids[i] = np.int32(rf_map[fx_pair_rf_name])
-#         except KeyError as e:
-#             u = underlying_ccy[i]
-#             s = settlement_ccy[i]
-#             raise PrettyKeyError(
-#                 "Missing FX spot risk factor for quanto conversion:\n"
-#                 f"- fx_pair={fx_pair_rf_name!r}\n"
-#                 f"- underlying_ccy={u!r}\n"
-#                 f"- settlement_ccy={s!r}\n"
-#             ) from e
-#
-#
-# def iter_spot_trades_from_positions_df(
-#     *,
-#     positions_df: pd.DataFrame,
-#     cfg: RiskStaticConfig,
-# ) -> Iterator[TradeRecord]:
-#     # --- SMOKE TESTS --- #
-#
-#     # Missing required columns
-#     missing_cols = [c for c in _REQUIRED_SPOT_COLS if c not in positions_df.columns]
-#     if missing_cols:
-#         raise ValueError(f"positions missing required columns:\n {_pl(missing_cols)}")
-#
-#     # Instruments.
-#     instruments = positions_df["instrument"].astype(str).str.upper()
-#     if not (instruments == "SPOT").all():
-#         bad_inst = sorted(instruments[instruments != "SPOT"].unique().tolist())
-#         raise ValueError(
-#             f"iter_spot_trades_from_positions_df expects SPOT-only rows; got:\n {_pl(bad_inst)}"
-#         )
-#
-#     # ---- SPOT INSTRUMENT ID --- #
-#
-#     # Get ID from config.
-#     spot_id = cfg.get_instrument_id("SPOT")
-#
-#     # Smoke.
-#     if spot_id is None:
-#         raise PrettyKeyError("cfg.instruments_dict missing key 'SPOT'!")
-#
-#     # --- TRADE UIDS --- #
-#
-#     # Get the UIDs.
-#     trade_uids = positions_df["uid"].to_numpy()
-#
-#     # --- RISK FACTOR IDS --- #
-#
-#     # Get the underlying names
-#     rf_names = positions_df["underlying"].astype(str)
-#
-#     # Get the ids.
-#     rf_ids = rf_names.map(cfg.rf_name_to_id)
-#
-#     # Smoke - all underlyings/risk factors need to have a risk factor ID.
-#     if rf_ids.isna().any():
-#         unknown_rf = sorted(rf_names[rf_ids.isna()].unique().tolist())
-#         raise PrettyKeyError(
-#             f"Unknown risk_factor_name(s) not in config:\n {_pl(unknown_rf)}"
-#         )
-#
-#     # IDs to Int32 NumPy array.
-#     price_rf_ids = rf_ids.to_numpy(dtype=np.int32, copy=False)
-#
-#     # --- VOLUMES --- #
-#
-#     # Get volumes,
-#     qty = positions_df["quantity"].to_numpy(dtype=np.float64, copy=False)
-#
-#     # Smoke - NaN volumes are not allowed.
-#     mask = np.isnan(qty)
-#     if mask.any():
-#         bad_uids = sorted(set(trade_uids[mask].tolist()))
-#         raise PrettyKeyError(f"Trade UIDs with NaN quantities:\n {_pl(bad_uids)}")
-#
-#     # --- QUANTO --- #
-#
-#     # Local bind and upper case.
-#     u_ser = positions_df["underlying_ccy"].str.upper()
-#     s_ser = positions_df["settlement_ccy"].str.upper()
-#
-#     # Validate
-#     validate_ccys_unique(u_ser)
-#     validate_ccys_unique(s_ser)
-#
-#     # To NumPy
-#     underlying_ccy = u_ser.to_numpy(dtype=object, copy=False)
-#     settlement_ccy = s_ser.to_numpy(dtype=object, copy=False)
-#
-#     # Init fx rf ids (mostly FX_NONE)
-#     fx_rf_ids = np.empty(len(positions_df), dtype=np.int32)
-#
-#     # Resolve IDs for quanto spot contracts.
-#     _resolve_quanto_fx_rf_ids(
-#         underlying_ccy=underlying_ccy,
-#         settlement_ccy=settlement_ccy,
-#         fx_rf_ids=fx_rf_ids,
-#         rf_name_to_id=cfg.rf_name_to_id,
-#     )
-#
-#     # --- GENERATE AND RETURN --- #
-#
-#     # Generate TradeRecords
-#     for i in range(len(positions_df)):
-#         yield TradeRecord(
-#             trade_uid=int(trade_uids[i]),
-#             instrument_id=np.int32(spot_id),
-#             payload=SpotPayload(
-#                 price_rf_id=np.int32(price_rf_ids[i]),
-#                 quantity=np.float64(qty[i]),
-#                 fx_rf_id=np.int32(fx_rf_ids[i]),
-#             ),
-#         )
-#
-#
-# def list_spot_trades_from_positions_df(
-#     *,
-#     positions_df: pd.DataFrame,
-#     cfg: RiskStaticConfig,
-# ) -> list[TradeRecord]:
-#     """Materialize the iterator into a list (useful for small tests)."""
-#     return list(iter_spot_trades_from_positions_df(positions_df=positions_df, cfg=cfg))
