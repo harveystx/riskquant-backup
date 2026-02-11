@@ -1,11 +1,11 @@
-from riskquant import (
-    config,
-    hvar,
-    market_data,
-    portfolio,
-    simlab,
-    utils,
-    valuation,
-    exceptions,
-    rq_logging,
-)
+from __future__ import annotations
+
+from importlib.metadata import version, PackageNotFoundError
+
+__all__ = ["__version__"]
+
+try:
+    __version__ = version("riskquant")
+except PackageNotFoundError:
+    # Package is not installed (e.g. running from source without install)
+    __version__ = "0.0.0"
