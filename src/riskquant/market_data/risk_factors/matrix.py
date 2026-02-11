@@ -1,14 +1,23 @@
 # riskquant/market_data/risk_factors/matrix.py
+
+# ----------------------------
+# 1) Imports: remove unused + add dtype helper
+# ----------------------------
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
-from typing import Mapping, Optional
+from pathlib import Path
+from typing import Any, Mapping, Optional, Union
 
 import numpy as np
 import pandas as pd
+from pandas.api.types import is_datetime64_any_dtype
 
-from riskquant.utils.dates import ordinal32_to_datetime64D, datetime64D_to_ordinal32
+from riskquant.utils.dates import (
+    coerce_as_of_date_to_pd_timestamp,
+    ordinal32_to_datetime64D,
+    datetime64D_to_ordinal32,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,7 +80,8 @@ class RiskFactorMatrix:
         # ---- contiguity invariant for values ----
         if not self.values.flags["C_CONTIGUOUS"]:
             raise ValueError(
-                "values must be C-contiguous (use np.ascontiguousarray at construction)."
+                "values must be C-contiguous (use np.ascontiguousarray at construction). If you sliced, "
+                "call np.ascontiguousarray(...) or use the provided slice_* helpers."
             )
 
         # ---- dates: require sorted unique (alloc-free checks) ----
@@ -106,6 +116,20 @@ class RiskFactorMatrix:
 
     # -------------------- Convenience --------------------
 
+    @property
+    def index_dates(self) -> pd.DatetimeIndex:
+        """Get a DatetimeIndex view of the dates."""
+        if np.issubdtype(self.dates.dtype, np.integer):
+            dts = ordinal32_to_datetime64D(self.dates)
+            return pd.DatetimeIndex(dts)
+        else:
+            return pd.DatetimeIndex(self.dates)
+
+    @property
+    def index_factors(self) -> pd.Index:
+        """Get a Index view of the factor_ids."""
+        return pd.Index(self.factor_ids, name="factor_id")
+
     def to_df(self) -> pd.DataFrame:
         """Convert to wide DataFrame with dates as index and factor_ids as columns."""
         if np.issubdtype(self.dates.dtype, np.integer):
@@ -130,6 +154,11 @@ class RiskFactorMatrix:
         return self.to_df().plot(**kwargs)
 
     @property
+    def df(self) -> pd.DataFrame:
+        """Get the risk factor matrix as a DataFrame."""
+        return self.to_df()
+
+    @property
     def shape(self) -> tuple[int, ...]:
         return self.values.shape
 
@@ -141,6 +170,9 @@ class RiskFactorMatrix:
     def num_factors(self) -> int:
         return self.values.shape[1]
 
+    # ----------------------------
+    # 2) slice_dates: enforce C-contiguous values to satisfy invariant
+    # ----------------------------
     def slice_dates(
         self,
         start: int | None = None,
@@ -152,12 +184,20 @@ class RiskFactorMatrix:
         if end is None:
             end = self.num_dates
 
+        vals = self.values[start:end, :]
+        # Slices can be non-contiguous views; enforce invariant cheaply if needed
+        if not vals.flags["C_CONTIGUOUS"]:
+            vals = np.ascontiguousarray(vals)
+
         return RiskFactorMatrix(
             dates=self.dates[start:end],
             factor_ids=self.factor_ids,
-            values=self.values[start:end, :],
+            values=vals,
         )
 
+    # ----------------------------
+    # 3) slice_factors: same contiguity enforcement
+    # ----------------------------
     def slice_factors(self, factor_indices: np.ndarray) -> "RiskFactorMatrix":
         """
         Return a sliced matrix along the factor dimension.
@@ -165,12 +205,19 @@ class RiskFactorMatrix:
         Note: the resulting factor_ids may no longer be sorted depending on factor_indices.
         We rely on __post_init__ to re-canonicalize (sort + permute columns) if needed.
         """
+        vals = self.values[:, factor_indices]
+        if not vals.flags["C_CONTIGUOUS"]:
+            vals = np.ascontiguousarray(vals)
+
         return RiskFactorMatrix(
             dates=self.dates,
             factor_ids=self.factor_ids[factor_indices],
-            values=self.values[:, factor_indices],
+            values=vals,
         )
 
+    # ----------------------------
+    # 4) from_df: accept "datetime-like" indices + enforce sorted/unique cleanly
+    # ----------------------------
     @staticmethod
     def from_df(
         *,
@@ -182,24 +229,37 @@ class RiskFactorMatrix:
         """
         Construct a RiskFactorMatrix from a wide DataFrame.
 
-        Efficiency:
-          - values allocated once (df -> contiguous numpy array)
-          - factor axis canonicalized HERE (to avoid an extra full matrix copy in __post_init__)
-          - dates extracted as a view; optional ordinal conversion (may allocate)
-
         Notes:
-          - This expects df.index to be date-like and already sorted unique.
-          - If not, the constructor will raise.
+        - Expects df.index to be date-like and already sorted unique.
+        - If not, we raise (we do not auto-sort to avoid O(T*N) row copies).
         """
+        if not isinstance(df, pd.DataFrame):
+            raise ValueError("Expected a DataFrame!")
+
+        # Accept a wider set of date-like index types; coerce if needed.
+        if not is_datetime64_any_dtype(df.index):
+            # Convert (keeps the same rows; does not sort)
+            df = df.copy(deep=False)
+            df.index = pd.to_datetime(df.index, errors="raise")
+
+        # Enforce invariants early with clear errors (and avoid needless allocations)
+        if df.index.has_duplicates:
+            raise ValueError("DataFrame index (dates) must be unique!")
+        if not df.index.is_monotonic_increasing:
+            raise ValueError("DataFrame index (dates) must be sorted ascending!")
+
         # Dates (view when possible)
         dts_64D = df.index.to_numpy(dtype="datetime64[D]", copy=False)
         dates = datetime64D_to_ordinal32(dts_64D) if use_int32_dates else dts_64D
 
+        # Columns -> factor_ids: either direct integer parsing or mapping lookup. We validate the mapping dict fully if provided to fail fast on config issues.
         cols = df.columns
+
+        # Numnber of factors (columns); used for preallocating arrays and validating mapping dict if provided.
         n = cols.size
 
+        # Factor IDs: either direct integer parsing or mapping lookup. We validate the mapping dict fully if provided to fail fast on config issues.
         if name_to_id_map is None:
-            # Columns already are IDs (int-like)
             factor_ids = np.fromiter((int(c) for c in cols), dtype=np.int32, count=n)
         else:
             _validate_mapping_dict(name_to_id_map)
@@ -214,202 +274,64 @@ class RiskFactorMatrix:
             perm = np.argsort(factor_ids, kind="mergesort")
             factor_ids = factor_ids[perm]
 
-            # Detect duplicates early (no need to allocate values if invalid)
             if np.any(factor_ids[1:] == factor_ids[:-1]):
                 raise ValueError("factor_ids must be unique!")
 
-            # Reorder df columns to match canonical factor order, then allocate values once
             df = df.iloc[:, perm]
         else:
-            # Already sorted: quick duplicate check
             if n > 1 and np.any(factor_ids[1:] == factor_ids[:-1]):
                 raise ValueError("factor_ids must be unique!")
 
-        # Values: one tight contiguous allocation
         values = np.ascontiguousarray(
             df.to_numpy(dtype=float_dtype, copy=True, na_value=np.nan)
         )
 
-        # Return RFM
         return RiskFactorMatrix(
             dates=dates,
             factor_ids=factor_ids,
             values=values,
         )
 
+    # ----------------------------
+    # 5) from_xlsx: coerce index to datetime + enforce sorted/unique + use Path typing
+    # ----------------------------
+    @staticmethod
+    def from_xlsx(
+        *,
+        path: Union[str, Path],
+        sheet_name: Union[str, int] = 0,
+        name_to_id_map: Optional[Mapping[str, int]] = None,
+        use_int32_dates: bool = True,
+        float_dtype: type[np.floating] = np.float32,
+        as_of_date: Optional[pd.Timestamp] = None,
+    ) -> "RiskFactorMatrix":
+        """
+        Convenience constructor to load a RiskFactorMatrix directly from an Excel file.
+        """
+        df = pd.read_excel(str(path), sheet_name=sheet_name, index_col=0)
 
-# @dataclass(frozen=True, slots=True)
-# class RiskFactorMatrix:
-#     dates: np.ndarray  # datetime64[D] or int32 ordinal
-#     factor_ids: np.ndarray  # int32, shape (N,)
-#     values: np.ndarray  # float32/float64, shape (T, N), contiguous
-#
-#     def __post_init__(self):
-#         # Dim
-#         if self.dates.ndim != 1:
-#             raise ValueError("dates must be 1D!")
-#         if self.factor_ids.ndim != 1:
-#             raise ValueError("factor_ids must be 1D!")
-#         if self.values.ndim != 2:
-#             raise ValueError("values must be 2D!")
-#
-#         # Enforce floating dtype invariant
-#         if not np.issubdtype(self.values.dtype, np.floating):
-#             raise TypeError(f"values must be floating dtype; got {self.values.dtype}")
-#
-#         # Shapes
-#         T, N = self.values.shape
-#         if self.dates.size != T:
-#             raise ValueError(
-#                 f"dates length ({self.dates.size}) must match values.shape[0] ({T})"
-#             )
-#         if self.factor_ids.size != N:
-#             raise ValueError(
-#                 f"factor_ids length ({self.factor_ids.size}) must match values.shape[1] ({N})"
-#             )
-#
-#         # Enforce canonical date encodings
-#         if np.issubdtype(self.dates.dtype, np.integer):
-#             if self.dates.dtype != np.int32:
-#                 raise TypeError(
-#                     f"int date encoding must be int32 days since DATE_EPOCH; got {self.dates.dtype}"
-#                 )
-#         else:
-#             if self.dates.dtype != np.dtype("datetime64[D]"):
-#                 raise TypeError(
-#                     f"datetime date encoding must be datetime64[D]; got {self.dates.dtype}"
-#                 )
-#
-#         if self.factor_ids.dtype != np.int32:
-#             raise TypeError(f"factor_ids must be int32; got {self.factor_ids.dtype}")
-#
-#         # Contiguity (you want dense contiguous arrays for VaR)
-#         if not self.values.flags["C_CONTIGUOUS"]:
-#             raise ValueError(
-#                 "values must be C-contiguous (use np.ascontiguousarray at construction)."
-#             )
-#
-#         # Uniqueness with minimal allocations:
-#         # - For dates: if you expect sorted input (typical), adjacent compare is O(T) and alloc-free.
-#         #   If you cannot guarantee sortedness, keep your sort+adjacent approach instead.
-#         if self.dates.size > 1:
-#             # enforce monotonic non-decreasing
-#             if np.any(self.dates[1:] < self.dates[:-1]):
-#                 raise ValueError("dates must be sorted ascending.")
-#             # then uniqueness is equivalent to “no equal adjacent pairs”
-#             if np.any(self.dates[1:] == self.dates[:-1]):
-#                 raise ValueError("dates must be unique!")
-#
-#         # - For factor_ids: not necessarily sorted; use unique counts.
-#         if self.factor_ids.size > 1:
-#             ids = np.sort(self.factor_ids)
-#             if np.any(ids[1:] == ids[:-1]):
-#                 raise ValueError("factor_ids must be unique!")
-#
-#     def to_df(self) -> pd.DataFrame:
-#         """Convert to pandas DataFrame with dates as index and factor_ids as columns."""
-#         if np.issubdtype(self.dates.dtype, np.integer):
-#             dts = ordinal32_to_datetime64D(self.dates)
-#             index = pd.DatetimeIndex(dts)
-#         else:
-#             index = pd.DatetimeIndex(self.dates)
-#
-#         df = pd.DataFrame(data=self.values, index=index, columns=self.factor_ids)
-#         df.index.name = "date"
-#         df.columns.name = "factor_id"
-#         return df
-#
-#     def plot(self, **kwargs):
-#         """Plot the risk factor matrix."""
-#         return self.to_df().plot(**kwargs)
-#
-#     @property
-#     def shape(self) -> tuple:
-#         """Return (T, N) shape of the matrix."""
-#         return self.values.shape
-#
-#     @property
-#     def num_dates(self) -> int:
-#         """Number of time periods."""
-#         return self.values.shape[0]
-#
-#     @property
-#     def num_factors(self) -> int:
-#         """Number of factors."""
-#         return self.values.shape[1]
-#
-#     def slice_dates(self, start: int = None, end: int = None) -> "RiskFactorMatrix":
-#         """Return a sliced matrix along the time dimension."""
-#         if start is None:
-#             start = 0
-#         if end is None:
-#             end = self.num_dates
-#
-#         return RiskFactorMatrix(
-#             dates=self.dates[start:end],
-#             factor_ids=self.factor_ids,
-#             values=self.values[start:end, :],
-#         )
-#
-#     def slice_factors(self, factor_indices: np.ndarray) -> "RiskFactorMatrix":
-#         """Return a sliced matrix along the factor dimension."""
-#         return RiskFactorMatrix(
-#             dates=self.dates,
-#             factor_ids=self.factor_ids[factor_indices],
-#             values=self.values[:, factor_indices],
-#         )
-#
-#     @staticmethod
-#     def from_df(
-#         *,
-#         df: pd.DataFrame,
-#         name_to_id_map: Optional[Mapping[str, int]] = None,
-#         use_int32_dates: bool = True,
-#         float_dtype: type[np.floating] = np.float32,
-#     ) -> "RiskFactorMatrix":
-#         """
-#         Construct a RiskFactorMatrix from a wide DataFrame.
-#
-#         Modes:
-#           1) name_to_id_map is provided -> df.columns are names; map to int32 factor_ids
-#           2) name_to_id_map is None     -> df.columns are already factor IDs (int-like)
-#
-#         Memory/CPU:
-#           - one unavoidable allocation for values (df -> contiguous numpy array)
-#           - dates taken as numpy view; optional ordinal conversion
-#         """
-#         # Dates (alloc-free view from index)
-#         dts_64D = df.index.to_numpy(dtype="datetime64[D]", copy=False)
-#         dates = datetime64D_to_ordinal32(dts_64D) if use_int32_dates else dts_64D
-#
-#         # Values: one tight contiguous allocation
-#         values = np.ascontiguousarray(
-#             df.to_numpy(dtype=float_dtype, copy=True, na_value=np.nan)
-#         )
-#
-#         # Factor IDs
-#         cols = df.columns
-#         n = cols.size
-#
-#         if name_to_id_map is None:
-#             # Columns already are IDs (int-like). Build int32 array once.
-#             factor_ids = np.fromiter((int(c) for c in cols), dtype=np.int32, count=n)
-#
-#             # Construct and return.
-#             return RiskFactorMatrix(dates=dates, factor_ids=factor_ids, values=values)
-#
-#         # Columns are names; map to IDs
-#         _validate_mapping_dict(name_to_id_map)
-#
-#         # Map factor names to factor IDs.
-#         factor_ids = np.fromiter(
-#             (_require_mapping_key(name_to_id_map, str(c)) for c in cols),
-#             dtype=np.int32,
-#             count=n,
-#         )
-#
-#         # Construct and return.
-#         return RiskFactorMatrix(dates=dates, factor_ids=factor_ids, values=values)
+        # Convert index to datetime if needed (common for Excel imports)
+        if not is_datetime64_any_dtype(df.index):
+            df.index = pd.to_datetime(df.index, errors="raise")
+
+        # Optional filter (preserves monotonicity if it was monotonic)
+        if as_of_date is not None:
+            cutoff = coerce_as_of_date_to_pd_timestamp(as_of_date)
+            df = df.loc[df.index <= cutoff]
+
+        # Enforce sorted/unique (same contract as from_df)
+        if df.index.has_duplicates:
+            raise ValueError("Excel sheet index (dates) must be unique!")
+        if not df.index.is_monotonic_increasing:
+            raise ValueError("Excel sheet index (dates) must be sorted ascending!")
+
+        # Create from the DataFrame using the existing from_df method (handles name_to_id mapping and canonicalization)
+        return RiskFactorMatrix.from_df(
+            df=df,
+            name_to_id_map=name_to_id_map,
+            use_int32_dates=use_int32_dates,
+            float_dtype=float_dtype,
+        )
 
 
 def _validate_mapping_dict(m: Mapping[str, Any]) -> None:

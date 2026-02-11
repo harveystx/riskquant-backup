@@ -7,6 +7,7 @@ from typing import Iterable, Optional, Union, Mapping, Dict
 import pandas as pd
 
 
+
 def load_risk_static_data_config_xlsx_into_dict(
     *,
     path: Union[str, Path],
