@@ -1,17 +1,17 @@
-# riskquant/config/loader.py
+# src/riskquant/config/loader.py
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Optional, Union, Mapping
+from typing import Iterable, Optional, Union, Mapping, Dict
 
 import pandas as pd
 
 
-def load_risk_static_data_config_xlsx(
+def load_risk_static_data_config_xlsx_into_dict(
     *,
     path: Union[str, Path],
     sheet_names: Optional[Iterable[str]] = None,
-) -> Mapping[str, pd.DataFrame]:
+) -> Dict[str, pd.DataFrame]:
     """
     Load selected sheets from a config workbook.
 
@@ -46,5 +46,5 @@ def load_risk_static_data_config_xlsx(
             "Expected multiple sheets to return a Mapping[str, DataFrame]."
         )
 
-    # Return
-    return dict_of_dfs
+    # Return a regular dict to avoid potential issues with pandas' internal dict subclass
+    return dict(dict_of_dfs)

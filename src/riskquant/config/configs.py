@@ -1,4 +1,4 @@
-# riskquant/config/configs.py
+# src/riskquant/config/configs.py
 from __future__ import annotations
 
 import re
