@@ -26,6 +26,10 @@ temp/
 !templates/**/*.xlsx
 !**/templates/**/*.xlsx
 
+# Development / scratch files
+data/dev/*.xlsx
+
+
 ###########################################################
 # Python
 ###########################################################
