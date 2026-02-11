@@ -1,10 +1,7 @@
 # src/riskquant/config/compile.py
-"""Helpers to compile risk static configuration from Excel workbooks.
-
-This module exposes a small convenience function used by notebooks and
-scripts to load the risk static configuration workbook, construct the
-`RiskStaticConfigFrames`, and compile it into a runtime
-`RiskStaticConfig` instance.
+"""
+Main API for compiling configurations from source data (e.g. .xlsx workbooks) 
+into runtime config objects.
 """
 
 from __future__ import annotations
@@ -17,16 +14,12 @@ from riskquant.config.loader import load_risk_static_data_config_xlsx_into_dict
 
 
 def compile_risk_static_config_from_xlsx(path: Union[str, Path]) -> RiskStaticConfig:
-    """Load and compile a risk static config workbook.
-
-    This is a thin helper that mirrors the common notebook pattern:
-
-        dfs = load_risk_static_data_config_xlsx_into_dict(path=...)
-        frames = RiskStaticConfigFrames(**dfs)
-        cfg = frames.compile()
+    """
+    Load and compile a risk static config .xlsx workbook into a RiskStaticConfig 
+    instance.
 
     Args:
-        path: Path to the Excel workbook containing the static config sheets.
+        path: Path to the Excel (.xlsx) workbook containing the static config sheets.
 
     Returns:
         RiskStaticConfig: the compiled runtime configuration object.
