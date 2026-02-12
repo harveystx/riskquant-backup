@@ -5,7 +5,7 @@ from riskquant.exceptions import PrettyKeyError
 from riskquant.utils.printer import as_list_str
 
 
-def require_cols(df: pd.DataFrame, cols, *, ctx: str) -> None:
+def require_cols_in_df(df: pd.DataFrame, cols, *, ctx: str) -> None:
     # Smoke test that the input is a DataFrame, since the error messages are more
     # helpful than if we just let it fail with an AttributeError later on
     if not isinstance(df, pd.DataFrame):
@@ -16,10 +16,12 @@ def require_cols(df: pd.DataFrame, cols, *, ctx: str) -> None:
 
     # If any required columns are missing, raise an error with a helpful message
     if missing:
-        raise ValueError(f"{ctx}: missing required columns:\n {as_list_str(missing)}")
+        raise ValueError(
+            f"{ctx}: missing required columns:\n {as_list_str(missing)}"
+        )
 
 
-def require_non_na(ser: pd.Series, *, ctx: str) -> None:
+def require_non_nan_in_series(ser: pd.Series, *, ctx: str) -> None:
     # Smoke test that the input is a Series, since the error messages are more
     # helpful than if we just let it fail with an AttributeError later on
     if not isinstance(ser, pd.Series):
