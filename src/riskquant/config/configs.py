@@ -23,7 +23,9 @@ import numpy as np
 import pandas as pd
 
 from riskquant.exceptions import PrettyKeyError
-from riskquant.market_data.risk_factors.shift_types import validate_shift_types_dict
+from riskquant.market_data.risk_factors.shift_types import (
+    validate_shift_types_dict,
+)
 from riskquant.utils.tenors import (
     parse_bracket_token,
     get_spot_year,
@@ -88,7 +90,9 @@ def _build_str_to_int_dict(
     # Duplicate key check
     if require_unique_keys and not keys.is_unique:
         dup = keys[keys.duplicated()].unique().tolist()
-        raise ValueError(f"{sheet_name} sheet has duplicate {key_col} values: {dup}")
+        raise ValueError(
+            f"{sheet_name} sheet has duplicate {key_col} values: {dup}"
+        )
 
     # Safe integer cast (pandas -> int64), then Python int in dict
     ids = id_s.astype("int64", copy=False)
@@ -135,12 +139,10 @@ class RiskFactorNameAbsToRelMapping:
             seen[iv] = abs_name
 
     @overload
-    def get(self, abs_name: str) -> tuple[str, int]:
-        ...
+    def get(self, abs_name: str) -> tuple[str, int]: ...
 
     @overload
-    def get(self, abs_name: Sequence[str]) -> list[tuple[str, int]]:
-        ...
+    def get(self, abs_name: Sequence[str]) -> list[tuple[str, int]]: ...
 
     def get(
         self,
@@ -152,12 +154,12 @@ class RiskFactorNameAbsToRelMapping:
         return [m[a] for a in abs_name]
 
     @overload
-    def get_rf_name_for_abs_name(self, abs_name: str) -> str:
-        ...
+    def get_rf_name_for_abs_name(self, abs_name: str) -> str: ...
 
     @overload
-    def get_rf_name_for_abs_name(self, abs_name: Sequence[str]) -> list[str]:
-        ...
+    def get_rf_name_for_abs_name(
+        self, abs_name: Sequence[str]
+    ) -> list[str]: ...
 
     def get_rf_name_for_abs_name(
         self,
@@ -169,12 +171,10 @@ class RiskFactorNameAbsToRelMapping:
         return [m[a][0] for a in abs_name]
 
     @overload
-    def get_rf_id_for_abs_name(self, abs_name: str) -> int:
-        ...
+    def get_rf_id_for_abs_name(self, abs_name: str) -> int: ...
 
     @overload
-    def get_rf_id_for_abs_name(self, abs_name: Sequence[str]) -> list[int]:
-        ...
+    def get_rf_id_for_abs_name(self, abs_name: Sequence[str]) -> list[int]: ...
 
     def get_rf_id_for_abs_name(
         self,
@@ -407,7 +407,7 @@ class RiskStaticConfig:
     # --- INTERNAL CACHES --- #
 
     # internal cache
-    _rf_name_to_id: Optional[Dict[str, int]] = None
+    _rf_name_to_rf_id: Optional[Dict[str, int]] = None
     _rf_id_to_proxy_rf_id: Optional[Dict[int, Tuple[int, float]]] = None
     _rf_id_to_risk_factor: Optional[Dict[int, RiskFactor]] = None
     _rf_id_to_shift_type_id: Optional[Dict[int, int]] = None
@@ -432,18 +432,21 @@ class RiskStaticConfig:
         return self.risk_factors_dict[risk_factor_name].risk_factor_name_id
 
     @property
-    def rf_name_to_id(self) -> Dict[str, int]:
+    def rf_name_to_rf_id(self) -> Dict[str, int]:
         """
         A built-once cache of risk factor name to risk factor name ID:
             risk_factor_name -> risk_factor_name_id
         """
-        if self._rf_name_to_id is None:
+        if self._rf_name_to_rf_id is None:
             object.__setattr__(
                 self,
-                "_rf_name_to_id",
-                {k: v.risk_factor_name_id for k, v in self.risk_factors_dict.items()},
+                "_rf_name_to_rf_id",
+                {
+                    k: v.risk_factor_name_id
+                    for k, v in self.risk_factors_dict.items()
+                },
             )
-        return self._rf_name_to_id
+        return self._rf_name_to_rf_id
 
     @property
     def rf_id_to_proxy_rf_id(self) -> Dict[int, Tuple[int, float]]:
@@ -454,11 +457,11 @@ class RiskStaticConfig:
         m = self._rf_id_to_proxy_rf_id
         if m is None:
             # risk_factor_name -> risk_factor_id
-            rf_name_to_id = self.rf_name_to_id  # already cached
+            rf_name_to_rf_id = self.rf_name_to_rf_id  # already cached
             out: Dict[int, Tuple[int, float]] = {}
             for p in self.risk_factor_proxies_dict.values():
-                rf_id = int(rf_name_to_id[p.risk_factor_name])
-                proxy_rf_id = int(rf_name_to_id[p.proxy_risk_factor_name])
+                rf_id = int(rf_name_to_rf_id[p.risk_factor_name])
+                proxy_rf_id = int(rf_name_to_rf_id[p.proxy_risk_factor_name])
                 scale = float(p.proxy_risk_factor_vol_scaling_factor or 1.0)
                 out[rf_id] = (proxy_rf_id, scale)
 
@@ -697,7 +700,9 @@ class RiskStaticConfig:
             out[rf_curve_name] = (
                 rf_offsets_arr[rf_offset_idx],  # sorted offsets
                 rf_ids_arr[rf_offset_idx],  # rf_ids aligned to sorted offsets
-                labels.get(rf_curve_name, {}),  # LABEL/NONE lookup (may be empty)
+                labels.get(
+                    rf_curve_name, {}
+                ),  # LABEL/NONE lookup (may be empty)
             )
 
         # --- CURVES WITH ONLY LABEL / NONE TENORS --- #
@@ -802,7 +807,10 @@ class RiskStaticConfig:
                 rf_abs_name = rf_rel_name
 
                 # Store.
-                abs_to_rf_name_and_id[rf_abs_name] = (rf_rel_name, rf_rel_name_id)
+                abs_to_rf_name_and_id[rf_abs_name] = (
+                    rf_rel_name,
+                    rf_rel_name_id,
+                )
 
                 # Continue.
                 continue
@@ -831,7 +839,10 @@ class RiskStaticConfig:
                 rf_abs_name = f"{rf_curve_name}_{label}"
 
                 # Store.
-                abs_to_rf_name_and_id[rf_abs_name] = (rf_rel_name, rf_rel_name_id)
+                abs_to_rf_name_and_id[rf_abs_name] = (
+                    rf_rel_name,
+                    rf_rel_name_id,
+                )
 
                 # Continue.
                 continue
@@ -856,8 +867,8 @@ class RiskStaticConfig:
                     )
 
                 # Parse RF tenor token
-                tenor_token_unit, tenor_token_signed_offset = parse_bracket_token(
-                    rf_tenor_token
+                tenor_token_unit, tenor_token_signed_offset = (
+                    parse_bracket_token(rf_tenor_token)
                 )
 
                 # Need +/- offset.
@@ -902,22 +913,29 @@ class RiskStaticConfig:
                     and rf_spot_roll_method == "CALENDAR_PERIOD"
                 ):
                     # M+0 anchored to first day of asof month, shifted by rule offset
-                    spot_month_yyyymm01 = add_months_to_date_and_return_yyyymm01(
-                        d=date(as_of_date.year, as_of_date.month, 1),
-                        months_to_add=rf_offset,
+                    spot_month_yyyymm01 = (
+                        add_months_to_date_and_return_yyyymm01(
+                            d=date(as_of_date.year, as_of_date.month, 1),
+                            months_to_add=rf_offset,
+                        )
                     )
 
                     # Get RF absolute date.
-                    rf_abs_date_yyyymm01 = add_months_to_date_and_return_yyyymm01(
-                        d=spot_month_yyyymm01,
-                        months_to_add=int(tenor_token_signed_offset),
+                    rf_abs_date_yyyymm01 = (
+                        add_months_to_date_and_return_yyyymm01(
+                            d=spot_month_yyyymm01,
+                            months_to_add=int(tenor_token_signed_offset),
+                        )
                     )
 
                     # Create absolute name.
                     rf_abs_name = f"{rf_curve_name}_{fmt_date_as_str_yyyymm(rf_abs_date_yyyymm01)}"
 
                     # Store.
-                    abs_to_rf_name_and_id[rf_abs_name] = (rf_rel_name, rf_rel_name_id)
+                    abs_to_rf_name_and_id[rf_abs_name] = (
+                        rf_rel_name,
+                        rf_rel_name_id,
+                    )
 
                     # Continue.
                     continue
@@ -942,7 +960,10 @@ class RiskStaticConfig:
                     rf_abs_name = f"{rf_curve_name}_{year:04d}"
 
                     # Store.
-                    abs_to_rf_name_and_id[rf_abs_name] = (rf_rel_name, rf_rel_name_id)
+                    abs_to_rf_name_and_id[rf_abs_name] = (
+                        rf_rel_name,
+                        rf_rel_name_id,
+                    )
 
                     # Continue.
                     continue
@@ -994,10 +1015,18 @@ class RiskStaticConfig:
                         as_of_year - look_years, as_of_year + look_years + 1
                     ):
                         boundaries.append(
-                            date(year=y, month=int(fh_mmdd[:2]), day=int(fh_mmdd[2:]))
+                            date(
+                                year=y,
+                                month=int(fh_mmdd[:2]),
+                                day=int(fh_mmdd[2:]),
+                            )
                         )
                         boundaries.append(
-                            date(year=y, month=int(bh_mmdd[:2]), day=int(bh_mmdd[2:]))
+                            date(
+                                year=y,
+                                month=int(bh_mmdd[:2]),
+                                day=int(bh_mmdd[2:]),
+                            )
                         )
                     boundaries.sort()
                     # print("boundaries:", boundaries)
@@ -1030,7 +1059,10 @@ class RiskStaticConfig:
                     rf_abs_name = f"{rf_curve_name}_{yyyymmdd_str}"
 
                     # Store.
-                    abs_to_rf_name_and_id[rf_abs_name] = (rf_rel_name, rf_rel_name_id)
+                    abs_to_rf_name_and_id[rf_abs_name] = (
+                        rf_rel_name,
+                        rf_rel_name_id,
+                    )
 
                     # Continue.
                     continue
@@ -1191,7 +1223,9 @@ class RiskStaticConfigFrames:
             # Extract.
             risk_factor_name = str(r["risk_factor_name"])
             risk_factor_name_id = int(r["risk_factor_name_id"])
-            tenor_token = None if _is_na(r["tenor_token"]) else str(r["tenor_token"])
+            tenor_token = (
+                None if _is_na(r["tenor_token"]) else str(r["tenor_token"])
+            )
             curve_name = str(r["curve_name"])
 
             # Create CurveMapping
@@ -1397,7 +1431,9 @@ class RiskStaticConfigFrames:
 
             # Cannot be < 0.
             if scaling_factor < 0:
-                raise ValueError("proxy_curve_vol_scaling_factor must be positive!")
+                raise ValueError(
+                    "proxy_curve_vol_scaling_factor must be positive!"
+                )
 
             # Create and store.
             curve_proxies_dict[curve_name] = CurveProxyMap(

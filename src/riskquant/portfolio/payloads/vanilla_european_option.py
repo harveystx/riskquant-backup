@@ -1,112 +1,157 @@
-# riskquant/portfolio/payloads/vanilla_european_option.py
+"""
+Payload definition for vanilla European option trades.
+
+This module defines a compact, immutable container that encodes the
+minimal economic and market-linkage information required by option pricers
+and valuation engines. The payload deliberately carries identifiers
+for risk factors (price, vol, FX) and a date encoded as an ordinal32
+(days since DATE_EPOCH), rather than storing strings or full market
+objects. This keeps memory footprint small and makes the payload
+well-suited for large portfolios and high-throughput simulation.
+
+Notes on expiry encoding:
+  - The payload uses `expiry_date_ordinal32` (int32 days-since-epoch)
+    to represent the option expiry date, aligning with how settlement
+    dates are encoded in ForwardPayload (`settlement_date_ordinal32`).
+  - The sentinel value `NO_EXPIRY_DATE` indicates a missing expiry.
+"""
+
 from dataclasses import dataclass
 
 import numpy as np
 
 from riskquant.portfolio.constants import (
-    FX_NONE,
-    NO_EXPIRY_DATE,
+    NO_ID,
+    NO_FX_RF_REQUIRED,
+    NO_SETTLEMENT_DATE_ORDINAL32,
+    NO_EXPIRY_DATE_ORDINAL32,
 )
-from riskquant.portfolio.payloads.base import Payload
 
 
-@dataclass(frozen=True, slots=True)
-class VanillaEuropeanOptionPayload(Payload):
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _VanillaEuropeanOptionBasePayload:
     """
-    Payload container for a plain-vanilla (single-underlying) European option position.
-
-    This payload is intentionally MODEL-NEUTRAL:
-      - It does NOT encode pricing model (Black, local vol, etc.)
-      - It does NOT encode exercise style (European/American/Bermudan)
-      - Those are pricer concerns.
-
-    What it DOES encode is the minimal economic definition + market linkages:
-      - underlying forward/price risk factor id used by the pricer
-      - strike (in trade currency units)
-      - time-to-expiry anchor via an expiry risk factor id (or expiry key) if you choose that pattern
-      - implied volatility linkage via a single vol risk factor id
-      - optional FX links if underlying/trade currencies differ from settlement currency
-
-    Attributes
-    ----------
-    underlying_price_rf_id : int32
-        Risk factor id for the underlying price/forward used by the option pricer.
-        (E.g. forward node F(t,T) if you model options on forwards.)
-
-    quantity : float64
-        Signed position size (long > 0, short < 0). Kept float64 for safety in big books.
-
-    strike : float64
-        Strike K in strike currency units (strike_ccy).
-
-    is_call : int8
-        1 for call, 0 for put. int8 to keep compact and branch-friendly.
-
-    expiry_rf_id : int32
-        Risk factor id that identifies the expiry anchor required by the pricer.
-        This can be:
-          - a time/expiry key factor,
-          - or a forward node / tenor id that implies expiry,
-          - depending on your market data design.
-        Keep it as int32 for compact numeric dispatch.
-
-    vol_rf_id : int32
-        Risk factor id for the implied volatility input used by the pricer.
-
-        Recommended convention:
-          - risk_factor_group = "VOL" (single group for all vols)
-          - different vol "types" (ATM / RR / BF / etc.) are represented as different curves
-            that all share group "VOL", with their own curve_name and tenor grid.
-          - shift type for group "VOL" is typically DIFFERENCE (absolute vol moves),
-            but the resolver treats this as a pure source-selection problem; shift-type logic
-            belongs downstream.
-
-        This design integrates cleanly with:
-          - proxy resolver (ID-level / curve-level / tenor fallback),
-          - RiskFactorMatrix (historical vol series),
-          - RiskFactorSnapshot (current vol level, potentially from a different provider).
-
-    fx_under_to_settle_rf_id : int32
-        FX spot risk factor id for underlying_ccy -> settlement_ccy conversion.
-        FX_NONE means no conversion required.
-
-    fx_strike_to_settle_rf_id : int32
-        FX spot risk factor id for strike_ccy -> settlement_ccy conversion.
-        FX_NONE means no conversion required.
-
-    Notes
-    -----
-    - Discounting is NOT stored here. The pricer will map expiry/curve metadata to a discount factor source.
-    - vol_rf_id is intentionally a single ID for now (one series per trade). If/when you add smile/surface
-      representations, you can extend by adding additional vol-related rf_ids (e.g. rr25_rf_id, bf25_rf_id),
-      still under risk_factor_group="VOL".
+    Common fields shared by vanilla European option payload variants.
     """
 
-    underlying_price_rf_id: np.int32
+    # Signed position size (contracts / notional)
     quantity: np.float64
+
+    # Strike price K expressed in strike currency units
     strike: np.float64
+
+    # 1 => call, 0 => put; stored as int8 for compactness
     is_call: np.int8
 
-    # --- VOL LINKAGE --- #
+    # --- EXPIRY DATE ---
+
+    # Expiry encoded as int32 ordinal (days since DATE_EPOCH). Matches ForwardPayload.
+    expiry_date_ordinal32: np.int32
+
+    # --- SETTLEMENT DATE ---
+
+    # Optional settlement date (days-since-epoch). Used for discounting only. dtype: np.int32
+    payoff_settlement_date_ordinal32: np.int32 = NO_SETTLEMENT_DATE_ORDINAL32
+
+    # --- FX LINKAGE ---
+
+    # FX id for underlying_ccy -> settlement_ccy, or FX_NONE if no conversion
+    fx_under_to_settle_rf_id: np.int32 = NO_FX_RF_REQUIRED
+
+    # FX id for strike_ccy -> settlement_ccy, or FX_NONE if no conversion
+    fx_strike_to_settle_rf_id: np.int32 = NO_FX_RF_REQUIRED
+
+    def __post_init__(self) -> None:
+        # expiry is required for a European option
+        if self.expiry_date_ordinal32 == NO_EXPIRY_DATE_ORDINAL32:
+            raise ValueError(
+                "European option payload requires expiry_date_ordinal32 (cannot be sentinel)."
+            )
+        if self.expiry_date_ordinal32 < 0:
+            raise ValueError("expiry_date_ordinal32 must be non-negative.")
+        # basic call/put validation (optional but cheap)
+        if int(self.is_call) not in (0, 1):
+            raise ValueError("is_call must be 0 (put) or 1 (call).")
+
+    def __repr__(self) -> str:
+        return self.__str__()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class VanillaEuropeanOptionNodePayload(_VanillaEuropeanOptionBasePayload):
+    """
+    Immutable payload for a single vanilla European option position when
+    the underlying price is sourced from a node.
+    """
+
+    # --- UNDERLYING LINKAGE ---
+
+    # ID referencing the underlying price/forward risk factor used by the pricer
+    underlying_price_rf_id: np.int32
+
+    # --- VOL LINKAGE ---
+
+    # Implied volatility risk factor id (volatility series used by pricer). This is a node-level risk factor id that resolves to a time series in scenario shocks. It is a separate risk factor from the price_rf_id because some pricers require a separate vol input, and the vol may be sourced from a different node than the price (e.g., a volatility surface vs. a forward curve).
     vol_rf_id: np.int32
 
-    # --- EXPIRY DATE --- #
-    expiry_rf_id: np.int32 = NO_EXPIRY_DATE
+    def __post_init__(self) -> None:
+        super().__post_init__()
 
-    # --- FX LINKAGE --- #
-    fx_under_to_settle_rf_id: np.int32 = FX_NONE
-    fx_strike_to_settle_rf_id: np.int32 = FX_NONE
+        if self.underlying_price_rf_id == NO_ID:
+            raise ValueError(
+                "underlying_price_rf_id is required (cannot be sentinel)."
+            )
+        if self.underlying_price_rf_id < 0:
+            raise ValueError("underlying_price_rf_id must be non-negative.")
+
+        if self.vol_rf_id == NO_ID:
+            raise ValueError("vol_rf_id is required (cannot be sentinel).")
+        if self.vol_rf_id < 0:
+            raise ValueError("vol_rf_id must be non-negative.")
 
     def __str__(self) -> str:
+        """Return a compact single-line representation for logging/debugging."""
         return (
-            f"VanillaEuropeanOptionPayload("
-            f"underlying_price_rf_id={self.underlying_price_rf_id}, "
+            "VanillaEuropeanOptionNodePayload("
             f"quantity={self.quantity}, "
             f"strike={self.strike}, "
-            f"is_call={self.is_call}, "
+            f"is_call={int(self.is_call)}, "
+            f"expiry_date_ordinal32={self.expiry_date_ordinal32}, "
+            f"payoff_settlement_date_ordinal32={self.payoff_settlement_date_ordinal32}, "
+            f"underlying_price_rf_id={self.underlying_price_rf_id}, "
             f"vol_rf_id={self.vol_rf_id}, "
-            f"expiry_rf_id={self.expiry_rf_id}, "
             f"fx_under_to_settle_rf_id={self.fx_under_to_settle_rf_id}, "
             f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}"
-            f")"
+            ")"
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class VanillaEuropeanOptionCurvePayload(_VanillaEuropeanOptionBasePayload):
+    """
+    Immutable payload for a single vanilla European option position when
+    the underlying price is sourced from a curve.
+    """
+
+    # --- UNDERLYING CURVE LINKAGE ---
+
+    # ID referencing the underlying price/forward risk factor used by the pricer
+    underlying_curve_rf_id: np.int32
+
+    # --- DELIVERY LINKAGE ---
+
+    # Delivery date encoded as int32 ordinal (days since DATE_EPOCH). Matches ForwardPayload.
+    delivery_date_ordinal32: np.int32
+
+    # --- VOL LINKAGE ---
+
+    # Implied volatility risk factor id (volatility series used by pricer). This is a surface-level risk factor id that resolves to a surface in scenario shocks. It is a separate risk factor from the price_rf_id because some pricers require a separate vol input, and the vol may be sourced from a different node than the price (e.g., a volatility surface vs. a forward curve). The final vol used for pricing is interpolated from the vol surface based on the expiry date and strike (money-ness) of the option.
+    vol_surface_id: np.int32
+
+    def __str__(self) -> str:
+        """Return a compact single-line representation for logging/debugging."""
+        return ""
+
+
+if __name__ == "__main__":
+    pass

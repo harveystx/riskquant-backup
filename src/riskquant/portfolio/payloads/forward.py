@@ -1,121 +1,92 @@
-# riskquant/portfolio/payloads/forward.py
+"""
+Payload definition for forward contract trades.
+
+This module defines a lightweight, immutable container for forward positions.
+The payload stores only numeric identifiers, primitive fields, and date ordinals
+(int32 days-since-epoch). External pricers and valuation engines resolve the
+identifiers to market data and perform pricing, discounting, and FX conversions.
+
+Key design principle:
+  Exposure timing (via `price_rf_id` and `price_source_type`) is intentionally
+  decoupled from settlement timing (`settlement_date_ordinal32`). This enables
+  support for forwards on long-dated production with arbitrary payment schedules,
+  power and commodity contracts, and custom discounting logic.
+"""
 
 from dataclasses import dataclass
 
 import numpy as np
 
+# Import price source type indicators and date/FX sentinels for defaults
 from riskquant.portfolio.constants import (
-    NO_SETTLEMENT_DATE,
-    FX_NONE,
+    NO_ID,
+    NO_DELIVERY_DATE_ORDINAL32,
+    NO_SETTLEMENT_DATE_ORDINAL32,
+    NO_FX_RF_REQUIRED,
 )
-from riskquant.portfolio.payloads.base import Payload
 
 
-@dataclass(frozen=True, slots=True)
-class ForwardPayload(Payload):
-    """
-    Immutable payload for a single forward contract position used in portfolio valuation
-    and historical simulation risk analytics within the riskquant framework.
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _ForwardBasePayload:
+    """Common fields shared by forward payload variants."""
 
-    This payload is intentionally MODEL-NEUTRAL and TIME-DECOUPLED:
-      - price risk exposure is defined by a forward curve point (`price_rf_id`)
-      - cash settlement timing is defined independently by `settlement_date_ordinal32`
-      - pricing, discounting, and FX logic are applied externally by pricers
+    # ========== ECONOMIC TERMS ==========
 
-    Attributes
-    ----------
-    price_rf_id : np.int32
-        Identifier of the underlying forward price risk factor F(t, T).
-
-        This identifies the forward curve point or surface coordinate that
-        defines the economic exposure of the contract and determines which
-        historical series is shocked in simulation.
-
-        IMPORTANT:
-          - `price_rf_id` defines *exposure timing* via the curve tenor.
-          - It does NOT imply a contractual delivery or settlement date.
-
-    quantity : np.float64
-        Signed contract quantity or notional.
-        Positive values represent long exposure, negative values represent short exposure.
-
-    strike : np.float64
-        Contract strike price K, expressed in trade currency units.
-
-    settlement_date_ordinal32 : np.int32
-        Contractual payment (settlement) date, expressed as days since
-        the riskquant DATE_EPOCH (1970-01-01).
-
-        This field is used **exclusively for discounting** the forward payoff.
-
-        Sentinel behavior:
-          - If `settlement_date_ordinal32 == NO_SETTLEMENT_DATE (-1)`, no discounting is applied
-            and the discount factor is assumed to be 1.0.
-
-        Design principles:
-          - The economic exposure is defined solely by `price_rf_id`.
-          - The payment date does NOT affect scenario shocks or risk factor selection.
-          - The payment date does NOT need to coincide with the tenor implied by
-            `price_rf_id`.
-
-        This design intentionally decouples:
-          - exposure timing (forward curve point), and
-          - cash settlement timing (payment date),
-
-        enabling support for:
-          - forwards on long-dated production with arbitrary settlement dates,
-          - power and commodity contracts with deferred payment schedules,
-          - instruments where discounting is disabled by construction.
-
-        Units:
-          - int32 days since 1970-01-01 (DATE_EPOCH)
-
-    fx_under_to_settle_rf_id : np.int32
-        Identifier of the FX spot risk factor mapping underlying_ccy -> settlement_ccy,
-        or FX_NONE (-1) if no conversion is required.
-
-    fx_strike_to_settle_rf_id : np.int32
-        Identifier of the FX spot risk factor mapping strike_ccy -> settlement_ccy,
-        or FX_NONE (-1) if no conversion is required.
-
-    Design Notes
-    ------------
-    - This payload carries only minimal economic definition and risk-factor identifiers.
-    - Pricing, discounting, FX conversion, and scenario application are performed
-      externally by pricers and valuation engines.
-    - `frozen=True` and `slots=True` enforce immutability and compact memory layout,
-      minimizing allocation overhead in large portfolios and high-throughput
-      simulation workloads.
-    - Supports up to two FX linkages without runtime currency strings, preserving
-      correctness for:
-        * direct forwards (underlying_ccy == settlement_ccy == strike_ccy)
-        * quanto forwards (underlying_ccy != settlement_ccy)
-        * cross-currency strike forwards (strike_ccy != settlement_ccy)
-        * combined quanto + cross-currency structures
-    - Suitable for large books, vectorized valuation, and multiprocessing execution.
-
-    Typical valuation identity (resolved by pricers, external to the payload)
-    -------------------------------------------------------------------------
-        V(t, s) = D(t, settlement_date, s) *
-                 quantity *
-                 (F_s * FX_s_under->settle - K * FX_s_strike->settle)
-
-        where:
-          - D(t, settlement_date, s) is the scenario discount factor in settlement currency
-          - F_s is the shocked forward price under scenario s
-          - FX_s_* are FX spot levels under scenario s
-    """
-
-    price_rf_id: np.int32
+    # Signed quantity/notional (long > 0, short < 0). dtype: np.float64
     quantity: np.float64
+
+    # Strike/forward level K in trade currency units. dtype: np.float64
     strike: np.float64
-    settlement_date_ordinal32: np.int32 = NO_SETTLEMENT_DATE
-    fx_under_to_settle_rf_id: np.int32 = FX_NONE
-    fx_strike_to_settle_rf_id: np.int32 = FX_NONE
+
+    # ========== SETTLEMENT DATE ==========
+
+    # Settlement/payment date encoded as int32 ordinal (days since DATE_EPOCH).
+    # Used exclusively for discounting. Default sentinel indicates no discounting.
+    settlement_date_ordinal32: np.int32 = NO_SETTLEMENT_DATE_ORDINAL32
+
+    # ========== FX LINKAGES ==========
+
+    # FX risk factor ID mapping underlying_ccy -> settlement_ccy.
+    # Sentinel NO_FX_RF_REQUIRED (-1) indicates no FX conversion needed.
+    fx_under_to_settle_rf_id: np.int32 = NO_FX_RF_REQUIRED
+
+    # FX risk factor ID mapping strike_ccy -> settlement_ccy.
+    # Sentinel NO_FX_RF_REQUIRED (-1) indicates no FX conversion needed.
+    fx_strike_to_settle_rf_id: np.int32 = NO_FX_RF_REQUIRED
+
+    def __repr__(self) -> str:
+        return self.__str__()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ForwardNodePayload(_ForwardBasePayload):
+    """
+    Immutable payload for a forward contract position.
+
+    Encodes the minimal economic and market-linkage information required
+    by pricers and valuation engines. All fields use compact NumPy dtypes
+    to support efficient array-based processing and serialization.
+
+    """
+
+    # ========== UNDERLYING LINKAGES ==========
+
+    # Unique identifier for the forward price/curve node used by the pricer.
+    # Resolves to a time series or market surface in scenario shocks.
+    price_rf_id: np.int32
+
+    def __post_init__(self) -> None:
+        if self.price_rf_id == NO_ID:
+            raise ValueError(
+                "ForwardNodePayload requires price_rf_id (cannot be sentinel)."
+            )
+        if self.price_rf_id < 0:
+            raise ValueError("price_rf_id must be non-negative.")
 
     def __str__(self) -> str:
+        """Return a compact, single-line string representation for logging and debugging."""
         return (
-            f"ForwardPayload("
+            f"ForwardNodePayload("
             f"quantity={self.quantity}, "
             f"strike={self.strike}, "
             f"settlement_date_ordinal32={self.settlement_date_ordinal32}, "
@@ -124,3 +95,78 @@ class ForwardPayload(Payload):
             f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}"
             f")"
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ForwardCurvePayload(_ForwardBasePayload):
+    """
+    Immutable payload for a forward contract position when the price is sourced from a curve and the delivery_date_ordinal32 is used to determine the curve point for pricing and valuation.
+
+    """
+
+    # ========== UNDERLYING LINKAGES ==========
+
+    # Unique identifier for the forward price/curve node used by the pricer.
+    # Resolves to a time series or market surface in scenario shocks.
+    price_curve_id: np.int32
+
+    # ========== DELIVERY DATE (ORDINAL) ==========
+
+    # Physical delivery date encoded as int32 ordinal (days since DATE_EPOCH).
+    # Default is sentinel NO_DELIVERY_DATE_ORDINAL32 if not applicable.
+    delivery_date_ordinal32: np.int32
+
+    def __post_init__(self) -> None:
+        if self.delivery_date_ordinal32 == NO_DELIVERY_DATE_ORDINAL32:
+            raise ValueError(
+                "ForwardCurvePayload requires delivery_date_ordinal32 (cannot be sentinel)."
+            )
+        if self.delivery_date_ordinal32 < 0:
+            raise ValueError("delivery_date_ordinal32 must be non-negative.")
+        if self.price_curve_id == NO_ID:
+            raise ValueError(
+                "ForwardCurvePayload requires price_curve_id (cannot be sentinel)."
+            )
+        if self.price_curve_id < 0:
+            raise ValueError("price_curve_id must be non-negative.")
+
+    def __str__(self) -> str:
+        """Return a compact, single-line string representation for logging and debugging."""
+        return (
+            f"ForwardCurvePayload("
+            f"quantity={self.quantity}, "
+            f"strike={self.strike}, "
+            f"delivery_date_ordinal32={self.delivery_date_ordinal32}, "
+            f"settlement_date_ordinal32={self.settlement_date_ordinal32}, "
+            f"price_curve_id={self.price_curve_id}, "
+            f"fx_under_to_settle_rf_id={self.fx_under_to_settle_rf_id}, "
+            f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}"
+            f")"
+        )
+
+
+if __name__ == "__main__":
+    # Example instantiation of ForwardNodePayload for testing and demonstration
+    fwd_node_payload = ForwardNodePayload(
+        quantity=np.float64(1_000.0),
+        strike=np.float64(1.2345),
+        settlement_date_ordinal32=np.int32(19_100),
+        price_rf_id=np.int32(101),
+        fx_under_to_settle_rf_id=NO_FX_RF_REQUIRED,
+        fx_strike_to_settle_rf_id=NO_FX_RF_REQUIRED,
+    )
+    print("Example ForwardNodePayload:")
+    print(fwd_node_payload)
+
+    # Example instantiation of ForwardCurvePayload for testing and demonstration
+    fwd_curve_payload = ForwardCurvePayload(
+        quantity=np.float64(1_000.0),
+        strike=np.float64(1.2345),
+        delivery_date_ordinal32=np.int32(19_150),
+        settlement_date_ordinal32=np.int32(19_100),
+        price_curve_id=np.int32(202),
+        fx_under_to_settle_rf_id=NO_FX_RF_REQUIRED,
+        fx_strike_to_settle_rf_id=NO_FX_RF_REQUIRED,
+    )
+    print("\nExample ForwardCurvePayload:")
+    print(fwd_curve_payload)

@@ -1,4 +1,4 @@
-# dump_code.py
+# src\riskquant\dump_code.py
 
 from pathlib import Path
 
@@ -8,8 +8,13 @@ def main():
     print(root)
     src = root
 
-    # src = root / "portfolio" / "payloads"
-    src = root / "portfolio" / "blocks"
+    src = [
+        # root / "portfolio" / "constants.py",
+        root / "portfolio" / "payloads",
+        # root / "portfolio" / "blocks",
+        # root / "market_data",
+    ]
+    # src = root / "portfolio"
 
     out_file = root / "all_code.txt"
 
@@ -22,12 +27,17 @@ def main():
     }
 
     with out_file.open("w", encoding="utf-8") as out:
-        for path in sorted(src.rglob("*.py")):
-            if any(part in exclude_dirs for part in path.parts):
-                continue
+        for path in sorted(src):
+            for subpath in sorted(
+                path.rglob("*.py") if path.is_dir() else [path]
+            ):
+                if any(part in exclude_dirs for part in subpath.parts):
+                    continue
 
-            out.write(f"\n\n# ===== FILE: {path.relative_to(root)} =====\n\n")
-            out.write(path.read_text(encoding="utf-8"))
+                out.write(
+                    f"\n\n# ===== FILE: {subpath.relative_to(root)} =====\n\n"
+                )
+                out.write(subpath.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

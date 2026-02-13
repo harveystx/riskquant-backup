@@ -13,7 +13,7 @@ from riskquant.market_data.risk_factors.shift_types import (
     SHIFT_SIMPLE_RETURN,
     SHIFT_DIFFERENCE,
 )
-from riskquant.market_data.risk_factors.snapshot import RiskFactorSnapshot
+from riskquant.market_data.risk_factors.snapshot import RiskFactorLevelSnapshot
 from riskquant.portfolio.compiled import CompiledPortfolio
 from riskquant.simlab.resolve.proxy import ProxyResolution
 from riskquant.simlab.scenarios.base import ScenarioGenerator
@@ -34,7 +34,9 @@ def _build_trade_uid_order(portfolio: CompiledPortfolio) -> np.ndarray:
     return trade_uids
 
 
-def _snapshot_id_to_level(snapshot: RiskFactorSnapshot) -> dict[int, float]:
+def _snapshot_id_to_level(
+    snapshot: RiskFactorLevelSnapshot,
+) -> dict[int, float]:
     ids = snapshot.factor_ids
     lv = snapshot.factor_levels
     return {int(ids[i]): float(lv[i]) for i in range(ids.shape[0])}
@@ -96,7 +98,7 @@ def run_pnl_engine_streaming(
     *,
     cfg: RiskStaticConfig,
     portfolio: CompiledPortfolio,
-    snapshot: RiskFactorSnapshot,
+    snapshot: RiskFactorLevelSnapshot,
     proxy: ProxyResolution,
     scenario_gen: ScenarioGenerator,
     scenario_batch_size: int,
@@ -121,7 +123,9 @@ def run_pnl_engine_streaming(
 
     price_ids = portfolio.price_factor_ids
     fx_ids = portfolio.fx_factor_ids
-    required_ids = np.concatenate((price_ids, fx_ids)).astype(np.int32, copy=False)
+    required_ids = np.concatenate((price_ids, fx_ids)).astype(
+        np.int32, copy=False
+    )
 
     # Enforce ordering alignment with proxy for direct slicing
     if required_ids.shape != proxy.required_factor_ids.shape or np.any(

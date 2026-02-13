@@ -1,4 +1,18 @@
-# riskquant/portfolio/blocks/vanilla_european_option_block.py
+"""
+Compiled block for vanilla European option trades.
+
+This module defines `VanillaEuropeanOptionBlock`, a struct-of-arrays
+representation of option trades optimized for vectorized valuation and
+simulation. The block stores only numeric identifiers and primitive
+arrays; pricers and resolvers map indices to full market objects.
+
+Key points:
+  - Row i corresponds to trade UID `trade_uids[i]`.
+  - `price_uix` and `vol_uix` index compiled factor universes (not risk-factor IDs).
+  - `expiry_date_ordinal32` stores expiry as int32 days-since-epoch; use
+    `NO_EXPIRY_DATE` to indicate a missing expiry.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,42 +25,44 @@ from riskquant.portfolio.blocks.base_block import Block
 @dataclass(frozen=True, slots=True)
 class VanillaEuropeanOptionBlock(Block):
     """
-    Compiled block for plain-vanilla European option trades (struct-of-arrays).
+    Struct-of-arrays for compiled plain-vanilla European options.
 
-    This is the compiled (array-of-structs -> struct-of-arrays) representation used by
-    fast valuation / simulation kernels.
-
-    Row order is defined by trade_uids: row i corresponds to trade_uids[i].
-
-    Indices refer to CompiledPortfolio factor universes:
-      - price_uix indexes CompiledPortfolio.price_factor_ids
-      - vol_uix indexes CompiledPortfolio.vol_factor_ids (pricing input; shockable only if you choose)
-      - fx_*_uix index CompiledPortfolio.fx_factor_ids (or -1 meaning "no FX conversion")
-
-    Notes
-    -----
-    - expiry_date_ordinal32 is the contractual option expiry date expressed as int32 days
-      since riskquant DATE_EPOCH (1970-01-01).
-      If expiry_date_ordinal32 == NO_EXPIRY_DATE, the pricer must interpret the expiry
-      via another convention (e.g., instrument-specific default) or raise.
-    - This block is intentionally model-neutral: it does not embed pricing model choice.
+    Attributes are NumPy arrays of length `m_opt` (number of option trades).
+    The block uses frozen dataclass semantics and slots for memory efficiency.
     """
 
-    # --- TRADE IDENTITY --- #
-    trade_uids: np.ndarray  # (m_opt,) int64
+    # --- TRADE IDENTITY ---
+    # Unique trade identifiers for each option row. dtype: int64 (np.int64)
+    trade_uids: np.ndarray
 
-    # --- ECONOMIC TERMS --- #
-    qty: np.ndarray  # (m_opt,) float64
-    strike: np.ndarray  # (m_opt,) float64
-    is_call: np.ndarray  # (m_opt,) int8  (1=call, 0=put)
+    # --- ECONOMIC TERMS ---
 
-    # --- MARKET LINKAGES (UNIVERSE INDICES) --- #
-    price_uix: np.ndarray  # (m_opt,) int32  -> CompiledPortfolio.price_factor_ids
-    vol_uix: np.ndarray  # (m_opt,) int32    -> CompiledPortfolio.vol_factor_ids
+    # Option quantities (signed). dtype: float64 (np.float64)
+    qty: np.ndarray
 
-    # --- EXPIRY DATE --- #
-    expiry_date_ordinal32: np.ndarray  # (m_opt,) int32 (NO_EXPIRY_DATE => pricer-defined)
+    # Option strikes. dtype: float64 (np.float64)
+    strike: np.ndarray
 
-    # --- OPTIONAL FX LINKAGES (UNIVERSE INDICES) --- #
-    fx_under_to_settle_uix: np.ndarray  # (m_opt,) int32  -> CompiledPortfolio.fx_factor_ids or -1
-    fx_strike_to_settle_uix: np.ndarray  # (m_opt,) int32  -> CompiledPortfolio.fx_factor_ids or -1
+    # Option type flag: 1 = call, 0 = put. dtype: int8 (np.int8)
+    is_call: np.ndarray
+
+    # --- MARKET LINKAGES (UNIVERSE INDICES) ---
+
+    # Index into compiled price factor universe for underlying exposure. dtype: int32
+    price_uix: np.ndarray
+
+    # Index into compiled volatility factor universe for implied vols. dtype: int32
+    vol_uix: np.ndarray
+
+    # --- EXPIRY DATE ---
+
+    # Expiry date encoded as int32 ordinal (days since DATE_EPOCH)
+    expiry_date_ordinal32: np.ndarray
+
+    # --- OPTIONAL FX LINKAGES (UNIVERSE INDICES) ---
+
+    # FX index for underlying_ccy -> settlement_ccy or sentinel (-1) if none. dtype: int32
+    fx_under_to_settle_uix: np.ndarray
+
+    # FX index for strike_ccy -> settlement_ccy or sentinel (-1) if none. dtype: int32
+    fx_strike_to_settle_uix: np.ndarray

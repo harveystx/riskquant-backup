@@ -10,9 +10,9 @@ import pandas as pd
 from riskquant.config.configs import RiskStaticConfig
 from riskquant.exceptions import PrettyKeyError
 from riskquant.portfolio.constants import (
-    FX_NONE,
-    NO_EXPIRY_DATE,
-    NO_SETTLEMENT_DATE,
+    NO_FX_RF_REQUIRED,
+    NO_EXPIRY_DATE_ORDINAL32,
+    NO_SETTLEMENT_DATE_ORDINAL32,
 )
 from riskquant.portfolio.fx import (
     get_fx_pair_for_under_to_settle_conversion,
@@ -29,193 +29,6 @@ from riskquant.utils.dates import (
     datetime64D_to_ordinal32,
 )
 from riskquant.utils.printer import as_list_str
-
-_REQUIRED_BASE_COLS: Final[Tuple[str, ...]] = (
-    "uid",
-    "instrument",
-    "quantity",
-    "underlying",
-    "underlying_ccy",
-    "settlement_ccy",
-)
-
-# Optional “extended schema” cols (may be missing for SPOT-only sheets)
-_OPTIONAL_COLS: Final[Tuple[str, ...]] = (
-    "strike_price",
-    "strike_ccy",
-    "is_call",
-    "expiry_date",
-    "settlement_date",
-)
-
-
-def _pl(x: Iterable) -> str:
-    return as_list_str(x)
-
-
-def _is_na(x) -> bool:
-    return x is None or pd.isna(x)
-
-
-def _require_cols(
-    df: pd.DataFrame,
-    cols: Iterable[str],
-    *,
-    ctx: str,
-) -> None:
-    missing = [c for c in cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"{ctx}: missing required columns:\n {_pl(missing)}")
-
-
-def _require_non_na(series: pd.Series, *, ctx: str) -> None:
-    if series.isna().any():
-        bad = series.index[series.isna()].tolist()
-        # keep it bounded
-        num_bad = len(bad)
-        bad = bad[:25]
-        raise PrettyKeyError(
-            f"{ctx}: found {num_bad:_.0f} missing values at row indices: {bad}"
-        )
-
-
-def _parse_optional_date_series_to_ordinal32(
-    ser: pd.Series,
-    *,
-    sentinel: np.int32,
-    col_name: str,
-) -> np.ndarray:
-    """
-    Convert a date-like column to ordinal32 days since DATE_EPOCH using the canonical
-    riskquant date encoding (datetime64[D] -> ordinal32).
-
-    Accepted inputs:
-      - NaN / None / ""        -> sentinel
-      - datetime64 / Timestamp -> encoded via datetime64D_to_ordinal32
-      - str "YYYY-MM-DD"       -> validated via is_date_str_valid then encoded
-
-    Rejected:
-      - any other string format (e.g. "01/12/2026", "20261201", etc.)
-      - ambiguous objects
-
-    Output:
-      - np.ndarray[int32] length n
-    """
-    n = int(len(ser))
-    out = np.empty(n, dtype=np.int32)
-    out.fill(np.int32(sentinel))
-
-    # Fast exit
-    if n == 0:
-        return out
-
-    # Work on a view
-    sv = ser.to_numpy(copy=False)
-
-    # Identify non-empty entries
-    # Treat "" as empty (common in Excel exports)
-    nn_mask = np.ones(n, dtype=bool)
-
-    # pd.isna works on object arrays too
-    nn_mask &= ~pd.isna(sv)
-
-    # Empty strings -> treat as missing
-    if sv.dtype == object:
-        for i in range(n):
-            if nn_mask[i]:
-                v = sv[i]
-                if isinstance(v, str) and not v.strip():
-                    nn_mask[i] = False
-
-    if not np.any(nn_mask):
-        return out
-
-    # Collect non-null values as a Series for dtype-aware conversion
-    v = ser.loc[nn_mask]
-
-    # Case 1: datetime-like column already
-    if np.issubdtype(v.dtype, np.datetime64):
-        d64 = v.to_numpy(dtype="datetime64[D]", copy=False)
-        out[nn_mask] = datetime64D_to_ordinal32(d64)
-        return out
-
-    # Case 2: object column: may contain Timestamp / datetime / strings
-    # We normalize row-wise but still encode via datetime64D_to_ordinal32 at the end.
-    idx = np.nonzero(nn_mask)[0]
-
-    # Build a small datetime64[D] array for just the present rows
-    d64 = np.empty(idx.shape[0], dtype="datetime64[D]")
-
-    for k, i in enumerate(idx):
-        x = sv[i]
-
-        # pandas Timestamp / numpy datetime64
-        if isinstance(x, (pd.Timestamp, np.datetime64)):
-            d64[k] = np.datetime64(x, "D")
-            continue
-
-        # strings must be strict YYYY-MM-DD
-        if isinstance(x, str):
-            xs = x.strip()
-            if not is_date_str_valid(xs):
-                raise ValueError(
-                    f"Invalid {col_name}='{xs}' at row {int(i)} "
-                    "(expected strict YYYY-MM-DD)."
-                )
-            d64[k] = np.datetime64(xs, "D")
-            continue
-
-        # Anything else: reject (keeps conventions deterministic)
-        raise TypeError(
-            f"Invalid {col_name} type at row {int(i)}: {type(x).__name__}. "
-            "Expected YYYY-MM-DD string, pandas Timestamp, or datetime64."
-        )
-
-    out[idx] = datetime64D_to_ordinal32(d64)
-    return out
-
-
-def _resolve_fx_rf_ids_inplace(
-    *,
-    base_ccy: np.ndarray,  # (n,) object/str
-    settlement_ccy: np.ndarray,  # (n,) object/str
-    out_fx_rf_ids: np.ndarray,  # (n,) int32
-    rf_name_to_id: dict[str, int],
-) -> None:
-    """
-    Resolve FX RF IDs for rows where base_ccy != settlement_ccy.
-
-    out_fx_rf_ids is filled with FX_NONE then overwritten for quanto rows.
-    """
-    out_fx_rf_ids.fill(np.int32(FX_NONE))
-
-    mask = base_ccy != settlement_ccy
-    if not np.any(mask):
-        return
-
-    qidx = np.nonzero(mask)[0]
-    fx_pair_fn = get_fx_pair_for_under_to_settle_conversion
-    rf_map = rf_name_to_id
-
-    for i in qidx:
-        fx_pair = fx_pair_fn(
-            underlying_ccy=str(base_ccy[i]),
-            settlement_ccy=str(settlement_ccy[i]),
-        )
-        # fx_pair_fn returns "" when equal, but mask excludes equals; still safe:
-        if not fx_pair:
-            out_fx_rf_ids[i] = np.int32(FX_NONE)
-            continue
-
-        try:
-            out_fx_rf_ids[i] = np.int32(rf_map[fx_pair])
-        except KeyError as e:
-            raise PrettyKeyError(
-                "Missing FX spot risk factor for currency conversion:\n"
-                f"- fx_pair={fx_pair!r}\n"
-                f"- base_ccy={base_ccy[i]!r}\n"
-                f"- settlement_ccy={settlement_ccy[i]!r}\n"
-            ) from e
 
 
 def iter_trades_from_positions_df(
@@ -245,7 +58,9 @@ def iter_trades_from_positions_df(
     # Smoke test - NaN quantities.
     if np.isnan(qty).any():
         bad_uids = sorted(uids[np.isnan(qty)].tolist())[:25]
-        raise PrettyKeyError(f"Trade UIDs with NaN quantities:\n {_pl(bad_uids)}")
+        raise PrettyKeyError(
+            f"Trade UIDs with NaN quantities:\n {_pl(bad_uids)}"
+        )
 
     # --- Resolve instrument IDs from config (fail fast) --- #
     spot_id = cfg.get_instrument_id("SPOT")
@@ -269,7 +84,7 @@ def iter_trades_from_positions_df(
 
     # --- Underlying risk factor IDs (shared by all three instruments) --- #
     rf_names = positions_df["underlying"].astype(str)
-    price_rf_ids_ser = rf_names.map(cfg.rf_name_to_id)
+    price_rf_ids_ser = rf_names.map(cfg.rf_name_to_rf_id)
 
     # Smoke test
     if price_rf_ids_ser.isna().any():
@@ -309,7 +124,7 @@ def iter_trades_from_positions_df(
         base_ccy=underlying_ccy,
         settlement_ccy=settlement_ccy,
         out_fx_rf_ids=fx_under_to_settle,
-        rf_name_to_id=cfg.rf_name_to_id,
+        rf_name_to_rf_id=cfg.rf_name_to_rf_id,
     )
 
     # strike_ccy defaults (FORWARD allows blank => default to underlying_ccy; OPTION requires strike_ccy)
@@ -336,18 +151,18 @@ def iter_trades_from_positions_df(
         base_ccy=strike_ccy_eff,
         settlement_ccy=settlement_ccy,
         out_fx_rf_ids=fx_strike_to_settle,
-        rf_name_to_id=cfg.rf_name_to_id,
+        rf_name_to_rf_id=cfg.rf_name_to_rf_id,
     )
 
     # --- Dates (ordinal32) --- #
     expiry_ord = _parse_optional_date_series_to_ordinal32(
         expiry_date_s,
-        sentinel=np.int32(NO_EXPIRY_DATE),
+        sentinel=np.int32(NO_EXPIRY_DATE_ORDINAL32),
         col_name="expiry_date",
     )
     settle_ord = _parse_optional_date_series_to_ordinal32(
         settlement_date_s,
-        sentinel=np.int32(NO_SETTLEMENT_DATE),
+        sentinel=np.int32(NO_SETTLEMENT_DATE_ORDINAL32),
         col_name="settlement_date",
     )
 
@@ -363,7 +178,9 @@ def iter_trades_from_positions_df(
                 payload=SpotPayload(
                     price_rf_id=np.int32(price_rf_ids[i]),
                     quantity=np.float64(qty[i]),
-                    fx_rf_id=np.int32(fx_under_to_settle[i]),  # FX_NONE if same ccy
+                    fx_rf_id=np.int32(
+                        fx_under_to_settle[i]
+                    ),  # FX_NONE if same ccy
                 ),
             )
             continue
@@ -413,7 +230,7 @@ def iter_trades_from_positions_df(
             ic8 = np.int8(int(ic))
 
             # expiry_date required (for now)
-            if int(expiry_ord[i]) == int(NO_EXPIRY_DATE):
+            if int(expiry_ord[i]) == int(NO_EXPIRY_DATE_ORDINAL32):
                 raise PrettyKeyError(
                     "VANILLA_EUROPEAN_OPTION row missing expiry_date:\n"
                     f"- uid={uid}\n"
@@ -433,7 +250,7 @@ def iter_trades_from_positions_df(
             under_name = str(rf_names.iat[i])
             vol_name = f"vol_{under_name}"
             try:
-                vol_rf_id = np.int32(cfg.rf_name_to_id[vol_name])
+                vol_rf_id = np.int32(cfg.rf_name_to_rf_id[vol_name])
             except KeyError as e:
                 raise PrettyKeyError(
                     "Missing implied volatility risk factor for vanilla option:\n"
@@ -452,7 +269,7 @@ def iter_trades_from_positions_df(
                     strike=np.float64(K),
                     is_call=ic8,
                     vol_rf_id=vol_rf_id,
-                    expiry_rf_id=np.int32(expiry_ord[i]),
+                    expiry_date_ordinal32=np.int32(expiry_ord[i]),
                     fx_under_to_settle_rf_id=np.int32(fx_under_to_settle[i]),
                     fx_strike_to_settle_rf_id=np.int32(fx_strike_to_settle[i]),
                 ),
@@ -493,4 +310,6 @@ def list_spot_trades_from_positions_df(
     positions_df: pd.DataFrame,
     cfg: RiskStaticConfig,
 ) -> list[TradeRecord]:
-    return list(iter_spot_trades_from_positions_df(positions_df=positions_df, cfg=cfg))
+    return list(
+        iter_spot_trades_from_positions_df(positions_df=positions_df, cfg=cfg)
+    )

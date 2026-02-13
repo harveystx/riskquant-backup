@@ -10,7 +10,7 @@ from riskquant.exceptions import PrettyKeyError
 from riskquant.portfolio.blocks.forward_block import ForwardBlock
 from riskquant.portfolio.blocks.spot_block import SpotBlock
 from riskquant.portfolio.compiled import CompiledPortfolio
-from riskquant.portfolio.constants import FX_NONE
+from riskquant.portfolio.constants import NO_FX_RF_REQUIRED
 from riskquant.portfolio.payloads.forward import ForwardPayload
 from riskquant.portfolio.payloads.spot import SpotPayload
 from riskquant.portfolio.trades import TradeRecord
@@ -110,7 +110,7 @@ def compile_portfolio_streaming(
     fx_map_set = fx_map.__setitem__
     price_ids_append = price_ids.append
     fx_ids_append = fx_ids.append
-    fx_none = int(FX_NONE)
+    fx_none = int(NO_FX_RF_REQUIRED)
 
     # ============================================================ #
     # --- STREAMING-BASED COMPILATION OF TRADES INTO PORTFOLIO --- #

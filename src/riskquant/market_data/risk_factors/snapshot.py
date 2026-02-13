@@ -9,7 +9,7 @@ import numpy as np
 
 
 @dataclass(frozen=True, slots=True)
-class RiskFactorSnapshot:
+class RiskFactorLevelSnapshot:
     as_of_date: date
     factor_ids: np.ndarray  # (N0,) int32
     factor_levels: np.ndarray  # (N0,) float32/float64
@@ -32,7 +32,9 @@ class RiskFactorSnapshot:
         if ids.dtype != np.int32:
             raise TypeError(f"factor_ids must be int32; got {ids.dtype}")
         if lv.dtype not in (np.float32, np.float64):
-            raise TypeError(f"factor_levels must be float32 or float64; got {lv.dtype}")
+            raise TypeError(
+                f"factor_levels must be float32 or float64; got {lv.dtype}"
+            )
 
         # Require contiguous to keep later gathers fast and predictable.
         if not ids.flags["C_CONTIGUOUS"]:

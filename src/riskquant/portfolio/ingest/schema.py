@@ -3,8 +3,8 @@
 
 from typing import Final, Tuple
 
-
-_REQUIRED_BASE_COLS: Final[Tuple[str, ...]] = (
+# Required “base schema” cols (must be present in all sheets, including SPOT-only sheets)
+REQUIRED_BASE_COLS: Final[Tuple[str, ...]] = (
     "uid",
     "instrument",
     "quantity",
@@ -14,7 +14,8 @@ _REQUIRED_BASE_COLS: Final[Tuple[str, ...]] = (
 )
 
 # Optional “extended schema” cols (may be missing for SPOT-only sheets)
-_OPTIONAL_COLS: Final[Tuple[str, ...]] = (
+# Cols are required for any non-SPOT instruments (e.g. options, futures, swaps) and may be missing for SPOT-only sheets.
+OPTIONAL_COLS: Final[Tuple[str, ...]] = (
     "strike_price",
     "strike_ccy",
     "is_call",

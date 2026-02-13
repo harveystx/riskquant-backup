@@ -6,8 +6,8 @@ from riskquant.utils.printer import as_list_str
 
 
 def require_cols_in_df(df: pd.DataFrame, cols, *, ctx: str) -> None:
-    # Smoke test that the input is a DataFrame, since the error messages are more
-    # helpful than if we just let it fail with an AttributeError later on
+    # Smoke test that the input is a DataFrame, since the error messages are
+    # more helpful than if we just let it fail with an AttributeError later on
     if not isinstance(df, pd.DataFrame):
         raise TypeError(f"{ctx}: expected a pandas DataFrame, got {type(df)}")
 
