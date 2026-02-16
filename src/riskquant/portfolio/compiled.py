@@ -6,7 +6,7 @@ from typing import Optional, Iterator
 
 import numpy as np
 
-from riskquant.portfolio.blocks.forward_block import ForwardBlock
+from riskquant.portfolio.blocks.forward_block import ForwardNodeBlock
 from riskquant.portfolio.blocks.spot_block import SpotBlock
 
 
@@ -23,10 +23,12 @@ class CompiledPortfolio:
     fx_factor_ids: np.ndarray  # (N_fx,) int32
 
     # Cache of unique and sorted factor IDs (disjoint union of price/fx)
-    _factor_ids_sorted_unique: Optional[np.ndarray] = field(init=False, default=None)
+    _factor_ids_sorted_unique: Optional[np.ndarray] = field(
+        init=False, default=None
+    )
 
     spot: Optional[SpotBlock] = None
-    forward: Optional[ForwardBlock] = None
+    forward: Optional[ForwardNodeBlock] = None
 
     def __post_init__(self) -> None:
         # --- FACTOR UNIVERSES (type/shape/layout) --- #
@@ -99,7 +101,9 @@ class CompiledPortfolio:
 
     @property
     def num_forward(self) -> int:
-        return 0 if self.forward is None else int(self.forward.trade_uids.shape[0])
+        return (
+            0 if self.forward is None else int(self.forward.trade_uids.shape[0])
+        )
 
     @property
     def factor_ids_sorted_unique(self) -> np.ndarray:

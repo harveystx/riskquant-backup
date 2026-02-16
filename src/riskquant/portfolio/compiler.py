@@ -7,7 +7,7 @@ import numpy as np
 
 from riskquant.config.configs import RiskStaticConfig
 from riskquant.exceptions import PrettyKeyError
-from riskquant.portfolio.blocks.forward_block import ForwardBlock
+from riskquant.portfolio.blocks.forward_block import ForwardNodeBlock
 from riskquant.portfolio.blocks.spot_block import SpotBlock
 from riskquant.portfolio.compiled import CompiledPortfolio
 from riskquant.portfolio.constants import NO_FX_RF_REQUIRED
@@ -327,7 +327,7 @@ def compile_portfolio_streaming(
     # Init the forward block.
     forward_block = None
     if m_fwd:  # m_fwd = 0 evaluates to False
-        forward_block = ForwardBlock(
+        forward_block = ForwardNodeBlock(
             trade_uids=fwd_trade_uids[:m_fwd],
             qty=fwd_qty[:m_fwd],
             strike=fwd_strike[:m_fwd],

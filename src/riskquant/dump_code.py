@@ -9,10 +9,11 @@ def main():
     src = root
 
     src = [
-        # root / "portfolio" / "constants.py",
+        root / "config",
+        root / "portfolio" / "constants.py",
         root / "portfolio" / "payloads",
-        # root / "portfolio" / "blocks",
-        # root / "market_data",
+        root / "portfolio" / "blocks",
+        root / "market_data",
     ]
     # src = root / "portfolio"
 

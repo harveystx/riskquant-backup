@@ -1,25 +1,2762 @@
 
 
-# ===== FILE: portfolio\payloads\__init__.py =====
+# ===== FILE: config\__init__.py =====
 
-# src\riskquant\portfolio\payloads\__init__.py
+# src/riskquant/config/__init__.py
 
-# ===== FILE: portfolio\payloads\base.py =====
+# ===== FILE: config\compile.py =====
 
-# riskquant/portfolio/payloads/base.py
+# src/riskquant/config/compile.py
+"""
+Main API for compiling configurations from source data (e.g. .xlsx workbooks) 
+into runtime config objects.
+"""
+
+from __future__ import annotations
+
+from typing import Union
+from pathlib import Path
+
+from riskquant.config.configs import RiskStaticConfigFrames, RiskStaticConfig
+from riskquant.config.loader import load_risk_static_data_config_xlsx_into_dict
+
+
+def compile_risk_static_config_from_xlsx(path: Union[str, Path]) -> RiskStaticConfig:
+    """
+    Load and compile a risk static config .xlsx workbook into a RiskStaticConfig 
+    instance.
+
+    Args:
+        path: Path to the Excel (.xlsx) workbook containing the static config sheets.
+
+    Returns:
+        RiskStaticConfig: the compiled runtime configuration object.
+
+    Raises:
+        ValueError: if required sheets are missing or validation fails during
+            construction/compilation of the config frames.
+    """
+
+    # Load config dataframes into tabs from the .xlsx file.
+    dict_of_dfs = load_risk_static_data_config_xlsx_into_dict(path=path)
+
+    # Create the frames config.
+    frames_config = RiskStaticConfigFrames(**dict_of_dfs)
+
+    # Compile the config.
+    compiled_config = frames_config.compile()
+
+    # Return
+    return compiled_config
+
+# ===== FILE: config\configs.py =====
+
+# src/riskquant/config/configs.py
+from __future__ import annotations
+
+import re
+from bisect import bisect_left
+from dataclasses import dataclass
+from dataclasses import field
+from datetime import date
+from typing import (
+    Dict,
+    Any,
+    Optional,
+    Tuple,
+    Pattern,
+    Mapping,
+    Sequence,
+    overload,
+    Callable,
+)
+from typing import NamedTuple
+
+import numpy as np
+import pandas as pd
+
+from riskquant.exceptions import PrettyKeyError
+from riskquant.market_data.risk_factors.shift_types import (
+    validate_shift_types_dict,
+)
+from riskquant.utils.tenors import (
+    parse_bracket_token,
+    get_spot_year,
+    add_months_to_date_and_return_yyyymm01,
+    fmt_date_as_str_yyyymm,
+)
+
+
+# ===================== #
+# --- SMALL HELPERS --- #
+# ===================== #
+
+
+def _require_cols(df: pd.DataFrame, cols: tuple[str, ...], name: str) -> None:
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"{name} sheet missing required columns: {missing}")
+
+
+def _build_str_to_int_dict(
+    *,
+    df: pd.DataFrame,
+    key_col: str,
+    id_col: str,
+    sheet_name: str,
+    key_transform: Optional[Callable[[str], str]] = None,
+    require_unique_keys: bool = True,
+    require_non_null_keys: bool = True,
+) -> Dict[str, int]:
+    """
+    Build Dict[str,int] from df[key_col] -> df[id_col], fail-fast on NaN IDs.
+
+    - key_transform: optional callable applied to key strings (e.g. str.upper)
+    - require_unique_keys: if True, fail-fast if key_col has duplicates
+    - require_non_null_keys: if True, fail-fast if key_col has NaN/None
+    """
+    _require_cols(df, (key_col, id_col), sheet_name)
+
+    key_s = df[key_col]
+    id_s = df[id_col]
+
+    # Fail-fast on missing keys (recommended for config)
+    if require_non_null_keys and key_s.isna().any():
+        bad_rows = df.loc[key_s.isna(), :].head(10)
+        raise ValueError(
+            f"{sheet_name} sheet has missing {key_col} values. Example rows:\n{bad_rows}"
+        )
+
+    # Keys as strings (copy=False where possible)
+    keys = key_s.astype(str, copy=False)
+
+    # Apply transform if provided
+    if key_transform is not None:
+        # .map is fine here; config tables are small and it preserves index alignment
+        keys = keys.map(key_transform)
+
+    # Fail-fast on NaN IDs
+    if id_s.isna().any():
+        bad = keys[id_s.isna()].unique().tolist()
+        raise ValueError(f"{sheet_name} sheet has missing {id_col} for: {bad}")
+
+    # Duplicate key check
+    if require_unique_keys and not keys.is_unique:
+        dup = keys[keys.duplicated()].unique().tolist()
+        raise ValueError(
+            f"{sheet_name} sheet has duplicate {key_col} values: {dup}"
+        )
+
+    # Safe integer cast (pandas -> int64), then Python int in dict
+    ids = id_s.astype("int64", copy=False)
+
+    return {str(k): int(v) for k, v in zip(keys, ids)}
+
+
+def _is_na(x: Any) -> bool:
+    # Fast NA check for typical pandas scalar values
+    return x is None or (isinstance(x, float) and np.isnan(x))
+
+
+# ========================================================== #
+# --- RISK FACTOR ABSOLUTE NAME TO RELATIVE NAME MAPPING --- #
+# ========================================================== #
+
+
+@dataclass(frozen=True, slots=True)
+class RiskFactorNameAbsToRelMapping:
+    as_of_date: date
+    abs_to_rf_name_and_id: Mapping[str, Tuple[str, int]]  # abs -> (rel, id)
+
+    def __post_init__(self) -> None:
+        seen: dict[int, str] = {}
+
+        for abs_name, (rel_name, rf_id) in self.abs_to_rf_name_and_id.items():
+            if not isinstance(rel_name, str):
+                raise ValueError(
+                    f"rel_name for '{abs_name}' must be str, got {type(rel_name).__name__}"
+                )
+            if not isinstance(rf_id, (int, np.integer)):
+                raise ValueError(
+                    f"id for '{abs_name}' must be an integer, got {type(rf_id).__name__}={rf_id!r}"
+                )
+
+            iv = int(rf_id)
+            prev = seen.get(iv)
+            if prev is not None and prev != abs_name:
+                raise ValueError(
+                    "Mapping contains duplicate ID assignment:\n"
+                    f"  '{prev}' and '{abs_name}' both map to ID={iv}\n"
+                    "Each absolute risk factor must map to a unique risk_factor_name_id."
+                )
+            seen[iv] = abs_name
+
+    @overload
+    def get(self, abs_name: str) -> tuple[str, int]: ...
+
+    @overload
+    def get(self, abs_name: Sequence[str]) -> list[tuple[str, int]]: ...
+
+    def get(
+        self,
+        abs_name: str | Sequence[str],
+    ) -> tuple[str, int] | list[tuple[str, int]]:
+        m = self.abs_to_rf_name_and_id
+        if isinstance(abs_name, str):
+            return m[abs_name]
+        return [m[a] for a in abs_name]
+
+    @overload
+    def get_rf_name_for_abs_name(self, abs_name: str) -> str: ...
+
+    @overload
+    def get_rf_name_for_abs_name(
+        self, abs_name: Sequence[str]
+    ) -> list[str]: ...
+
+    def get_rf_name_for_abs_name(
+        self,
+        abs_name: str | Sequence[str],
+    ) -> str | list[str]:
+        m = self.abs_to_rf_name_and_id
+        if isinstance(abs_name, str):
+            return m[abs_name][0]
+        return [m[a][0] for a in abs_name]
+
+    @overload
+    def get_rf_id_for_abs_name(self, abs_name: str) -> int: ...
+
+    @overload
+    def get_rf_id_for_abs_name(self, abs_name: Sequence[str]) -> list[int]: ...
+
+    def get_rf_id_for_abs_name(
+        self,
+        abs_name: str | Sequence[str],
+    ) -> int | list[int]:
+        m = self.abs_to_rf_name_and_id
+        if isinstance(abs_name, str):
+            return m[abs_name][1]
+        return [m[a][1] for a in abs_name]
+
+    def to_df(self) -> pd.DataFrame:
+        """
+        Return a DataFrame with columns:
+          [as_of_date, absolute_name, risk_factor_name, risk_factor_id]
+        Rows are deterministically ordered by absolute_name.
+        """
+        items = sorted(self.abs_to_rf_name_and_id.items(), key=lambda x: x[0])
+        abs_names = [k for k, _ in items]
+        rel_names = [v[0] for _, v in items]
+        ids = np.fromiter(
+            (int(v[1]) for _, v in items), dtype=np.int32, count=len(items)
+        )
+
+        df = pd.DataFrame(
+            {
+                # "as_of_date": self.as_of_date,
+                "risk_factor_name": rel_names,
+                "risk_factor_id": ids,
+            },
+            index=pd.Index(abs_names, name="absolute_risk_factor_name"),
+        )
+        return df
+
+    @property
+    def df(self) -> pd.DataFrame:
+        """Alias for to_dataframe(), for convenient access."""
+        return self.to_df()
+
+    @property
+    def abs_to_rf_name(self) -> Dict[str, str]:
+        # Materialize a simple abs -> rel mapping (small; created on demand)
+        return {
+            abs_name: str(rf_name_and_id[0])
+            for abs_name, rf_name_and_id in self.abs_to_rf_name_and_id.items()
+        }
+
+    @property
+    def abs_to_rf_id(self) -> Dict[str, int]:
+        # Materialize a simple abs -> id mapping (small; created on demand)
+        return {
+            abs_name: int(rf_name_and_id[1])
+            for abs_name, rf_name_and_id in self.abs_to_rf_name_and_id.items()
+        }
+
+    @property
+    def rf_name_to_rf_id(self) -> Dict[str, int]:
+        # Materialize a simple abs -> id mapping (small; created on demand)
+        return {
+            rf_name_and_id[0]: int(rf_name_and_id[1])
+            for _, rf_name_and_id in self.abs_to_rf_name_and_id.items()
+        }
+
+
+class CurveMapping(NamedTuple):
+    curve_name: str
+    curve_name_id: int
+    risk_factor_group: str
+    tenor_type_name: str
+    spot_roll_rule_name: str
+    alias_type_name: str
+    quote_ccy: str
+    shift_type_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class RiskFactor:
+    risk_factor_name: str
+    risk_factor_name_id: int
+    tenor_token: Optional[str]
+    curve_name: str
+
+    def __post_init__(self) -> None:
+        # Remove tenor token as a suffix only (safer than replace)
+        rf_name_prefix = (
+            self.risk_factor_name.removesuffix(self.tenor_token)
+            if self.tenor_token
+            else self.risk_factor_name
+        )
+
+        if rf_name_prefix != self.curve_name:
+            raise ValueError(
+                f"risk_factor_name ('{self.risk_factor_name}') must match "
+                f"curve_name ('{self.curve_name}') "
+                f"after removing tenor_token ('{self.tenor_token}')!"
+            )
+
+
+class TenorSchema(NamedTuple):
+    tenor_type_name: str
+    tenor_units: str
+    digits: int
+    regex: Pattern[str]
+
+
+class AliasSchema(NamedTuple):
+    alias_type_name: str
+    alias_kind: str
+    alias_unit: Optional[str]
+
+
+class SpotRollRule(NamedTuple):
+    spot_roll_rule_name: str
+    tenor_type_name: str
+    spot_roll_method: str
+    offset_in_tenor_units: Optional[int]
+    roll_month: Optional[int]
+    roll_day: Optional[int]
+    fh_bh_ddmm: Optional[str]
+    post_roll_shift: Optional[int]
+
+
+class RiskDesk(NamedTuple):
+    pass
+
+
+class RiskBookStructure(NamedTuple):
+    risk_desk: str
+    risk_portfolio: str
+    risk_book: str
+    risk_sub_book: str
+    risk_product: Optional[str]
+    query: str
+
+
+class CurveProxyMap(NamedTuple):
+    curve_name: str
+    proxy_curve_name: str
+    proxy_curve_vol_scaling_factor: Optional[float]
+
+
+class RiskFactorProxyMap(NamedTuple):
+    risk_factor_name: str
+    proxy_risk_factor_name: str
+    proxy_risk_factor_vol_scaling_factor: Optional[float]
+
+
+class HolidayCalendar(NamedTuple):
+    calendar_name: str
+    date: Optional[Tuple[date, ...]]
+
+
+@dataclass(frozen=True, slots=True)
+class RiskStaticConfig:
+    """
+    Container for risk static configuration tables.
+
+    """
+
+    curve_mapping_dict: Dict[str, CurveMapping] = field(
+        init=True,
+        default_factory=dict,
+        repr=False,
+    )
+    risk_factors_dict: Dict[str, RiskFactor] = field(
+        init=True,
+        default_factory=dict,
+        repr=False,
+    )
+    tenor_schema_dict: Dict[str, TenorSchema] = field(
+        init=True,
+        default_factory=dict,
+        repr=False,
+    )
+    alias_schema_dict: Dict[str, AliasSchema] = field(
+        init=True,
+        default_factory=dict,
+        repr=False,
+    )
+    spot_roll_rules_dict: Dict[tuple[str, str], SpotRollRule] = field(
+        init=True,
+        default_factory=dict,
+        repr=False,
+    )
+    ccy_dict: Dict[str, int] = field(
+        init=True,
+        default_factory=dict,
+        repr=False,
+    )
+    risk_factor_groups_dict: Dict[str, int] = field(
+        init=True,
+        default_factory=dict,
+        repr=False,
+    )
+    shift_types_dict: Dict[str, int] = field(
+        init=True,
+        default_factory=dict,
+        repr=False,
+    )
+    instruments_dict: Dict[str, int] = field(
+        init=True,
+        default_factory=dict,
+        repr=False,
+    )
+    risk_desks: Tuple[RiskDesk] = field(
+        init=True,
+        default_factory=tuple,
+        repr=False,
+    )
+    risk_book_structure: Tuple[RiskBookStructure] = field(
+        init=True,
+        default_factory=tuple,
+        repr=False,
+    )
+    curve_proxies_dict: Dict[str, CurveProxyMap] = field(
+        init=True,
+        default_factory=dict,
+        repr=False,
+    )
+    risk_factor_proxies_dict: Dict[str, RiskFactorProxyMap] = field(
+        init=True,
+        default_factory=dict,
+        repr=False,
+    )
+    holiday_calendars_dict: Dict[str, HolidayCalendar] = field(
+        init=True,
+        default_factory=dict,
+        repr=False,
+    )
+
+    # --- INTERNAL CACHES --- #
+
+    # internal cache
+    _rf_name_to_rf_id: Optional[Dict[str, int]] = None
+    _rf_id_to_proxy_rf_id: Optional[Dict[int, Tuple[int, float]]] = None
+    _rf_id_to_risk_factor: Optional[Dict[int, RiskFactor]] = None
+    _rf_id_to_shift_type_id: Optional[Dict[int, int]] = None
+    _curve_tenor_index: Optional[
+        Dict[str, Tuple[np.ndarray, np.ndarray, Dict[str, int]]]
+    ] = None
+
+    def __post_init__(self):
+        if not self.curve_mapping_dict:
+            raise ValueError(
+                "curve_mapping_dict is empty. Check your curve_mapping sheet and 'active' flags."
+            )
+        if not self.risk_factors_dict:
+            raise ValueError(
+                "risk_factors_dict is empty. Check your risk_factor_ids sheet and 'active' flags."
+            )
+
+    def get_instrument_id(self, instrument_name: str) -> int:
+        return self.instruments_dict[instrument_name.upper()]
+
+    def get_risk_factor_id(self, risk_factor_name: str) -> int:
+        return self.risk_factors_dict[risk_factor_name].risk_factor_name_id
+
+    @property
+    def rf_name_to_rf_id(self) -> Dict[str, int]:
+        """
+        A built-once cache of risk factor name to risk factor name ID:
+            risk_factor_name -> risk_factor_name_id
+        """
+        if self._rf_name_to_rf_id is None:
+            object.__setattr__(
+                self,
+                "_rf_name_to_rf_id",
+                {
+                    k: v.risk_factor_name_id
+                    for k, v in self.risk_factors_dict.items()
+                },
+            )
+        return self._rf_name_to_rf_id
+
+    @property
+    def rf_id_to_proxy_rf_id(self) -> Dict[int, Tuple[int, float]]:
+        """
+        A build-once cache of RF ID-level proxy overrides:
+            required_rf_id -> (proxy_rf_id, vol_scale)
+        """
+        m = self._rf_id_to_proxy_rf_id
+        if m is None:
+            # risk_factor_name -> risk_factor_id
+            rf_name_to_rf_id = self.rf_name_to_rf_id  # already cached
+            out: Dict[int, Tuple[int, float]] = {}
+            for p in self.risk_factor_proxies_dict.values():
+                rf_id = int(rf_name_to_rf_id[p.risk_factor_name])
+                proxy_rf_id = int(rf_name_to_rf_id[p.proxy_risk_factor_name])
+                scale = float(p.proxy_risk_factor_vol_scaling_factor or 1.0)
+                out[rf_id] = (proxy_rf_id, scale)
+
+            object.__setattr__(self, "_rf_id_to_proxy_rf_id", out)
+            m = out
+        return m
+
+    @property
+    def rf_id_to_risk_factor(self) -> Dict[int, RiskFactor]:
+        """
+        Cached mapping:
+            risk_factor_name_id (int) -> RiskFactor
+
+        Built once. Used for fast ID-based access during:
+          - proxy resolution
+          - curve lookups
+          - shift-type resolution
+          - simulation kernels
+
+        This avoids repeated scans over risk_factors_dict.values().
+        """
+        m = self._rf_id_to_risk_factor
+        if m is None:
+            # Init output.
+            out: Dict[int, RiskFactor] = {}
+
+            # Loop over all RiskFactors
+            for rf in self.risk_factors_dict.values():
+                # RF ID.
+                rf_id = int(rf.risk_factor_name_id)
+
+                # Fail-fast on duplicate IDs (should never happen if config validated)
+                if rf_id in out:
+                    raise ValueError(
+                        "Duplicate risk_factor_name_id detected in risk_factors_dict:\n"
+                        f"risk_factor_name_id={rf_id}\n"
+                        f"existing={out[rf_id].risk_factor_name!r}\n"
+                        f"new={rf.risk_factor_name!r}"
+                    )
+
+                # Store
+                out[rf_id] = rf
+
+            # Set attribute.
+            object.__setattr__(self, "_rf_id_to_risk_factor", out)
+
+            # Bind to m
+            m = out
+
+        # Return
+        return m
+
+    @property
+    def rf_id_to_shift_type_id(self) -> Dict[int, int]:
+        """
+        Cached mapping:
+            risk_factor_name_id (int) -> shift_type_id (int)
+
+        Built once. Used for fast shift type ID access in kernels.
+        """
+        m = self._rf_id_to_shift_type_id
+        if m is not None:
+            return m
+
+        # Local binds for speed
+        curve_meta_get = self.curve_mapping_dict.get
+        shift_types_get = self.shift_types_dict.get
+
+        # Init out.
+        out: Dict[int, int] = {}
+
+        # Loop over all RiskFactors
+        for rf in self.risk_factors_dict.values():
+            # RF ID.
+            rf_id = int(rf.risk_factor_name_id)
+
+            # Duplicate detection (should not happen if config validated)
+            if rf_id in out:
+                raise ValueError(
+                    "Duplicate risk_factor_name_id detected in risk_factors_dict:\n"
+                    f"risk_factor_name_id={rf_id}\n"
+                    f"existing_shift_type_id={int(out[rf_id])}\n"
+                    f"new_risk_factor_name={rf.risk_factor_name!r}"
+                )
+
+            # Get curve meta for risk factor.
+            cm = curve_meta_get(rf.curve_name)
+            if cm is None:
+                raise PrettyKeyError(
+                    f"curve_name={rf.curve_name!r} referenced by risk_factor_name="
+                    f"{rf.risk_factor_name!r} not found in curve_mapping_dict."
+                )
+
+            # Get the shift type name for risk factor.
+            st_name = cm.shift_type_name
+            st_id = shift_types_get(st_name)
+            if st_id is None:
+                raise PrettyKeyError(
+                    "shift_type_name from curve_mapping not found in shift_types_dict:\n"
+                    f"curve_name={rf.curve_name!r}\n"
+                    f"shift_type_name={st_name!r}\n"
+                    f"risk_factor_name={rf.risk_factor_name!r}\n"
+                    f"risk_factor_name_id={rf_id}\n"
+                )
+
+            # Store the shift type ID of the risk factor ID.
+            out[rf_id] = int(st_id)
+
+        # Set.
+        object.__setattr__(self, "_rf_id_to_shift_type_id", out)
+
+        # Return.
+        return out
+
+    @property
+    def curve_tenor_index(
+        self,
+    ) -> Dict[str, Tuple[np.ndarray, np.ndarray, Dict[str, int]]]:
+        """
+        Cached per-curve tenor lookup used by curve-level proxy resolution.
+
+        This structure supports resolving a required risk factor on curve A
+        to the nearest appropriate tenor on a proxy curve B.
+
+        Returns
+        -------
+        dict:
+            curve_name -> (offsets_sorted, rf_ids_sorted, label_to_rf_id)
+
+        offsets_sorted : (Kc,) int32
+            Sorted signed offsets for OFFSET-style tenors on the curve
+            (e.g. extracted from [Y+2], [M-1]).
+
+        rf_ids_sorted : (Kc,) int32
+            Risk factor IDs aligned to offsets_sorted.
+
+        label_to_rf_id : dict[str, int]
+            Mapping for LABEL or NONE tenors:
+              - LABEL (e.g. [ON], [1W], [1M]) => label -> rf_id
+              - NONE (tenor_token is None)    => "" -> rf_id
+        """
+
+        # --------------------------------------------------- #
+        # --- FAST PATH: RETURN CACHED STRUCTURE IF BUILT --- #
+        # --------------------------------------------------- #
+
+        cached = self._curve_tenor_index
+        if cached is not None:
+            return cached
+
+        # ------------------------------------------------------- #
+        # --- TEMPORARY CONTAINERS FOR CURVE TENOR EXTRACTION --- #
+        # ------------------------------------------------------- #
+        #
+        # offsets     : curve_name -> list of signed OFFSET integers
+        # offset_ids  : curve_name -> list of rf_ids aligned to offsets
+        # labels      : curve_name -> dict(label -> rf_id) for LABEL/NONE tenors
+        #
+
+        offsets: Dict[str, list[int]] = {}
+        offset_ids: Dict[str, list[int]] = {}
+        labels: Dict[str, Dict[str, int]] = {}
+
+        # Local binding for speed (integer-key dict)
+        rf_id_to_rf = self.rf_id_to_risk_factor
+
+        # ------------------------------------------------ #
+        # --- SINGLE PASS OVER CONFIGURED RISK FACTORS --- #
+        # ------------------------------------------------ #
+        #
+        # For each risk factor:
+        #   - group by curve_name
+        #   - classify tenor as NONE, LABEL, or OFFSET
+        #   - collect data needed for proxy resolution
+        #
+
+        for rf_id, rf in rf_id_to_rf.items():
+            rf_curve_name = rf.curve_name
+            rf_tenor_token = rf.tenor_token
+
+            # --- NONE TENOR (spot-like) --- #
+            #
+            # No tenor token: treated as a label with empty key "".
+            #
+            if rf_tenor_token is None:
+                labels.setdefault(rf_curve_name, {})[""] = int(rf_id)
+                continue
+
+            # Parse bracket token: [UNIT±OFFSET] or [LABEL]
+            rf_unit, rf_offset = parse_bracket_token(rf_tenor_token)
+
+            # --- LABEL TENOR (e.g. [ON], [1W], [1M]) --- #
+            #
+            # No signed offset => exact label match required.
+            #
+            if rf_offset is None:
+                labels.setdefault(rf_curve_name, {})[rf_unit] = int(rf_id)
+
+            # --- OFFSET TENOR (e.g. [Y+2], [M-1], [D+4]) --- #
+            #
+            # Store signed offset for nearest-neighbor matching.
+            #
+            else:
+                offsets.setdefault(rf_curve_name, []).append(int(rf_offset))
+                offset_ids.setdefault(rf_curve_name, []).append(int(rf_id))
+
+        # ------------------------------------------------------- #
+        # --- BUILD FINAL PER-CURVE LOOKUP STRUCTURE (OUTPUT) --- #
+        # ------------------------------------------------------- #
+
+        # Init dict to store data of property.
+        #
+        # out: curve_name -> (offsets_sorted, rf_ids_sorted, label_to_rf_id)
+        #
+        out: Dict[str, Tuple[np.ndarray, np.ndarray, Dict[str, int]]] = {}
+
+        # --- CURVES WITH OFFSET TENORS --- #
+        #
+        # Convert lists to NumPy arrays and sort by offset
+        # using a stable sort for deterministic behavior.
+        #
+        for rf_curve_name, rf_offset_list in offsets.items():
+            # RF IDs corresponding to offsets.
+            rf_ids_list = offset_ids[rf_curve_name]
+
+            # To arrays.
+            rf_offsets_arr = np.asarray(rf_offset_list, dtype=np.int32)
+            rf_ids_arr = np.asarray(rf_ids_list, dtype=np.int32)
+
+            # Sort the offsets.
+            rf_offset_idx = np.argsort(
+                rf_offsets_arr, kind="mergesort"
+            )  # stable + deterministic
+
+            # Store in dict.
+            out[rf_curve_name] = (
+                rf_offsets_arr[rf_offset_idx],  # sorted offsets
+                rf_ids_arr[rf_offset_idx],  # rf_ids aligned to sorted offsets
+                labels.get(
+                    rf_curve_name, {}
+                ),  # LABEL/NONE lookup (may be empty)
+            )
+
+        # --- CURVES WITH ONLY LABEL / NONE TENORS --- #
+        #
+        # Ensure all curves appear in output, even if they
+        # have no OFFSET tenors.
+        #
+        for rf_curve_name, rf_curve_label_to_rf_id in labels.items():
+            if rf_curve_name not in out:
+                out[rf_curve_name] = (
+                    np.empty(0, dtype=np.int32),
+                    np.empty(0, dtype=np.int32),
+                    rf_curve_label_to_rf_id,
+                )
+
+        # -------------------------------- #
+        # --- CACHE AND RETURN RESULT --- #
+        # -------------------------------- #
+
+        # Cache.
+        object.__setattr__(self, "_curve_tenor_index", out)
+
+        # Return.
+        return out
+
+    def build_risk_factor_name_mapping_for_as_of_date(
+        self,
+        as_of_date: date,
+    ) -> RiskFactorNameAbsToRelMapping:
+        """
+        Resolve relative risk factor names (risk_factors_dict keys) into absolute names for as_of_date.
+
+        Design:
+            - risk_factor_ids defines the authoritative whitelist of valid factors (relative name + id).
+            - For the given as-of date, resolve each relative factor to its absolute column name.
+            - Fail fast on:
+                * missing config rows (unknown curve, missing roll rule)
+                * token/kind mismatches (LABEL vs OFFSET)
+                * absolute-name collisions (two relatives resolve to same absolute)
+
+        Output:
+          abs_to_rel: absolute_name -> relative_name
+          abs_to_id:  absolute_name -> risk_factor_name_id
+        """
+
+        # --- INIT --- #
+
+        # Init the dicts to store the mappings.
+        abs_to_rf_name_and_id: Dict[str, Tuple[str, int]] = {}
+
+        # # cache HY boundary grids per fh_bh_ddmm string
+        # hy_cache: Dict[str, list[date]] = {}
+
+        # --- MAIN LOOP --- #
+
+        # Loop over white list of risk factor IDs.
+        for rf in self.risk_factors_dict.values():
+            # --- EXTRACT RF ID INFORMATION --- #
+            rf_rel_name = rf.risk_factor_name
+            rf_rel_name_id = rf.risk_factor_name_id
+            rf_curve_name = rf.curve_name
+            rf_tenor_token = rf.tenor_token
+
+            # --- GET CURVE MAPPING FOR RISK FACTOR ID --- #
+
+            # Get curve.
+            rf_cm = self.curve_mapping_dict.get(rf_curve_name)
+
+            # Smoke - need a curve mapping.
+            if rf_cm is None:
+                raise ValueError(
+                    "risk_factor_ids references unknown curve_name.\n"
+                    f"curve_name={rf_curve_name!r}\nrelative={rf_rel_name!r}"
+                )
+
+            # --- GET ALIAS SCHEMA
+
+            # Get alias schema for RF from RF curve mapping
+            rf_alias = self.alias_schema_dict.get(rf_cm.alias_type_name)
+
+            # Smoke - need and alias schema
+            if rf_alias is None:
+                raise ValueError(
+                    "curve_mapping references unknown alias_type_name.\n"
+                    f"curve_name={rf_cm.curve_name!r}\nalias_type_name={rf_cm.alias_type_name!r}"
+                )
+
+            # ================================ #
+            # === RESOLVE TO ABSOLUTE NAME === #
+            # ================================ #
+
+            # --- ALIAS KIND == 'NONE' --- #
+            elif rf_alias.alias_kind == "NONE":
+                # Tenor token must be None or empty.
+                if rf_tenor_token is not None:
+                    raise ValueError(
+                        f"Risk factor ID tenor_token ({rf_tenor_token}) must be None for alias_kind = 'NONE'.\n"
+                        f"relative={rf_rel_name!r}\ncurve_name={rf_curve_name!r}"
+                    )
+
+                # Absolute name is same as rf relative name.
+                rf_abs_name = rf_rel_name
+
+                # Store.
+                abs_to_rf_name_and_id[rf_abs_name] = (
+                    rf_rel_name,
+                    rf_rel_name_id,
+                )
+
+                # Continue.
+                continue
+
+            # --- ALIAS KIND == 'LABEL'
+            elif rf_alias.alias_kind == "LABEL":
+                # If the tenor token is missing.
+                if rf_tenor_token is None:
+                    # For LABEL curves the tenor token must exist (e.g., [ON], [1W])
+                    raise ValueError(
+                        "Risk factor missing tenor_token for alias_kind = 'LABEL'.\n"
+                        f"relative={rf_rel_name!r}\ncurve_name={rf_curve_name!r}"
+                    )
+
+                # Parse the tenor token.
+                label, signed_offset = parse_bracket_token(rf_tenor_token)
+
+                # Error is signed offset is not none.
+                if signed_offset is not None:
+                    raise ValueError(
+                        f"alias_kind = 'LABEL' tenor_token ('{rf_tenor_token}') must not have +/- offset.\n"
+                        f"relative={rf_rel_name!r}\ncurve_name={rf_curve_name!r}"
+                    )
+
+                # Create absolute name.
+                rf_abs_name = f"{rf_curve_name}_{label}"
+
+                # Store.
+                abs_to_rf_name_and_id[rf_abs_name] = (
+                    rf_rel_name,
+                    rf_rel_name_id,
+                )
+
+                # Continue.
+                continue
+
+            # --- ALIAS KIND == 'OFFSET'
+            elif rf_alias.alias_kind == "OFFSET":
+                # Token cannot be None.
+                if rf_tenor_token is None:
+                    raise ValueError(
+                        "alias_kind = OFFSET risk factor missing tenor_token.\n"
+                        f"relative={rf_rel_name!r}\ncurve_name={rf_curve_name!r}"
+                    )
+
+                # spot_roll_rule_name cannot be None or missing for OFFSET.
+                if (
+                    rf_cm.spot_roll_rule_name is None
+                    or rf_cm.spot_roll_rule_name == "None"
+                ):
+                    raise ValueError(
+                        "alias_kind = OFFSET curve missing spot_roll_rule_name in curve_mapping.\n"
+                        f"relative={rf_rel_name!r}\ncurve_name={rf_curve_name!r}"
+                    )
+
+                # Parse RF tenor token
+                tenor_token_unit, tenor_token_signed_offset = (
+                    parse_bracket_token(rf_tenor_token)
+                )
+
+                # Need +/- offset.
+                if tenor_token_signed_offset is None:
+                    raise ValueError(
+                        "alias_kind = OFFSET tenor_token must have +/- integer.\n"
+                        f"relative={rf_rel_name!r}\n"
+                        f"curve_name={rf_curve_name!r}"
+                        f"tenor_token={rf_tenor_token!r}\n"
+                    )
+
+                # Get spot roll rule
+                rf_srr = self.spot_roll_rules_dict.get(
+                    (rf_cm.spot_roll_rule_name, rf_cm.tenor_type_name),
+                    None,
+                )
+
+                # The RF spot roll rule (SRR) cannot be None for alias_kind = 'OFFSET'.
+                if rf_srr is None:
+                    raise ValueError(
+                        "Missing spot roll rule in spot_roll_rules_dict! \n"
+                        "For alias_kind = OFFSET, the spot roll cannot be none! \n"
+                        f"spot_roll_rule_name={rf_cm.spot_roll_rule_name!r}\n"
+                        f"tenor_type_name={rf_cm.tenor_type_name!r}\n"
+                        f"relative={rf_rel_name!r}\n"
+                        f"curve_name={rf_curve_name!r}"
+                    )
+
+                # Extract.
+                rf_spot_roll_method = rf_srr.spot_roll_method
+                rf_tenor_type_name = rf_cm.tenor_type_name
+
+                # Normalize optional ints (SpotRollRule stores np.int32 or None)
+                rf_offset = int(rf_srr.offset_in_tenor_units or 0)
+                rf_roll_month = int(rf_srr.roll_month or 0)
+                rf_roll_day = int(rf_srr.roll_day or 0)
+                rf_post_shift = int(rf_srr.post_roll_shift or 0)
+
+                # Get the relative name.
+                if (
+                    rf_tenor_type_name == "TENOR_YM"
+                    and rf_spot_roll_method == "CALENDAR_PERIOD"
+                ):
+                    # M+0 anchored to first day of asof month, shifted by rule offset
+                    spot_month_yyyymm01 = (
+                        add_months_to_date_and_return_yyyymm01(
+                            d=date(as_of_date.year, as_of_date.month, 1),
+                            months_to_add=rf_offset,
+                        )
+                    )
+
+                    # Get RF absolute date.
+                    rf_abs_date_yyyymm01 = (
+                        add_months_to_date_and_return_yyyymm01(
+                            d=spot_month_yyyymm01,
+                            months_to_add=int(tenor_token_signed_offset),
+                        )
+                    )
+
+                    # Create absolute name.
+                    rf_abs_name = f"{rf_curve_name}_{fmt_date_as_str_yyyymm(rf_abs_date_yyyymm01)}"
+
+                    # Store.
+                    abs_to_rf_name_and_id[rf_abs_name] = (
+                        rf_rel_name,
+                        rf_rel_name_id,
+                    )
+
+                    # Continue.
+                    continue
+
+                # Get the relative name.
+                elif (
+                    rf_tenor_type_name == "TENOR_Y"
+                    and rf_spot_roll_method == "ROLL_ON_MMDD"
+                ):
+                    # Get the spot year for the as-of-date.
+                    spot_year = get_spot_year(
+                        as_of_date=as_of_date,
+                        roll_month=rf_roll_month,
+                        roll_day=rf_roll_day,
+                        post_roll_shift=rf_post_shift,
+                    )
+
+                    # Compute absolute year from as-of-date.
+                    year = spot_year + int(tenor_token_signed_offset)
+
+                    # Create absolute name.
+                    rf_abs_name = f"{rf_curve_name}_{year:04d}"
+
+                    # Store.
+                    abs_to_rf_name_and_id[rf_abs_name] = (
+                        rf_rel_name,
+                        rf_rel_name_id,
+                    )
+
+                    # Continue.
+                    continue
+
+                # Get the relative name.
+                elif (
+                    rf_tenor_type_name == "TENOR_YMD"
+                    and rf_spot_roll_method == "HALF_YEAR_BY_DATE"
+                ):
+                    # Get FH and BH MM-DD dates.
+                    fh_bh_ddmm = rf_srr.fh_bh_ddmm
+
+                    # Cannot be None.
+                    if fh_bh_ddmm is None:
+                        raise ValueError(
+                            f"spot_roll_method = 'HALF_YEAR_BY_DATE' missing fh_bh_ddmm!\n"
+                            f"spot_roll_rule_name={rf_cm.spot_roll_rule_name!r}\n"
+                            f"tenor_type_name={rf_cm.tenor_type_name!r}\n"
+                            f"relative={rf_rel_name!r}\n"
+                            f"curve_name={rf_curve_name!r}"
+                        )
+
+                    # Split FH and BH
+                    fh_mmdd, bh_mmdd = fh_bh_ddmm.split("|")
+
+                    # Sanity.
+                    if len(fh_mmdd) != 4 or len(bh_mmdd) != 4:
+                        raise ValueError(
+                            f"fh_bh_ddmm ('{fh_bh_ddmm}) must be of form 'ddmm|ddmm'!"
+                        )
+
+                    # Get year of as of date.
+                    as_of_year = as_of_date.year
+
+                    # Business rule for HALF_YEAR_BY_DATE:
+                    #   - Build a chronological sequence of FH/BH boundary dates around the as-of date
+                    #   - Define HY+0 as the first boundary date that is >= as_of_date
+                    #   - Apply the signed offset from the token (HY+k moves k boundaries forward/backward)
+                    #   - The resulting boundary date becomes the absolute YYYYMMDD suffix
+
+                    # Choose a tight year window so we never allocate more than necessary.
+                    # We need enough boundaries to cover the requested +/- offset.
+                    look_years = max(3, abs(int(tenor_token_signed_offset)) + 1)
+
+                    # Build a sorted list of boundary dates:
+                    #   [ ... , YYYY-<FH>, YYYY-<BH>, (YYYY+1)-<FH>, (YYYY+1)-<BH>, ... ]
+                    boundaries: list[date] = []
+                    for y in range(
+                        as_of_year - look_years, as_of_year + look_years + 1
+                    ):
+                        boundaries.append(
+                            date(
+                                year=y,
+                                month=int(fh_mmdd[:2]),
+                                day=int(fh_mmdd[2:]),
+                            )
+                        )
+                        boundaries.append(
+                            date(
+                                year=y,
+                                month=int(bh_mmdd[:2]),
+                                day=int(bh_mmdd[2:]),
+                            )
+                        )
+                    boundaries.sort()
+                    # print("boundaries:", boundaries)
+
+                    # HY+0 anchor: first boundary >= as_of_date
+                    idx_hy0 = bisect_left(boundaries, as_of_date)
+
+                    # Apply signed offset from token, e.g. HY+1 => next boundary, HY-2 => two boundaries back
+                    idx_target = idx_hy0 + int(tenor_token_signed_offset)
+
+                    # Fail fast if the offset pushes outside our constructed grid
+                    if idx_target < 0 or idx_target >= len(boundaries):
+                        raise ValueError(
+                            "HALF_YEAR_BY_DATE offset out of range for constructed boundary grid.\n"
+                            f"curve_name={rf_curve_name!r}\nrelative={rf_rel_name!r}\n"
+                            f"tenor_token={rf_tenor_token!r}\nas_of_date={as_of_date}\n"
+                            f"fh_bh_ddmm={fh_bh_ddmm!r}\n"
+                            f"grid_years=[{as_of_year - look_years}, {as_of_year + look_years}]"
+                        )
+
+                    # Absolute delivery date is the chosen boundary
+                    abs_dt = boundaries[idx_target]
+
+                    # Convert to YYYYMMDD string suffix for the absolute name
+                    yyyymmdd_str = (
+                        f"{abs_dt.year:04d}{abs_dt.month:02d}{abs_dt.day:02d}"
+                    )
+
+                    # Create absolute name.
+                    rf_abs_name = f"{rf_curve_name}_{yyyymmdd_str}"
+
+                    # Store.
+                    abs_to_rf_name_and_id[rf_abs_name] = (
+                        rf_rel_name,
+                        rf_rel_name_id,
+                    )
+
+                    # Continue.
+                    continue
+
+                # Error as not implemented or invalid.
+                else:
+                    raise ValueError(
+                        "Unsupported OFFSET resolution combination: "
+                        f"(tenor_type_name, rf_spot_roll_method) = ('{rf_tenor_type_name}', '{rf_spot_roll_method}')\n"
+                        f"curve_name={rf_curve_name!r}\n"
+                        f"relative={rf_rel_name!r}\n"
+                        f"relative_id={rf_rel_name_id!r}\n"
+                        f"tenor_token={rf_tenor_token!r}"
+                    )
+
+        return RiskFactorNameAbsToRelMapping(
+            as_of_date=as_of_date,
+            abs_to_rf_name_and_id=abs_to_rf_name_and_id,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RiskStaticConfigFrames:
+    """
+    Temporary container that holds pandas DataFrames loaded from Excel.
+    Call .compile() to create a runtime RiskStaticConfig that holds no DataFrames.
+    """
+
+    curve_mapping: pd.DataFrame
+    risk_factors: pd.DataFrame
+    tenor_schema: pd.DataFrame
+    alias_schema: pd.DataFrame
+    spot_roll_rules: pd.DataFrame
+    ccy: pd.DataFrame
+    risk_factor_groups: pd.DataFrame
+    shift_types: pd.DataFrame
+    instruments: pd.DataFrame
+    risk_desks: pd.DataFrame
+    risk_book_structure: pd.DataFrame
+    curve_proxies: pd.DataFrame
+    risk_factor_proxies: pd.DataFrame
+    holiday_calendars: pd.DataFrame
+
+    def __post_init__(self):
+        # (1) Curve names must be unique.
+        if not self.curve_mapping["curve_name"].is_unique:
+            raise ValueError(
+                f"self.curve_mapping.curve_name must be unique: "
+                f"{self.curve_mapping['curve_name'].unique()}"
+            )
+        # (2) Curve name IDs must be unique.
+        if not self.curve_mapping["curve_name_id"].is_unique:
+            raise ValueError(
+                f"self.curve_mapping.curve_name_id must be unique: "
+                f"{self.curve_mapping['curve_name_id'].unique()}"
+            )
+        # (3) Risk factor names must be unique.
+        if not self.risk_factors["risk_factor_name"].is_unique:
+            raise ValueError(
+                f"self.risk_factors.risk_factor_name must be unique: "
+                f"{self.risk_factors['risk_factor_name'].unique()}"
+            )
+        # (4) Risk factor name IDs must be unique.
+        if not self.risk_factors["risk_factor_name_id"].is_unique:
+            raise ValueError(
+                f"self.risk_factors.risk_factor_name_id must be unique: "
+                f"{self.risk_factors['risk_factor_name_id'].unique()}"
+            )
+
+        # Curve proxies.
+        if not self.curve_proxies["curve_name"].is_unique:
+            raise ValueError(
+                f"self.curve_proxies.curve_name must be unique: "
+                f"{self.curve_proxies['curve_name'].unique()}"
+            )
+        if not self.risk_factor_proxies["risk_factor_name"].is_unique:
+            raise ValueError(
+                f"self.risk_factor_proxies.risk_factor_name must be unique: "
+                f"{self.risk_factor_proxies['risk_factor_name'].unique()}"
+            )
+
+    def compile(self) -> RiskStaticConfig:
+        """
+        Compile DataFrames into compact Python structures and return runtime config.
+        """
+
+        # --- CURVE MAPPING --- #
+
+        # Init.
+        curve_mapping_dict: Dict[str, CurveMapping] = {}
+
+        # Populate.
+        for r in self.curve_mapping.to_dict("records"):
+            # Is active.
+            is_active = r.get("active", 1)
+
+            # Smoke.
+            if is_active is None:
+                raise ValueError(f"is_active cannot be None!")
+            if not isinstance(is_active, (bool, int)):
+                raise TypeError(
+                    f"is_active must be bool or int, got {type(is_active).__name__}"
+                )
+
+            # Continue if not active.
+            if not bool(is_active):
+                continue
+
+            # Extract.
+            curve_name = str(r["curve_name"])
+            curve_name_id = int(r["curve_name_id"])
+            risk_factor_group = str(r["risk_factor_group"])
+            tenor_type_name = str(r["tenor_type_name"])
+            spot_roll_rule_name = str(r["spot_roll_rule_name"])
+            alias_type_name = str(r["alias_type_name"])
+            quote_ccy = str(r["quote_ccy"])
+            shift_type_name = str(r["shift_type_name"])
+
+            # Create CurveMapping
+            if curve_name not in curve_mapping_dict:
+                curve_mapping_dict[curve_name] = CurveMapping(
+                    curve_name=curve_name,
+                    curve_name_id=curve_name_id,
+                    risk_factor_group=risk_factor_group,
+                    tenor_type_name=tenor_type_name,
+                    spot_roll_rule_name=spot_roll_rule_name,
+                    alias_type_name=alias_type_name,
+                    quote_ccy=quote_ccy,
+                    shift_type_name=shift_type_name,
+                )
+            else:
+                raise ValueError(
+                    f"CureMapping already exists for curve_name: '{curve_name}'!"
+                )
+
+        # --- RISK FACTOR IDS --- #
+
+        # Init.
+        risk_factors_dict: Dict[str, RiskFactor] = {}
+
+        # Populate.
+        for r in self.risk_factors.to_dict("records"):
+            # Is active.
+            is_active = r.get("active", 1)
+
+            # Smoke.
+            if is_active is None:
+                raise ValueError(f"is_active cannot be None!")
+            if not isinstance(is_active, (bool, int)):
+                raise TypeError(
+                    f"is_active must be bool or int, got {type(is_active).__name__}"
+                )
+
+            # Continue if not active.
+            if not bool(is_active):
+                continue
+
+            # Extract.
+            risk_factor_name = str(r["risk_factor_name"])
+            risk_factor_name_id = int(r["risk_factor_name_id"])
+            tenor_token = (
+                None if _is_na(r["tenor_token"]) else str(r["tenor_token"])
+            )
+            curve_name = str(r["curve_name"])
+
+            # Create CurveMapping
+            if risk_factor_name not in risk_factors_dict:
+                risk_factors_dict[risk_factor_name] = RiskFactor(
+                    risk_factor_name=risk_factor_name,
+                    risk_factor_name_id=risk_factor_name_id,
+                    tenor_token=tenor_token,
+                    curve_name=curve_name,
+                )
+            else:
+                raise ValueError(
+                    f"RiskFactor already exists for risk_factor_name: '{risk_factor_name}'!"
+                )
+
+        # --- TENOR SCHEMA --- #
+
+        # Init dict.
+        tenor_schema_dict: Dict[str, TenorSchema] = {}
+
+        # Loop over records.
+        for r in self.tenor_schema.to_dict("records"):
+            # Tenor type.
+            tenor_type_name = str(r["tenor_type_name"])
+            if tenor_type_name in tenor_schema_dict:
+                raise ValueError(
+                    f"TenorSchema already exists for tenor_type_name: {tenor_type_name!r}"
+                )
+
+            # Regex
+            regex_raw = r.get("regex")
+            if _is_na(regex_raw):
+                raise ValueError(
+                    f"TenorSchema.regex is missing for tenor_type_name: {tenor_type_name!r}"
+                )
+
+            # Create.
+            tenor_schema_dict[tenor_type_name] = TenorSchema(
+                tenor_type_name=tenor_type_name,
+                tenor_units=str(r["tenor_units"]),
+                digits=int(r["digits"]),
+                regex=re.compile(str(regex_raw)),
+            )
+
+        # --- ALIAS SCHEMA --- #
+
+        # Init dict.
+        alias_schema_dict: Dict[str, AliasSchema] = {}
+
+        # Loop over records.
+        for r in self.alias_schema.to_dict("records"):
+            # Alias type name
+            alias_type_name = str(r["alias_type_name"])
+            if alias_type_name in alias_schema_dict:
+                raise ValueError(
+                    f"AliasSchema already exists for alias_type_name: {alias_type_name!r}"
+                )
+
+            # Alias unit.
+            unit = r.get("alias_unit")
+
+            # Create.
+            alias_schema_dict[alias_type_name] = AliasSchema(
+                alias_type_name=alias_type_name,
+                alias_kind=str(r["alias_kind"]),
+                alias_unit=None if _is_na(unit) else str(unit),
+            )
+
+        # --- SPOT ROLL RULES --- #
+
+        # NOTE: dict key should be (spot_roll_rule_name, tenor_type_name) to avoid collisions across tenor types.
+        spot_roll_rules_dict: Dict[tuple[str, str], SpotRollRule] = {}
+
+        # Loop over records.
+        for r in self.spot_roll_rules.to_dict("records"):
+            spot_roll_rule_name = str(r["spot_roll_rule_name"])
+            tenor_type_name = str(r["tenor_type_name"])
+            key = (spot_roll_rule_name, tenor_type_name)
+
+            if key in spot_roll_rules_dict:
+                raise ValueError(
+                    "SpotRollRule already exists for key:\n"
+                    f"  spot_roll_rule_name={spot_roll_rule_name!r}\n"
+                    f"  tenor_type_name={tenor_type_name!r}"
+                )
+
+            # Extract other.
+            srm = r.get("spot_roll_method")
+            off = r.get("offset_in_tenor_units")
+            rmm = r.get("roll_month")
+            rdd = r.get("roll_day")
+            fbh = r.get("fh_bh_ddmm")
+            prs = r.get("post_roll_shift")
+
+            # Validate
+
+            # Create.
+            spot_roll_rules_dict[key] = SpotRollRule(
+                spot_roll_rule_name=spot_roll_rule_name,
+                tenor_type_name=tenor_type_name,
+                spot_roll_method="" if _is_na(srm) else str(srm),
+                offset_in_tenor_units=None if _is_na(off) else int(off),
+                roll_month=None if _is_na(rmm) else int(rmm),
+                roll_day=None if _is_na(rdd) else int(rdd),
+                fh_bh_ddmm=None if _is_na(fbh) else str(fbh),
+                post_roll_shift=None if _is_na(prs) else int(prs),
+            )
+
+        # =========== #
+        # --- CCY --- #
+        # =========== #
+
+        ccy_dict: Dict[str, int] = _build_str_to_int_dict(
+            df=self.ccy,
+            key_col="ccy",
+            id_col="ccy_id",
+            sheet_name="ccy",
+            key_transform=str.upper,  # currencies should be uppercase
+            require_unique_keys=True,
+        )
+
+        # ========================== #
+        # --- RISK FACTOR GROUPS --- #
+        # ========================== #
+
+        risk_factor_groups_dict: Dict[str, int] = _build_str_to_int_dict(
+            df=self.risk_factor_groups,
+            key_col="risk_factor_group",
+            id_col="risk_factor_group_id",
+            sheet_name="risk_factor_groups",
+            key_transform=str,  # keep as-is (or use str.upper if desired)
+            require_unique_keys=True,
+        )
+
+        # ================== #
+        # --- SHIFT TYPE --- #
+        # ================== #
+
+        shift_types_dict: Dict[str, int] = _build_str_to_int_dict(
+            df=self.shift_types,
+            key_col="shift_type",
+            id_col="shift_type_id",
+            sheet_name="shift_types",
+            key_transform=str.upper,  # your config uses LOG_RETURN style
+            require_unique_keys=True,
+        )
+
+        # Validate shift types.
+        validate_shift_types_dict(shift_types_dict)
+
+        # =================== #
+        # --- INSTRUMENTS --- #
+        # =================== #
+
+        instruments_dict: Dict[str, int] = _build_str_to_int_dict(
+            df=self.instruments,
+            key_col="instrument",
+            id_col="instrument_id",
+            sheet_name="instruments",
+            key_transform=str.upper,  # your code calls instrument_name.upper()
+            require_unique_keys=True,
+        )
+
+        # --- CURVE PROXIES DICT --- #
+
+        # Init.
+        curve_proxies_dict: Dict[str, CurveProxyMap] = {}
+
+        # Loop.
+        for r in self.curve_proxies.to_dict("records"):
+            # Is active.
+            is_active = r.get("active", 1)
+
+            # Smoke.
+            if is_active is None:
+                raise ValueError(f"is_active cannot be None!")
+            if not isinstance(is_active, (bool, int)):
+                raise TypeError(
+                    f"is_active must be bool or int, got {type(is_active).__name__}"
+                )
+
+            # Continue if not active.
+            if not bool(is_active):
+                continue
+
+            # Curve name.
+            curve_name = str(r["curve_name"])
+
+            # Duplicate detection (explicit, fail-fast)
+            if curve_name in curve_proxies_dict:
+                raise ValueError(
+                    f"CurveProxyMap already exists for curve_name: '{curve_name}'!"
+                )
+
+            # Vol scaling factor: default only on missing/NaN (do NOT override 0.0)
+            scaling_factor = r["proxy_curve_vol_scaling_factor"]
+
+            # Set to 1.0 if None or NaN.
+            if scaling_factor is None or (
+                isinstance(scaling_factor, float) and np.isnan(scaling_factor)
+            ):
+                scaling_factor = 1.0
+
+            # Cannot be < 0.
+            if scaling_factor < 0:
+                raise ValueError(
+                    "proxy_curve_vol_scaling_factor must be positive!"
+                )
+
+            # Create and store.
+            curve_proxies_dict[curve_name] = CurveProxyMap(
+                curve_name=curve_name,
+                proxy_curve_name=str(r["proxy_curve_name"]),
+                proxy_curve_vol_scaling_factor=float(scaling_factor),
+            )
+
+        # --- RISK FACTOR PROXIES DICT --- #
+
+        # Init.
+        risk_factor_proxies_dict: Dict[str, RiskFactorProxyMap] = {}
+
+        # Loop.
+        for r in self.risk_factor_proxies.to_dict("records"):
+            # Is active.
+            is_active = r.get("active", 1)
+
+            # Smoke.
+            if is_active is None:
+                raise ValueError(f"is_active cannot be None!")
+            if not isinstance(is_active, (bool, int)):
+                raise TypeError(
+                    f"is_active must be bool or int, got {type(is_active).__name__}"
+                )
+
+            # Continue if not active.
+            if not bool(is_active):
+                continue
+
+            # Curve name.
+            risk_factor_name = str(r["risk_factor_name"])
+
+            # Duplicate detection (explicit, fail-fast)
+            if risk_factor_name in risk_factor_proxies_dict:
+                raise ValueError(
+                    f"RiskFactorProxyMap already exists for risk_factor_name: '{risk_factor_name}'!"
+                )
+
+            # Vol scaling factor: default only on missing/NaN (do NOT override 0.0)
+            scaling_factor = r["proxy_risk_factor_vol_scaling_factor"]
+
+            # Set to 1.0 if None or NaN.
+            if scaling_factor is None or (
+                isinstance(scaling_factor, float) and np.isnan(scaling_factor)
+            ):
+                scaling_factor = 1.0
+
+            # Create and store.
+            risk_factor_proxies_dict[risk_factor_name] = RiskFactorProxyMap(
+                risk_factor_name=risk_factor_name,
+                proxy_risk_factor_name=str(r["proxy_risk_factor_name"]),
+                proxy_risk_factor_vol_scaling_factor=float(scaling_factor),
+            )
+
+        # --- FINISH --- #
+
+        # Create and return
+        return RiskStaticConfig(
+            curve_mapping_dict=curve_mapping_dict,
+            risk_factors_dict=risk_factors_dict,
+            tenor_schema_dict=tenor_schema_dict,
+            alias_schema_dict=alias_schema_dict,
+            spot_roll_rules_dict=spot_roll_rules_dict,
+            ccy_dict=ccy_dict,
+            risk_factor_groups_dict=risk_factor_groups_dict,
+            shift_types_dict=shift_types_dict,
+            instruments_dict=instruments_dict,
+            curve_proxies_dict=curve_proxies_dict,
+            risk_factor_proxies_dict=risk_factor_proxies_dict,
+            # TODO: OTHERS
+        )
+
+
+# ===== FILE: config\loader.py =====
+
+# src/riskquant/config/loader.py
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Iterable, Optional, Union, Mapping, Dict
+
+import pandas as pd
+
+
+
+def load_risk_static_data_config_xlsx_into_dict(
+    *,
+    path: Union[str, Path],
+    sheet_names: Optional[Iterable[str]] = None,
+) -> Dict[str, pd.DataFrame]:
+    """
+    Load selected sheets from a config workbook.
+
+    Notebook-safe:
+      - Ensures the Excel file handle is closed so the workbook can be saved/edited after load.
+    Memory/CPU efficient:
+      - Reads selected sheets in one call where possible.
+      - Avoids unnecessary copies.
+    """
+    path_str = str(path)
+
+    # Use a context manager to guarantee the file handle is closed
+    with pd.ExcelFile(path_str, engine="openpyxl") as xls:
+        available = xls.sheet_names
+
+        if sheet_names is None:
+            sheets = available  # reuse list
+        else:
+            # materialize once; also ensures list-like -> dict return
+            sheets = tuple(sheet_names)
+
+        missing = tuple(s for s in sheets if s not in available)
+        if missing:
+            raise ValueError(f"Missing required sheet(s) in '{path_str}': {missing}")
+
+        # One read call for all requested sheets
+        dict_of_dfs = pd.read_excel(xls, sheet_name=sheets)
+
+    # Validate that dfs is a mapping of sheet_name -> DataFrame
+    if not isinstance(dict_of_dfs, Mapping):
+        raise ValueError(
+            "Expected multiple sheets to return a Mapping[str, DataFrame]."
+        )
+
+    # Return a regular dict to avoid potential issues with pandas' internal dict subclass
+    return dict(dict_of_dfs)
+
+
+# ===== FILE: config\validate.py =====
+
+# src\riskquant\config\validate.py
+
+# ===== FILE: market_data\__init__.py =====
+
+# src\riskquant\market_data\__init__.py
+
+# ===== FILE: market_data\curves\__init__.py =====
+
+# src/riskquant/market_data/curves/__init__.py
+
+
+# ===== FILE: market_data\curves\interpolation_methods.py =====
+
+# src\riskquant\market_data\curves\interpolation_methods.py
+
+from __future__ import annotations
+
+from enum import IntEnum
+from typing import Mapping
+
+import numpy as np
+
+
+class InterpolationMethod(IntEnum):
+    LINEAR = 1
+    LOG_LINEAR = 2
+    STEP_LEFT = 3
+    STEP_RIGHT = 4
+    CUBIC_SPLINE = 5
+
+
+# compiler-friendly int8 constants
+INTERP_LINEAR: np.int8 = np.int8(InterpolationMethod.LINEAR)
+INTERP_LOG_LINEAR: np.int8 = np.int8(InterpolationMethod.LOG_LINEAR)
+INTERP_STEP_LEFT: np.int8 = np.int8(InterpolationMethod.STEP_LEFT)
+INTERP_STEP_RIGHT: np.int8 = np.int8(InterpolationMethod.STEP_RIGHT)
+INTERP_CUBIC_SPLINE: np.int8 = np.int8(InterpolationMethod.CUBIC_SPLINE)
+
+
+def validate_interpolation_methods_dict(
+    interpolation_methods_dict: Mapping[str, int],
+) -> None:
+    expected = {
+        name: int(member)
+        for name, member in InterpolationMethod.__members__.items()
+    }
+    got = {str(k): int(v) for k, v in interpolation_methods_dict.items()}
+
+    if got == expected:
+        return
+
+    missing = {k: expected[k] for k in expected.keys() - got.keys()}
+    extra = {k: got[k] for k in got.keys() - expected.keys()}
+    different = {
+        k: {"expected": expected[k], "got": got[k]}
+        for k in (expected.keys() & got.keys())
+        if expected[k] != got[k]
+    }
+
+    raise ValueError(
+        "interpolation_methods sheet does not match riskquant InterpolationMethod enum.\n"
+        f"missing={missing}\n"
+        f"extra={extra}\n"
+        f"different={different}\n"
+        "Fix the Excel interpolation_methods table or update riskquant.market_data.risk_factors.interpolation_methods.InterpolationMethod."
+    )
+
+
+# ===== FILE: market_data\risk_factors\__init__.py =====
+
+# src\riskquant\market_data\risk_factors\__init__.py
+
+# ===== FILE: market_data\risk_factors\matrix.py =====
+
+# riskquant/market_data/risk_factors/matrix.py
+
+# ----------------------------
+# 1) Imports: remove unused + add dtype helper
+# ----------------------------
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Mapping, Optional, Union
+
+import numpy as np
+import pandas as pd
+from pandas.api.types import is_datetime64_any_dtype
+
+from riskquant.utils.dates import (
+    coerce_as_of_date_to_pd_timestamp,
+    ordinal32_to_datetime64D,
+    datetime64D_to_ordinal32,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RiskFactorMatrix:
+    """
+    Canonical invariants (enforced):
+      - dates: 1D, sorted ascending, unique
+      - factor_ids: 1D int32, sorted ascending, unique
+      - values: 2D floating, shape (T, N), C-contiguous
+      - shapes aligned: len(dates)=T, len(factor_ids)=N
+
+    Canonicalization:
+      - factor axis is automatically sorted (and values columns permuted) if needed.
+      - dates are validated as sorted+unique (not auto-sorted) to avoid an O(T*N) row copy.
+    """
+
+    dates: np.ndarray  # datetime64[D] or int32 ordinal
+    factor_ids: np.ndarray  # int32, shape (N,)
+    values: np.ndarray  # float32/float64, shape (T, N), contiguous
+
+    def __post_init__(self) -> None:
+        """Validate and canonicalize a newly-created RiskFactorMatrix.
+
+        Responsibilities:
+          - verify simple shape/dtype/contiguity invariants cheaply (no heavy copies)
+          - enforce that date encoding is either int32 ordinal or datetime64[D]
+          - ensure `factor_ids` are int32 and unique; *automatically* sort + permute columns
+            if the provided factor_ids are not sorted (keeps values aligned)
+
+        The method raises clear, early exceptions to avoid subtle bugs later in
+        numerical code that assumes the canonical invariants described on the
+        class docstring.
+        """
+        # ---- Basic dimensionality checks (cheap) ----
+        if self.dates.ndim != 1:
+            raise ValueError("dates must be 1D!")
+        if self.factor_ids.ndim != 1:
+            raise ValueError("factor_ids must be 1D!")
+        if self.values.ndim != 2:
+            raise ValueError("values must be 2D!")
+
+        # ---- dtype invariants ----
+        # `values` must be a floating-point array (float32/float64 allowed).
+        if not np.issubdtype(self.values.dtype, np.floating):
+            raise TypeError(
+                f"values must be floating dtype; got {self.values.dtype}"
+            )
+
+        # Dates may be encoded as int32 ordinals or as datetime64[D].
+        # If integer-encoded, require int32 to avoid accidental upcasting.
+        if np.issubdtype(self.dates.dtype, np.integer):
+            if self.dates.dtype != np.int32:
+                raise TypeError(
+                    f"int date encoding must be int32 days since DATE_EPOCH; got {self.dates.dtype}"
+                )
+        else:
+            if self.dates.dtype != np.dtype("datetime64[D]"):
+                raise TypeError(
+                    f"datetime date encoding must be datetime64[D]; got {self.dates.dtype}"
+                )
+
+        # Factor IDs must be 32-bit integers for compact storage and stable hashing.
+        if self.factor_ids.dtype != np.int32:
+            raise TypeError(
+                f"factor_ids must be int32; got {self.factor_ids.dtype}"
+            )
+
+        # ---- shape invariants ----
+        T, N = self.values.shape
+        if self.dates.size != T:
+            raise ValueError(
+                f"dates length ({self.dates.size}) must match values.shape[0] ({T})"
+            )
+        if self.factor_ids.size != N:
+            raise ValueError(
+                f"factor_ids length ({self.factor_ids.size}) must match values.shape[1] ({N})"
+            )
+
+        # ---- contiguity invariant for values ----
+        # Many numerical libraries expect C-contiguous 2D arrays; detect accidental
+        # non-contiguous views early and ask callers to construct canonical arrays.
+        if not self.values.flags["C_CONTIGUOUS"]:
+            raise ValueError(
+                "values must be C-contiguous (use np.ascontiguousarray at construction). If you sliced, "
+                "call np.ascontiguousarray(...) or use the provided slice_* helpers."
+            )
+
+        # ---- dates: require sorted + unique (cheap, alloc-free checks) ----
+        # We *do not* auto-sort dates because that would require an O(T*N) row copy.
+        if T > 1:
+            if np.any(self.dates[1:] < self.dates[:-1]):
+                raise ValueError("dates must be sorted ascending.")
+            if np.any(self.dates[1:] == self.dates[:-1]):
+                raise ValueError("dates must be unique!")
+
+        # ---- factor_ids: canonicalize to sorted + unique with minimal copying ----
+        if N > 1:
+            # Fast path: if already non-decreasing, just check uniqueness and return.
+            if not np.any(self.factor_ids[1:] < self.factor_ids[:-1]):
+                if np.any(self.factor_ids[1:] == self.factor_ids[:-1]):
+                    raise ValueError("factor_ids must be unique!")
+                return
+
+            # Slow path: factor_ids are unsorted -> build a stable permutation and
+            # reorder both `factor_ids` and the corresponding columns of `values`.
+            # We use `mergesort` for determinism; `np.argsort` here allocates O(N).
+            perm = np.argsort(self.factor_ids, kind="mergesort")
+            sorted_ids = self.factor_ids[perm]
+
+            # Check uniqueness after sorting (adjacent duplicates are easy to detect).
+            if np.any(sorted_ids[1:] == sorted_ids[:-1]):
+                raise ValueError("factor_ids must be unique!")
+
+            # Permuting columns via fancy indexing produces a new array; ensure it's
+            # C-contiguous so downstream code's contiguity assumptions hold.
+            sorted_vals = np.ascontiguousarray(self.values[:, perm])
+
+            # Bypass dataclass immutability to install canonicalized arrays.
+            object.__setattr__(self, "factor_ids", sorted_ids)
+            object.__setattr__(self, "values", sorted_vals)
+
+    # -------------------- Convenience --------------------
+
+    @property
+    def index_dates(self) -> pd.DatetimeIndex:
+        """Return a pandas DatetimeIndex view of the stored dates.
+
+        - If dates are stored as int32 ordinals, convert them to datetime64[D].
+        - Does not copy underlying date storage when possible (uses views).
+        """
+        if np.issubdtype(self.dates.dtype, np.integer):
+            dts = ordinal32_to_datetime64D(self.dates)
+            return pd.DatetimeIndex(dts)
+        else:
+            return pd.DatetimeIndex(self.dates)
+
+    @property
+    def index_factors(self) -> pd.Index:
+        """Return a pandas Index for `factor_ids` (named `factor_id`)."""
+        return pd.Index(self.factor_ids, name="factor_id")
+
+    def to_df(self) -> pd.DataFrame:
+        """Convert the matrix into a wide pandas DataFrame.
+
+        Returns:
+          DataFrame with `date` as the index (DatetimeIndex) and integer
+          `factor_id` values as columns. The function preserves the internal
+          canonical ordering of factors.
+        """
+        if np.issubdtype(self.dates.dtype, np.integer):
+            dts = ordinal32_to_datetime64D(self.dates)
+            index = pd.DatetimeIndex(dts)
+        else:
+            index = pd.DatetimeIndex(self.dates)
+
+        df = pd.DataFrame(
+            data=self.values, index=index, columns=self.factor_ids
+        )
+        df.index.name = "date"
+        df.columns.name = "factor_id"
+        return df
+
+    def head(self, n: int = 5) -> pd.DataFrame:
+        """Return the first `n` rows as a DataFrame (convenience wrapper)."""
+        return self.to_df().head(n=n)
+
+    def tail(self, n: int = 5) -> pd.DataFrame:
+        """Return the last `n` rows as a DataFrame (convenience wrapper)."""
+        return self.to_df().tail(n=n)
+
+    def plot(self, **kwargs):
+        """Plot all factors over time using pandas plotting backend.
+
+        Any keyword args are forwarded to `DataFrame.plot`.
+        """
+        return self.to_df().plot(**kwargs)
+
+    @property
+    def df(self) -> pd.DataFrame:
+        """Alias for `to_df()` to present the matrix as a DataFrame."""
+        return self.to_df()
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """Return the (T, N) shape of the underlying values array."""
+        return self.values.shape
+
+    @property
+    def num_dates(self) -> int:
+        """Number of dates (time steps) in the matrix."""
+        return self.values.shape[0]
+
+    @property
+    def num_factors(self) -> int:
+        """Number of risk factors (columns) in the matrix."""
+        return self.values.shape[1]
+
+    # ----------------------------
+    # 2) slice_dates: enforce C-contiguous values to satisfy invariant
+    # ----------------------------
+    def slice_dates(
+        self,
+        start: int | None = None,
+        end: int | None = None,
+    ) -> "RiskFactorMatrix":
+        """Return a time-sliced view of the matrix as a new canonical object.
+
+        Notes:
+          - `start`/`end` use Python slice semantics (end is exclusive).
+          - The returned `RiskFactorMatrix` always satisfies the class invariants
+            (including C-contiguity of `values`).
+        """
+        if start is None:
+            start = 0
+        if end is None:
+            end = self.num_dates
+
+        vals = self.values[start:end, :]
+        # Slicing a NumPy array can produce non-contiguous views; downstream
+        # code depends on C-contiguity so we eagerly copy only when required.
+        if not vals.flags["C_CONTIGUOUS"]:
+            vals = np.ascontiguousarray(vals)
+
+        return RiskFactorMatrix(
+            dates=self.dates[start:end],
+            factor_ids=self.factor_ids,
+            values=vals,
+        )
+
+    # ----------------------------
+    # 3) slice_factors: same contiguity enforcement
+    # ----------------------------
+    def slice_factors(self, factor_indices: np.ndarray) -> "RiskFactorMatrix":
+        """Return a factor-sliced matrix.
+
+        Parameters:
+          factor_indices: integer indices (NumPy indexing) selecting columns from
+            the canonical `values` array.
+
+        Returns:
+          New `RiskFactorMatrix` containing the selected factor columns. Note
+          that `factor_ids` passed to the constructor may be unsorted; the
+          constructor's canonicalization step will re-sort and permute values
+          if necessary.
+        """
+        vals = self.values[:, factor_indices]
+        # Ensure C-contiguity after fancy indexing / boolean masking.
+        if not vals.flags["C_CONTIGUOUS"]:
+            vals = np.ascontiguousarray(vals)
+
+        return RiskFactorMatrix(
+            dates=self.dates,
+            factor_ids=self.factor_ids[factor_indices],
+            values=vals,
+        )
+
+    # ----------------------------
+    # 4) from_df: accept "datetime-like" indices + enforce sorted/unique cleanly
+    # ----------------------------
+    @staticmethod
+    def from_df(
+        *,
+        df: pd.DataFrame,
+        name_to_id_map: Optional[Mapping[str, int]] = None,
+        use_int32_dates: bool = True,
+        float_dtype: type[np.floating] = np.float32,
+    ) -> "RiskFactorMatrix":
+        """Construct a RiskFactorMatrix from a wide pandas DataFrame.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Wide DataFrame with dates on the index and one column per risk factor.
+        name_to_id_map : Optional[Mapping[str, int]]
+            Optional mapping from column name (string) to integer factor id. If
+            omitted, columns are parsed as integers directly.
+        use_int32_dates : bool
+            If True convert dates to int32 ordinal representation; otherwise
+            keep datetime64[D] dtype.
+        float_dtype : numpy floating type
+            dtype used for the `values` array (default: np.float32).
+
+        Returns
+        -------
+        RiskFactorMatrix
+            Canonicalized matrix with validated shapes, dtypes and contiguity.
+
+        Raises
+        ------
+        ValueError
+            If the index is not date-like, not monotonic increasing, or contains
+            duplicates; or if factor id mapping contains errors.
+
+        Notes
+        -----
+        The function intentionally does not auto-sort the DataFrame rows
+        (dates). If the provided index is unsorted we raise an error because
+        auto-sorting would require an expensive O(T*N) copy of the values.
+        """
+        if not isinstance(df, pd.DataFrame):
+            raise ValueError("Expected a DataFrame!")
+
+        # Accept a wider set of date-like index types; coerce if needed.
+        if not is_datetime64_any_dtype(df.index):
+            # Convert in-place where possible; this preserves row order and
+            # avoids unnecessary copying of the data matrix.
+            df = df.copy(deep=False)
+            df.index = pd.to_datetime(df.index, errors="raise")
+
+        # Enforce invariants early with clear errors (and avoid needless allocations)
+        if df.index.has_duplicates:
+            raise ValueError("DataFrame index (dates) must be unique!")
+        if not df.index.is_monotonic_increasing:
+            raise ValueError(
+                "DataFrame index (dates) must be sorted ascending!"
+            )
+
+        # Dates: obtain a datetime64[D] view and optionally convert to int32 ordinal
+        dts_64D = df.index.to_numpy(dtype="datetime64[D]", copy=False)
+        dates = (
+            datetime64D_to_ordinal32(dts_64D) if use_int32_dates else dts_64D
+        )
+
+        # Columns -> factor_ids: either direct integer parsing or mapping lookup.
+        cols = df.columns
+        n = cols.size
+
+        if name_to_id_map is None:
+            # Parse column labels as integers; will raise on non-integer labels.
+            factor_ids = np.fromiter(
+                (int(c) for c in cols), dtype=np.int32, count=n
+            )
+        else:
+            # Validate mapping once (cheap for small config dicts) and then map.
+            _validate_mapping_dict(name_to_id_map)
+            factor_ids = np.fromiter(
+                (_require_mapping_key(name_to_id_map, str(c)) for c in cols),
+                dtype=np.int32,
+                count=n,
+            )
+
+        # Canonicalize factor axis BEFORE allocating `values` (avoids extra copies).
+        if n > 1 and np.any(factor_ids[1:] < factor_ids[:-1]):
+            perm = np.argsort(factor_ids, kind="mergesort")
+            factor_ids = factor_ids[perm]
+
+            if np.any(factor_ids[1:] == factor_ids[:-1]):
+                raise ValueError("factor_ids must be unique!")
+
+            # Reorder the DataFrame columns to match the canonical factor order.
+            df = df.iloc[:, perm]
+        else:
+            if n > 1 and np.any(factor_ids[1:] == factor_ids[:-1]):
+                raise ValueError("factor_ids must be unique!")
+
+        # Materialize the numeric matrix as a C-contiguous array with requested dtype.
+        values = np.ascontiguousarray(
+            df.to_numpy(dtype=float_dtype, copy=True, na_value=np.nan)
+        )
+
+        return RiskFactorMatrix(
+            dates=dates, factor_ids=factor_ids, values=values
+        )
+
+    # ----------------------------
+    # 5) from_xlsx: coerce index to datetime + enforce sorted/unique + use Path typing
+    # ----------------------------
+    @staticmethod
+    def from_xlsx(
+        *,
+        path: Union[str, Path],
+        sheet_name: Union[str, int] = 0,
+        name_to_id_map: Optional[Mapping[str, int]] = None,
+        use_int32_dates: bool = True,
+        float_dtype: type[np.floating] = np.float32,
+        as_of_date: Optional[pd.Timestamp] = None,
+    ) -> "RiskFactorMatrix":
+        """Load a RiskFactorMatrix from an Excel workbook/sheet.
+
+        Parameters
+        ----------
+        path : str | Path
+            Path to the Excel file.
+        sheet_name : str | int
+            Sheet name or index to read (forwarded to pandas.read_excel).
+        name_to_id_map : Optional[Mapping[str, int]]
+            Optional mapping for column name -> factor id (same semantics as
+            `from_df`).
+        use_int32_dates : bool
+            If True convert dates to int32 ordinal representation.
+        float_dtype : numpy floating type
+            dtype used for the `values` array.
+        as_of_date : Optional[pd.Timestamp]
+            If provided, rows with date > as_of_date are filtered out.
+
+        Returns
+        -------
+        RiskFactorMatrix
+            Canonicalized matrix constructed from the Excel sheet.
+        """
+        # Read sheet with the first column treated as the index (dates expected).
+        df = pd.read_excel(str(path), sheet_name=sheet_name, index_col=0)
+
+        # Convert index to datetime if needed (common for Excel imports).
+        if not is_datetime64_any_dtype(df.index):
+            df.index = pd.to_datetime(df.index, errors="raise")
+
+        # Optional filter by as_of_date; preserves monotonicity if present.
+        if as_of_date is not None:
+            cutoff = coerce_as_of_date_to_pd_timestamp(as_of_date)
+            df = df.loc[df.index <= cutoff]
+
+        # Enforce same sorted/unique contract as `from_df`.
+        if df.index.has_duplicates:
+            raise ValueError("Excel sheet index (dates) must be unique!")
+        if not df.index.is_monotonic_increasing:
+            raise ValueError(
+                "Excel sheet index (dates) must be sorted ascending!"
+            )
+
+        # Reuse the robust `from_df` constructor for the remaining work.
+        return RiskFactorMatrix.from_df(
+            df=df,
+            name_to_id_map=name_to_id_map,
+            use_int32_dates=use_int32_dates,
+            float_dtype=float_dtype,
+        )
+
+
+def _validate_mapping_dict(m: Mapping[str, Any]) -> None:
+    """Validate a small static mapping of risk factor name -> integer id.
+
+    Checks performed:
+      - keys must be non-empty strings
+      - values must be integer-like (reject bool, float, str)
+      - no two keys map to the same integer id
+
+    This helper is optimized for configuration-time validation (small dicts),
+    not for per-row lookups in tight loops.
+    """
+    # Empty/blank key detection (single pass)
+    for k in m.keys():
+        if not isinstance(k, str) or not k.strip():
+            raise ValueError(f"Mapping contains invalid/blank key: {k!r}")
+
+    # Ensure values are integer-like and detect duplicates by tracking seen ids.
+    seen: dict[int, str] = {}
+    for k, v in m.items():
+        # `bool` is a subclass of int in Python; explicitly reject it here because
+        # booleans are not valid factor ids.
+        if isinstance(v, (bool,)):
+            raise ValueError(
+                f"Mapping value for '{k}' must be an int id, got bool={v!r}"
+            )
+
+        # Accept Python ints and NumPy integer scalars; reject other types.
+        if not isinstance(v, (int, np.integer)):
+            raise ValueError(
+                f"Mapping value for '{k}' must be an int id, got {type(v).__name__}={v!r}"
+            )
+
+        iv = int(v)
+        prev = seen.get(iv)
+        if prev is not None:
+            # Clear, actionable error message when multiple names map to same id.
+            raise ValueError(
+                "Mapping contains duplicate ID assignment:\n"
+                f"  '{prev}' and '{k}' both map to ID={iv}\n"
+                "Each risk factor must have a unique risk_factor_name_id."
+            )
+        seen[iv] = k
+
+
+def _require_mapping_key(
+    m: Mapping[str, Any], key: str, *, preview_n: int = 25
+) -> Any:
+    """Lookup `key` in mapping `m` and raise a detailed error if missing.
+
+    This helper provides user-friendly diagnostics on configuration errors by
+    showing a short preview of known keys and a suggested fix. Designed to be
+    inexpensive on the success path (single hash lookup); the preview list is
+    materialized only on error.
+
+    Parameters
+    ----------
+    m : Mapping[str, Any]
+        Mapping from risk factor name to id.
+    key : str
+        Key to lookup (column label converted to string prior to lookup).
+    preview_n : int
+        Maximum number of known keys to show in the error message.
+    """
+    try:
+        return m[key]
+    except KeyError:
+        # Materialize a small preview of keys only when diagnosing a failure --
+        # prevents huge error messages for very large config maps.
+        keys = list(m.keys())
+        n = len(keys)
+        preview = keys[:preview_n]
+        preview_str = ", ".join(preview) + (" ..." if n > preview_n else "")
+
+        raise ValueError(
+            "Risk factor ID mapping lookup failed.\n"
+            f"Missing key: '{key}'\n\n"
+            "Fix:\n"
+            "  Add this risk factor to the STATIC config table that defines risk_factor_name_id.\n"
+            "  Example row to add:\n"
+            f"    risk_factor_name = {key}\n"
+            "    risk_factor_name_id = <new unique integer>\n\n"
+            f"Known keys preview ({min(preview_n, n)} of {n}):\n"
+            f"  {preview_str}\n"
+        ) from None
+
+
+if __name__ == "__main__":
+    # Build a tiny example (3 dates x 4 factors)
+    df_test = pd.DataFrame(
+        data=[
+            [1.0, 2.0, 3.0, 4.0],
+            [1.1, 2.1, 3.1, 4.1],
+            [1.2, 2.2, 3.2, 4.2],
+        ],
+        index=pd.to_datetime(["2025-01-02", "2025-01-03", "2025-01-04"]),
+        columns=[10, 20, 30, 40],
+        dtype=np.float32,
+    )
+
+    # Absolute name -> id mapping for test
+    name_map = {"10": 1, "20": 2, "30": 3, "40": 4}
+
+    # Compile into matrix
+    m = RiskFactorMatrix.from_df(df=df_test, name_to_id_map=name_map)
+
+    print("Matrix shape:", m.shape)
+    print(m.to_df())
+
+
+# ===== FILE: market_data\risk_factors\shift_types.py =====
+
+# riskquant/market_data/risk_factors/shift_types.py
+from __future__ import annotations
+
+from enum import IntEnum
+from typing import Mapping
+
+import numpy as np
+
+
+class ShiftType(IntEnum):
+    LOG_RETURN = 1
+    SIMPLE_RETURN = 2
+    DIFFERENCE = 3
+
+
+# Kernel-friendly int8 constants (avoid repeated casts in hot code)
+SHIFT_LOG_RETURN: np.int8 = np.int8(ShiftType.LOG_RETURN)
+SHIFT_SIMPLE_RETURN: np.int8 = np.int8(ShiftType.SIMPLE_RETURN)
+SHIFT_DIFFERENCE: np.int8 = np.int8(ShiftType.DIFFERENCE)
+
+
+def validate_shift_types_dict(shift_types_dict: Mapping[str, int]) -> None:
+    """
+    Validate that the Excel-provided mapping exactly matches the code enum.
+
+    Rationale:
+      - Code is the contract; Excel is data.
+      - Kernels rely on stable integer codes.
+    """
+    # Expected mapping from enum
+    expected: dict[str, int] = {
+        name: int(member) for name, member in ShiftType.__members__.items()
+    }
+
+    # Normalize "got" mapping to plain ints for stable comparison
+    got: dict[str, int] = {str(k): int(v) for k, v in shift_types_dict.items()}
+
+    if got == expected:
+        return
+
+    missing = {k: expected[k] for k in expected.keys() - got.keys()}
+    extra = {k: got[k] for k in got.keys() - expected.keys()}
+    different = {
+        k: {"expected": expected[k], "got": got[k]}
+        for k in (expected.keys() & got.keys())
+        if expected[k] != got[k]
+    }
+
+    raise ValueError(
+        "shift_types sheet does not match riskquant ShiftType enum.\n"
+        f"missing={missing}\n"
+        f"extra={extra}\n"
+        f"different={different}\n"
+        "Fix the Excel shift_types table or update riskquant.market_data.risk_factors.shift_types.ShiftType."
+    )
+
+
+# ===== FILE: market_data\risk_factors\snapshot.py =====
+
+# riskquant/market_data/risk_factors/snapshot.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date
+
+import numpy as np
+
+
+@dataclass(frozen=True, slots=True)
+class RiskFactorLevelSnapshot:
+    """Immutable snapshot of risk factor levels at a single as-of date.
+
+    Attributes
+    ----------
+    as_of_date : datetime.date
+        The calendar date for which the snapshot applies.
+    factor_ids : np.ndarray[int32]
+        1-D array of unique risk-factor identifiers (dtype int32, C-contiguous).
+        Must be sorted ascending; if not sorted, the constructor will re-order
+        the ids and corresponding `factor_levels`.
+    factor_levels : np.ndarray[float32|float64]
+        1-D numeric array of factor levels aligned with `factor_ids`.
+        Must be the same length as `factor_ids` and C-contiguous.
+
+    Invariants (enforced on construction)
+    -------------------------------------
+    - `factor_ids` is 1D, dtype int32, C-contiguous, sorted ascending and unique
+    - `factor_levels` is 1D, dtype float32 or float64, C-contiguous
+    - lengths of `factor_ids` and `factor_levels` match
+
+    The class is intentionally lightweight and validates eagerly so downstream
+    numerical kernels can assume compact, contiguous, and deterministic
+    memory layouts (fast gathers, stable hashing, etc.).
+    """
+
+    as_of_date: date
+    factor_ids: np.ndarray  # (N0,) int32
+    factor_levels: np.ndarray  # (N0,) float32/float64
+
+    def __post_init__(self) -> None:
+        """Validate and canonicalize snapshot arrays.
+
+        The method performs cheap, early checks and performs the minimal amount
+        of work required to restore canonical invariants (sorting + contiguity).
+        It raises clear exceptions on invalid input rather than attempting to
+        silently coerce data into a valid form.
+        """
+        # Local aliases to make subsequent checks concise and explicit.
+        ids = self.factor_ids
+        lv = self.factor_levels
+
+        # ----- shape checks -----
+        # Ensure both arrays are 1-D vectors.
+        if ids.ndim != 1:
+            raise ValueError(f"factor_ids must be 1D; got shape={ids.shape}")
+        if lv.ndim != 1:
+            raise ValueError(f"factor_levels must be 1D; got shape={lv.shape}")
+
+        # Ensure arrays have the same length (alignment requirement).
+        if ids.shape[0] != lv.shape[0]:
+            raise ValueError(
+                f"factor_ids and factor_levels length mismatch: "
+                f"{ids.shape[0]} vs {lv.shape[0]}"
+            )
+
+        # ----- dtype checks -----
+        # factor_ids must be 32-bit integers for compactness and predictable
+        # behavior when used as indices or keys in mappings.
+        if ids.dtype != np.int32:
+            raise TypeError(f"factor_ids must be int32; got {ids.dtype}")
+
+        # factor_levels must be floating point (single or double precision).
+        if lv.dtype not in (np.float32, np.float64):
+            raise TypeError(
+                f"factor_levels must be float32 or float64; got {lv.dtype}"
+            )
+
+        # ----- memory layout checks -----
+        # Many numerical routines assume C-contiguous 1-D arrays; check early so
+        # callers get an explicit error instead of subtle performance bugs.
+        if not ids.flags["C_CONTIGUOUS"]:
+            raise ValueError("factor_ids must be C-contiguous")
+        if not lv.flags["C_CONTIGUOUS"]:
+            raise ValueError("factor_levels must be C-contiguous")
+
+        # Fast path: zero or one element requires no further sorting/uniqueness checks.
+        n = ids.size
+        if n <= 1:
+            return
+
+        # ----- sorted + unique enforcement -----
+        # If ids are already non-decreasing, perform an adjacent-duplicate check
+        # which is allocation-free. If not sorted, build a stable permutation and
+        # reorder both arrays so the object is canonical afterwards.
+        if not np.any(ids[1:] < ids[:-1]):
+            # ids are non-decreasing — ensure strict uniqueness.
+            if np.any(ids[1:] == ids[:-1]):
+                raise ValueError("factor_ids must be unique")
+            return
+
+        # ids are unsorted: compute a stable sort permutation (mergesort).
+        perm = np.argsort(ids, kind="mergesort")
+
+        # Apply the permutation to ids (produces a new array view/copy).
+        ids_sorted = ids[perm]
+
+        # Check for duplicates after sorting (adjacent duplicates are easy to detect).
+        if np.any(ids_sorted[1:] == ids_sorted[:-1]):
+            raise ValueError("factor_ids must be unique")
+
+        # Reorder factor levels to keep alignment with the now-sorted ids.
+        lv_sorted = lv[perm]
+
+        # Fancy indexing typically returns a contiguous array for 1-D, but
+        # explicitly enforce C-contiguity to preserve the class invariant.
+        if not lv_sorted.flags["C_CONTIGUOUS"]:
+            lv_sorted = np.ascontiguousarray(lv_sorted)
+
+        # Bypass dataclass immutability to install the canonicalized arrays.
+        object.__setattr__(self, "factor_ids", ids_sorted)
+        object.__setattr__(self, "factor_levels", lv_sorted)
+
+
+# ===== FILE: portfolio\blocks\__init__.py =====
+
+# src\riskquant\portfolio\blocks\__init__.py
+
+# ===== FILE: portfolio\blocks\base_block.py =====
+
+"""
+Base types for compiled instrument blocks.
+
+This module provides the `Block` marker base class used to type the
+struct-of-arrays containers produced by the portfolio compiler and consumed
+by valuation and simulation kernels. Blocks are intentionally minimal and
+carry only compact numeric NumPy arrays and integer indices into compiled
+factor universes.
+
+The class exists primarily for typing and to provide a shared superclass
+for all compiled block types (spot, forward, option, etc.).
+"""
+
 from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
-class Payload:
+class Block:
     """
-    Marker base class for instrument payloads.
-    No methods; payloads are compiled into blocks.
+    Marker base class for compiled instrument blocks.
+
+    Implementations (concrete blocks) should expose only NumPy arrays and
+    primitive numeric dtypes to remain efficient in memory and serialisation.
+    The dataclass is frozen and uses slots to reduce per-instance overhead.
     """
 
-    def __repr__(self) -> str:
-        return self.__str__()
+    # Intentionally empty; subclasses define typed NumPy array fields.
+    pass
 
+
+# ===== FILE: portfolio\blocks\forward_block.py =====
+
+"""
+Compiled block for forward trades (struct-of-arrays).
+
+This module defines `ForwardBlock`, the compiled runtime representation of
+forward positions. Produced by the portfolio compiler from `ForwardPayload`
+objects, it stores NumPy arrays of numeric indices into a `CompiledPortfolio`
+factor universe, enabling fast vectorized valuation and scenario simulation.
+
+Key design:
+  - Row i across all arrays corresponds to trade UID `trade_uids[i]`.
+  - `price_uix` identifies the exposure timing (forward curve node index)
+    and is distinct from `settlement_date_ordinal32`, which is used only
+    for discounting the cash payoff.
+  - FX indices use sentinel values (e.g., -1) to indicate when no FX
+    conversion is required; this keeps arrays numeric and vectorizable.
+  - No `price_source_type` is stored; that interpretation is resolved at
+    compile time by the portfolio compiler.
+"""
+
+from dataclasses import dataclass
+
+import numpy as np
+
+# Import base Block interface for type checking and polymorphism
+from riskquant.portfolio.blocks.base_block import Block
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ForwardNodeBlock(Block):
+    """
+    Struct-of-arrays representation of compiled forward trades.
+    """
+
+    # ========== TRADE IDENTITY ==========
+
+    # Unique trade identifiers (one per row). dtype: int64 (np.int64)
+    trade_uids: np.ndarray
+
+    # ========== ECONOMIC TERMS ==========
+
+    # Signed contract quantities/notionals. dtype: float64 (np.float64)
+    qty: np.ndarray
+
+    # Strike prices for each forward contract. dtype: float64 (np.float64)
+    strike: np.ndarray
+
+    # ========== SETTLEMENT DATE ==========
+
+    # Settlement/payment date encoded as int32 ordinal (days since DATE_EPOCH).
+    # Index into `CompiledPortfolio` discount factor curves. Use sentinel
+    # NO_SETTLEMENT_DATE_ORDINAL32 to indicate no discounting.
+    settlement_date_ordinal32: np.ndarray
+
+    # ========== MARKET LINKAGES (UNIVERSE INDICES) ==========
+
+    # Index into compiled price factor universe for exposure timing.
+    # Resolves to a forward curve node or surface used in scenario shocks.
+    price_uix: np.ndarray
+
+    # Index into compiled FX factor universe mapping underlying_ccy -> settlement_ccy,
+    # or sentinel (-1) when no FX conversion is required. dtype: int32
+    fx_under_to_settle_uix: np.ndarray
+
+    # Index into compiled FX factor universe mapping strike_ccy -> settlement_ccy,
+    # or sentinel (-1) when no FX conversion is required. dtype: int32
+    fx_strike_to_settle_uix: np.ndarray
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ForwardCurveBlock(Block):
+    """
+    Struct-of-arrays representation of compiled forward trades.
+    """
+
+    # ========== TRADE IDENTITY ==========
+
+    # Unique trade identifiers (one per row). dtype: int64 (np.int64)
+    trade_uids: np.ndarray
+
+    # ========== ECONOMIC TERMS ==========
+
+    # Signed contract quantities/notionals. dtype: float64 (np.float64)
+    qty: np.ndarray
+
+    # Strike prices for each forward contract. dtype: float64 (np.float64)
+    strike: np.ndarray
+
+    # ========== SETTLEMENT DATE ==========
+
+    # Physical delivery date encoded as int32 ordinal (days since DATE_EPOCH).
+    # Default is sentinel NO_DELIVERY_DATE_ORDINAL32 if not applicable.
+    delivery_date_ordinal32: np.ndarray
+
+    # Settlement/payment date encoded as int32 ordinal (days since DATE_EPOCH).
+    # Index into `CompiledPortfolio` discount factor curves. Use sentinel
+    # NO_SETTLEMENT_DATE_ORDINAL32 to indicate no discounting.
+    settlement_date_ordinal32: np.ndarray
+
+    # ========== MARKET LINKAGES (UNIVERSE INDICES) ==========
+
+    # Index into compiled price curve universe.
+    price_curve_uix: np.ndarray
+
+    # Index into compiled FX factor universe mapping underlying_ccy -> settlement_ccy,
+    # or sentinel (-1) when no FX conversion is required. dtype: int32
+    fx_under_to_settle_uix: np.ndarray
+
+    # Index into compiled FX factor universe mapping strike_ccy -> settlement_ccy,
+    # or sentinel (-1) when no FX conversion is required. dtype: int32
+    fx_strike_to_settle_uix: np.ndarray
+
+
+# ===== FILE: portfolio\blocks\spot_block.py =====
+
+"""
+Compiled, memory-efficient container for spot positions used by the compiled
+portfolio runtime.
+
+This module provides `SpotBlock`, a struct-of-arrays representation of a set
+of spot trades. The block is intentionally compact (NumPy arrays, primitive
+numeric dtypes) so it can be held efficiently in memory and passed between
+processes in high-throughput valuation workflows.
+
+Design notes:
+  - Row i of every array corresponds to the trade with UID `trade_uids[i]`.
+  - Index fields (e.g. `price_uix`, `fx_uix`) are integer indices into the
+    `CompiledPortfolio` factor universes. These are not risk-factor IDs but
+    zero-based indices used for fast array-based lookup.
+  - FX linkage uses a sentinel index (e.g. `-1`) to indicate "no FX conversion",
+    keeping the representation numeric and avoiding object arrays.
+"""
+
+from dataclasses import dataclass
+
+import numpy as np
+
+from riskquant.portfolio.blocks.base_block import Block
+
+
+@dataclass(frozen=True, slots=True)
+class SpotBlock(Block):
+    """
+    Struct-of-arrays for compiled spot trades.
+
+    Each attribute is a NumPy array with matching length `m_spot` (number of spot trades). The block is frozen and uses slots for memory and performance benefits.
+
+    Row ordering:
+      - row i corresponds to trade with UID `trade_uids[i]`.
+
+    Index semantics:
+      - `price_uix` is an int32 index into `CompiledPortfolio.price_factor_ids`.
+      - `fx_uix` is an int32 index into `CompiledPortfolio.fx_factor_ids` or
+        the sentinel value (e.g. -1) indicating no FX conversion is required.
+    """
+
+    # ========= TRADE IDENTITY ==========
+
+    # Unique trade identifiers, one per row. dtype: int64 (np.int64)
+    trade_uids: np.ndarray
+
+    # ========== ECONOMIC TERMS ==========
+
+    # Signed quantities / notionals for the spot positions. dtype: float64 (np.float64)
+    qty: np.ndarray
+
+    # ========== MARKET LINKAGES (UNIVERSE INDICES) ==========
+
+    # Index into the compiled price factor universe for this row. dtype: int32 (np.int32)
+    price_uix: np.ndarray
+
+    # Index into the compiled FX factor universe, or sentinel (-1) when no FX needed. dtype: int32 (np.int32)
+    fx_uix: np.ndarray
+
+
+# ===== FILE: portfolio\blocks\vanilla_european_option_block.py =====
+
+"""
+Compiled block for vanilla European option trades.
+
+This module defines `VanillaEuropeanOptionBlock`, a struct-of-arrays
+representation of option trades optimized for vectorized valuation and
+simulation. The block stores only numeric identifiers and primitive
+arrays; pricers and resolvers map indices to full market objects.
+
+Key points:
+  - Row i corresponds to trade UID `trade_uids[i]`.
+  - `price_uix` and `vol_uix` index compiled factor universes (not risk-factor IDs).
+  - `expiry_date_ordinal32` stores expiry as int32 days-since-epoch; use
+    `NO_EXPIRY_DATE` to indicate a missing expiry.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+
+from riskquant.portfolio.blocks.base_block import Block
+
+
+@dataclass(frozen=True, slots=True)
+class VanillaEuropeanOptionBlock(Block):
+    """
+    Struct-of-arrays for compiled plain-vanilla European options.
+
+    Attributes are NumPy arrays of length `m_opt` (number of option trades).
+    The block uses frozen dataclass semantics and slots for memory efficiency.
+    """
+
+    # --- TRADE IDENTITY ---
+    # Unique trade identifiers for each option row. dtype: int64 (np.int64)
+    trade_uids: np.ndarray
+
+    # --- ECONOMIC TERMS ---
+
+    # Option quantities (signed). dtype: float64 (np.float64)
+    qty: np.ndarray
+
+    # Option strikes. dtype: float64 (np.float64)
+    strike: np.ndarray
+
+    # Option type flag: 1 = call, 0 = put. dtype: int8 (np.int8)
+    is_call: np.ndarray
+
+    # --- MARKET LINKAGES (UNIVERSE INDICES) ---
+
+    # Index into compiled price factor universe for underlying exposure. dtype: int32
+    price_uix: np.ndarray
+
+    # Index into compiled volatility factor universe for implied vols. dtype: int32
+    vol_uix: np.ndarray
+
+    # --- EXPIRY DATE ---
+
+    # Expiry date encoded as int32 ordinal (days since DATE_EPOCH)
+    expiry_date_ordinal32: np.ndarray
+
+    # --- OPTIONAL FX LINKAGES (UNIVERSE INDICES) ---
+
+    # FX index for underlying_ccy -> settlement_ccy or sentinel (-1) if none. dtype: int32
+    fx_under_to_settle_uix: np.ndarray
+
+    # FX index for strike_ccy -> settlement_ccy or sentinel (-1) if none. dtype: int32
+    fx_strike_to_settle_uix: np.ndarray
+
+
+# ===== FILE: portfolio\constants.py =====
+
+# src/riskquant/portfolio/constants.py
+
+"""
+Common portfolio sentinel constants.
+
+"""
+
+import numpy as np
+
+# --- SENTINELS FOR "MISSING" IDS (payload fields stay numeric) ---
+NO_ID: np.int32 = np.int32(-1)  # missing ID
+
+
+# --- SENTINEL FOR "NO UIX" IN BLOCKS ---
+NO_UIX: np.int32 = np.int32(-1)
+
+
+# FX sentinel: indicates that no FX risk factor is required for a conversion
+# (i.e., underlying_ccy == settlement_ccy or no FX conversion applies).
+NO_FX_RF_REQUIRED: np.int32 = np.int32(-1)
+
+# Sentinel for missing delivery date encoded as an int32 ordinal (days since DATE_EPOCH). Delivery dates are used in the forward block for economic exposure timing but are not required for discounting, which is anchored to settlement dates. This sentinel indicates that no delivery date is specified or relevant for the position. Sometimes price_rf_id may refere to a specific risk factor where the price is not dependent on a delivery date, such as a spot price or a forward curve point with no specific delivery date. In other cases, the price_rf_id that is itself an entire curve/surface/cube and the delivery date must be used to identify the specific point on the curve/surface/cube that defines the economic exposure. In these cases, the delivery date is required and must be specified as an ordinal32. The NO_DELIVERY_DATE_ORDINAL32 sentinel is used to indicate that no delivery date is specified or relevant for the position, which can occur when price_rf_id references a risk factor where the price is not dependent on a delivery date.
+NO_DELIVERY_DATE_ORDINAL32: np.int32 = np.int32(-1)
+
+# Sentinel for missing settlement/payment date encoded as an int32 ordinal
+# (days since DATE_EPOCH). Used by ForwardPayload as `settlement_date_ordinal32`.
+NO_SETTLEMENT_DATE_ORDINAL32: np.int32 = np.int32(-1)
+
+# Sentinel for missing option expiry date encoded as an int32 ordinal.
+NO_EXPIRY_DATE_ORDINAL32: np.int32 = np.int32(-1)
+
+
+# ===== FILE: portfolio\payloads\__init__.py =====
+
+# src\riskquant\portfolio\payloads\__init__.py
 
 # ===== FILE: portfolio\payloads\forward.py =====
 
@@ -44,43 +2781,16 @@ import numpy as np
 
 # Import price source type indicators and date/FX sentinels for defaults
 from riskquant.portfolio.constants import (
-    PRICE_SOURCE_NODE,
-    PRICE_SOURCE_CURVE,
+    NO_ID,
     NO_DELIVERY_DATE_ORDINAL32,
     NO_SETTLEMENT_DATE_ORDINAL32,
     NO_FX_RF_REQUIRED,
 )
 
-# Import base Payload interface for type polymorphism
-from riskquant.portfolio.payloads.base import Payload
 
-
-@dataclass(frozen=True, slots=True)
-class ForwardPayload(Payload):
-    """
-    Immutable payload for a forward contract position.
-
-    Encodes the minimal economic and market-linkage information required
-    by pricers and valuation engines. All fields use compact NumPy dtypes
-    to support efficient array-based processing and serialization.
-
-    The payload intentionally separates:
-      - Exposure timing (price_rf_id + price_source_type): defines which
-        market curve/node is shocked in scenarios.
-      - Settlement timing (delivery_date_ordinal32 + settlement_date_ordinal32):
-        used for payment and discounting logic.
-
-    This design enables:
-      - Forwards on long-dated underlying with custom payment schedules.
-      - Decoupled scenario shock and valuation logic.
-      - Flexible discounting strategies (can be disabled via sentinel values).
-    """
-
-    # ========== UNDERLYING LINKAGES ==========
-
-    # Unique identifier for the forward price/curve node used by the pricer.
-    # Resolves to a time series or market surface in scenario shocks.
-    price_rf_id: np.int32
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _ForwardBasePayload:
+    """Common fields shared by forward payload variants."""
 
     # ========== ECONOMIC TERMS ==========
 
@@ -90,17 +2800,7 @@ class ForwardPayload(Payload):
     # Strike/forward level K in trade currency units. dtype: np.float64
     strike: np.float64
 
-    # ========== PRICE SOURCE TYPE ==========
-
-    # Indicator for how to interpret price_rf_id (0=NODE, 1=CURVE).
-    # Helps pricers select the correct market data interpretation.
-    price_source_type: np.int8 = PRICE_SOURCE_NODE
-
-    # ========== DELIVERY & SETTLEMENT DATES (ORDINALS) ==========
-
-    # Physical delivery date encoded as int32 ordinal (days since DATE_EPOCH).
-    # Default is sentinel NO_DELIVERY_DATE_ORDINAL32 if not applicable.
-    delivery_date_ordinal32: np.int32 = NO_DELIVERY_DATE_ORDINAL32
+    # ========== SETTLEMENT DATE ==========
 
     # Settlement/payment date encoded as int32 ordinal (days since DATE_EPOCH).
     # Used exclusively for discounting. Default sentinel indicates no discounting.
@@ -116,16 +2816,91 @@ class ForwardPayload(Payload):
     # Sentinel NO_FX_RF_REQUIRED (-1) indicates no FX conversion needed.
     fx_strike_to_settle_rf_id: np.int32 = NO_FX_RF_REQUIRED
 
+    def __repr__(self) -> str:
+        return self.__str__()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ForwardNodePayload(_ForwardBasePayload):
+    """
+    Immutable payload for a forward contract position.
+
+    Encodes the minimal economic and market-linkage information required
+    by pricers and valuation engines. All fields use compact NumPy dtypes
+    to support efficient array-based processing and serialization.
+
+    """
+
+    # ========== UNDERLYING LINKAGES ==========
+
+    # Unique identifier for the forward price/curve node used by the pricer.
+    # Resolves to a time series or market surface in scenario shocks.
+    price_rf_id: np.int32
+
+    def __post_init__(self) -> None:
+        if self.price_rf_id == NO_ID:
+            raise ValueError(
+                "ForwardNodePayload requires price_rf_id (cannot be sentinel)."
+            )
+        if self.price_rf_id < 0:
+            raise ValueError("price_rf_id must be non-negative.")
+
     def __str__(self) -> str:
         """Return a compact, single-line string representation for logging and debugging."""
         return (
-            f"ForwardPayload("
+            f"ForwardNodePayload("
+            f"quantity={self.quantity}, "
+            f"strike={self.strike}, "
+            f"settlement_date_ordinal32={self.settlement_date_ordinal32}, "
+            f"price_rf_id={self.price_rf_id}, "
+            f"fx_under_to_settle_rf_id={self.fx_under_to_settle_rf_id}, "
+            f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}"
+            f")"
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ForwardCurvePayload(_ForwardBasePayload):
+    """
+    Immutable payload for a forward contract position when the price is sourced from a curve and the delivery_date_ordinal32 is used to determine the curve point for pricing and valuation.
+
+    """
+
+    # ========== UNDERLYING LINKAGES ==========
+
+    # Unique identifier for the forward price/curve node used by the pricer.
+    # Resolves to a time series or market surface in scenario shocks.
+    price_curve_id: np.int32
+
+    # ========== DELIVERY DATE (ORDINAL) ==========
+
+    # Physical delivery date encoded as int32 ordinal (days since DATE_EPOCH).
+    # Default is sentinel NO_DELIVERY_DATE_ORDINAL32 if not applicable.
+    delivery_date_ordinal32: np.int32
+
+    def __post_init__(self) -> None:
+        if self.delivery_date_ordinal32 == NO_DELIVERY_DATE_ORDINAL32:
+            raise ValueError(
+                "ForwardCurvePayload requires delivery_date_ordinal32 (cannot be sentinel)."
+            )
+        if self.delivery_date_ordinal32 < 0:
+            raise ValueError("delivery_date_ordinal32 must be non-negative.")
+        if self.price_curve_id == NO_ID:
+            raise ValueError(
+                "ForwardCurvePayload requires price_curve_id (cannot be sentinel)."
+            )
+        if self.price_curve_id < 0:
+            raise ValueError("price_curve_id must be non-negative.")
+
+    def __str__(self) -> str:
+        """Return a compact, single-line string representation for logging and debugging."""
+        return (
+            f"ForwardCurvePayload("
             f"quantity={self.quantity}, "
             f"strike={self.strike}, "
             f"delivery_date_ordinal32={self.delivery_date_ordinal32}, "
             f"settlement_date_ordinal32={self.settlement_date_ordinal32}, "
-            f"price_rf_id={self.price_rf_id}, "
-            f"price_source_type={self.price_source_type}, "
+            f"price_curve_id={self.price_curve_id}, "
             f"fx_under_to_settle_rf_id={self.fx_under_to_settle_rf_id}, "
             f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}"
             f")"
@@ -133,19 +2908,30 @@ class ForwardPayload(Payload):
 
 
 if __name__ == "__main__":
-    # Example: Create and print a ForwardPayload representing a 1000-unit
-    # position on a forward contract with strike 1.2345, using a curve-based
-    # price source, settling on ordinal day 18993 with no FX conversions needed.
-    example = ForwardPayload(
-        price_rf_id=np.int32(101),
-        price_source_type=PRICE_SOURCE_CURVE,
+    # Example instantiation of ForwardNodePayload for testing and demonstration
+    fwd_node_payload = ForwardNodePayload(
         quantity=np.float64(1_000.0),
         strike=np.float64(1.2345),
-        settlement_date_ordinal32=np.int32(18993),
+        settlement_date_ordinal32=np.int32(19_100),
+        price_rf_id=np.int32(101),
         fx_under_to_settle_rf_id=NO_FX_RF_REQUIRED,
         fx_strike_to_settle_rf_id=NO_FX_RF_REQUIRED,
     )
-    print(example)
+    print("Example ForwardNodePayload:")
+    print(fwd_node_payload)
+
+    # Example instantiation of ForwardCurvePayload for testing and demonstration
+    fwd_curve_payload = ForwardCurvePayload(
+        quantity=np.float64(1_000.0),
+        strike=np.float64(1.2345),
+        delivery_date_ordinal32=np.int32(19_150),
+        settlement_date_ordinal32=np.int32(19_100),
+        price_curve_id=np.int32(202),
+        fx_under_to_settle_rf_id=NO_FX_RF_REQUIRED,
+        fx_strike_to_settle_rf_id=NO_FX_RF_REQUIRED,
+    )
+    print("\nExample ForwardCurvePayload:")
+    print(fwd_curve_payload)
 
 
 # ===== FILE: portfolio\payloads\spot.py =====
@@ -177,11 +2963,10 @@ from dataclasses import dataclass
 import numpy as np
 
 from riskquant.portfolio.constants import NO_FX_RF_REQUIRED
-from riskquant.portfolio.payloads.base import Payload
 
 
-@dataclass(frozen=True, slots=True)
-class SpotPayload(Payload):
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SpotPayload:
     """Immutable payload for a single spot trade.
 
     The class is frozen to guarantee immutability and uses slots to
@@ -213,6 +2998,9 @@ class SpotPayload(Payload):
             f"fx_rf_id={self.fx_rf_id}"
             f")"
         )
+
+    def __repr__(self) -> str:
+        return self.__str__()
 
 
 if __name__ == "__main__":
@@ -251,27 +3039,18 @@ from dataclasses import dataclass
 import numpy as np
 
 from riskquant.portfolio.constants import (
+    NO_ID,
     NO_FX_RF_REQUIRED,
-    NO_EXPIRY_DATE_ORDINAL32,
     NO_SETTLEMENT_DATE_ORDINAL32,
-    PRICE_SOURCE_NODE,
-    PRICE_SOURCE_CURVE,
+    NO_EXPIRY_DATE_ORDINAL32,
 )
-from riskquant.portfolio.payloads.base import Payload
 
 
-@dataclass(frozen=True, slots=True)
-class VanillaEuropeanOptionPayload(Payload):
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _VanillaEuropeanOptionBasePayload:
     """
-    Immutable payload for a single vanilla European option position.
-
-    Lightweight container that exposes only numeric identifiers and
-    primitive fields. External pricers resolve the IDs to time series
-    or market objects and perform pricing, discounting and FX logic.
+    Common fields shared by vanilla European option payload variants.
     """
-
-    # ID referencing the underlying price/forward risk factor used by the pricer
-    underlying_price_rf_id: np.int32
 
     # Signed position size (contracts / notional)
     quantity: np.float64
@@ -282,64 +3061,115 @@ class VanillaEuropeanOptionPayload(Payload):
     # 1 => call, 0 => put; stored as int8 for compactness
     is_call: np.int8
 
-    # --- VOL LINKAGE ---
-    # Implied volatility risk factor id (volatility series used by pricer)
-    vol_rf_id: np.int32
-
-    # Indicates how to interpret `underlying_price_rf_id`: 0=NODE, 1=CURVE. dtype: np.int8
-    # 0=NODE, 1=CURVE
-    underlying_price_source_type: np.int8 = PRICE_SOURCE_NODE
-
     # --- EXPIRY DATE ---
+
     # Expiry encoded as int32 ordinal (days since DATE_EPOCH). Matches ForwardPayload.
-    expiry_date_ordinal32: np.int32 = NO_EXPIRY_DATE_ORDINAL32
+    expiry_date_ordinal32: np.int32
 
     # --- SETTLEMENT DATE ---
+
     # Optional settlement date (days-since-epoch). Used for discounting only. dtype: np.int32
     payoff_settlement_date_ordinal32: np.int32 = NO_SETTLEMENT_DATE_ORDINAL32
 
     # --- FX LINKAGE ---
+
     # FX id for underlying_ccy -> settlement_ccy, or FX_NONE if no conversion
     fx_under_to_settle_rf_id: np.int32 = NO_FX_RF_REQUIRED
 
     # FX id for strike_ccy -> settlement_ccy, or FX_NONE if no conversion
     fx_strike_to_settle_rf_id: np.int32 = NO_FX_RF_REQUIRED
 
+    def __post_init__(self) -> None:
+        # expiry is required for a European option
+        if self.expiry_date_ordinal32 == NO_EXPIRY_DATE_ORDINAL32:
+            raise ValueError(
+                "European option payload requires expiry_date_ordinal32 (cannot be sentinel)."
+            )
+        if self.expiry_date_ordinal32 < 0:
+            raise ValueError("expiry_date_ordinal32 must be non-negative.")
+        # basic call/put validation (optional but cheap)
+        if int(self.is_call) not in (0, 1):
+            raise ValueError("is_call must be 0 (put) or 1 (call).")
+
+    def __repr__(self) -> str:
+        return self.__str__()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class VanillaEuropeanOptionNodePayload(_VanillaEuropeanOptionBasePayload):
+    """
+    Immutable payload for a single vanilla European option position when
+    the underlying price is sourced from a node.
+    """
+
+    # --- UNDERLYING LINKAGE ---
+
+    # ID referencing the underlying price/forward risk factor used by the pricer
+    underlying_price_rf_id: np.int32
+
+    # --- VOL LINKAGE ---
+
+    # Implied volatility risk factor id (volatility series used by pricer). This is a node-level risk factor id that resolves to a time series in scenario shocks. It is a separate risk factor from the price_rf_id because some pricers require a separate vol input, and the vol may be sourced from a different node than the price (e.g., a volatility surface vs. a forward curve).
+    vol_rf_id: np.int32
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        if self.underlying_price_rf_id == NO_ID:
+            raise ValueError(
+                "underlying_price_rf_id is required (cannot be sentinel)."
+            )
+        if self.underlying_price_rf_id < 0:
+            raise ValueError("underlying_price_rf_id must be non-negative.")
+
+        if self.vol_rf_id == NO_ID:
+            raise ValueError("vol_rf_id is required (cannot be sentinel).")
+        if self.vol_rf_id < 0:
+            raise ValueError("vol_rf_id must be non-negative.")
+
     def __str__(self) -> str:
         """Return a compact single-line representation for logging/debugging."""
         return (
-            f"VanillaEuropeanOptionPayload("
-            f"underlying_price_rf_id={self.underlying_price_rf_id}, "
-            f"underlying_price_source_type={self.underlying_price_source_type}, "
+            "VanillaEuropeanOptionNodePayload("
             f"quantity={self.quantity}, "
             f"strike={self.strike}, "
-            f"is_call={self.is_call}, "
-            f"vol_rf_id={self.vol_rf_id}, "
+            f"is_call={int(self.is_call)}, "
             f"expiry_date_ordinal32={self.expiry_date_ordinal32}, "
-            f"settlement_date_ordinal32={self.payoff_settlement_date_ordinal32}, "
+            f"payoff_settlement_date_ordinal32={self.payoff_settlement_date_ordinal32}, "
+            f"underlying_price_rf_id={self.underlying_price_rf_id}, "
+            f"vol_rf_id={self.vol_rf_id}, "
             f"fx_under_to_settle_rf_id={self.fx_under_to_settle_rf_id}, "
             f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}"
-            f")"
+            ")"
         )
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class VanillaEuropeanOptionCurvePayload(_VanillaEuropeanOptionBasePayload):
+    """
+    Immutable payload for a single vanilla European option position when
+    the underlying price is sourced from a curve.
+    """
+
+    # --- UNDERLYING CURVE LINKAGE ---
+
+    # ID referencing the underlying price/forward risk factor used by the pricer
+    underlying_curve_rf_id: np.int32
+
+    # --- DELIVERY LINKAGE ---
+
+    # Delivery date encoded as int32 ordinal (days since DATE_EPOCH). Matches ForwardPayload.
+    delivery_date_ordinal32: np.int32
+
+    # --- VOL LINKAGE ---
+
+    # Implied volatility risk factor id (volatility series used by pricer). This is a surface-level risk factor id that resolves to a surface in scenario shocks. It is a separate risk factor from the price_rf_id because some pricers require a separate vol input, and the vol may be sourced from a different node than the price (e.g., a volatility surface vs. a forward curve). The final vol used for pricing is interpolated from the vol surface based on the expiry date and strike (money-ness) of the option.
+    vol_surface_id: np.int32
+
+    def __str__(self) -> str:
+        """Return a compact single-line representation for logging/debugging."""
+        return ""
+
+
 if __name__ == "__main__":
-    # Small usage example showing construction and printing of a VanillaEuropeanOptionPayload.
-    # Example values chosen for illustration only.
-    example = VanillaEuropeanOptionPayload(
-        underlying_price_rf_id=np.int32(101),
-        underlying_price_source_type=PRICE_SOURCE_CURVE,
-        quantity=np.float64(1_000.0),
-        strike=np.float64(1.2345),
-        # 1 => call, 0 => put; using int8 for compact storage
-        is_call=np.int8(1),
-        vol_rf_id=np.int32(202),
-        # Use a hypothetical expiry ordinal (days since 1970-01-01)
-        expiry_date_ordinal32=np.int32(18993),
-        # No settlement date specified in this example, using the sentinel
-        payoff_settlement_date_ordinal32=NO_SETTLEMENT_DATE_ORDINAL32,
-        # No FX conversion required in this example, using the sentinel
-        fx_under_to_settle_rf_id=NO_FX_RF_REQUIRED,
-        fx_strike_to_settle_rf_id=NO_FX_RF_REQUIRED,
-    )
-    print(example)
+    pass
