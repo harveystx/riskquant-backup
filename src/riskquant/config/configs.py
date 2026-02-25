@@ -22,6 +22,16 @@ from typing import NamedTuple
 import numpy as np
 import pandas as pd
 
+from riskquant.config.schema_objects import (
+    ContainerMapping,
+    RiskFactor,
+    TenorSchema,
+    AliasSchema,
+    SpotRollRule,
+    ContainerProxyMap,
+    RiskFactorProxyMap,
+    HolidayCalendar,
+)
 from riskquant.exceptions import PrettyKeyError
 from riskquant.market_data.risk_factors.shift_types import (
     validate_shift_types_dict,
@@ -32,77 +42,6 @@ from riskquant.utils.tenors import (
     add_months_to_date_and_return_yyyymm01,
     fmt_date_as_str_yyyymm,
 )
-
-
-# ===================== #
-# --- SMALL HELPERS --- #
-# ===================== #
-
-
-def _require_cols(df: pd.DataFrame, cols: tuple[str, ...], name: str) -> None:
-    missing = [c for c in cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"{name} sheet missing required columns: {missing}")
-
-
-def _build_str_to_int_dict(
-    *,
-    df: pd.DataFrame,
-    key_col: str,
-    id_col: str,
-    sheet_name: str,
-    key_transform: Optional[Callable[[str], str]] = None,
-    require_unique_keys: bool = True,
-    require_non_null_keys: bool = True,
-) -> Dict[str, int]:
-    """
-    Build Dict[str,int] from df[key_col] -> df[id_col], fail-fast on NaN IDs.
-
-    - key_transform: optional callable applied to key strings (e.g. str.upper)
-    - require_unique_keys: if True, fail-fast if key_col has duplicates
-    - require_non_null_keys: if True, fail-fast if key_col has NaN/None
-    """
-    _require_cols(df, (key_col, id_col), sheet_name)
-
-    key_s = df[key_col]
-    id_s = df[id_col]
-
-    # Fail-fast on missing keys (recommended for config)
-    if require_non_null_keys and key_s.isna().any():
-        bad_rows = df.loc[key_s.isna(), :].head(10)
-        raise ValueError(
-            f"{sheet_name} sheet has missing {key_col} values. Example rows:\n{bad_rows}"
-        )
-
-    # Keys as strings (copy=False where possible)
-    keys = key_s.astype(str, copy=False)
-
-    # Apply transform if provided
-    if key_transform is not None:
-        # .map is fine here; config tables are small and it preserves index alignment
-        keys = keys.map(key_transform)
-
-    # Fail-fast on NaN IDs
-    if id_s.isna().any():
-        bad = keys[id_s.isna()].unique().tolist()
-        raise ValueError(f"{sheet_name} sheet has missing {id_col} for: {bad}")
-
-    # Duplicate key check
-    if require_unique_keys and not keys.is_unique:
-        dup = keys[keys.duplicated()].unique().tolist()
-        raise ValueError(
-            f"{sheet_name} sheet has duplicate {key_col} values: {dup}"
-        )
-
-    # Safe integer cast (pandas -> int64), then Python int in dict
-    ids = id_s.astype("int64", copy=False)
-
-    return {str(k): int(v) for k, v in zip(keys, ids)}
-
-
-def _is_na(x: Any) -> bool:
-    # Fast NA check for typical pandas scalar values
-    return x is None or (isinstance(x, float) and np.isnan(x))
 
 
 # ========================================================== #
@@ -238,94 +177,6 @@ class RiskFactorNameAbsToRelMapping:
         }
 
 
-class CurveMapping(NamedTuple):
-    curve_name: str
-    curve_name_id: int
-    risk_factor_group: str
-    tenor_type_name: str
-    spot_roll_rule_name: str
-    alias_type_name: str
-    quote_ccy: str
-    shift_type_name: str
-
-
-@dataclass(frozen=True, slots=True)
-class RiskFactor:
-    risk_factor_name: str
-    risk_factor_name_id: int
-    tenor_token: Optional[str]
-    curve_name: str
-
-    def __post_init__(self) -> None:
-        # Remove tenor token as a suffix only (safer than replace)
-        rf_name_prefix = (
-            self.risk_factor_name.removesuffix(self.tenor_token)
-            if self.tenor_token
-            else self.risk_factor_name
-        )
-
-        if rf_name_prefix != self.curve_name:
-            raise ValueError(
-                f"risk_factor_name ('{self.risk_factor_name}') must match "
-                f"curve_name ('{self.curve_name}') "
-                f"after removing tenor_token ('{self.tenor_token}')!"
-            )
-
-
-class TenorSchema(NamedTuple):
-    tenor_type_name: str
-    tenor_units: str
-    digits: int
-    regex: Pattern[str]
-
-
-class AliasSchema(NamedTuple):
-    alias_type_name: str
-    alias_kind: str
-    alias_unit: Optional[str]
-
-
-class SpotRollRule(NamedTuple):
-    spot_roll_rule_name: str
-    tenor_type_name: str
-    spot_roll_method: str
-    offset_in_tenor_units: Optional[int]
-    roll_month: Optional[int]
-    roll_day: Optional[int]
-    fh_bh_ddmm: Optional[str]
-    post_roll_shift: Optional[int]
-
-
-class RiskDesk(NamedTuple):
-    pass
-
-
-class RiskBookStructure(NamedTuple):
-    risk_desk: str
-    risk_portfolio: str
-    risk_book: str
-    risk_sub_book: str
-    risk_product: Optional[str]
-    query: str
-
-
-class CurveProxyMap(NamedTuple):
-    curve_name: str
-    proxy_curve_name: str
-    proxy_curve_vol_scaling_factor: Optional[float]
-
-
-class RiskFactorProxyMap(NamedTuple):
-    risk_factor_name: str
-    proxy_risk_factor_name: str
-    proxy_risk_factor_vol_scaling_factor: Optional[float]
-
-
-class HolidayCalendar(NamedTuple):
-    calendar_name: str
-    date: Optional[Tuple[date, ...]]
-
-
 @dataclass(frozen=True, slots=True)
 class RiskStaticConfig:
     """
@@ -333,7 +184,7 @@ class RiskStaticConfig:
 
     """
 
-    curve_mapping_dict: Dict[str, CurveMapping] = field(
+    container_mapping_dict: Dict[str, ContainerMapping] = field(
         init=True,
         default_factory=dict,
         repr=False,
@@ -416,7 +267,7 @@ class RiskStaticConfig:
     ] = None
 
     def __post_init__(self):
-        if not self.curve_mapping_dict:
+        if not self.container_mapping_dict:
             raise ValueError(
                 "curve_mapping_dict is empty. Check your curve_mapping sheet and 'active' flags."
             )
@@ -527,7 +378,7 @@ class RiskStaticConfig:
             return m
 
         # Local binds for speed
-        curve_meta_get = self.curve_mapping_dict.get
+        curve_meta_get = self.container_mapping_dict.get
         shift_types_get = self.shift_types_dict.get
 
         # Init out.
@@ -548,10 +399,10 @@ class RiskStaticConfig:
                 )
 
             # Get curve meta for risk factor.
-            cm = curve_meta_get(rf.curve_name)
+            cm = curve_meta_get(rf.container_name)
             if cm is None:
                 raise PrettyKeyError(
-                    f"curve_name={rf.curve_name!r} referenced by risk_factor_name="
+                    f"curve_name={rf.container_name!r} referenced by risk_factor_name="
                     f"{rf.risk_factor_name!r} not found in curve_mapping_dict."
                 )
 
@@ -561,7 +412,7 @@ class RiskStaticConfig:
             if st_id is None:
                 raise PrettyKeyError(
                     "shift_type_name from curve_mapping not found in shift_types_dict:\n"
-                    f"curve_name={rf.curve_name!r}\n"
+                    f"curve_name={rf.container_name!r}\n"
                     f"shift_type_name={st_name!r}\n"
                     f"risk_factor_name={rf.risk_factor_name!r}\n"
                     f"risk_factor_name_id={rf_id}\n"
@@ -639,7 +490,7 @@ class RiskStaticConfig:
         #
 
         for rf_id, rf in rf_id_to_rf.items():
-            rf_curve_name = rf.curve_name
+            rf_curve_name = rf.container_name
             rf_tenor_token = rf.tenor_token
 
             # --- NONE TENOR (spot-like) --- #
@@ -763,13 +614,13 @@ class RiskStaticConfig:
             # --- EXTRACT RF ID INFORMATION --- #
             rf_rel_name = rf.risk_factor_name
             rf_rel_name_id = rf.risk_factor_name_id
-            rf_curve_name = rf.curve_name
+            rf_curve_name = rf.container_name
             rf_tenor_token = rf.tenor_token
 
             # --- GET CURVE MAPPING FOR RISK FACTOR ID --- #
 
             # Get curve.
-            rf_cm = self.curve_mapping_dict.get(rf_curve_name)
+            rf_cm = self.container_mapping_dict.get(rf_curve_name)
 
             # Smoke - need a curve mapping.
             if rf_cm is None:
@@ -787,7 +638,7 @@ class RiskStaticConfig:
             if rf_alias is None:
                 raise ValueError(
                     "curve_mapping references unknown alias_type_name.\n"
-                    f"curve_name={rf_cm.curve_name!r}\nalias_type_name={rf_cm.alias_type_name!r}"
+                    f"curve_name={rf_cm.container_name!r}\nalias_type_name={rf_cm.alias_type_name!r}"
                 )
 
             # ================================ #
@@ -1091,418 +942,567 @@ class RiskStaticConfigFrames:
     Call .compile() to create a runtime RiskStaticConfig that holds no DataFrames.
     """
 
-    curve_mapping: pd.DataFrame
+    # Core
+    container_meta: pd.DataFrame
     risk_factors: pd.DataFrame
+
+    # Schemas
     tenor_schema: pd.DataFrame
     alias_schema: pd.DataFrame
     spot_roll_rules: pd.DataFrame
-    ccy: pd.DataFrame
-    risk_factor_groups: pd.DataFrame
-    shift_types: pd.DataFrame
-    instruments: pd.DataFrame
-    risk_desks: pd.DataFrame
-    risk_book_structure: pd.DataFrame
-    curve_proxies: pd.DataFrame
-    risk_factor_proxies: pd.DataFrame
-    holiday_calendars: pd.DataFrame
+    surface_y_axis_schema: pd.DataFrame
 
-    def __post_init__(self):
-        # (1) Curve names must be unique.
-        if not self.curve_mapping["curve_name"].is_unique:
+    # Lookups
+    asset_classes: pd.DataFrame
+    asset_subclasses: pd.DataFrame
+    unit_types: pd.DataFrame
+    unit_scales: pd.DataFrame
+    ccy: pd.DataFrame
+    shift_types: pd.DataFrame
+    interpolation_methods: pd.DataFrame
+    extrapolation_methods: pd.DataFrame
+
+    # Mappings
+    container_proxies: pd.DataFrame
+    risk_factor_proxies: pd.DataFrame
+
+    # Calendars / conventions
+    holiday_calendars: pd.DataFrame
+    day_count_conventions: pd.DataFrame
+    business_day_conventions: pd.DataFrame
+    compounding_conventions: pd.DataFrame
+
+    def __post_init__(self) -> None:
+        # ========================== #
+        # --- CONTAINER META --- #
+        # ========================== #
+
+        # (1) container_name must be unique.
+        if not self.container_meta["container_name"].is_unique:
             raise ValueError(
-                f"self.curve_mapping.curve_name must be unique: "
-                f"{self.curve_mapping['curve_name'].unique()}"
+                "self.container_meta.container_name must be unique; duplicates found: "
+                f"{self.container_meta['container_name'][self.container_meta['container_name'].duplicated()].tolist()}"
             )
-        # (2) Curve name IDs must be unique.
-        if not self.curve_mapping["curve_name_id"].is_unique:
+
+        # (2) container_name_id must be unique.
+        if not self.container_meta["container_name_id"].is_unique:
             raise ValueError(
-                f"self.curve_mapping.curve_name_id must be unique: "
-                f"{self.curve_mapping['curve_name_id'].unique()}"
+                "self.container_meta.container_name_id must be unique; duplicates found: "
+                f"{self.container_meta['container_name_id'][self.container_meta['container_name_id'].duplicated()].tolist()}"
             )
-        # (3) Risk factor names must be unique.
+
+        # ====================== #
+        # --- RISK FACTORS --- #
+        # ====================== #
+
+        # (3) risk_factor_name must be unique.
         if not self.risk_factors["risk_factor_name"].is_unique:
             raise ValueError(
-                f"self.risk_factors.risk_factor_name must be unique: "
-                f"{self.risk_factors['risk_factor_name'].unique()}"
+                "self.risk_factors.risk_factor_name must be unique; duplicates found: "
+                f"{self.risk_factors['risk_factor_name'][self.risk_factors['risk_factor_name'].duplicated()].tolist()}"
             )
-        # (4) Risk factor name IDs must be unique.
+
+        # (4) risk_factor_name_id must be unique.
         if not self.risk_factors["risk_factor_name_id"].is_unique:
             raise ValueError(
-                f"self.risk_factors.risk_factor_name_id must be unique: "
-                f"{self.risk_factors['risk_factor_name_id'].unique()}"
+                "self.risk_factors.risk_factor_name_id must be unique; duplicates found: "
+                f"{self.risk_factors['risk_factor_name_id'][self.risk_factors['risk_factor_name_id'].duplicated()].tolist()}"
             )
 
-        # Curve proxies.
-        if not self.curve_proxies["curve_name"].is_unique:
+        # Optional but very useful: each risk factor must reference a known container.
+        if "container_name" in self.risk_factors.columns:
+            missing_containers = set(
+                self.risk_factors["container_name"].dropna().astype(str)
+            ) - set(self.container_meta["container_name"].dropna().astype(str))
+            if missing_containers:
+                raise ValueError(
+                    "self.risk_factors.container_name contains values not present in "
+                    "self.container_meta.container_name: "
+                    f"{sorted(missing_containers)}"
+                )
+
+        # ============================ #
+        # --- ASSET CLASSES / SUBS --- #
+        # ============================ #
+
+        # (5) asset_class must be unique.
+        if not self.asset_classes["asset_class"].is_unique:
             raise ValueError(
-                f"self.curve_proxies.curve_name must be unique: "
-                f"{self.curve_proxies['curve_name'].unique()}"
+                "self.asset_classes.asset_class must be unique; duplicates found: "
+                f"{self.asset_classes['asset_class'][self.asset_classes['asset_class'].duplicated()].tolist()}"
             )
+
+        # (6) asset_class_id must be unique.
+        if not self.asset_classes["asset_class_id"].is_unique:
+            raise ValueError(
+                "self.asset_classes.asset_class_id must be unique; duplicates found: "
+                f"{self.asset_classes['asset_class_id'][self.asset_classes['asset_class_id'].duplicated()].tolist()}"
+            )
+
+        # (7) asset_subclass must be unique.
+        if not self.asset_subclasses["asset_subclass"].is_unique:
+            raise ValueError(
+                "self.asset_subclasses.asset_subclass must be unique; duplicates found: "
+                f"{self.asset_subclasses['asset_subclass'][self.asset_subclasses['asset_subclass'].duplicated()].tolist()}"
+            )
+
+        # (8) asset_subclass_id must be unique.
+        if not self.asset_subclasses["asset_subclass_id"].is_unique:
+            raise ValueError(
+                "self.asset_subclasses.asset_subclass_id must be unique; duplicates found: "
+                f"{self.asset_subclasses['asset_subclass_id'][self.asset_subclasses['asset_subclass_id'].duplicated()].tolist()}"
+            )
+
+        # (9) asset_subclasses.asset_class must exist in asset_classes.asset_class.
+        missing_asset_classes = set(
+            self.asset_subclasses["asset_class"].dropna().astype(str)
+        ) - set(self.asset_classes["asset_class"].dropna().astype(str))
+        if missing_asset_classes:
+            raise ValueError(
+                "self.asset_subclasses.asset_class contains values not present in "
+                "self.asset_classes.asset_class: "
+                f"{sorted(missing_asset_classes)}"
+            )
+
+        # ===================== #
+        # --- UNIT LOOKUPS --- #
+        # ===================== #
+
+        # (10) unit_type_name must be unique.
+        if not self.unit_types["unit_type_name"].is_unique:
+            raise ValueError(
+                "self.unit_types.unit_type_name must be unique; duplicates found: "
+                f"{self.unit_types['unit_type_name'][self.unit_types['unit_type_name'].duplicated()].tolist()}"
+            )
+
+        # (11) unit_type_name_id must be unique.
+        if not self.unit_types["unit_type_name_id"].is_unique:
+            raise ValueError(
+                "self.unit_types.unit_type_name_id must be unique; duplicates found: "
+                f"{self.unit_types['unit_type_name_id'][self.unit_types['unit_type_name_id'].duplicated()].tolist()}"
+            )
+
+        # (12) unit_scale_name must be unique.
+        if not self.unit_scales["unit_scale_name"].is_unique:
+            raise ValueError(
+                "self.unit_scales.unit_scale_name must be unique; duplicates found: "
+                f"{self.unit_scales['unit_scale_name'][self.unit_scales['unit_scale_name'].duplicated()].tolist()}"
+            )
+
+        # (13) unit_scale_name_id must be unique.
+        if not self.unit_scales["unit_scale_name_id"].is_unique:
+            raise ValueError(
+                "self.unit_scales.unit_scale_name_id must be unique; duplicates found: "
+                f"{self.unit_scales['unit_scale_name_id'][self.unit_scales['unit_scale_name_id'].duplicated()].tolist()}"
+            )
+
+        # ====================== #
+        # --- CCY / SHIFTS --- #
+        # ====================== #
+
+        # (14) ccy must be unique.
+        if not self.ccy["ccy"].is_unique:
+            raise ValueError(
+                "self.ccy.ccy must be unique; duplicates found: "
+                f"{self.ccy['ccy'][self.ccy['ccy'].duplicated()].tolist()}"
+            )
+        # (15) ccy_id must be unique.
+        if not self.ccy["ccy_id"].is_unique:
+            raise ValueError(
+                "self.ccy.ccy_id must be unique; duplicates found: "
+                f"{self.ccy['ccy_id'][self.ccy['ccy_id'].duplicated()].tolist()}"
+            )
+
+        # (16) shift_type must be unique.
+        if not self.shift_types["shift_type"].is_unique:
+            raise ValueError(
+                "self.shift_types.shift_type must be unique; duplicates found: "
+                f"{self.shift_types['shift_type'][self.shift_types['shift_type'].duplicated()].tolist()}"
+            )
+        # (17) shift_type_id must be unique.
+        if not self.shift_types["shift_type_id"].is_unique:
+            raise ValueError(
+                "self.shift_types.shift_type_id must be unique; duplicates found: "
+                f"{self.shift_types['shift_type_id'][self.shift_types['shift_type_id'].duplicated()].tolist()}"
+            )
+
+        # ============================ #
+        # --- PROXIES VALIDATION --- #
+        # ============================ #
+
+        # Container proxies: container_name must be unique.
+        if not self.container_proxies["container_name"].is_unique:
+            raise ValueError(
+                "self.container_proxies.container_name must be unique; duplicates found: "
+                f"{self.container_proxies['container_name'][self.container_proxies['container_name'].duplicated()].tolist()}"
+            )
+
+        # Risk factor proxies: risk_factor_name must be unique.
         if not self.risk_factor_proxies["risk_factor_name"].is_unique:
             raise ValueError(
-                f"self.risk_factor_proxies.risk_factor_name must be unique: "
-                f"{self.risk_factor_proxies['risk_factor_name'].unique()}"
+                "self.risk_factor_proxies.risk_factor_name must be unique; duplicates found: "
+                f"{self.risk_factor_proxies['risk_factor_name'][self.risk_factor_proxies['risk_factor_name'].duplicated()].tolist()}"
             )
 
-    def compile(self) -> RiskStaticConfig:
-        """
-        Compile DataFrames into compact Python structures and return runtime config.
-        """
+    # def compile(self) -> RiskStaticConfig:
+    #     """
+    #     Compile DataFrames into compact Python structures and return runtime config.
+    #     """
 
-        # --- CURVE MAPPING --- #
+    #     # --- CURVE MAPPING --- #
 
-        # Init.
-        curve_mapping_dict: Dict[str, CurveMapping] = {}
+    #     # Init.
+    #     curve_mapping_dict: Dict[str, ContainerMapping] = {}
 
-        # Populate.
-        for r in self.curve_mapping.to_dict("records"):
-            # Is active.
-            is_active = r.get("active", 1)
+    #     # Populate.
+    #     for r in self.curve_mapping.to_dict("records"):
+    #         # Is active.
+    #         is_active = r.get("active", 1)
 
-            # Smoke.
-            if is_active is None:
-                raise ValueError(f"is_active cannot be None!")
-            if not isinstance(is_active, (bool, int)):
-                raise TypeError(
-                    f"is_active must be bool or int, got {type(is_active).__name__}"
-                )
+    #         # Smoke.
+    #         if is_active is None:
+    #             raise ValueError(f"is_active cannot be None!")
+    #         if not isinstance(is_active, (bool, int)):
+    #             raise TypeError(
+    #                 f"is_active must be bool or int, got {type(is_active).__name__}"
+    #             )
 
-            # Continue if not active.
-            if not bool(is_active):
-                continue
+    #         # Continue if not active.
+    #         if not bool(is_active):
+    #             continue
 
-            # Extract.
-            curve_name = str(r["curve_name"])
-            curve_name_id = int(r["curve_name_id"])
-            risk_factor_group = str(r["risk_factor_group"])
-            tenor_type_name = str(r["tenor_type_name"])
-            spot_roll_rule_name = str(r["spot_roll_rule_name"])
-            alias_type_name = str(r["alias_type_name"])
-            quote_ccy = str(r["quote_ccy"])
-            shift_type_name = str(r["shift_type_name"])
+    #         # Extract.
+    #         curve_name = str(r["curve_name"])
+    #         curve_name_id = int(r["curve_name_id"])
+    #         risk_factor_group = str(r["risk_factor_group"])
+    #         tenor_type_name = str(r["tenor_type_name"])
+    #         spot_roll_rule_name = str(r["spot_roll_rule_name"])
+    #         alias_type_name = str(r["alias_type_name"])
+    #         quote_ccy = str(r["quote_ccy"])
+    #         shift_type_name = str(r["shift_type_name"])
 
-            # Create CurveMapping
-            if curve_name not in curve_mapping_dict:
-                curve_mapping_dict[curve_name] = CurveMapping(
-                    curve_name=curve_name,
-                    curve_name_id=curve_name_id,
-                    risk_factor_group=risk_factor_group,
-                    tenor_type_name=tenor_type_name,
-                    spot_roll_rule_name=spot_roll_rule_name,
-                    alias_type_name=alias_type_name,
-                    quote_ccy=quote_ccy,
-                    shift_type_name=shift_type_name,
-                )
-            else:
-                raise ValueError(
-                    f"CureMapping already exists for curve_name: '{curve_name}'!"
-                )
+    #         # Create CurveMapping
+    #         if curve_name not in curve_mapping_dict:
+    #             curve_mapping_dict[curve_name] = ContainerMapping(
+    #                 container_name=curve_name,
+    #                 container_name_id=curve_name_id,
+    #                 risk_factor_group=risk_factor_group,
+    #                 tenor_type_name=tenor_type_name,
+    #                 spot_roll_rule_name=spot_roll_rule_name,
+    #                 alias_type_name=alias_type_name,
+    #                 quote_ccy=quote_ccy,
+    #                 shift_type_name=shift_type_name,
+    #             )
+    #         else:
+    #             raise ValueError(
+    #                 f"CureMapping already exists for curve_name: '{curve_name}'!"
+    #             )
 
-        # --- RISK FACTOR IDS --- #
+    #     # --- RISK FACTOR IDS --- #
 
-        # Init.
-        risk_factors_dict: Dict[str, RiskFactor] = {}
+    #     # Init.
+    #     risk_factors_dict: Dict[str, RiskFactor] = {}
 
-        # Populate.
-        for r in self.risk_factors.to_dict("records"):
-            # Is active.
-            is_active = r.get("active", 1)
+    #     # Populate.
+    #     for r in self.risk_factors.to_dict("records"):
+    #         # Is active.
+    #         is_active = r.get("active", 1)
 
-            # Smoke.
-            if is_active is None:
-                raise ValueError(f"is_active cannot be None!")
-            if not isinstance(is_active, (bool, int)):
-                raise TypeError(
-                    f"is_active must be bool or int, got {type(is_active).__name__}"
-                )
+    #         # Smoke.
+    #         if is_active is None:
+    #             raise ValueError(f"is_active cannot be None!")
+    #         if not isinstance(is_active, (bool, int)):
+    #             raise TypeError(
+    #                 f"is_active must be bool or int, got {type(is_active).__name__}"
+    #             )
 
-            # Continue if not active.
-            if not bool(is_active):
-                continue
+    #         # Continue if not active.
+    #         if not bool(is_active):
+    #             continue
 
-            # Extract.
-            risk_factor_name = str(r["risk_factor_name"])
-            risk_factor_name_id = int(r["risk_factor_name_id"])
-            tenor_token = (
-                None if _is_na(r["tenor_token"]) else str(r["tenor_token"])
-            )
-            curve_name = str(r["curve_name"])
+    #         # Extract.
+    #         risk_factor_name = str(r["risk_factor_name"])
+    #         risk_factor_name_id = int(r["risk_factor_name_id"])
+    #         tenor_token = (
+    #             None if _is_na(r["tenor_token"]) else str(r["tenor_token"])
+    #         )
+    #         curve_name = str(r["curve_name"])
 
-            # Create CurveMapping
-            if risk_factor_name not in risk_factors_dict:
-                risk_factors_dict[risk_factor_name] = RiskFactor(
-                    risk_factor_name=risk_factor_name,
-                    risk_factor_name_id=risk_factor_name_id,
-                    tenor_token=tenor_token,
-                    curve_name=curve_name,
-                )
-            else:
-                raise ValueError(
-                    f"RiskFactor already exists for risk_factor_name: '{risk_factor_name}'!"
-                )
+    #         # Create CurveMapping
+    #         if risk_factor_name not in risk_factors_dict:
+    #             risk_factors_dict[risk_factor_name] = RiskFactor(
+    #                 risk_factor_name=risk_factor_name,
+    #                 risk_factor_name_id=risk_factor_name_id,
+    #                 tenor_token=tenor_token,
+    #                 container_name=curve_name,
+    #             )
+    #         else:
+    #             raise ValueError(
+    #                 f"RiskFactor already exists for risk_factor_name: '{risk_factor_name}'!"
+    #             )
 
-        # --- TENOR SCHEMA --- #
+    #     # --- TENOR SCHEMA --- #
 
-        # Init dict.
-        tenor_schema_dict: Dict[str, TenorSchema] = {}
+    #     # Init dict.
+    #     tenor_schema_dict: Dict[str, TenorSchema] = {}
 
-        # Loop over records.
-        for r in self.tenor_schema.to_dict("records"):
-            # Tenor type.
-            tenor_type_name = str(r["tenor_type_name"])
-            if tenor_type_name in tenor_schema_dict:
-                raise ValueError(
-                    f"TenorSchema already exists for tenor_type_name: {tenor_type_name!r}"
-                )
+    #     # Loop over records.
+    #     for r in self.tenor_schema.to_dict("records"):
+    #         # Tenor type.
+    #         tenor_type_name = str(r["tenor_type_name"])
+    #         if tenor_type_name in tenor_schema_dict:
+    #             raise ValueError(
+    #                 f"TenorSchema already exists for tenor_type_name: {tenor_type_name!r}"
+    #             )
 
-            # Regex
-            regex_raw = r.get("regex")
-            if _is_na(regex_raw):
-                raise ValueError(
-                    f"TenorSchema.regex is missing for tenor_type_name: {tenor_type_name!r}"
-                )
+    #         # Regex
+    #         regex_raw = r.get("regex")
+    #         if _is_na(regex_raw):
+    #             raise ValueError(
+    #                 f"TenorSchema.regex is missing for tenor_type_name: {tenor_type_name!r}"
+    #             )
 
-            # Create.
-            tenor_schema_dict[tenor_type_name] = TenorSchema(
-                tenor_type_name=tenor_type_name,
-                tenor_units=str(r["tenor_units"]),
-                digits=int(r["digits"]),
-                regex=re.compile(str(regex_raw)),
-            )
+    #         # Create.
+    #         tenor_schema_dict[tenor_type_name] = TenorSchema(
+    #             tenor_type_name=tenor_type_name,
+    #             tenor_units=str(r["tenor_units"]),
+    #             digits=int(r["digits"]),
+    #             regex=re.compile(str(regex_raw)),
+    #         )
 
-        # --- ALIAS SCHEMA --- #
+    #     # --- ALIAS SCHEMA --- #
 
-        # Init dict.
-        alias_schema_dict: Dict[str, AliasSchema] = {}
+    #     # Init dict.
+    #     alias_schema_dict: Dict[str, AliasSchema] = {}
 
-        # Loop over records.
-        for r in self.alias_schema.to_dict("records"):
-            # Alias type name
-            alias_type_name = str(r["alias_type_name"])
-            if alias_type_name in alias_schema_dict:
-                raise ValueError(
-                    f"AliasSchema already exists for alias_type_name: {alias_type_name!r}"
-                )
+    #     # Loop over records.
+    #     for r in self.alias_schema.to_dict("records"):
+    #         # Alias type name
+    #         alias_type_name = str(r["alias_type_name"])
+    #         if alias_type_name in alias_schema_dict:
+    #             raise ValueError(
+    #                 f"AliasSchema already exists for alias_type_name: {alias_type_name!r}"
+    #             )
 
-            # Alias unit.
-            unit = r.get("alias_unit")
+    #         # Alias unit.
+    #         unit = r.get("alias_unit")
 
-            # Create.
-            alias_schema_dict[alias_type_name] = AliasSchema(
-                alias_type_name=alias_type_name,
-                alias_kind=str(r["alias_kind"]),
-                alias_unit=None if _is_na(unit) else str(unit),
-            )
+    #         # Create.
+    #         alias_schema_dict[alias_type_name] = AliasSchema(
+    #             alias_type_name=alias_type_name,
+    #             alias_kind=str(r["alias_kind"]),
+    #             alias_unit=None if _is_na(unit) else str(unit),
+    #         )
 
-        # --- SPOT ROLL RULES --- #
+    #     # --- SPOT ROLL RULES --- #
 
-        # NOTE: dict key should be (spot_roll_rule_name, tenor_type_name) to avoid collisions across tenor types.
-        spot_roll_rules_dict: Dict[tuple[str, str], SpotRollRule] = {}
+    #     # NOTE: dict key should be (spot_roll_rule_name, tenor_type_name) to avoid collisions across tenor types.
+    #     spot_roll_rules_dict: Dict[tuple[str, str], SpotRollRule] = {}
 
-        # Loop over records.
-        for r in self.spot_roll_rules.to_dict("records"):
-            spot_roll_rule_name = str(r["spot_roll_rule_name"])
-            tenor_type_name = str(r["tenor_type_name"])
-            key = (spot_roll_rule_name, tenor_type_name)
+    #     # Loop over records.
+    #     for r in self.spot_roll_rules.to_dict("records"):
+    #         spot_roll_rule_name = str(r["spot_roll_rule_name"])
+    #         tenor_type_name = str(r["tenor_type_name"])
+    #         key = (spot_roll_rule_name, tenor_type_name)
 
-            if key in spot_roll_rules_dict:
-                raise ValueError(
-                    "SpotRollRule already exists for key:\n"
-                    f"  spot_roll_rule_name={spot_roll_rule_name!r}\n"
-                    f"  tenor_type_name={tenor_type_name!r}"
-                )
+    #         if key in spot_roll_rules_dict:
+    #             raise ValueError(
+    #                 "SpotRollRule already exists for key:\n"
+    #                 f"  spot_roll_rule_name={spot_roll_rule_name!r}\n"
+    #                 f"  tenor_type_name={tenor_type_name!r}"
+    #             )
 
-            # Extract other.
-            srm = r.get("spot_roll_method")
-            off = r.get("offset_in_tenor_units")
-            rmm = r.get("roll_month")
-            rdd = r.get("roll_day")
-            fbh = r.get("fh_bh_ddmm")
-            prs = r.get("post_roll_shift")
+    #         # Extract other.
+    #         srm = r.get("spot_roll_method")
+    #         off = r.get("offset_in_tenor_units")
+    #         rmm = r.get("roll_month")
+    #         rdd = r.get("roll_day")
+    #         fbh = r.get("fh_bh_ddmm")
+    #         prs = r.get("post_roll_shift")
 
-            # Validate
+    #         # Validate
 
-            # Create.
-            spot_roll_rules_dict[key] = SpotRollRule(
-                spot_roll_rule_name=spot_roll_rule_name,
-                tenor_type_name=tenor_type_name,
-                spot_roll_method="" if _is_na(srm) else str(srm),
-                offset_in_tenor_units=None if _is_na(off) else int(off),
-                roll_month=None if _is_na(rmm) else int(rmm),
-                roll_day=None if _is_na(rdd) else int(rdd),
-                fh_bh_ddmm=None if _is_na(fbh) else str(fbh),
-                post_roll_shift=None if _is_na(prs) else int(prs),
-            )
+    #         # Create.
+    #         spot_roll_rules_dict[key] = SpotRollRule(
+    #             spot_roll_rule_name=spot_roll_rule_name,
+    #             tenor_type_name=tenor_type_name,
+    #             spot_roll_method="" if _is_na(srm) else str(srm),
+    #             offset_in_tenor_units=None if _is_na(off) else int(off),
+    #             roll_month=None if _is_na(rmm) else int(rmm),
+    #             roll_day=None if _is_na(rdd) else int(rdd),
+    #             fh_bh_ddmm=None if _is_na(fbh) else str(fbh),
+    #             post_roll_shift=None if _is_na(prs) else int(prs),
+    #         )
 
-        # =========== #
-        # --- CCY --- #
-        # =========== #
+    #     # =========== #
+    #     # --- CCY --- #
+    #     # =========== #
 
-        ccy_dict: Dict[str, int] = _build_str_to_int_dict(
-            df=self.ccy,
-            key_col="ccy",
-            id_col="ccy_id",
-            sheet_name="ccy",
-            key_transform=str.upper,  # currencies should be uppercase
-            require_unique_keys=True,
-        )
+    #     ccy_dict: Dict[str, int] = _build_str_to_int_dict(
+    #         df=self.ccy,
+    #         key_col="ccy",
+    #         id_col="ccy_id",
+    #         sheet_name="ccy",
+    #         key_transform=str.upper,  # currencies should be uppercase
+    #         require_unique_keys=True,
+    #     )
 
-        # ========================== #
-        # --- RISK FACTOR GROUPS --- #
-        # ========================== #
+    #     # ========================== #
+    #     # --- RISK FACTOR GROUPS --- #
+    #     # ========================== #
 
-        risk_factor_groups_dict: Dict[str, int] = _build_str_to_int_dict(
-            df=self.risk_factor_groups,
-            key_col="risk_factor_group",
-            id_col="risk_factor_group_id",
-            sheet_name="risk_factor_groups",
-            key_transform=str,  # keep as-is (or use str.upper if desired)
-            require_unique_keys=True,
-        )
+    #     risk_factor_groups_dict: Dict[str, int] = _build_str_to_int_dict(
+    #         df=self.risk_factor_groups,
+    #         key_col="risk_factor_group",
+    #         id_col="risk_factor_group_id",
+    #         sheet_name="risk_factor_groups",
+    #         key_transform=str,  # keep as-is (or use str.upper if desired)
+    #         require_unique_keys=True,
+    #     )
 
-        # ================== #
-        # --- SHIFT TYPE --- #
-        # ================== #
+    #     # ================== #
+    #     # --- SHIFT TYPE --- #
+    #     # ================== #
 
-        shift_types_dict: Dict[str, int] = _build_str_to_int_dict(
-            df=self.shift_types,
-            key_col="shift_type",
-            id_col="shift_type_id",
-            sheet_name="shift_types",
-            key_transform=str.upper,  # your config uses LOG_RETURN style
-            require_unique_keys=True,
-        )
+    #     shift_types_dict: Dict[str, int] = _build_str_to_int_dict(
+    #         df=self.shift_types,
+    #         key_col="shift_type",
+    #         id_col="shift_type_id",
+    #         sheet_name="shift_types",
+    #         key_transform=str.upper,  # your config uses LOG_RETURN style
+    #         require_unique_keys=True,
+    #     )
 
-        # Validate shift types.
-        validate_shift_types_dict(shift_types_dict)
+    #     # Validate shift types.
+    #     validate_shift_types_dict(shift_types_dict)
 
-        # =================== #
-        # --- INSTRUMENTS --- #
-        # =================== #
+    #     # =================== #
+    #     # --- INSTRUMENTS --- #
+    #     # =================== #
 
-        instruments_dict: Dict[str, int] = _build_str_to_int_dict(
-            df=self.instruments,
-            key_col="instrument",
-            id_col="instrument_id",
-            sheet_name="instruments",
-            key_transform=str.upper,  # your code calls instrument_name.upper()
-            require_unique_keys=True,
-        )
+    #     instruments_dict: Dict[str, int] = _build_str_to_int_dict(
+    #         df=self.instruments,
+    #         key_col="instrument",
+    #         id_col="instrument_id",
+    #         sheet_name="instruments",
+    #         key_transform=str.upper,  # your code calls instrument_name.upper()
+    #         require_unique_keys=True,
+    #     )
 
-        # --- CURVE PROXIES DICT --- #
+    #     # --- CURVE PROXIES DICT --- #
 
-        # Init.
-        curve_proxies_dict: Dict[str, CurveProxyMap] = {}
+    #     # Init.
+    #     curve_proxies_dict: Dict[str, CurveProxyMap] = {}
 
-        # Loop.
-        for r in self.curve_proxies.to_dict("records"):
-            # Is active.
-            is_active = r.get("active", 1)
+    #     # Loop.
+    #     for r in self.curve_proxies.to_dict("records"):
+    #         # Is active.
+    #         is_active = r.get("active", 1)
 
-            # Smoke.
-            if is_active is None:
-                raise ValueError(f"is_active cannot be None!")
-            if not isinstance(is_active, (bool, int)):
-                raise TypeError(
-                    f"is_active must be bool or int, got {type(is_active).__name__}"
-                )
+    #         # Smoke.
+    #         if is_active is None:
+    #             raise ValueError(f"is_active cannot be None!")
+    #         if not isinstance(is_active, (bool, int)):
+    #             raise TypeError(
+    #                 f"is_active must be bool or int, got {type(is_active).__name__}"
+    #             )
 
-            # Continue if not active.
-            if not bool(is_active):
-                continue
+    #         # Continue if not active.
+    #         if not bool(is_active):
+    #             continue
 
-            # Curve name.
-            curve_name = str(r["curve_name"])
+    #         # Curve name.
+    #         curve_name = str(r["curve_name"])
 
-            # Duplicate detection (explicit, fail-fast)
-            if curve_name in curve_proxies_dict:
-                raise ValueError(
-                    f"CurveProxyMap already exists for curve_name: '{curve_name}'!"
-                )
+    #         # Duplicate detection (explicit, fail-fast)
+    #         if curve_name in curve_proxies_dict:
+    #             raise ValueError(
+    #                 f"CurveProxyMap already exists for curve_name: '{curve_name}'!"
+    #             )
 
-            # Vol scaling factor: default only on missing/NaN (do NOT override 0.0)
-            scaling_factor = r["proxy_curve_vol_scaling_factor"]
+    #         # Vol scaling factor: default only on missing/NaN (do NOT override 0.0)
+    #         scaling_factor = r["proxy_curve_vol_scaling_factor"]
 
-            # Set to 1.0 if None or NaN.
-            if scaling_factor is None or (
-                isinstance(scaling_factor, float) and np.isnan(scaling_factor)
-            ):
-                scaling_factor = 1.0
+    #         # Set to 1.0 if None or NaN.
+    #         if scaling_factor is None or (
+    #             isinstance(scaling_factor, float) and np.isnan(scaling_factor)
+    #         ):
+    #             scaling_factor = 1.0
 
-            # Cannot be < 0.
-            if scaling_factor < 0:
-                raise ValueError(
-                    "proxy_curve_vol_scaling_factor must be positive!"
-                )
+    #         # Cannot be < 0.
+    #         if scaling_factor < 0:
+    #             raise ValueError(
+    #                 "proxy_curve_vol_scaling_factor must be positive!"
+    #             )
 
-            # Create and store.
-            curve_proxies_dict[curve_name] = CurveProxyMap(
-                curve_name=curve_name,
-                proxy_curve_name=str(r["proxy_curve_name"]),
-                proxy_curve_vol_scaling_factor=float(scaling_factor),
-            )
+    #         # Create and store.
+    #         curve_proxies_dict[curve_name] = CurveProxyMap(
+    #             curve_name=curve_name,
+    #             proxy_curve_name=str(r["proxy_curve_name"]),
+    #             proxy_curve_vol_scaling_factor=float(scaling_factor),
+    #         )
 
-        # --- RISK FACTOR PROXIES DICT --- #
+    #     # --- RISK FACTOR PROXIES DICT --- #
 
-        # Init.
-        risk_factor_proxies_dict: Dict[str, RiskFactorProxyMap] = {}
+    #     # Init.
+    #     risk_factor_proxies_dict: Dict[str, RiskFactorProxyMap] = {}
 
-        # Loop.
-        for r in self.risk_factor_proxies.to_dict("records"):
-            # Is active.
-            is_active = r.get("active", 1)
+    #     # Loop.
+    #     for r in self.risk_factor_proxies.to_dict("records"):
+    #         # Is active.
+    #         is_active = r.get("active", 1)
 
-            # Smoke.
-            if is_active is None:
-                raise ValueError(f"is_active cannot be None!")
-            if not isinstance(is_active, (bool, int)):
-                raise TypeError(
-                    f"is_active must be bool or int, got {type(is_active).__name__}"
-                )
+    #         # Smoke.
+    #         if is_active is None:
+    #             raise ValueError(f"is_active cannot be None!")
+    #         if not isinstance(is_active, (bool, int)):
+    #             raise TypeError(
+    #                 f"is_active must be bool or int, got {type(is_active).__name__}"
+    #             )
 
-            # Continue if not active.
-            if not bool(is_active):
-                continue
+    #         # Continue if not active.
+    #         if not bool(is_active):
+    #             continue
 
-            # Curve name.
-            risk_factor_name = str(r["risk_factor_name"])
+    #         # Curve name.
+    #         risk_factor_name = str(r["risk_factor_name"])
 
-            # Duplicate detection (explicit, fail-fast)
-            if risk_factor_name in risk_factor_proxies_dict:
-                raise ValueError(
-                    f"RiskFactorProxyMap already exists for risk_factor_name: '{risk_factor_name}'!"
-                )
+    #         # Duplicate detection (explicit, fail-fast)
+    #         if risk_factor_name in risk_factor_proxies_dict:
+    #             raise ValueError(
+    #                 f"RiskFactorProxyMap already exists for risk_factor_name: '{risk_factor_name}'!"
+    #             )
 
-            # Vol scaling factor: default only on missing/NaN (do NOT override 0.0)
-            scaling_factor = r["proxy_risk_factor_vol_scaling_factor"]
+    #         # Vol scaling factor: default only on missing/NaN (do NOT override 0.0)
+    #         scaling_factor = r["proxy_risk_factor_vol_scaling_factor"]
 
-            # Set to 1.0 if None or NaN.
-            if scaling_factor is None or (
-                isinstance(scaling_factor, float) and np.isnan(scaling_factor)
-            ):
-                scaling_factor = 1.0
+    #         # Set to 1.0 if None or NaN.
+    #         if scaling_factor is None or (
+    #             isinstance(scaling_factor, float) and np.isnan(scaling_factor)
+    #         ):
+    #             scaling_factor = 1.0
 
-            # Create and store.
-            risk_factor_proxies_dict[risk_factor_name] = RiskFactorProxyMap(
-                risk_factor_name=risk_factor_name,
-                proxy_risk_factor_name=str(r["proxy_risk_factor_name"]),
-                proxy_risk_factor_vol_scaling_factor=float(scaling_factor),
-            )
+    #         # Create and store.
+    #         risk_factor_proxies_dict[risk_factor_name] = RiskFactorProxyMap(
+    #             risk_factor_name=risk_factor_name,
+    #             proxy_risk_factor_name=str(r["proxy_risk_factor_name"]),
+    #             proxy_risk_factor_vol_scaling_factor=float(scaling_factor),
+    #         )
 
-        # --- FINISH --- #
+    #     # --- FINISH --- #
 
-        # Create and return
-        return RiskStaticConfig(
-            curve_mapping_dict=curve_mapping_dict,
-            risk_factors_dict=risk_factors_dict,
-            tenor_schema_dict=tenor_schema_dict,
-            alias_schema_dict=alias_schema_dict,
-            spot_roll_rules_dict=spot_roll_rules_dict,
-            ccy_dict=ccy_dict,
-            risk_factor_groups_dict=risk_factor_groups_dict,
-            shift_types_dict=shift_types_dict,
-            instruments_dict=instruments_dict,
-            curve_proxies_dict=curve_proxies_dict,
-            risk_factor_proxies_dict=risk_factor_proxies_dict,
-            # TODO: OTHERS
-        )
+    #     # Create and return
+    #     return RiskStaticConfig(
+    #         container_mapping_dict=curve_mapping_dict,
+    #         risk_factors_dict=risk_factors_dict,
+    #         tenor_schema_dict=tenor_schema_dict,
+    #         alias_schema_dict=alias_schema_dict,
+    #         spot_roll_rules_dict=spot_roll_rules_dict,
+    #         ccy_dict=ccy_dict,
+    #         risk_factor_groups_dict=risk_factor_groups_dict,
+    #         shift_types_dict=shift_types_dict,
+    #         instruments_dict=instruments_dict,
+    #         curve_proxies_dict=curve_proxies_dict,
+    #         risk_factor_proxies_dict=risk_factor_proxies_dict,
+    #         # TODO: OTHERS
+    #     )

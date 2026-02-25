@@ -90,15 +90,17 @@ def _build_audit_df(
         srf = rf_by_id.get(sid)
 
         if rrf is None:
-            raise PrettyKeyError(f"required_factor_id not found in config: {rid}")
+            raise PrettyKeyError(
+                f"required_factor_id not found in config: {rid}"
+            )
         if srf is None:
             raise PrettyKeyError(f"source_factor_id not found in config: {sid}")
 
-        required_curve[i] = rrf.curve_name
+        required_curve[i] = rrf.container_name
         required_tok[i] = "" if rrf.tenor_token is None else rrf.tenor_token
         required_name[i] = rrf.risk_factor_name
 
-        source_curve[i] = srf.curve_name
+        source_curve[i] = srf.container_name
         source_tok[i] = "" if srf.tenor_token is None else srf.tenor_token
         source_name[i] = srf.risk_factor_name
 
@@ -192,7 +194,9 @@ class ProxyResolutionAudit:
             base = get_logger(__name__)
 
         ctx = LogContext(
-            component=self.component, object_name=self.name, object_id=self.run_id
+            component=self.component,
+            object_name=self.name,
+            object_id=self.run_id,
         )
         return with_context(base, ctx)
 
@@ -244,7 +248,9 @@ class ProxyResolutionAudit:
             cols = list(columns)
             missing = [c for c in cols if c not in df.columns]
             if missing:
-                raise KeyError(f"Requested audit columns not in DataFrame: {missing}")
+                raise KeyError(
+                    f"Requested audit columns not in DataFrame: {missing}"
+                )
             df = df.loc[:, cols]
 
         col_names = list(df.columns)
@@ -253,7 +259,9 @@ class ProxyResolutionAudit:
 
         # Iterate without materializing a big list of dicts.
         for i, row in enumerate(df.itertuples(index=False, name=None)):
-            row_dict = {col_names[j]: _jsonable(row[j]) for j in range(len(col_names))}
+            row_dict = {
+                col_names[j]: _jsonable(row[j]) for j in range(len(col_names))
+            }
             payload = {
                 "event": event,
                 "audit_name": audit_name,

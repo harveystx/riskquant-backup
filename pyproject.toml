@@ -13,7 +13,9 @@ dependencies = [
   "matplotlib>=3.10",
 ]
 
-
 [tool.setuptools]
 package-dir = {"" = "src"}
-packages = ["riskquant"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["riskquant*"]

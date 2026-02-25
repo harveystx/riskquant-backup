@@ -158,9 +158,11 @@ def _build_available_curve_tenor_index(
         if rf is None:
             # Market data contains an id unknown to config: fail-fast, because
             # tenor/curve matching is undefined without config metadata.
-            raise PrettyKeyError(f"market_data_factor_id not found in config: {rid}")
+            raise PrettyKeyError(
+                f"market_data_factor_id not found in config: {rid}"
+            )
 
-        curve = rf.curve_name
+        curve = rf.container_name
         tok = rf.tenor_token
 
         if tok is None:
@@ -189,7 +191,11 @@ def _build_available_curve_tenor_index(
 
     for curve, d in labels.items():
         if curve not in out:
-            out[curve] = (np.empty(0, dtype=np.int32), np.empty(0, dtype=np.int32), d)
+            out[curve] = (
+                np.empty(0, dtype=np.int32),
+                np.empty(0, dtype=np.int32),
+                d,
+            )
 
     return out
 
@@ -308,7 +314,7 @@ def resolve_required_factor_ids_to_market_data_factor_ids(
                 f"Required factor_id not found in config: {required_id}"
             )
 
-        required_curve = rf.curve_name
+        required_curve = rf.container_name
         tok = rf.tenor_token
         if tok is None:
             target_unit = ""
@@ -356,7 +362,9 @@ def resolve_required_factor_ids_to_market_data_factor_ids(
                 cp = curve_proxy_get(required_curve)
                 if cp is not None:
                     proxy_curve = cp.proxy_curve_name
-                    curve_scale = float(cp.proxy_curve_vol_scaling_factor or 1.0)
+                    curve_scale = float(
+                        cp.proxy_curve_vol_scaling_factor or 1.0
+                    )
 
                     # --- MARKET-DATA-RESTRICTED TENOR MATCH ON PROXY CURVE --- #
                     #
@@ -495,7 +503,9 @@ def resolve_required_factor_ids_to_market_data_factor_ids(
     # --- BUILD REQUIRED -> UNIQUE SOURCE INDEX VECTOR --- #
     required_to_source_index = np.empty(num_required_ids, dtype=np.int32)
     for i in range(num_required_ids):
-        required_to_source_index[i] = np.int32(src_to_uix[int(source_factor_ids[i])])
+        required_to_source_index[i] = np.int32(
+            src_to_uix[int(source_factor_ids[i])]
+        )
 
     # build and return
     return ProxyResolution(
