@@ -1,6 +1,8 @@
 # riskquant/utils/printer.py
 from typing import Any, Iterable, Mapping
 
+import pandas as pd
+
 
 def as_list_str(x: Iterable) -> str:
     # Convert an iterable of items to a nicely formatted string with each
@@ -80,7 +82,7 @@ def print_success_message() -> None:
     )
 
 
-def print_dict_pretty(
+def print_dict(
     d: Mapping[str, Any],
     *,
     indent: int = 0,
@@ -121,7 +123,7 @@ def print_dict_pretty(
 
         if isinstance(value, Mapping):
             print(pad + " " * indent_step + f"{key_pad}:")
-            print_dict_pretty(
+            print_dict(
                 value,
                 indent=indent + indent_step * 2,
                 indent_step=indent_step,
@@ -131,3 +133,44 @@ def print_dict_pretty(
             print(pad + " " * indent_step + f"{key_pad}: {value}")
 
     print(pad + "}")
+
+
+def print_df(
+    df: pd.DataFrame,
+    index: bool = True,
+    max_rows: int | None = None,
+    max_cols: int | None = None,
+    float_format: str | None = "_.2f",
+    add_space_before: bool = True,
+    add_space_after: bool = True,
+) -> None:
+    """
+    Print a DataFrame with optional display controls.
+
+    float_format:
+        Format specifier like ".2f", "_.2f", ",.3f", etc.
+        Use None to disable formatting.
+    """
+
+    if float_format is not None:
+        fmt = "{:" + float_format + "}"
+        formatted = df.to_string(
+            index=index,
+            max_rows=max_rows,
+            max_cols=max_cols,
+            float_format=lambda x: fmt.format(x),
+        )
+    else:
+        formatted = df.to_string(
+            index=index,
+            max_rows=max_rows,
+            max_cols=max_cols,
+        )
+
+    if add_space_before:
+        print()
+
+    print(formatted)
+
+    if add_space_after:
+        print()

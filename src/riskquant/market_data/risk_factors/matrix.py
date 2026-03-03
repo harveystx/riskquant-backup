@@ -7,17 +7,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Optional, Union
+from typing import Any, Final, Mapping, Optional, Union
 
 import numpy as np
 import pandas as pd
 from pandas.api.types import is_datetime64_any_dtype
 
+from riskquant.config.compile import compile_risk_static_config_from_xlsx
+from riskquant.config.resolution import RiskFactorNameAbsToRelMapping
 from riskquant.utils.dates import (
     coerce_as_of_date_to_pd_timestamp,
+    date_str_to_date,
     ordinal32_to_datetime64D,
     datetime64D_to_ordinal32,
 )
+from riskquant.utils.printer import print_df, print_dict, print_success_message
 
 
 @dataclass(frozen=True, slots=True)
@@ -348,7 +352,9 @@ class RiskFactorMatrix:
         if name_to_id_map is None:
             # Parse column labels as integers; will raise on non-integer labels.
             factor_ids = np.fromiter(
-                (int(c) for c in cols), dtype=np.int32, count=n
+                (int(c) for c in cols),
+                dtype=np.int32,
+                count=n,
             )
         else:
             # Validate mapping once (cheap for small config dicts) and then map.
@@ -419,7 +425,15 @@ class RiskFactorMatrix:
             Canonicalized matrix constructed from the Excel sheet.
         """
         # Read sheet with the first column treated as the index (dates expected).
-        df = pd.read_excel(str(path), sheet_name=sheet_name, index_col=0)
+        df = pd.read_excel(
+            str(path),
+            sheet_name=sheet_name,
+            index_col=0,
+        )
+
+        # If empty.
+        if df.empty:
+            raise ValueError("dataframe is empty - check: {path}")
 
         # Convert index to datetime if needed (common for Excel imports).
         if not is_datetime64_any_dtype(df.index):
@@ -431,8 +445,19 @@ class RiskFactorMatrix:
             df = df.loc[df.index <= cutoff]
 
         # Enforce same sorted/unique contract as `from_df`.
+
+        # Duplicated dates.
         if df.index.has_duplicates:
-            raise ValueError("Excel sheet index (dates) must be unique!")
+            duplicated = df.index[df.index.duplicated(keep=False)]
+            unique_dupes = duplicated.unique()
+            sample = unique_dupes[:10]
+            raise ValueError(
+                f"Excel sheet index (dates) must be unique.\n"
+                f"Found {len(unique_dupes)} duplicated date(s).\n"
+                f"Sample duplicates: {list(sample)}"
+            )
+
+        # Non-monotonic dates
         if not df.index.is_monotonic_increasing:
             raise ValueError(
                 "Excel sheet index (dates) must be sorted ascending!"
@@ -445,6 +470,40 @@ class RiskFactorMatrix:
             use_int32_dates=use_int32_dates,
             float_dtype=float_dtype,
         )
+
+    # ----------------------------
+    # 6) Time-Series Optimization
+    # ----------------------------
+    def to_time_series_optimized_array(self) -> np.ndarray:
+        """
+        Returns an F-contiguous (Fortran/column-major) copy of the values array.
+
+        Use this when passing the matrix to a Cython/Numba kernel or perform heavy
+        time-series math (e.g., historical volatility, EWMA) where the access
+        pattern is factor-by-factor (column-by-column) across all dates.
+
+        Returns:
+            np.ndarray: A (T, N) array where columns are contiguous in memory.
+                        Note: This forces a memory allocation/copy because the
+                        source array is strictly C-contiguous.
+        """
+        # np.asfortranarray creates a column-major copy of the C-contiguous data.
+        # This means arr[:, i] becomes an unbroken block of physical memory.
+        return np.asfortranarray(self.values)
+
+    def get_factor_time_series(self, factor_id: int) -> np.ndarray:
+        """
+        Extract a strictly C-contiguous 1D time-series array for a single factor.
+        Useful for running math on exactly one instrument without copying the whole matrix.
+        """
+        # Find the column index for the requested factor_id
+        idx = np.searchsorted(self.factor_ids, factor_id)
+        if idx >= self.factor_ids.size or self.factor_ids[idx] != factor_id:
+            raise KeyError(f"factor_id {factor_id} not found in matrix.")
+
+        # Slicing a column from a C-contiguous 2D array creates a strided view.
+        # We force it back to a contiguous 1D array for optimal cache performance.
+        return np.ascontiguousarray(self.values[:, idx])
 
 
 def _validate_mapping_dict(m: Mapping[str, Any]) -> None:
@@ -492,7 +551,10 @@ def _validate_mapping_dict(m: Mapping[str, Any]) -> None:
 
 
 def _require_mapping_key(
-    m: Mapping[str, Any], key: str, *, preview_n: int = 25
+    m: Mapping[str, Any],
+    key: str,
+    *,
+    preview_n: int = 25,
 ) -> Any:
     """Lookup `key` in mapping `m` and raise a detailed error if missing.
 
@@ -534,23 +596,92 @@ def _require_mapping_key(
 
 
 if __name__ == "__main__":
-    # Build a tiny example (3 dates x 4 factors)
-    df_test = pd.DataFrame(
-        data=[
-            [1.0, 2.0, 3.0, 4.0],
-            [1.1, 2.1, 3.1, 4.1],
-            [1.2, 2.2, 3.2, 4.2],
-        ],
-        index=pd.to_datetime(["2025-01-02", "2025-01-03", "2025-01-04"]),
-        columns=[10, 20, 30, 40],
-        dtype=np.float32,
+    # ---------------------------------------------------------
+    # 0. INPUTS
+    # ---------------------------------------------------------
+
+    # AS OF DATE AS STR
+    AS_OF_DATE_STR: Final[str] = "2026-01-02"
+
+    # Path to directory with test data
+    DEV_DATA_DIR: Final[str] = (
+        "C:/Users/mharvey/Documents/code/riskquant/data/dev"
     )
 
-    # Absolute name -> id mapping for test
-    name_map = {"10": 1, "20": 2, "30": 3, "40": 4}
+    # XLSX file name: Risk Static Data
+    DEV_DATA_FILE_NAME_STATIC_CONFIG: Final[str] = (
+        "dev_risk_static_data_config_v01.xlsx"
+    )
 
-    # Compile into matrix
-    m = RiskFactorMatrix.from_df(df=df_test, name_to_id_map=name_map)
+    # XLSX file name
+    DEV_DATA_FILE_NAME_RF_LEVELS: Final[str] = "dev_risk_factor_levels_v01.xlsx"
 
-    print("Matrix shape:", m.shape)
-    print(m.to_df())
+    # ---------------------------------------------------------
+    # 1. AS OF DATE AS DATE
+    # ---------------------------------------------------------
+
+    # Print title.
+    print("\n--- Convert as-of date from str to date ---")
+
+    # As date.
+    as_of_date = date_str_to_date(AS_OF_DATE_STR)
+
+    # ---------------------------------------------------------
+    # 2. COMPILE THE CONFIG
+    # ---------------------------------------------------------
+
+    # Print title.
+    print("\n--- Compiling Static Config ---")
+
+    # Compile the config from the XLSX
+    compiled_config = compile_risk_static_config_from_xlsx(
+        path=DEV_DATA_DIR + "/" + DEV_DATA_FILE_NAME_STATIC_CONFIG,
+    )
+
+    # Print config summary
+    print(compiled_config.summary())
+
+    # ---------------------------------------------------------
+    # 3. RESLOVE RISK FACTORS FOR AS OF DATE
+    # ---------------------------------------------------------
+
+    # Print title.
+    print(f"\n--- Resolving Risk Factors for As-Of Date: {as_of_date} ---")
+
+    # Use the static method on the mapping class which calls the pure function in resolution.py
+    rf_abs_to_rel_mapping = RiskFactorNameAbsToRelMapping.from_config(
+        config=compiled_config,
+        as_of_date=as_of_date,
+    )
+
+    # Print.
+    print("\nRF Abs. Name Mapping:")
+    print_dict(rf_abs_to_rel_mapping.abs_to_rf_name_and_id)
+
+    # ---------------------------------------------------------
+    # 4. LOAD IN HISTORICAL RISK FACTOR LEVELS
+    # ---------------------------------------------------------
+
+    # Print title.
+    print(f"\n--- Loading in historical risk factor levels ---")
+
+    # Load from XLSX.
+    rfm = RiskFactorMatrix.from_xlsx(
+        path=DEV_DATA_DIR + "/" + DEV_DATA_FILE_NAME_RF_LEVELS,
+        name_to_id_map=rf_abs_to_rel_mapping.abs_to_rf_id,
+    )
+
+    # Display basic info about the RFM.
+    print("\nRFM shape:", rfm.shape)
+
+    print("\nRMF Head (first 5 rows, transposed):")
+    print(rfm.head(5).T.to_string())
+    print("\nRMF Tail (last 5 rows, transposed):")
+    print(rfm.tail(5).T.to_string())
+
+    # ---------------------------------------------------------
+    # X. SUCCESS
+    # ---------------------------------------------------------
+
+    # Print success message if everything executed.
+    print_success_message()

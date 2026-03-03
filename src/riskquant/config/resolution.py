@@ -41,7 +41,6 @@ def build_risk_factor_name_mapping_for_as_of_date(
     abs_to_rf_name_and_id: Dict[str, Tuple[str, int]] = {}
 
     for rf in config.risk_factors_dict.values():
-        print(rf)
         rf_rel_name = rf.risk_factor_name
         rf_rel_name_id = rf.risk_factor_name_id
         rf_container_name = rf.container_name

@@ -18,7 +18,7 @@ from riskquant.config.resolution import RiskFactorNameAbsToRelMapping
 from riskquant.config.validate import validate_static_config_dfs
 from riskquant.utils.dates import get_previous_business_date_as_date
 from riskquant.utils.printer import (
-    print_dict_pretty,
+    print_dict,
     print_success_message,
 )
 
@@ -101,11 +101,11 @@ if __name__ == "__main__":
     # Property accessors for the same data.
     print("\n\nProperty accessors:")
     print("\n\nAbsolute to relative name mapping:")
-    print_dict_pretty(mapping.abs_to_rf_name)
+    print_dict(mapping.abs_to_rf_name)
     print("\n\nAbsolute to relative ID mapping:")
-    print_dict_pretty(mapping.abs_to_rf_id)
+    print_dict(mapping.abs_to_rf_id)
     print("\n\nRelative name to relative ID mapping:")
-    print_dict_pretty(mapping.rf_name_to_rf_id)
+    print_dict(mapping.rf_name_to_rf_id)
 
     # ---------------------------------------------------------
     # 4. Success
