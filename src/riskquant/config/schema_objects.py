@@ -279,4 +279,7 @@ class HolidayCalendar:
 
 
 if __name__ == "__main__":
-    pass
+    Ccy(ccy="USDEUR", ccy_id=1)
+
+    # Print success message
+    print_success_message()

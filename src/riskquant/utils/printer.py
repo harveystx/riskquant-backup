@@ -1,5 +1,5 @@
 # riskquant/utils/printer.py
-from typing import Iterable
+from typing import Any, Iterable, Mapping
 
 
 def as_list_str(x: Iterable) -> str:
@@ -78,3 +78,56 @@ def print_success_message() -> None:
         top_border="=",
         bottom_border="=",
     )
+
+
+def print_dict_pretty(
+    d: Mapping[str, Any],
+    *,
+    indent: int = 0,
+    indent_step: int = 4,
+    sort_keys: bool = False,
+) -> None:
+    """
+    Pretty-print a dictionary with aligned keys and nested support.
+
+    Designed for low memory overhead:
+        - No large intermediate strings
+        - Streams output directly via print
+        - Minimal recursion footprint
+
+    Args:
+        d: Dictionary (or mapping) to print.
+        indent: Initial indentation level.
+        indent_step: Spaces added per nesting level.
+        sort_keys: If True, keys are printed alphabetically.
+    """
+    if not isinstance(d, Mapping):
+        raise TypeError("print_dict_pretty expects a mapping type.")
+
+    items = sorted(d.items()) if sort_keys else d.items()
+
+    # Compute key width once for alignment
+    try:
+        max_key_len = max(len(str(k)) for k in d.keys())
+    except ValueError:  # empty dict
+        max_key_len = 0
+
+    pad = " " * indent
+
+    print(pad + "{")
+    for key, value in items:
+        key_str = str(key)
+        key_pad = key_str.ljust(max_key_len)
+
+        if isinstance(value, Mapping):
+            print(pad + " " * indent_step + f"{key_pad}:")
+            print_dict_pretty(
+                value,
+                indent=indent + indent_step * 2,
+                indent_step=indent_step,
+                sort_keys=sort_keys,
+            )
+        else:
+            print(pad + " " * indent_step + f"{key_pad}: {value}")
+
+    print(pad + "}")

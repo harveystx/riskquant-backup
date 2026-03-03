@@ -4,12 +4,16 @@
 - config\__init__.py
 - config\builder.py
 - config\compile.py
-- config\config_utils.py
 - config\configs.py
 - config\loader.py
 - config\resolution.py
 - config\schema_objects.py
 - config\validate.py
+- utils\__init__.py
+- utils\dates.py
+- utils\memory.py
+- utils\printer.py
+- utils\tenors.py
 
 ============================================================
 
@@ -43,7 +47,7 @@ from riskquant.config.schema_objects import (
     BusinessDayConvention,
     Ccy,
     CompoundingConvention,
-    ContainerMapping,
+    ContainerMeta,
     ContainerProxyMap,
     DayCountConvention,
     ExtrapolationMethod,
@@ -256,7 +260,7 @@ class RiskStaticConfigFrames:
         # ======================= #
         # --- CORE META & RF  --- #
         # ======================= #
-        container_meta_dict: Dict[str, ContainerMapping] = {}
+        container_meta_dict: Dict[str, ContainerMeta] = {}
         for r in _iter_df(self.container_meta):
             if not bool(r.get("active", 1)):
                 continue
@@ -266,7 +270,7 @@ class RiskStaticConfigFrames:
             quote_ccy = str(r["quote_ccy"])
             base_ccy = str(base_ccy) if base_ccy is not None else quote_ccy
 
-            container_meta_dict[c_name] = ContainerMapping(
+            container_meta_dict[c_name] = ContainerMeta(
                 container_name=c_name,
                 container_name_id=int(r["container_name_id"]),
                 base_ccy=base_ccy,
@@ -440,8 +444,8 @@ if __name__ == "__main__":
     # 4. Compile the DataFrames into our highly efficient, slot-based python structures.
     compiled_config = frames_config.compile()
 
-    # # 5. Print summary of the compiled config to confirm successful compilation.
-    # print(compiled_config.summary())
+    # 5. Print summary of the compiled config to confirm successful compilation.
+    print(compiled_config.summary())
 
     # 4. Print success message and a summary of the loaded frames config.
     print_success_message()
@@ -458,15 +462,21 @@ into runtime config objects.
 
 from __future__ import annotations
 
-from typing import Union
+from datetime import date
 from pathlib import Path
+from typing import Union
 from typing_extensions import Final
 
-from riskquant.config.configs import RiskStaticConfig
 from riskquant.config.builder import RiskStaticConfigFrames
+from riskquant.config.configs import RiskStaticConfig
 from riskquant.config.loader import load_risk_static_data_config_xlsx_into_dict
+from riskquant.config.resolution import RiskFactorNameAbsToRelMapping
 from riskquant.config.validate import validate_static_config_dfs
-from riskquant.utils.printer import print_success_message
+from riskquant.utils.dates import get_previous_business_date_as_date
+from riskquant.utils.printer import (
+    print_dict_pretty,
+    print_success_message,
+)
 
 
 def compile_risk_static_config_from_xlsx(
@@ -505,6 +515,9 @@ def compile_risk_static_config_from_xlsx(
 
 if __name__ == "__main__":
 
+    # ---------------------------------------------------------
+    # 1. Setup paths
+    # ---------------------------------------------------------
     DEV_DATA_DIR: Final[str] = (
         "C:/Users/mharvey/Documents/code/riskquant/data/dev"
     )
@@ -513,111 +526,64 @@ if __name__ == "__main__":
         "dev_risk_static_data_config_v01.xlsx"
     )
 
-    # Path to the .xlsx workbook containing the static config sheets.
     xlsx_path = DEV_DATA_DIR + "/" + DEV_DATA_FILE_NAME_STATIC_CONFIG
 
-    # Run the full compile process and print the resulting config object.
+    # ---------------------------------------------------------
+    # 2. Compile the Config
+    # ---------------------------------------------------------
+    print("\n--- Compiling Static Config ---")
     compiled_config = compile_risk_static_config_from_xlsx(path=xlsx_path)
-
-    # Print success message and a summary of the compiled config.
-    print_success_message()
-
-    # The compiled_config.summary() method should provide a concise overview of the config contents.
     print(compiled_config.summary())
 
-```
+    # ---------------------------------------------------------
+    # 3. Test Risk Factor Resolution for an As-Of Date
+    # ---------------------------------------------------------
+    as_of_date = get_previous_business_date_as_date()
 
-### FILE: config\config_utils.py ###
-```python
-# src/riskquant/config/config_utils.py
-"""
-Utility functions for config loading/validation.
-"""
+    print(f"\n--- Resolving Risk Factors for As-Of Date: {as_of_date} ---")
 
-import numpy as np
-import pandas as pd
-from typing import Any, Callable, Dict, Optional
+    # Use the static method on the mapping class which calls the pure function in resolution.py
+    mapping = RiskFactorNameAbsToRelMapping.from_config(
+        config=compiled_config,
+        as_of_date=as_of_date,
+    )
 
-# ===================== #
-# --- SMALL HELPERS --- #
-# ===================== #
+    # Print a small sample of the resolved mapping to verify
+    mapping_df = mapping.to_df()
+    print(f"\nSuccessfully resolved {len(mapping_df)} absolute risk factors.")
+    print("\nSample of resolved mappings (Absolute -> Relative):")
+    print(mapping_df.to_string())
 
+    # Property accessors for the same data.
+    print("\n\nProperty accessors:")
+    print("\n\nAbsolute to relative name mapping:")
+    print_dict_pretty(mapping.abs_to_rf_name)
+    print("\n\nAbsolute to relative ID mapping:")
+    print_dict_pretty(mapping.abs_to_rf_id)
+    print("\n\nRelative name to relative ID mapping:")
+    print_dict_pretty(mapping.rf_name_to_rf_id)
 
-def _require_cols(df: pd.DataFrame, cols: tuple[str, ...], name: str) -> None:
-    missing = [c for c in cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"{name} sheet missing required columns: {missing}")
-
-
-def _build_str_to_int_dict(
-    *,
-    df: pd.DataFrame,
-    key_col: str,
-    id_col: str,
-    sheet_name: str,
-    key_transform: Optional[Callable[[str], str]] = None,
-    require_unique_keys: bool = True,
-    require_non_null_keys: bool = True,
-) -> Dict[str, int]:
-    """
-    Build Dict[str,int] from df[key_col] -> df[id_col], fail-fast on NaN IDs.
-
-    - key_transform: optional callable applied to key strings (e.g. str.upper)
-    - require_unique_keys: if True, fail-fast if key_col has duplicates
-    - require_non_null_keys: if True, fail-fast if key_col has NaN/None
-    """
-    _require_cols(df, (key_col, id_col), sheet_name)
-
-    key_s = df[key_col]
-    id_s = df[id_col]
-
-    # Fail-fast on missing keys (recommended for config)
-    if require_non_null_keys and key_s.isna().any():
-        bad_rows = df.loc[key_s.isna(), :].head(10)
-        raise ValueError(
-            f"{sheet_name} sheet has missing {key_col} values. Example rows:\n{bad_rows}"
-        )
-
-    # Keys as strings (copy=False where possible)
-    keys = key_s.astype(str, copy=False)
-
-    # Apply transform if provided
-    if key_transform is not None:
-        # .map is fine here; config tables are small and it preserves index alignment
-        keys = keys.map(key_transform)
-
-    # Fail-fast on NaN IDs
-    if id_s.isna().any():
-        bad = keys[id_s.isna()].unique().tolist()
-        raise ValueError(f"{sheet_name} sheet has missing {id_col} for: {bad}")
-
-    # Duplicate key check
-    if require_unique_keys and not keys.is_unique:
-        dup = keys[keys.duplicated()].unique().tolist()
-        raise ValueError(
-            f"{sheet_name} sheet has duplicate {key_col} values: {dup}"
-        )
-
-    # Safe integer cast (pandas -> int64), then Python int in dict
-    ids = id_s.astype("int64", copy=False)
-
-    return {str(k): int(v) for k, v in zip(keys, ids)}
-
-
-def _is_na(x: Any) -> bool:
-    # Fast NA check for typical pandas scalar values
-    return x is None or (isinstance(x, float) and np.isnan(x))
+    # ---------------------------------------------------------
+    # 4. Success
+    # ---------------------------------------------------------
+    print_success_message()
 
 ```
 
 ### FILE: config\configs.py ###
 ```python
-from dataclasses import field
+# src/riskquant/config/configs.py
+"""
+Runtime configuration containers.
+Strictly native Python structures (no Pandas/DataFrames) for maximum efficiency.
+"""
 
-from dataclasses import dataclass
-from datetime import date
-from typing import Dict
-from riskquant.config.schema_objects import ContainerMapping
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Dict, Optional, Tuple
+
+import numpy as np
 
 from riskquant.config.schema_objects import (
     AssetClass,
@@ -626,7 +592,7 @@ from riskquant.config.schema_objects import (
     BusinessDayConvention,
     Ccy,
     CompoundingConvention,
-    ContainerMapping,
+    ContainerMeta,
     ContainerProxyMap,
     DayCountConvention,
     ExtrapolationMethod,
@@ -641,778 +607,277 @@ from riskquant.config.schema_objects import (
     UnitScale,
     UnitType,
 )
+from riskquant.utils.printer import print_success_message
+from riskquant.utils.tenors import parse_bracket_token
 
 
 @dataclass(frozen=True, slots=True)
 class RiskStaticConfig:
     """
-    Container for risk static configuration tables for runtime use. No pandas DataFrames here - just pure Python structures for maximum efficiency.
-
-    The fields of this dataclass correspond to the sheets in the input Excel config, but are transformed into more efficient Python structures (e.g. dicts, tuples) for runtime use. The raw DataFrames are only used during the compilation process and are not stored in the final RiskStaticConfig object.
-
-    The following fields are included, each corresponding to a sheet in the input config:
-    - container_meta_dict,
-    - risk_factors_dict,
-    - tenor_schema_dict,
-    - alias_schema_dict,
-    - spot_roll_rules_dict,
-    - asset_classes_dict,
-    - asset_subclasses_dict,
-    - unit_types_dict,
-    - unit_scales_dict,
-    - surface_y_axis_schema_dict,
-    - ccy_dict,
-    - shift_types_dict,
-    - interpolation_methods_dict,
-    - extrapolation_methods,
-    - container_proxies,
-    - risk_factor_proxies,
-    - holiday_calendars,
-    - day_count_conventions,
-    - business_day_conventions,
-    - compounding_conventions.
-
+    Container for risk static configuration tables for runtime use.
+    No pandas DataFrames here - just pure Python structures for maximum efficiency.
     """
 
-    # container_meta_dict: Dict[str, ContainerMapping] = field(
-    #     init=True,
-    #     default_factory=dict,
-    #     repr=False,
-    # )
-    # risk_factors_dict: Dict[str, RiskFactor] = field(
-    #     init=True,
-    #     default_factory=dict,
-    #     repr=False,
-    # )
-    # tenor_schema_dict: Dict[str, TenorSchema] = field(
-    #     init=True,
-    #     default_factory=dict,
-    #     repr=False,
-    # )
-    # alias_schema_dict: Dict[str, AliasSchema] = field(
-    #     init=True,
-    #     default_factory=dict,
-    #     repr=False,
-    # )
-    # spot_roll_rules_dict: Dict[tuple[str, str], SpotRollRule] = field(
-    #     init=True,
-    #     default_factory=dict,
-    #     repr=False,
-    # )
-    # ccy_dict: Dict[str, int] = field(
-    #     init=True,
-    #     default_factory=dict,
-    #     repr=False,
-    # )
-    # risk_factor_groups_dict: Dict[str, int] = field(
-    #     init=True,
-    #     default_factory=dict,
-    #     repr=False,
-    # )
-    # shift_types_dict: Dict[str, int] = field(
-    #     init=True,
-    #     default_factory=dict,
-    #     repr=False,
-    # )
-    # instruments_dict: Dict[str, int] = field(
-    #     init=True,
-    #     default_factory=dict,
-    #     repr=False,
-    # )
-    # curve_proxies_dict: Dict[str, CurveProxyMap] = field(
-    #     init=True,
-    #     default_factory=dict,
-    #     repr=False,
-    # )
-    # risk_factor_proxies_dict: Dict[str, RiskFactorProxyMap] = field(
-    #     init=True,
-    #     default_factory=dict,
-    #     repr=False,
-    # )
-    # holiday_calendars_dict: Dict[str, HolidayCalendar] = field(
-    #     init=True,
-    #     default_factory=dict,
-    #     repr=False,
-    # )
-
-    # # --- INTERNAL CACHES --- #
-
-    # # internal cache
-    # _rf_name_to_rf_id: Optional[Dict[str, int]] = None
-    # _rf_id_to_proxy_rf_id: Optional[Dict[int, Tuple[int, float]]] = None
-    # _rf_id_to_risk_factor: Optional[Dict[int, RiskFactor]] = None
-    # _rf_id_to_shift_type_id: Optional[Dict[int, int]] = None
-    # _curve_tenor_index: Optional[
-    #     Dict[str, Tuple[np.ndarray, np.ndarray, Dict[str, int]]]
-    # ] = None
-
-    # def __post_init__(self):
-    #     if not self.container_mapping_dict:
-    #         raise ValueError(
-    #             "curve_mapping_dict is empty. Check your curve_mapping sheet and 'active' flags."
-    #         )
-    #     if not self.risk_factors_dict:
-    #         raise ValueError(
-    #             "risk_factors_dict is empty. Check your risk_factor_ids sheet and 'active' flags."
-    #         )
-
-    # def get_instrument_id(self, instrument_name: str) -> int:
-    #     return self.instruments_dict[instrument_name.upper()]
-
-    # def get_risk_factor_id(self, risk_factor_name: str) -> int:
-    #     return self.risk_factors_dict[risk_factor_name].risk_factor_name_id
-
-    # @property
-    # def rf_name_to_rf_id(self) -> Dict[str, int]:
-    #     """
-    #     A built-once cache of risk factor name to risk factor name ID:
-    #         risk_factor_name -> risk_factor_name_id
-    #     """
-    #     if self._rf_name_to_rf_id is None:
-    #         object.__setattr__(
-    #             self,
-    #             "_rf_name_to_rf_id",
-    #             {
-    #                 k: v.risk_factor_name_id
-    #                 for k, v in self.risk_factors_dict.items()
-    #             },
-    #         )
-    #     return self._rf_name_to_rf_id
-
-    # @property
-    # def rf_id_to_proxy_rf_id(self) -> Dict[int, Tuple[int, float]]:
-    #     """
-    #     A build-once cache of RF ID-level proxy overrides:
-    #         required_rf_id -> (proxy_rf_id, vol_scale)
-    #     """
-    #     m = self._rf_id_to_proxy_rf_id
-    #     if m is None:
-    #         # risk_factor_name -> risk_factor_id
-    #         rf_name_to_rf_id = self.rf_name_to_rf_id  # already cached
-    #         out: Dict[int, Tuple[int, float]] = {}
-    #         for p in self.risk_factor_proxies_dict.values():
-    #             rf_id = int(rf_name_to_rf_id[p.risk_factor_name])
-    #             proxy_rf_id = int(rf_name_to_rf_id[p.proxy_risk_factor_name])
-    #             scale = float(p.proxy_risk_factor_vol_scaling_factor or 1.0)
-    #             out[rf_id] = (proxy_rf_id, scale)
-
-    #         object.__setattr__(self, "_rf_id_to_proxy_rf_id", out)
-    #         m = out
-    #     return m
-
-    # @property
-    # def rf_id_to_risk_factor(self) -> Dict[int, RiskFactor]:
-    #     """
-    #     Cached mapping:
-    #         risk_factor_name_id (int) -> RiskFactor
-
-    #     Built once. Used for fast ID-based access during:
-    #       - proxy resolution
-    #       - curve lookups
-    #       - shift-type resolution
-    #       - simulation kernels
-
-    #     This avoids repeated scans over risk_factors_dict.values().
-    #     """
-    #     m = self._rf_id_to_risk_factor
-    #     if m is None:
-    #         # Init output.
-    #         out: Dict[int, RiskFactor] = {}
-
-    #         # Loop over all RiskFactors
-    #         for rf in self.risk_factors_dict.values():
-    #             # RF ID.
-    #             rf_id = int(rf.risk_factor_name_id)
-
-    #             # Fail-fast on duplicate IDs (should never happen if config validated)
-    #             if rf_id in out:
-    #                 raise ValueError(
-    #                     "Duplicate risk_factor_name_id detected in risk_factors_dict:\n"
-    #                     f"risk_factor_name_id={rf_id}\n"
-    #                     f"existing={out[rf_id].risk_factor_name!r}\n"
-    #                     f"new={rf.risk_factor_name!r}"
-    #                 )
-
-    #             # Store
-    #             out[rf_id] = rf
-
-    #         # Set attribute.
-    #         object.__setattr__(self, "_rf_id_to_risk_factor", out)
-
-    #         # Bind to m
-    #         m = out
-
-    #     # Return
-    #     return m
-
-    # @property
-    # def rf_id_to_shift_type_id(self) -> Dict[int, int]:
-    #     """
-    #     Cached mapping:
-    #         risk_factor_name_id (int) -> shift_type_id (int)
-
-    #     Built once. Used for fast shift type ID access in kernels.
-    #     """
-    #     m = self._rf_id_to_shift_type_id
-    #     if m is not None:
-    #         return m
-
-    #     # Local binds for speed
-    #     curve_meta_get = self.container_mapping_dict.get
-    #     shift_types_get = self.shift_types_dict.get
-
-    #     # Init out.
-    #     out: Dict[int, int] = {}
-
-    #     # Loop over all RiskFactors
-    #     for rf in self.risk_factors_dict.values():
-    #         # RF ID.
-    #         rf_id = int(rf.risk_factor_name_id)
-
-    #         # Duplicate detection (should not happen if config validated)
-    #         if rf_id in out:
-    #             raise ValueError(
-    #                 "Duplicate risk_factor_name_id detected in risk_factors_dict:\n"
-    #                 f"risk_factor_name_id={rf_id}\n"
-    #                 f"existing_shift_type_id={int(out[rf_id])}\n"
-    #                 f"new_risk_factor_name={rf.risk_factor_name!r}"
-    #             )
-
-    #         # Get curve meta for risk factor.
-    #         cm = curve_meta_get(rf.container_name)
-    #         if cm is None:
-    #             raise PrettyKeyError(
-    #                 f"curve_name={rf.container_name!r} referenced by risk_factor_name="
-    #                 f"{rf.risk_factor_name!r} not found in curve_mapping_dict."
-    #             )
-
-    #         # Get the shift type name for risk factor.
-    #         st_name = cm.shift_type_name
-    #         st_id = shift_types_get(st_name)
-    #         if st_id is None:
-    #             raise PrettyKeyError(
-    #                 "shift_type_name from curve_mapping not found in shift_types_dict:\n"
-    #                 f"curve_name={rf.container_name!r}\n"
-    #                 f"shift_type_name={st_name!r}\n"
-    #                 f"risk_factor_name={rf.risk_factor_name!r}\n"
-    #                 f"risk_factor_name_id={rf_id}\n"
-    #             )
-
-    #         # Store the shift type ID of the risk factor ID.
-    #         out[rf_id] = int(st_id)
-
-    #     # Set.
-    #     object.__setattr__(self, "_rf_id_to_shift_type_id", out)
-
-    #     # Return.
-    #     return out
-
-    # @property
-    # def curve_tenor_index(
-    #     self,
-    # ) -> Dict[str, Tuple[np.ndarray, np.ndarray, Dict[str, int]]]:
-    #     """
-    #     Cached per-curve tenor lookup used by curve-level proxy resolution.
-
-    #     This structure supports resolving a required risk factor on curve A
-    #     to the nearest appropriate tenor on a proxy curve B.
-
-    #     Returns
-    #     -------
-    #     dict:
-    #         curve_name -> (offsets_sorted, rf_ids_sorted, label_to_rf_id)
-
-    #     offsets_sorted : (Kc,) int32
-    #         Sorted signed offsets for OFFSET-style tenors on the curve
-    #         (e.g. extracted from [Y+2], [M-1]).
-
-    #     rf_ids_sorted : (Kc,) int32
-    #         Risk factor IDs aligned to offsets_sorted.
-
-    #     label_to_rf_id : dict[str, int]
-    #         Mapping for LABEL or NONE tenors:
-    #           - LABEL (e.g. [ON], [1W], [1M]) => label -> rf_id
-    #           - NONE (tenor_token is None)    => "" -> rf_id
-    #     """
-
-    #     # --------------------------------------------------- #
-    #     # --- FAST PATH: RETURN CACHED STRUCTURE IF BUILT --- #
-    #     # --------------------------------------------------- #
-
-    #     cached = self._curve_tenor_index
-    #     if cached is not None:
-    #         return cached
-
-    #     # ------------------------------------------------------- #
-    #     # --- TEMPORARY CONTAINERS FOR CURVE TENOR EXTRACTION --- #
-    #     # ------------------------------------------------------- #
-    #     #
-    #     # offsets     : curve_name -> list of signed OFFSET integers
-    #     # offset_ids  : curve_name -> list of rf_ids aligned to offsets
-    #     # labels      : curve_name -> dict(label -> rf_id) for LABEL/NONE tenors
-    #     #
-
-    #     offsets: Dict[str, list[int]] = {}
-    #     offset_ids: Dict[str, list[int]] = {}
-    #     labels: Dict[str, Dict[str, int]] = {}
-
-    #     # Local binding for speed (integer-key dict)
-    #     rf_id_to_rf = self.rf_id_to_risk_factor
-
-    #     # ------------------------------------------------ #
-    #     # --- SINGLE PASS OVER CONFIGURED RISK FACTORS --- #
-    #     # ------------------------------------------------ #
-    #     #
-    #     # For each risk factor:
-    #     #   - group by curve_name
-    #     #   - classify tenor as NONE, LABEL, or OFFSET
-    #     #   - collect data needed for proxy resolution
-    #     #
-
-    #     for rf_id, rf in rf_id_to_rf.items():
-    #         rf_curve_name = rf.container_name
-    #         rf_tenor_token = rf.tenor_token
-
-    #         # --- NONE TENOR (spot-like) --- #
-    #         #
-    #         # No tenor token: treated as a label with empty key "".
-    #         #
-    #         if rf_tenor_token is None:
-    #             labels.setdefault(rf_curve_name, {})[""] = int(rf_id)
-    #             continue
-
-    #         # Parse bracket token: [UNIT±OFFSET] or [LABEL]
-    #         rf_unit, rf_offset = parse_bracket_token(rf_tenor_token)
-
-    #         # --- LABEL TENOR (e.g. [ON], [1W], [1M]) --- #
-    #         #
-    #         # No signed offset => exact label match required.
-    #         #
-    #         if rf_offset is None:
-    #             labels.setdefault(rf_curve_name, {})[rf_unit] = int(rf_id)
-
-    #         # --- OFFSET TENOR (e.g. [Y+2], [M-1], [D+4]) --- #
-    #         #
-    #         # Store signed offset for nearest-neighbor matching.
-    #         #
-    #         else:
-    #             offsets.setdefault(rf_curve_name, []).append(int(rf_offset))
-    #             offset_ids.setdefault(rf_curve_name, []).append(int(rf_id))
-
-    #     # ------------------------------------------------------- #
-    #     # --- BUILD FINAL PER-CURVE LOOKUP STRUCTURE (OUTPUT) --- #
-    #     # ------------------------------------------------------- #
-
-    #     # Init dict to store data of property.
-    #     #
-    #     # out: curve_name -> (offsets_sorted, rf_ids_sorted, label_to_rf_id)
-    #     #
-    #     out: Dict[str, Tuple[np.ndarray, np.ndarray, Dict[str, int]]] = {}
-
-    #     # --- CURVES WITH OFFSET TENORS --- #
-    #     #
-    #     # Convert lists to NumPy arrays and sort by offset
-    #     # using a stable sort for deterministic behavior.
-    #     #
-    #     for rf_curve_name, rf_offset_list in offsets.items():
-    #         # RF IDs corresponding to offsets.
-    #         rf_ids_list = offset_ids[rf_curve_name]
-
-    #         # To arrays.
-    #         rf_offsets_arr = np.asarray(rf_offset_list, dtype=np.int32)
-    #         rf_ids_arr = np.asarray(rf_ids_list, dtype=np.int32)
-
-    #         # Sort the offsets.
-    #         rf_offset_idx = np.argsort(
-    #             rf_offsets_arr, kind="mergesort"
-    #         )  # stable + deterministic
-
-    #         # Store in dict.
-    #         out[rf_curve_name] = (
-    #             rf_offsets_arr[rf_offset_idx],  # sorted offsets
-    #             rf_ids_arr[rf_offset_idx],  # rf_ids aligned to sorted offsets
-    #             labels.get(
-    #                 rf_curve_name, {}
-    #             ),  # LABEL/NONE lookup (may be empty)
-    #         )
-
-    #     # --- CURVES WITH ONLY LABEL / NONE TENORS --- #
-    #     #
-    #     # Ensure all curves appear in output, even if they
-    #     # have no OFFSET tenors.
-    #     #
-    #     for rf_curve_name, rf_curve_label_to_rf_id in labels.items():
-    #         if rf_curve_name not in out:
-    #             out[rf_curve_name] = (
-    #                 np.empty(0, dtype=np.int32),
-    #                 np.empty(0, dtype=np.int32),
-    #                 rf_curve_label_to_rf_id,
-    #             )
-
-    #     # -------------------------------- #
-    #     # --- CACHE AND RETURN RESULT --- #
-    #     # -------------------------------- #
-
-    #     # Cache.
-    #     object.__setattr__(self, "_curve_tenor_index", out)
-
-    #     # Return.
-    #     return out
-
-    # def build_risk_factor_name_mapping_for_as_of_date(
-    #     self,
-    #     as_of_date: date,
-    # ) -> RiskFactorNameAbsToRelMapping:
-    #     """
-    #     Resolve relative risk factor names (risk_factors_dict keys) into absolute names for as_of_date.
-
-    #     Design:
-    #         - risk_factor_ids defines the authoritative whitelist of valid factors (relative name + id).
-    #         - For the given as-of date, resolve each relative factor to its absolute column name.
-    #         - Fail fast on:
-    #             * missing config rows (unknown curve, missing roll rule)
-    #             * token/kind mismatches (LABEL vs OFFSET)
-    #             * absolute-name collisions (two relatives resolve to same absolute)
-
-    #     Output:
-    #       abs_to_rel: absolute_name -> relative_name
-    #       abs_to_id:  absolute_name -> risk_factor_name_id
-    #     """
-
-    #     # --- INIT --- #
-
-    #     # Init the dicts to store the mappings.
-    #     abs_to_rf_name_and_id: Dict[str, Tuple[str, int]] = {}
-
-    #     # # cache HY boundary grids per fh_bh_ddmm string
-    #     # hy_cache: Dict[str, list[date]] = {}
-
-    #     # --- MAIN LOOP --- #
-
-    #     # Loop over white list of risk factor IDs.
-    #     for rf in self.risk_factors_dict.values():
-    #         # --- EXTRACT RF ID INFORMATION --- #
-    #         rf_rel_name = rf.risk_factor_name
-    #         rf_rel_name_id = rf.risk_factor_name_id
-    #         rf_curve_name = rf.container_name
-    #         rf_tenor_token = rf.tenor_token
-
-    #         # --- GET CURVE MAPPING FOR RISK FACTOR ID --- #
-
-    #         # Get curve.
-    #         rf_cm = self.container_mapping_dict.get(rf_curve_name)
-
-    #         # Smoke - need a curve mapping.
-    #         if rf_cm is None:
-    #             raise ValueError(
-    #                 "risk_factor_ids references unknown curve_name.\n"
-    #                 f"curve_name={rf_curve_name!r}\nrelative={rf_rel_name!r}"
-    #             )
-
-    #         # --- GET ALIAS SCHEMA
-
-    #         # Get alias schema for RF from RF curve mapping
-    #         rf_alias = self.alias_schema_dict.get(rf_cm.alias_type_name)
-
-    #         # Smoke - need and alias schema
-    #         if rf_alias is None:
-    #             raise ValueError(
-    #                 "curve_mapping references unknown alias_type_name.\n"
-    #                 f"curve_name={rf_cm.container_name!r}\nalias_type_name={rf_cm.alias_type_name!r}"
-    #             )
-
-    #         # ================================ #
-    #         # === RESOLVE TO ABSOLUTE NAME === #
-    #         # ================================ #
-
-    #         # --- ALIAS KIND == 'NONE' --- #
-    #         elif rf_alias.alias_kind == "NONE":
-    #             # Tenor token must be None or empty.
-    #             if rf_tenor_token is not None:
-    #                 raise ValueError(
-    #                     f"Risk factor ID tenor_token ({rf_tenor_token}) must be None for alias_kind = 'NONE'.\n"
-    #                     f"relative={rf_rel_name!r}\ncurve_name={rf_curve_name!r}"
-    #                 )
-
-    #             # Absolute name is same as rf relative name.
-    #             rf_abs_name = rf_rel_name
-
-    #             # Store.
-    #             abs_to_rf_name_and_id[rf_abs_name] = (
-    #                 rf_rel_name,
-    #                 rf_rel_name_id,
-    #             )
-
-    #             # Continue.
-    #             continue
-
-    #         # --- ALIAS KIND == 'LABEL'
-    #         elif rf_alias.alias_kind == "LABEL":
-    #             # If the tenor token is missing.
-    #             if rf_tenor_token is None:
-    #                 # For LABEL curves the tenor token must exist (e.g., [ON], [1W])
-    #                 raise ValueError(
-    #                     "Risk factor missing tenor_token for alias_kind = 'LABEL'.\n"
-    #                     f"relative={rf_rel_name!r}\ncurve_name={rf_curve_name!r}"
-    #                 )
-
-    #             # Parse the tenor token.
-    #             label, signed_offset = parse_bracket_token(rf_tenor_token)
-
-    #             # Error is signed offset is not none.
-    #             if signed_offset is not None:
-    #                 raise ValueError(
-    #                     f"alias_kind = 'LABEL' tenor_token ('{rf_tenor_token}') must not have +/- offset.\n"
-    #                     f"relative={rf_rel_name!r}\ncurve_name={rf_curve_name!r}"
-    #                 )
-
-    #             # Create absolute name.
-    #             rf_abs_name = f"{rf_curve_name}_{label}"
-
-    #             # Store.
-    #             abs_to_rf_name_and_id[rf_abs_name] = (
-    #                 rf_rel_name,
-    #                 rf_rel_name_id,
-    #             )
-
-    #             # Continue.
-    #             continue
-
-    #         # --- ALIAS KIND == 'OFFSET'
-    #         elif rf_alias.alias_kind == "OFFSET":
-    #             # Token cannot be None.
-    #             if rf_tenor_token is None:
-    #                 raise ValueError(
-    #                     "alias_kind = OFFSET risk factor missing tenor_token.\n"
-    #                     f"relative={rf_rel_name!r}\ncurve_name={rf_curve_name!r}"
-    #                 )
-
-    #             # spot_roll_rule_name cannot be None or missing for OFFSET.
-    #             if (
-    #                 rf_cm.spot_roll_rule_name is None
-    #                 or rf_cm.spot_roll_rule_name == "None"
-    #             ):
-    #                 raise ValueError(
-    #                     "alias_kind = OFFSET curve missing spot_roll_rule_name in curve_mapping.\n"
-    #                     f"relative={rf_rel_name!r}\ncurve_name={rf_curve_name!r}"
-    #                 )
-
-    #             # Parse RF tenor token
-    #             tenor_token_unit, tenor_token_signed_offset = (
-    #                 parse_bracket_token(rf_tenor_token)
-    #             )
-
-    #             # Need +/- offset.
-    #             if tenor_token_signed_offset is None:
-    #                 raise ValueError(
-    #                     "alias_kind = OFFSET tenor_token must have +/- integer.\n"
-    #                     f"relative={rf_rel_name!r}\n"
-    #                     f"curve_name={rf_curve_name!r}"
-    #                     f"tenor_token={rf_tenor_token!r}\n"
-    #                 )
-
-    #             # Get spot roll rule
-    #             rf_srr = self.spot_roll_rules_dict.get(
-    #                 (rf_cm.spot_roll_rule_name, rf_cm.tenor_type_name),
-    #                 None,
-    #             )
-
-    #             # The RF spot roll rule (SRR) cannot be None for alias_kind = 'OFFSET'.
-    #             if rf_srr is None:
-    #                 raise ValueError(
-    #                     "Missing spot roll rule in spot_roll_rules_dict! \n"
-    #                     "For alias_kind = OFFSET, the spot roll cannot be none! \n"
-    #                     f"spot_roll_rule_name={rf_cm.spot_roll_rule_name!r}\n"
-    #                     f"tenor_type_name={rf_cm.tenor_type_name!r}\n"
-    #                     f"relative={rf_rel_name!r}\n"
-    #                     f"curve_name={rf_curve_name!r}"
-    #                 )
-
-    #             # Extract.
-    #             rf_spot_roll_method = rf_srr.spot_roll_method
-    #             rf_tenor_type_name = rf_cm.tenor_type_name
-
-    #             # Normalize optional ints (SpotRollRule stores np.int32 or None)
-    #             rf_offset = int(rf_srr.offset_in_tenor_units or 0)
-    #             rf_roll_month = int(rf_srr.roll_month or 0)
-    #             rf_roll_day = int(rf_srr.roll_day or 0)
-    #             rf_post_shift = int(rf_srr.post_roll_shift or 0)
-
-    #             # Get the relative name.
-    #             if (
-    #                 rf_tenor_type_name == "TENOR_YM"
-    #                 and rf_spot_roll_method == "CALENDAR_PERIOD"
-    #             ):
-    #                 # M+0 anchored to first day of asof month, shifted by rule offset
-    #                 spot_month_yyyymm01 = (
-    #                     add_months_to_date_and_return_yyyymm01(
-    #                         d=date(as_of_date.year, as_of_date.month, 1),
-    #                         months_to_add=rf_offset,
-    #                     )
-    #                 )
-
-    #                 # Get RF absolute date.
-    #                 rf_abs_date_yyyymm01 = (
-    #                     add_months_to_date_and_return_yyyymm01(
-    #                         d=spot_month_yyyymm01,
-    #                         months_to_add=int(tenor_token_signed_offset),
-    #                     )
-    #                 )
-
-    #                 # Create absolute name.
-    #                 rf_abs_name = f"{rf_curve_name}_{fmt_date_as_str_yyyymm(rf_abs_date_yyyymm01)}"
-
-    #                 # Store.
-    #                 abs_to_rf_name_and_id[rf_abs_name] = (
-    #                     rf_rel_name,
-    #                     rf_rel_name_id,
-    #                 )
-
-    #                 # Continue.
-    #                 continue
-
-    #             # Get the relative name.
-    #             elif (
-    #                 rf_tenor_type_name == "TENOR_Y"
-    #                 and rf_spot_roll_method == "ROLL_ON_MMDD"
-    #             ):
-    #                 # Get the spot year for the as-of-date.
-    #                 spot_year = get_spot_year(
-    #                     as_of_date=as_of_date,
-    #                     roll_month=rf_roll_month,
-    #                     roll_day=rf_roll_day,
-    #                     post_roll_shift=rf_post_shift,
-    #                 )
-
-    #                 # Compute absolute year from as-of-date.
-    #                 year = spot_year + int(tenor_token_signed_offset)
-
-    #                 # Create absolute name.
-    #                 rf_abs_name = f"{rf_curve_name}_{year:04d}"
-
-    #                 # Store.
-    #                 abs_to_rf_name_and_id[rf_abs_name] = (
-    #                     rf_rel_name,
-    #                     rf_rel_name_id,
-    #                 )
-
-    #                 # Continue.
-    #                 continue
-
-    #             # Get the relative name.
-    #             elif (
-    #                 rf_tenor_type_name == "TENOR_YMD"
-    #                 and rf_spot_roll_method == "HALF_YEAR_BY_DATE"
-    #             ):
-    #                 # Get FH and BH MM-DD dates.
-    #                 fh_bh_ddmm = rf_srr.fh_bh_ddmm
-
-    #                 # Cannot be None.
-    #                 if fh_bh_ddmm is None:
-    #                     raise ValueError(
-    #                         f"spot_roll_method = 'HALF_YEAR_BY_DATE' missing fh_bh_ddmm!\n"
-    #                         f"spot_roll_rule_name={rf_cm.spot_roll_rule_name!r}\n"
-    #                         f"tenor_type_name={rf_cm.tenor_type_name!r}\n"
-    #                         f"relative={rf_rel_name!r}\n"
-    #                         f"curve_name={rf_curve_name!r}"
-    #                     )
-
-    #                 # Split FH and BH
-    #                 fh_mmdd, bh_mmdd = fh_bh_ddmm.split("|")
-
-    #                 # Sanity.
-    #                 if len(fh_mmdd) != 4 or len(bh_mmdd) != 4:
-    #                     raise ValueError(
-    #                         f"fh_bh_ddmm ('{fh_bh_ddmm}) must be of form 'ddmm|ddmm'!"
-    #                     )
-
-    #                 # Get year of as of date.
-    #                 as_of_year = as_of_date.year
-
-    #                 # Business rule for HALF_YEAR_BY_DATE:
-    #                 #   - Build a chronological sequence of FH/BH boundary dates around the as-of date
-    #                 #   - Define HY+0 as the first boundary date that is >= as_of_date
-    #                 #   - Apply the signed offset from the token (HY+k moves k boundaries forward/backward)
-    #                 #   - The resulting boundary date becomes the absolute YYYYMMDD suffix
-
-    #                 # Choose a tight year window so we never allocate more than necessary.
-    #                 # We need enough boundaries to cover the requested +/- offset.
-    #                 look_years = max(3, abs(int(tenor_token_signed_offset)) + 1)
-
-    #                 # Build a sorted list of boundary dates:
-    #                 #   [ ... , YYYY-<FH>, YYYY-<BH>, (YYYY+1)-<FH>, (YYYY+1)-<BH>, ... ]
-    #                 boundaries: list[date] = []
-    #                 for y in range(
-    #                     as_of_year - look_years, as_of_year + look_years + 1
-    #                 ):
-    #                     boundaries.append(
-    #                         date(
-    #                             year=y,
-    #                             month=int(fh_mmdd[:2]),
-    #                             day=int(fh_mmdd[2:]),
-    #                         )
-    #                     )
-    #                     boundaries.append(
-    #                         date(
-    #                             year=y,
-    #                             month=int(bh_mmdd[:2]),
-    #                             day=int(bh_mmdd[2:]),
-    #                         )
-    #                     )
-    #                 boundaries.sort()
-    #                 # print("boundaries:", boundaries)
-
-    #                 # HY+0 anchor: first boundary >= as_of_date
-    #                 idx_hy0 = bisect_left(boundaries, as_of_date)
-
-    #                 # Apply signed offset from token, e.g. HY+1 => next boundary, HY-2 => two boundaries back
-    #                 idx_target = idx_hy0 + int(tenor_token_signed_offset)
-
-    #                 # Fail fast if the offset pushes outside our constructed grid
-    #                 if idx_target < 0 or idx_target >= len(boundaries):
-    #                     raise ValueError(
-    #                         "HALF_YEAR_BY_DATE offset out of range for constructed boundary grid.\n"
-    #                         f"curve_name={rf_curve_name!r}\nrelative={rf_rel_name!r}\n"
-    #                         f"tenor_token={rf_tenor_token!r}\nas_of_date={as_of_date}\n"
-    #                         f"fh_bh_ddmm={fh_bh_ddmm!r}\n"
-    #                         f"grid_years=[{as_of_year - look_years}, {as_of_year + look_years}]"
-    #                     )
-
-    #                 # Absolute delivery date is the chosen boundary
-    #                 abs_dt = boundaries[idx_target]
-
-    #                 # Convert to YYYYMMDD string suffix for the absolute name
-    #                 yyyymmdd_str = (
-    #                     f"{abs_dt.year:04d}{abs_dt.month:02d}{abs_dt.day:02d}"
-    #                 )
-
-    #                 # Create absolute name.
-    #                 rf_abs_name = f"{rf_curve_name}_{yyyymmdd_str}"
-
-    #                 # Store.
-    #                 abs_to_rf_name_and_id[rf_abs_name] = (
-    #                     rf_rel_name,
-    #                     rf_rel_name_id,
-    #                 )
-
-    #                 # Continue.
-    #                 continue
-
-    #             # Error as not implemented or invalid.
-    #             else:
-    #                 raise ValueError(
-    #                     "Unsupported OFFSET resolution combination: "
-    #                     f"(tenor_type_name, rf_spot_roll_method) = ('{rf_tenor_type_name}', '{rf_spot_roll_method}')\n"
-    #                     f"curve_name={rf_curve_name!r}\n"
-    #                     f"relative={rf_rel_name!r}\n"
-    #                     f"relative_id={rf_rel_name_id!r}\n"
-    #                     f"tenor_token={rf_tenor_token!r}"
-    #                 )
-
-    #     return RiskFactorNameAbsToRelMapping(
-    #         as_of_date=as_of_date,
-    #         abs_to_rf_name_and_id=abs_to_rf_name_and_id,
-    #     )
+    # Core
+    container_meta_dict: Dict[str, ContainerMeta] = field(
+        init=True,
+        repr=False,
+    )
+    risk_factors_dict: Dict[str, RiskFactor] = field(
+        init=True,
+        repr=False,
+    )
+
+    # Schemas & Rules
+    tenor_schema_dict: Dict[str, TenorSchema] = field(
+        init=True,
+        repr=False,
+    )
+    alias_schema_dict: Dict[str, AliasSchema] = field(
+        init=True,
+        repr=False,
+    )
+    spot_roll_rules_dict: Dict[Tuple[str, str], SpotRollRule] = field(
+        init=True, repr=False
+    )
+    surface_y_axis_schema_dict: Dict[str, SurfaceYAxisType] = field(
+        init=True, repr=False
+    )
+
+    # Lookups
+    asset_classes_dict: Dict[str, AssetClass] = field(
+        init=True,
+        repr=False,
+    )
+    asset_subclasses_dict: Dict[str, AssetSubclass] = field(
+        init=True, repr=False
+    )
+    unit_types_dict: Dict[str, UnitType] = field(
+        init=True,
+        repr=False,
+    )
+    unit_scales_dict: Dict[str, UnitScale] = field(
+        init=True,
+        repr=False,
+    )
+    day_count_conventions_dict: Dict[str, DayCountConvention] = field(
+        init=True, repr=False
+    )
+    business_day_conventions_dict: Dict[str, BusinessDayConvention] = field(
+        init=True, repr=False
+    )
+    compounding_conventions_dict: Dict[str, CompoundingConvention] = field(
+        init=True, repr=False
+    )
+    interpolation_methods_dict: Dict[str, InterpolationMethod] = field(
+        init=True, repr=False
+    )
+    extrapolation_methods_dict: Dict[str, ExtrapolationMethod] = field(
+        init=True, repr=False
+    )
+    ccy_dict: Dict[str, Ccy] = field(
+        init=True,
+        repr=False,
+    )
+    shift_types_dict: Dict[str, ShiftType] = field(
+        init=True,
+        repr=False,
+    )
+
+    # Proxies & Calendars
+    curve_proxies_dict: Dict[str, ContainerProxyMap] = field(
+        init=True,
+        repr=False,
+    )
+    risk_factor_proxies_dict: Dict[str, RiskFactorProxyMap] = field(
+        init=True,
+        repr=False,
+    )
+    holiday_calendars_dict: Dict[str, HolidayCalendar] = field(
+        init=True,
+        repr=False,
+    )
+
+    # --- INTERNAL CACHES --- #
+    # Initialized as None; populated lazily on first access using object.__setattr__
+    _rf_name_to_rf_id: Optional[Dict[str, int]] = field(
+        default=None,
+        repr=False,
+        init=False,
+    )
+    _rf_id_to_proxy_rf_id: Optional[Dict[int, Tuple[int, float]]] = field(
+        default=None,
+        repr=False,
+        init=False,
+    )
+    _rf_id_to_risk_factor: Optional[Dict[int, RiskFactor]] = field(
+        default=None,
+        repr=False,
+        init=False,
+    )
+    _rf_id_to_shift_type_id: Optional[Dict[int, int]] = field(
+        default=None,
+        repr=False,
+        init=False,
+    )
+    _curve_tenor_index: Optional[
+        Dict[str, Tuple[np.ndarray, np.ndarray, Dict[str, int]]]
+    ] = field(
+        default=None,
+        repr=False,
+        init=False,
+    )
+
+    def __post_init__(self) -> None:
+        if not self.container_meta_dict:
+            raise ValueError(
+                "container_meta_dict is empty. Check your container_meta sheet and 'active' flags."
+            )
+        if not self.risk_factors_dict:
+            raise ValueError(
+                "risk_factors_dict is empty. Check your risk_factors sheet and 'active' flags."
+            )
+
+    def summary(self) -> str:
+        lines = [
+            "=== Risk Static Config Summary ===",
+            f"Containers Mapped: {len(self.container_meta_dict)}",
+            f"Risk Factors: {len(self.risk_factors_dict)}",
+            f"Asset Classes: {len(self.asset_classes_dict)}",
+            f"Currencies: {len(self.ccy_dict)}",
+            f"Shift Types: {len(self.shift_types_dict)}",
+            f"Container Proxies: {len(self.curve_proxies_dict)}",
+            f"Risk Factor Proxies: {len(self.risk_factor_proxies_dict)}",
+            "==================================",
+        ]
+        return "\n".join(lines)
+
+    def get_risk_factor_id(self, risk_factor_name: str) -> int:
+        return self.risk_factors_dict[risk_factor_name].risk_factor_name_id
+
+    @property
+    def rf_name_to_rf_id(self) -> Dict[str, int]:
+        """A build-once cache: risk_factor_name -> risk_factor_name_id"""
+        if self._rf_name_to_rf_id is None:
+            object.__setattr__(
+                self,
+                "_rf_name_to_rf_id",
+                {
+                    k: v.risk_factor_name_id
+                    for k, v in self.risk_factors_dict.items()
+                },
+            )
+        return self._rf_name_to_rf_id
+
+    @property
+    def rf_id_to_proxy_rf_id(self) -> Dict[int, Tuple[int, float]]:
+        """A build-once cache of RF ID-level proxy overrides: required_rf_id -> (proxy_rf_id, vol_scale)"""
+        if self._rf_id_to_proxy_rf_id is None:
+            rf_name_map = self.rf_name_to_rf_id
+            out: Dict[int, Tuple[int, float]] = {}
+            for p in self.risk_factor_proxies_dict.values():
+                rf_id = int(rf_name_map[p.risk_factor_name])
+                proxy_rf_id = int(rf_name_map[p.proxy_risk_factor_name])
+                scale = float(p.proxy_risk_factor_vol_scaling_factor or 1.0)
+                out[rf_id] = (proxy_rf_id, scale)
+            object.__setattr__(self, "_rf_id_to_proxy_rf_id", out)
+        return self._rf_id_to_proxy_rf_id
+
+    @property
+    def rf_id_to_risk_factor(self) -> Dict[int, RiskFactor]:
+        """Cached mapping: risk_factor_name_id (int) -> RiskFactor"""
+        if self._rf_id_to_risk_factor is None:
+            out: Dict[int, RiskFactor] = {}
+            for rf in self.risk_factors_dict.values():
+                rf_id = int(rf.risk_factor_name_id)
+                if rf_id in out:
+                    raise ValueError(
+                        f"Duplicate risk_factor_name_id detected: {rf_id}"
+                    )
+                out[rf_id] = rf
+            object.__setattr__(self, "_rf_id_to_risk_factor", out)
+        return self._rf_id_to_risk_factor
+
+    @property
+    def rf_id_to_shift_type_id(self) -> Dict[int, int]:
+        """Cached mapping: risk_factor_name_id (int) -> shift_type_id (int)"""
+        if self._rf_id_to_shift_type_id is None:
+            out: Dict[int, int] = {}
+            for rf in self.risk_factors_dict.values():
+                rf_id = int(rf.risk_factor_name_id)
+                cm = self.container_meta_dict.get(rf.container_name)
+                if cm is None:
+                    raise KeyError(
+                        f"curve_name={rf.container_name!r} not found in container_meta_dict."
+                    )
+
+                st_obj = self.shift_types_dict.get(cm.shift_type_name)
+                if st_obj is None:
+                    raise KeyError(
+                        f"shift_type_name={cm.shift_type_name!r} not found in shift_types_dict."
+                    )
+
+                out[rf_id] = int(st_obj.shift_type_id)
+            object.__setattr__(self, "_rf_id_to_shift_type_id", out)
+        return self._rf_id_to_shift_type_id
+
+    @property
+    def curve_tenor_index(
+        self,
+    ) -> Dict[str, Tuple[np.ndarray, np.ndarray, Dict[str, int]]]:
+        """Cached per-curve tenor lookup used by curve-level proxy resolution."""
+        if self._curve_tenor_index is not None:
+            return self._curve_tenor_index
+
+        offsets: Dict[str, list[int]] = {}
+        offset_ids: Dict[str, list[int]] = {}
+        labels: Dict[str, Dict[str, int]] = {}
+
+        for rf_id, rf in self.rf_id_to_risk_factor.items():
+            rf_curve_name = rf.container_name
+            rf_tenor_token = rf.tenor_token
+
+            if rf_tenor_token is None:
+                labels.setdefault(rf_curve_name, {})[""] = int(rf_id)
+                continue
+
+            rf_unit, rf_offset = parse_bracket_token(rf_tenor_token)
+
+            if rf_offset is None:
+                labels.setdefault(rf_curve_name, {})[rf_unit] = int(rf_id)
+            else:
+                offsets.setdefault(rf_curve_name, []).append(int(rf_offset))
+                offset_ids.setdefault(rf_curve_name, []).append(int(rf_id))
+
+        out: Dict[str, Tuple[np.ndarray, np.ndarray, Dict[str, int]]] = {}
+
+        for rf_curve_name, rf_offset_list in offsets.items():
+            rf_ids_list = offset_ids[rf_curve_name]
+            rf_offsets_arr = np.asarray(rf_offset_list, dtype=np.int32)
+            rf_ids_arr = np.asarray(rf_ids_list, dtype=np.int32)
+
+            rf_offset_idx = np.argsort(rf_offsets_arr, kind="mergesort")
+
+            out[rf_curve_name] = (
+                rf_offsets_arr[rf_offset_idx],
+                rf_ids_arr[rf_offset_idx],
+                labels.get(rf_curve_name, {}),
+            )
+
+        for rf_curve_name, rf_curve_label_to_rf_id in labels.items():
+            if rf_curve_name not in out:
+                out[rf_curve_name] = (
+                    np.empty(0, dtype=np.int32),
+                    np.empty(0, dtype=np.int32),
+                    rf_curve_label_to_rf_id,
+                )
+
+        object.__setattr__(self, "_curve_tenor_index", out)
+        return out
+
+
+if __name__ == "__main__":
+    pass
 
 ```
 
@@ -1558,34 +1023,264 @@ if __name__ == "__main__":
 
 ### FILE: config\resolution.py ###
 ```python
+# src/riskquant/config/resolution.py
 from __future__ import annotations
 
-import re
 from bisect import bisect_left
 from dataclasses import dataclass
-from dataclasses import field
 from datetime import date
 from typing import (
     Dict,
-    Tuple,
     Mapping,
     Sequence,
+    Tuple,
     overload,
 )
 
 import numpy as np
 import pandas as pd
 
-# ========================================================== #
-# --- RISK FACTOR ABSOLUTE NAME TO RELATIVE NAME MAPPING --- #
-# ========================================================== #
+
+# Ensure these utility functions are available in riskquant.utils.tenors
+from riskquant.config.configs import RiskStaticConfig
+from riskquant.utils.tenors import (
+    add_months_to_date_and_return_yyyymm01,
+    fmt_date_as_str_yyyymm,
+    get_spot_year,
+    parse_bracket_token,
+)
 
 
-from typing import Dict, Sequence
+def build_risk_factor_name_mapping_for_as_of_date(
+    *,
+    config: RiskStaticConfig,
+    as_of_date: date,
+) -> RiskFactorNameAbsToRelMapping:
+    """
+    Resolve relative risk factor names into absolute names for a given as_of_date.
 
-import pandas as pd
+    Design:
+        - Interrogates `config.risk_factors_dict` to define the universe of valid factors.
+        - Translates each relative factor to its absolute name based on spot roll rules.
+    """
+    abs_to_rf_name_and_id: Dict[str, Tuple[str, int]] = {}
 
-from riskquant.utils.printer import print_success_message
+    for rf in config.risk_factors_dict.values():
+        print(rf)
+        rf_rel_name = rf.risk_factor_name
+        rf_rel_name_id = rf.risk_factor_name_id
+        rf_container_name = rf.container_name
+        rf_tenor_token = rf.tenor_token
+
+        # Get container meta
+        rf_cm = config.container_meta_dict.get(rf_container_name)
+        if rf_cm is None:
+            raise ValueError(
+                "risk_factors_dict references unknown container_name.\n"
+                f"container_name={rf_container_name!r}\n"
+                f"relative={rf_rel_name!r}"
+            )
+
+        # ======================================================== #
+        # === HANDLE SCALAR CONTAINERS (FX SPOT, EQUITIES, ETC) == #
+        # ======================================================== #
+        if rf_cm.alias_type_name is None:
+            if rf_tenor_token is not None:
+                raise ValueError(
+                    f"Risk factor ID tenor_token ({rf_tenor_token}) must be None when alias_type_name is None.\n"
+                    f"relative={rf_rel_name!r}\n"
+                    "container_name={rf_container_name!r}"
+                )
+            # Scalar factors just map to themselves (no term structure to roll)
+            abs_to_rf_name_and_id[rf_rel_name] = (rf_rel_name, rf_rel_name_id)
+            continue
+
+        # Get alias schema
+        rf_alias = config.alias_schema_dict.get(rf_cm.alias_type_name)
+        if rf_alias is None:
+            raise ValueError(
+                "container_meta_dict references unknown alias_type_name.\n"
+                f"container_name={rf_cm.container_name!r}\n"
+                "alias_type_name={rf_cm.alias_type_name!r}"
+            )
+
+        # ================================ #
+        # === RESOLVE TO ABSOLUTE NAME === #
+        # ================================ #
+
+        if rf_alias.alias_kind == "NONE":
+            if rf_tenor_token is not None:
+                raise ValueError(
+                    f"Risk factor ID tenor_token ({rf_tenor_token}) must be None for alias_kind = 'NONE'.\n"
+                    f"relative={rf_rel_name!r}\ncurve_name={rf_container_name!r}"
+                )
+            abs_to_rf_name_and_id[rf_rel_name] = (rf_rel_name, rf_rel_name_id)
+            continue
+
+        elif rf_alias.alias_kind == "LABEL":
+            if rf_tenor_token is None:
+                raise ValueError(
+                    "Risk factor missing tenor_token for alias_kind = 'LABEL'.\n"
+                    f"relative={rf_rel_name!r}\ncurve_name={rf_container_name!r}"
+                )
+            label, signed_offset = parse_bracket_token(rf_tenor_token)
+            if signed_offset is not None:
+                raise ValueError(
+                    f"alias_kind = 'LABEL' tenor_token ('{rf_tenor_token}') must not have +/- offset.\n"
+                    f"relative={rf_rel_name!r}\ncurve_name={rf_container_name!r}"
+                )
+            rf_abs_name = f"{rf_container_name}_{label}"
+            abs_to_rf_name_and_id[rf_abs_name] = (rf_rel_name, rf_rel_name_id)
+            continue
+
+        elif rf_alias.alias_kind == "OFFSET":
+            if rf_tenor_token is None:
+                raise ValueError(
+                    "alias_kind = OFFSET risk factor missing tenor_token.\n"
+                    f"relative={rf_rel_name!r}\ncurve_name={rf_container_name!r}"
+                )
+
+            if (
+                not rf_cm.spot_roll_rule_name
+                or rf_cm.spot_roll_rule_name == "None"
+            ):
+                raise ValueError(
+                    "alias_kind = OFFSET curve missing spot_roll_rule_name in container_meta.\n"
+                    f"relative={rf_rel_name!r}\ncurve_name={rf_container_name!r}"
+                )
+
+            tenor_token_unit, tenor_token_signed_offset = parse_bracket_token(
+                rf_tenor_token
+            )
+            if tenor_token_signed_offset is None:
+                raise ValueError(
+                    "alias_kind = OFFSET tenor_token must have +/- integer.\n"
+                    f"relative={rf_rel_name!r}\ncurve_name={rf_container_name!r}\ntenor_token={rf_tenor_token!r}\n"
+                )
+
+            # Retrieve rule
+            rf_srr = config.spot_roll_rules_dict.get(
+                (rf_cm.spot_roll_rule_name, rf_cm.tenor_type_name)
+            )
+            if rf_srr is None:
+                raise ValueError(
+                    "Missing spot roll rule in spot_roll_rules_dict!\n"
+                    f"spot_roll_rule_name={rf_cm.spot_roll_rule_name!r}\n"
+                    f"tenor_type_name={rf_cm.tenor_type_name!r}\n"
+                    f"relative={rf_rel_name!r}\ncurve_name={rf_container_name!r}"
+                )
+
+            rf_spot_roll_method = rf_srr.spot_roll_method
+            rf_tenor_type_name = rf_cm.tenor_type_name
+
+            rf_offset = int(rf_srr.offset_in_tenor_units or 0)
+            rf_roll_month = int(rf_srr.roll_month or 0)
+            rf_roll_day = int(rf_srr.roll_day or 0)
+            rf_post_shift = int(rf_srr.post_roll_shift or 0)
+
+            # Resolution Logic
+            if (
+                rf_tenor_type_name == "TENOR_YM"
+                and rf_spot_roll_method == "CALENDAR_PERIOD"
+            ):
+                spot_month_yyyymm01 = add_months_to_date_and_return_yyyymm01(
+                    d=date(as_of_date.year, as_of_date.month, 1),
+                    months_to_add=rf_offset,
+                )
+                rf_abs_date_yyyymm01 = add_months_to_date_and_return_yyyymm01(
+                    d=spot_month_yyyymm01,
+                    months_to_add=int(tenor_token_signed_offset),
+                )
+                rf_abs_name = f"{rf_container_name}_{fmt_date_as_str_yyyymm(rf_abs_date_yyyymm01)}"
+                abs_to_rf_name_and_id[rf_abs_name] = (
+                    rf_rel_name,
+                    rf_rel_name_id,
+                )
+                continue
+
+            elif (
+                rf_tenor_type_name == "TENOR_Y"
+                and rf_spot_roll_method == "ROLL_ON_MMDD"
+            ):
+                spot_year = get_spot_year(
+                    as_of_date=as_of_date,
+                    roll_month=rf_roll_month,
+                    roll_day=rf_roll_day,
+                    post_roll_shift=rf_post_shift,
+                )
+                year = spot_year + int(tenor_token_signed_offset)
+                rf_abs_name = f"{rf_container_name}_{year:04d}"
+                abs_to_rf_name_and_id[rf_abs_name] = (
+                    rf_rel_name,
+                    rf_rel_name_id,
+                )
+                continue
+
+            elif (
+                rf_tenor_type_name == "TENOR_YMD"
+                and rf_spot_roll_method == "HALF_YEAR_BY_DATE"
+            ):
+                fh_bh_ddmm = rf_srr.fh_bh_ddmm
+                if not fh_bh_ddmm:
+                    raise ValueError(
+                        "spot_roll_method = 'HALF_YEAR_BY_DATE' missing fh_bh_ddmm!\n"
+                        f"spot_roll_rule_name={rf_cm.spot_roll_rule_name!r}\n"
+                        f"relative={rf_rel_name!r}\ncurve_name={rf_container_name!r}"
+                    )
+
+                fh_mmdd, bh_mmdd = fh_bh_ddmm.split("|")
+                if len(fh_mmdd) != 4 or len(bh_mmdd) != 4:
+                    raise ValueError(
+                        f"fh_bh_ddmm ('{fh_bh_ddmm}') must be of form 'ddmm|ddmm'!"
+                    )
+
+                as_of_year = as_of_date.year
+                look_years = max(3, abs(int(tenor_token_signed_offset)) + 1)
+
+                boundaries: list[date] = []
+                for y in range(
+                    as_of_year - look_years, as_of_year + look_years + 1
+                ):
+                    boundaries.append(
+                        date(y, int(fh_mmdd[:2]), int(fh_mmdd[2:]))
+                    )
+                    boundaries.append(
+                        date(y, int(bh_mmdd[:2]), int(bh_mmdd[2:]))
+                    )
+                boundaries.sort()
+
+                idx_hy0 = bisect_left(boundaries, as_of_date)
+                idx_target = idx_hy0 + int(tenor_token_signed_offset)
+
+                if idx_target < 0 or idx_target >= len(boundaries):
+                    raise ValueError(
+                        "HALF_YEAR_BY_DATE offset out of range for constructed boundary grid.\n"
+                        f"curve_name={rf_container_name!r}\nrelative={rf_rel_name!r}\n"
+                    )
+
+                abs_dt = boundaries[idx_target]
+                yyyymmdd_str = (
+                    f"{abs_dt.year:04d}{abs_dt.month:02d}{abs_dt.day:02d}"
+                )
+                rf_abs_name = f"{rf_container_name}_{yyyymmdd_str}"
+
+                abs_to_rf_name_and_id[rf_abs_name] = (
+                    rf_rel_name,
+                    rf_rel_name_id,
+                )
+                continue
+
+            else:
+                raise ValueError(
+                    "Unsupported OFFSET resolution combination: "
+                    f"(tenor_type_name, rf_spot_roll_method) = ('{rf_tenor_type_name}', '{rf_spot_roll_method}')\n"
+                    f"curve_name={rf_container_name!r}\nrelative={rf_rel_name!r}\n"
+                )
+
+    return RiskFactorNameAbsToRelMapping(
+        as_of_date=as_of_date,
+        abs_to_rf_name_and_id=abs_to_rf_name_and_id,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1615,6 +1310,16 @@ class RiskFactorNameAbsToRelMapping:
                     "Each absolute risk factor must map to a unique risk_factor_name_id."
                 )
             seen[iv] = abs_name
+
+    @staticmethod
+    def from_config(
+        config: RiskStaticConfig,
+        as_of_date: date,
+    ) -> "RiskFactorNameAbsToRelMapping":
+        return build_risk_factor_name_mapping_for_as_of_date(
+            config=config,
+            as_of_date=as_of_date,
+        )
 
     @overload
     def get(self, abs_name: str) -> tuple[str, int]: ...
@@ -1666,8 +1371,8 @@ class RiskFactorNameAbsToRelMapping:
     def to_df(self) -> pd.DataFrame:
         """
         Return a DataFrame with columns:
-          [as_of_date, absolute_name, risk_factor_name, risk_factor_id]
-        Rows are deterministically ordered by absolute_name.
+          [risk_factor_name, risk_factor_id]
+        Rows are deterministically ordered by absolute_name (the index).
         """
         items = sorted(self.abs_to_rf_name_and_id.items(), key=lambda x: x[0])
         abs_names = [k for k, _ in items]
@@ -1678,7 +1383,6 @@ class RiskFactorNameAbsToRelMapping:
 
         df = pd.DataFrame(
             {
-                # "as_of_date": self.as_of_date,
                 "risk_factor_name": rel_names,
                 "risk_factor_id": ids,
             },
@@ -1693,7 +1397,6 @@ class RiskFactorNameAbsToRelMapping:
 
     @property
     def abs_to_rf_name(self) -> Dict[str, str]:
-        # Materialize a simple abs -> rel mapping (small; created on demand)
         return {
             abs_name: str(rf_name_and_id[0])
             for abs_name, rf_name_and_id in self.abs_to_rf_name_and_id.items()
@@ -1701,7 +1404,6 @@ class RiskFactorNameAbsToRelMapping:
 
     @property
     def abs_to_rf_id(self) -> Dict[str, int]:
-        # Materialize a simple abs -> id mapping (small; created on demand)
         return {
             abs_name: int(rf_name_and_id[1])
             for abs_name, rf_name_and_id in self.abs_to_rf_name_and_id.items()
@@ -1709,7 +1411,6 @@ class RiskFactorNameAbsToRelMapping:
 
     @property
     def rf_name_to_rf_id(self) -> Dict[str, int]:
-        # Materialize a simple abs -> id mapping (small; created on demand)
         return {
             rf_name_and_id[0]: int(rf_name_and_id[1])
             for _, rf_name_and_id in self.abs_to_rf_name_and_id.items()
@@ -1717,26 +1418,7 @@ class RiskFactorNameAbsToRelMapping:
 
 
 if __name__ == "__main__":
-    # Example usage
-    mapping = RiskFactorNameAbsToRelMapping(
-        as_of_date=date(2024, 6, 30),
-        abs_to_rf_name_and_id={
-            "ABS_RF_1": ("REL_RF_A", 101),
-            "ABS_RF_2": ("REL_RF_B", 102),
-            "ABS_RF_3": ("REL_RF_C", 103),
-        },
-    )
-
-    print(mapping.get("ABS_RF_1"))  # Output: ('REL_RF_A', 101)
-    print(
-        mapping.get(["ABS_RF_1", "ABS_RF_2"])
-    )  # Output: [('REL_RF_A', 101), ('REL_RF_B', 102)]
-    print(mapping.get_rf_name_for_abs_name("ABS_RF_2"))  # Output: 'REL_RF_B'
-    print(mapping.get_rf_id_for_abs_name("ABS_RF_3"))  # Output: 103
-    print(mapping.to_df())
-
-    # Print success message to confirm that the test ran without errors.
-    print_success_message()
+    pass
 
 ```
 
@@ -1852,7 +1534,7 @@ class CompoundingConvention:
 
 
 @dataclass(frozen=True, slots=True)
-class ContainerMapping:
+class ContainerMeta:
     """
     Metadata for a container (curve, surface, FX spot, etc).
 
@@ -2023,7 +1705,10 @@ class HolidayCalendar:
 
 
 if __name__ == "__main__":
-    pass
+    Ccy(ccy="USDEUR", ccy_id=1)
+
+    # Print success message
+    print_success_message()
 
 ```
 
@@ -2157,6 +1842,515 @@ if __name__ == "__main__":
 
     # If we reach this point without exceptions, all validations have passed.
     print_success_message()
+
+```
+
+### FILE: utils\__init__.py ###
+```python
+# src\riskquant\utils\__init__.py
+```
+
+### FILE: utils\dates.py ###
+```python
+# riskquant/utils/dates.py
+from __future__ import annotations
+
+import datetime as dt
+from typing import Iterable, Final, List, Tuple, Union
+
+import numpy as np
+import pandas as pd
+
+DATE_EPOCH: Final[dt.date] = dt.date(1970, 1, 1)
+DATE_EPOCH_AS_DATETIME64D: Final[np.datetime64] = np.datetime64(
+    DATE_EPOCH.isoformat(),
+    "D",
+)
+
+
+def coerce_as_of_date_to_pd_timestamp(
+    as_of_date: pd.Timestamp | dt.date | pd.Timestamp | str,
+) -> pd.Timestamp:
+    """
+    Accepts: pd.Timestamp | datetime.datetime | datetime.date | str
+    Returns: pd.Timestamp (tz-naive)
+    """
+    # If str, validate format.
+    if isinstance(as_of_date, str):
+        assert_date_str_is_iso_format(as_of_date)
+
+    # As pd.Timestamp
+    ts = pd.Timestamp(as_of_date)
+
+    # If caller passed a date (no time), treat it as end-of-day inclusive
+    # so 2026-01-02 includes all times on 2026-01-02.
+    if isinstance(as_of_date, dt.date) and not isinstance(
+        as_of_date, dt.datetime
+    ):
+        ts = ts + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
+
+    # Normalize tz handling (if any). Adjust policy as you like.
+    if ts.tzinfo is not None:
+        ts = ts.tz_convert(None)
+
+    return ts
+
+
+def is_date_str_valid(date_str: str) -> bool:
+    """Checks if date_str which must have form %Y-%m-%d is a valid calendar date."""
+    if not isinstance(date_str, str):
+        return False
+    if len(date_str) != 10 or date_str[4] != "-" or date_str[7] != "-":
+        return False
+    if not date_str.replace("-", "").isdigit():
+        return False
+
+    try:
+        pd.to_datetime(date_str, format="%Y-%m-%d", errors="raise")
+    except ValueError:
+        return False
+
+    return True
+
+
+def assert_date_str_is_iso_format(date_str: str) -> None:
+    """Assert that date_str is in ISO format 'YYYY-MM-DD'."""
+    if not is_date_str_valid(date_str):
+        raise ValueError(
+            f"Date string '{date_str}' is not in 'YYYY-MM-DD' format."
+        )
+
+
+def date_str_to_date(date_str: str) -> dt.date:
+    """Convert a date string in 'YYYY-MM-DD' format to a datetime.date object."""
+    assert_date_str_is_iso_format(date_str)
+    return pd.to_datetime(date_str, format="%Y-%m-%d", errors="raise").date()
+
+
+def date_to_ordinal32(d: dt.date) -> np.int32:
+    return np.int32((d - DATE_EPOCH).days)
+
+
+def ordinal32_to_date(days: int) -> dt.date:
+    return DATE_EPOCH + pd.Timedelta(days=int(days))  # or datetime.timedelta
+
+
+def datetime64D_to_ordinal32(dts: np.ndarray) -> np.ndarray:
+    """
+    Convert numpy datetime64[D] array -> int32 days since DATE_EPOCH.
+    Returns a view/copy depending on input; no pandas involvement.
+    """
+    dts = np.asarray(dts, dtype="datetime64[D]")
+    return (dts - DATE_EPOCH_AS_DATETIME64D).astype(np.int32, copy=False)
+
+
+def ordinal32_to_datetime64D(days: np.ndarray) -> np.ndarray:
+    """
+    Convert int32 days since DATE_EPOCH -> numpy datetime64[D] array.
+    """
+    days = np.asarray(days, dtype=np.int32)
+    # Cast to timedelta64[D] then add epoch
+    return DATE_EPOCH_AS_DATETIME64D + days.astype("timedelta64[D]", copy=False)
+
+
+def ym_str_to_int_tuple(ym: str) -> tuple[int, int]:
+    """Convert 'YYYYMM' -> (YYYY, MM)."""
+    if len(ym) != 6 or not ym.isdigit():
+        raise ValueError(f"Invalid YM string: {ym}")
+    y, m = int(ym[:4]), int(ym[4:6])
+    if not 1 <= m <= 12:
+        raise ValueError(f"Invalid YM string: {ym}")
+    return y, m
+
+
+def ymd_str_to_date(ymd: str) -> dt.date:
+    """Convert 'YYYYMMDD' -> datetime.date."""
+    if len(ymd) != 8 or not ymd.isdigit():
+        raise ValueError(f"Invalid YMD string: {ymd}")
+    return dt.date(int(ymd[:4]), int(ymd[4:6]), int(ymd[6:8]))
+
+
+def month_diff(
+    *,
+    anchor_ym: tuple[int, int],
+    target_ym: tuple[int, int],
+) -> int:
+    """Difference in months: target - anchor."""
+    ay, am = anchor_ym
+    ty, tm = target_ym
+    return (ty - ay) * 12 + (tm - am)
+
+
+def next_half_year_boundary(
+    t0: dt.date,
+    ym_boundaries: Iterable[str] = ("0630", "1231"),
+) -> dt.date:
+    """
+    Return the first boundary date >= t0 among {YYYY0630, YYYY1231} (or configured boundaries).
+    If none remain in the year, return the first boundary in the next year.
+    """
+    ym_bounds = list(ym_boundaries)
+    if not ym_bounds:
+        raise ValueError("No half-year boundaries provided.")
+
+    year = t0.year
+    candidates = []
+    for b in ym_bounds:
+        if len(b) != 4 or not b.isdigit():
+            raise ValueError(f"Invalid year-month boundary 'MMDD': {b}")
+        m = int(b[:2])
+        d = int(b[2:])
+        candidates.append(dt.date(year, m, d))
+
+    for d in sorted(candidates):
+        if d >= t0:
+            return d
+
+    # none left this year -> first boundary next year (sorted)
+    year += 1
+    b0 = sorted(ym_bounds)[0]
+    return dt.date(year, int(b0[:2]), int(b0[2:]))
+
+
+def half_year_index(d: dt.date) -> tuple[int, int]:
+    """
+    Map boundary date to a half-year index:
+      YYYY-06-30 -> (YYYY, 0)
+      YYYY-12-31 -> (YYYY, 1)
+    """
+    if (d.month, d.day) == (6, 30):
+        return d.year, 0
+    if (d.month, d.day) == (12, 31):
+        return d.year, 1
+    raise ValueError(f"Not a recognized half-year boundary: {d.isoformat()}")
+
+
+def half_year_diff(
+    *,
+    anchor: dt.date,
+    target: dt.date,
+) -> int:
+    """Difference in half-years: target - anchor, where each boundary step counts as 1."""
+    ay, ah = half_year_index(anchor)
+    ty, th = half_year_index(target)
+    return (ty - ay) * 2 + (th - ah)
+
+
+def get_previous_business_date_as_iso_str(
+    *,
+    lag_in_bus_days: int = 0,
+    holiday_dates: Union[List[str], Tuple[str, ...]] = None,
+    time_str_to_append_to_date: str = None,
+) -> str:
+    # Ensure holidays is a list of strings.
+    if holiday_dates is None:
+        holiday_dates = []
+    if isinstance(holiday_dates, tuple):
+        holiday_dates = list(holiday_dates)
+    if not isinstance(holiday_dates, list):
+        raise TypeError("holiday_dates must be a list!")
+
+    # Create a custom business day with the holidays.
+    custom_business_day = pd.offsets.CustomBusinessDay(holidays=holiday_dates)
+
+    # Start from today and apply the lag and one additional business day.
+    start_date = dt.datetime.today().date()
+    adjusted_date = start_date - custom_business_day * (lag_in_bus_days + 1)
+    date_as_str = adjusted_date.strftime("%Y-%m-%d")
+
+    # Append the time string if provided, and return.
+    if time_str_to_append_to_date is not None:
+        return date_as_str + " {}".format(time_str_to_append_to_date)
+    return date_as_str
+
+
+def get_previous_business_date_as_date(
+    *,
+    lag_in_bus_days: int = 0,
+    holiday_dates: Union[List[str], Tuple[str, ...]] = None,
+    time_str_to_append_to_date: str = None,
+) -> dt.date:
+    # Get as string.
+    date_string = get_previous_business_date_as_iso_str(
+        lag_in_bus_days=lag_in_bus_days,
+        holiday_dates=holiday_dates,
+        time_str_to_append_to_date=time_str_to_append_to_date,
+    )
+
+    # To date.
+    return dt.date.fromisoformat(date_string)
+
+
+if __name__ == "__main__":
+    pass
+
+```
+
+### FILE: utils\memory.py ###
+```python
+# from __future__ import annotations
+#
+# import os
+# import tracemalloc
+#
+# import psutil
+#
+#
+# def trace_memory_top_lines(top_n: int = 25) -> None:
+#     tracemalloc.start()
+#     snap = tracemalloc.take_snapshot()
+#     stats = snap.statistics("lineno")
+#
+#     print(f"Top {top_n} allocation sites:")
+#     for stat in stats[:top_n]:
+#         size_kb = stat.size / 1024
+#         print(f"{size_kb:10.1f} KiB  {stat.traceback.format()[-1]}")
+#
+#
+# def print_process_memory(stage: str = "") -> None:
+#     """
+#     Print current process memory usage in MB.
+#     Designed for diagnostics, not for hot paths.
+#     """
+#     p = psutil.Process(os.getpid())
+#     mem_mb = p.memory_info().rss >> 20  # shift bits instead of float division
+#     label = f"[{stage}] " if stage else ""
+#     print(f"{label}Process memory (RSS): {mem_mb} MB")
+
+```
+
+### FILE: utils\printer.py ###
+```python
+# riskquant/utils/printer.py
+from typing import Any, Iterable, Mapping
+
+
+def as_list_str(x: Iterable) -> str:
+    # Convert an iterable of items to a nicely formatted string with each
+    # item on its own line, prefixed by "- ".
+    items = (str(i) for i in x)  # generator avoids extra allocations
+    return "- " + ",\n- ".join(items) + "."
+
+
+def print_as_list_str(x: Iterable) -> None:
+    print(as_list_str(x))
+
+
+def print_wrapped_text_box(
+    text: str,
+    *,
+    width: int = 70,
+    padding: int = 1,
+    corner_char: str = "+",
+    top_border: str = "-",
+    bottom_border: str = "-",
+    horiz_border: str = "|",
+    add_space_before: bool = True,
+    add_space_after: bool = True,
+) -> None:
+    """Word‑wrap `text` to `width` characters and display it in an ASCII box.
+
+    The box will have a single‑character border and the given number of spaces
+    between the text and the vertical edges.
+
+    Example:
+
+        +-------------------------------+
+        | This is a long sentence that  |
+        | will be wrapped automatically |
+        | and displayed in a neat box.  |
+        +-------------------------------+
+
+    Args:
+        text: string to render.
+        width: max characters per line inside the box.
+        padding: spaces between text and left/right borders.
+    """
+    import textwrap  # local import keeps top‑level imports unchanged
+
+    lines = textwrap.wrap(text, width=width)
+    if not lines:
+        lines = [""]
+    max_len = max(len(line) for line in lines)
+
+    inner_width = max_len + padding * 2
+    horiz = corner_char + top_border * inner_width + corner_char
+
+    if add_space_before:
+        print()
+    print(horiz)
+    for line in lines:
+        print(
+            horiz_border
+            + " " * padding
+            + line.ljust(max_len)
+            + " " * padding
+            + horiz_border
+        )
+    print(corner_char + bottom_border * inner_width + corner_char)
+    if add_space_after:
+        print()
+
+
+def print_success_message() -> None:
+    print_wrapped_text_box(
+        "SUCCESS! CODE RAN SUCCESSFULLY!",
+        width=60,
+        padding=2,
+        corner_char="*",
+        top_border="=",
+        bottom_border="=",
+    )
+
+
+def print_dict_pretty(
+    d: Mapping[str, Any],
+    *,
+    indent: int = 0,
+    indent_step: int = 4,
+    sort_keys: bool = False,
+) -> None:
+    """
+    Pretty-print a dictionary with aligned keys and nested support.
+
+    Designed for low memory overhead:
+        - No large intermediate strings
+        - Streams output directly via print
+        - Minimal recursion footprint
+
+    Args:
+        d: Dictionary (or mapping) to print.
+        indent: Initial indentation level.
+        indent_step: Spaces added per nesting level.
+        sort_keys: If True, keys are printed alphabetically.
+    """
+    if not isinstance(d, Mapping):
+        raise TypeError("print_dict_pretty expects a mapping type.")
+
+    items = sorted(d.items()) if sort_keys else d.items()
+
+    # Compute key width once for alignment
+    try:
+        max_key_len = max(len(str(k)) for k in d.keys())
+    except ValueError:  # empty dict
+        max_key_len = 0
+
+    pad = " " * indent
+
+    print(pad + "{")
+    for key, value in items:
+        key_str = str(key)
+        key_pad = key_str.ljust(max_key_len)
+
+        if isinstance(value, Mapping):
+            print(pad + " " * indent_step + f"{key_pad}:")
+            print_dict_pretty(
+                value,
+                indent=indent + indent_step * 2,
+                indent_step=indent_step,
+                sort_keys=sort_keys,
+            )
+        else:
+            print(pad + " " * indent_step + f"{key_pad}: {value}")
+
+    print(pad + "}")
+
+```
+
+### FILE: utils\tenors.py ###
+```python
+# riskquant/utils/tenors.py
+from __future__ import annotations
+
+from datetime import date
+from typing import Tuple, Optional
+
+
+def parse_bracket_token(tenor_token: str) -> Tuple[str, Optional[int]]:
+    """
+    "[Y-2]" -> ("Y", -2)
+    "[M+0]" -> ("M", 0)
+    "[D+24]" -> ("D", 24)
+    "[HY+1]" -> ("HY", 1)
+    "[ON]" -> ("ON", None)   (LABEL)
+    """
+    # Error.
+    if tenor_token is None:
+        raise ValueError("tenor_token cannot be None!")
+
+    # Strip white space.
+    s = tenor_token.strip()
+
+    # Must start with '[' and end with ']'.
+    if s.startswith("[") and s.endswith("]"):
+        s = s[1:-1].strip()
+
+    # Find the plus or minus sign.
+    plus = s.rfind("+")
+    minus = s.rfind("-")
+    sign_pos = max(plus, minus)
+
+    # If no sign.
+    if sign_pos <= 0:
+        return s, None
+
+    # Unit (Y, M, D, HY, etc.)
+    unit = s[:sign_pos]
+
+    # Signed offset.
+    offset = int(s[sign_pos:])
+
+    # Return.
+    return unit, offset
+
+
+def get_spot_year(
+    *,
+    as_of_date: date,
+    roll_month: int,
+    roll_day: int,
+    post_roll_shift: int,
+) -> int:
+    """
+    Defines which delivery year corresponds to Y+0 under ROLL_ON_MMDD.
+    """
+
+    # Get the roll date,
+    roll_date = date(as_of_date.year, roll_month, roll_day)
+
+    # Compare to as-of-date.
+    # As-of-date is on or after the roll date.
+    if as_of_date >= roll_date:
+        return (
+            as_of_date.year + post_roll_shift
+        )  # Current year plus the post_roll_shift amount (in years).
+
+    # As-of-date is before the roll date.
+    # Previous year plus the post_roll_shift amount (in years).
+    return (as_of_date.year - 1) + post_roll_shift
+
+
+def add_months_to_date_and_return_yyyymm01(
+    *,
+    d: date,
+    months_to_add: int,
+) -> date:
+    """Add months to a month-start date (day=1)."""
+    y = d.year + (d.month - 1 + months_to_add) // 12
+    m = (d.month - 1 + months_to_add) % 12 + 1
+    return date(y, m, 1)
+
+
+def fmt_date_as_str_yyyy(d: date) -> str:
+    return f"{d.year:04d}"
+
+
+def fmt_date_as_str_yyyymm(d: date) -> str:
+    return f"{d.year:04d}{d.month:02d}"
+
+
+def fmt_date_as_str_yyyymmdd(d: date) -> str:
+    return f"{d.year:04d}{d.month:02d}{d.day:02d}"
 
 ```
 

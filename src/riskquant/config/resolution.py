@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from datetime import date
 from typing import (
     Dict,
-    Final,
     Mapping,
     Sequence,
     Tuple,
@@ -16,12 +15,9 @@ from typing import (
 import numpy as np
 import pandas as pd
 
-from riskquant.config.compile import compile_risk_static_config_from_xlsx
-from riskquant.config.configs import RiskStaticConfig
-from riskquant.utils.dates import get_previous_business_date_as_iso_str
-from riskquant.utils.printer import print_success_message
 
 # Ensure these utility functions are available in riskquant.utils.tenors
+from riskquant.config.configs import RiskStaticConfig
 from riskquant.utils.tenors import (
     add_months_to_date_and_return_yyyymm01,
     fmt_date_as_str_yyyymm,
@@ -45,25 +41,42 @@ def build_risk_factor_name_mapping_for_as_of_date(
     abs_to_rf_name_and_id: Dict[str, Tuple[str, int]] = {}
 
     for rf in config.risk_factors_dict.values():
+        print(rf)
         rf_rel_name = rf.risk_factor_name
         rf_rel_name_id = rf.risk_factor_name_id
-        rf_curve_name = rf.container_name
+        rf_container_name = rf.container_name
         rf_tenor_token = rf.tenor_token
 
         # Get container meta
-        rf_cm = config.container_meta_dict.get(rf_curve_name)
+        rf_cm = config.container_meta_dict.get(rf_container_name)
         if rf_cm is None:
             raise ValueError(
                 "risk_factors_dict references unknown container_name.\n"
-                f"container_name={rf_curve_name!r}\nrelative={rf_rel_name!r}"
+                f"container_name={rf_container_name!r}\n"
+                f"relative={rf_rel_name!r}"
             )
+
+        # ======================================================== #
+        # === HANDLE SCALAR CONTAINERS (FX SPOT, EQUITIES, ETC) == #
+        # ======================================================== #
+        if rf_cm.alias_type_name is None:
+            if rf_tenor_token is not None:
+                raise ValueError(
+                    f"Risk factor ID tenor_token ({rf_tenor_token}) must be None when alias_type_name is None.\n"
+                    f"relative={rf_rel_name!r}\n"
+                    "container_name={rf_container_name!r}"
+                )
+            # Scalar factors just map to themselves (no term structure to roll)
+            abs_to_rf_name_and_id[rf_rel_name] = (rf_rel_name, rf_rel_name_id)
+            continue
 
         # Get alias schema
         rf_alias = config.alias_schema_dict.get(rf_cm.alias_type_name)
         if rf_alias is None:
             raise ValueError(
                 "container_meta_dict references unknown alias_type_name.\n"
-                f"container_name={rf_cm.container_name!r}\nalias_type_name={rf_cm.alias_type_name!r}"
+                f"container_name={rf_cm.container_name!r}\n"
+                "alias_type_name={rf_cm.alias_type_name!r}"
             )
 
         # ================================ #
@@ -74,7 +87,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
             if rf_tenor_token is not None:
                 raise ValueError(
                     f"Risk factor ID tenor_token ({rf_tenor_token}) must be None for alias_kind = 'NONE'.\n"
-                    f"relative={rf_rel_name!r}\ncurve_name={rf_curve_name!r}"
+                    f"relative={rf_rel_name!r}\ncurve_name={rf_container_name!r}"
                 )
             abs_to_rf_name_and_id[rf_rel_name] = (rf_rel_name, rf_rel_name_id)
             continue
@@ -83,15 +96,15 @@ def build_risk_factor_name_mapping_for_as_of_date(
             if rf_tenor_token is None:
                 raise ValueError(
                     "Risk factor missing tenor_token for alias_kind = 'LABEL'.\n"
-                    f"relative={rf_rel_name!r}\ncurve_name={rf_curve_name!r}"
+                    f"relative={rf_rel_name!r}\ncurve_name={rf_container_name!r}"
                 )
             label, signed_offset = parse_bracket_token(rf_tenor_token)
             if signed_offset is not None:
                 raise ValueError(
                     f"alias_kind = 'LABEL' tenor_token ('{rf_tenor_token}') must not have +/- offset.\n"
-                    f"relative={rf_rel_name!r}\ncurve_name={rf_curve_name!r}"
+                    f"relative={rf_rel_name!r}\ncurve_name={rf_container_name!r}"
                 )
-            rf_abs_name = f"{rf_curve_name}_{label}"
+            rf_abs_name = f"{rf_container_name}_{label}"
             abs_to_rf_name_and_id[rf_abs_name] = (rf_rel_name, rf_rel_name_id)
             continue
 
@@ -99,7 +112,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
             if rf_tenor_token is None:
                 raise ValueError(
                     "alias_kind = OFFSET risk factor missing tenor_token.\n"
-                    f"relative={rf_rel_name!r}\ncurve_name={rf_curve_name!r}"
+                    f"relative={rf_rel_name!r}\ncurve_name={rf_container_name!r}"
                 )
 
             if (
@@ -108,7 +121,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
             ):
                 raise ValueError(
                     "alias_kind = OFFSET curve missing spot_roll_rule_name in container_meta.\n"
-                    f"relative={rf_rel_name!r}\ncurve_name={rf_curve_name!r}"
+                    f"relative={rf_rel_name!r}\ncurve_name={rf_container_name!r}"
                 )
 
             tenor_token_unit, tenor_token_signed_offset = parse_bracket_token(
@@ -117,7 +130,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
             if tenor_token_signed_offset is None:
                 raise ValueError(
                     "alias_kind = OFFSET tenor_token must have +/- integer.\n"
-                    f"relative={rf_rel_name!r}\ncurve_name={rf_curve_name!r}\ntenor_token={rf_tenor_token!r}\n"
+                    f"relative={rf_rel_name!r}\ncurve_name={rf_container_name!r}\ntenor_token={rf_tenor_token!r}\n"
                 )
 
             # Retrieve rule
@@ -129,7 +142,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
                     "Missing spot roll rule in spot_roll_rules_dict!\n"
                     f"spot_roll_rule_name={rf_cm.spot_roll_rule_name!r}\n"
                     f"tenor_type_name={rf_cm.tenor_type_name!r}\n"
-                    f"relative={rf_rel_name!r}\ncurve_name={rf_curve_name!r}"
+                    f"relative={rf_rel_name!r}\ncurve_name={rf_container_name!r}"
                 )
 
             rf_spot_roll_method = rf_srr.spot_roll_method
@@ -153,7 +166,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
                     d=spot_month_yyyymm01,
                     months_to_add=int(tenor_token_signed_offset),
                 )
-                rf_abs_name = f"{rf_curve_name}_{fmt_date_as_str_yyyymm(rf_abs_date_yyyymm01)}"
+                rf_abs_name = f"{rf_container_name}_{fmt_date_as_str_yyyymm(rf_abs_date_yyyymm01)}"
                 abs_to_rf_name_and_id[rf_abs_name] = (
                     rf_rel_name,
                     rf_rel_name_id,
@@ -171,7 +184,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
                     post_roll_shift=rf_post_shift,
                 )
                 year = spot_year + int(tenor_token_signed_offset)
-                rf_abs_name = f"{rf_curve_name}_{year:04d}"
+                rf_abs_name = f"{rf_container_name}_{year:04d}"
                 abs_to_rf_name_and_id[rf_abs_name] = (
                     rf_rel_name,
                     rf_rel_name_id,
@@ -187,7 +200,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
                     raise ValueError(
                         "spot_roll_method = 'HALF_YEAR_BY_DATE' missing fh_bh_ddmm!\n"
                         f"spot_roll_rule_name={rf_cm.spot_roll_rule_name!r}\n"
-                        f"relative={rf_rel_name!r}\ncurve_name={rf_curve_name!r}"
+                        f"relative={rf_rel_name!r}\ncurve_name={rf_container_name!r}"
                     )
 
                 fh_mmdd, bh_mmdd = fh_bh_ddmm.split("|")
@@ -217,14 +230,14 @@ def build_risk_factor_name_mapping_for_as_of_date(
                 if idx_target < 0 or idx_target >= len(boundaries):
                     raise ValueError(
                         "HALF_YEAR_BY_DATE offset out of range for constructed boundary grid.\n"
-                        f"curve_name={rf_curve_name!r}\nrelative={rf_rel_name!r}\n"
+                        f"curve_name={rf_container_name!r}\nrelative={rf_rel_name!r}\n"
                     )
 
                 abs_dt = boundaries[idx_target]
                 yyyymmdd_str = (
                     f"{abs_dt.year:04d}{abs_dt.month:02d}{abs_dt.day:02d}"
                 )
-                rf_abs_name = f"{rf_curve_name}_{yyyymmdd_str}"
+                rf_abs_name = f"{rf_container_name}_{yyyymmdd_str}"
 
                 abs_to_rf_name_and_id[rf_abs_name] = (
                     rf_rel_name,
@@ -236,7 +249,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
                 raise ValueError(
                     "Unsupported OFFSET resolution combination: "
                     f"(tenor_type_name, rf_spot_roll_method) = ('{rf_tenor_type_name}', '{rf_spot_roll_method}')\n"
-                    f"curve_name={rf_curve_name!r}\nrelative={rf_rel_name!r}\n"
+                    f"curve_name={rf_container_name!r}\nrelative={rf_rel_name!r}\n"
                 )
 
     return RiskFactorNameAbsToRelMapping(
@@ -380,59 +393,4 @@ class RiskFactorNameAbsToRelMapping:
 
 
 if __name__ == "__main__":
-    DEV_DATA_DIR: Final[str] = (
-        "C:/Users/mharvey/Documents/code/riskquant/data/dev"
-    )
-
-    DEV_DATA_FILE_NAME_STATIC_CONFIG: Final[str] = (
-        "dev_risk_static_data_config_v01.xlsx"
-    )
-
-    # Path to the .xlsx workbook containing the static config sheets.
-    xlsx_path = DEV_DATA_DIR + "/" + DEV_DATA_FILE_NAME_STATIC_CONFIG
-
-    # Run the full compile process and print the resulting config object.
-    compiled_config = compile_risk_static_config_from_xlsx(path=xlsx_path)
-
-    # Get as of date.
-    as_of_date = get_previous_business_date_as_iso_str()
-
-    # Get risk factor mapping.
-    mapping = RiskFactorNameAbsToRelMapping.from_config(
-        as_of_date=as_of_date,
-        config=compiled_config,
-    )
-
-    # Test the mapping methods.
-    print("\nTesting mapping methods:")
-
-    # Test single absolute name lookup.
-    print("\n\nSingle lookup:")
-    print(mapping.get("ABS_RF_1"))  # Output: ('REL_RF_A', 101)
-
-    # Test batch absolute name lookup.
-    print("\n\nBatch lookup:")
-    print(
-        mapping.get(["ABS_RF_1", "ABS_RF_2"])
-    )  # Output: [('REL_RF_A', 101), ('REL_RF_B', 102)]
-
-    # Test convenience methods for getting just the relative name or ID.
-    print("\n\nConvenience methods:")
-    print("\n\nGet relative names for absolute names:")
-    print(mapping.get_rf_name_for_abs_name("ABS_RF_2"))  # Output: 'REL_RF_B'
-    print("\n\nGet IDs for absolute names:")
-    print(mapping.get_rf_id_for_abs_name("ABS_RF_3"))  # Output: 103
-    print("\n\nGet mapping as DataFrame:")
-    print(mapping.to_df())
-
-    # Property accessors for the same data.
-    print("\n\nProperty accessors:")
-    print("\n\nAbsolute to relative name mapping:")
-    print(mapping.abs_to_rf_name)  # Output: {'ABS_RF_1': 'REL_RF_A', ...}
-    print("\n\nAbsolute to relative ID mapping:")
-    print(mapping.abs_to_rf_id)  # Output: {'ABS_RF_1':   101, ...}
-    print("\n\nRelative name to relative ID mapping:")
-    print(mapping.rf_name_to_rf_id)  # Output: {'REL_RF_A': 101, ...}
-
-    # Print success message to confirm that the test ran without errors.
-    print_success_message()
+    pass

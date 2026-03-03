@@ -6,15 +6,21 @@ into runtime config objects.
 
 from __future__ import annotations
 
-from typing import Union
+from datetime import date
 from pathlib import Path
+from typing import Union
 from typing_extensions import Final
 
-from riskquant.config.configs import RiskStaticConfig
 from riskquant.config.builder import RiskStaticConfigFrames
+from riskquant.config.configs import RiskStaticConfig
 from riskquant.config.loader import load_risk_static_data_config_xlsx_into_dict
+from riskquant.config.resolution import RiskFactorNameAbsToRelMapping
 from riskquant.config.validate import validate_static_config_dfs
-from riskquant.utils.printer import print_success_message
+from riskquant.utils.dates import get_previous_business_date_as_date
+from riskquant.utils.printer import (
+    print_dict_pretty,
+    print_success_message,
+)
 
 
 def compile_risk_static_config_from_xlsx(
@@ -53,6 +59,9 @@ def compile_risk_static_config_from_xlsx(
 
 if __name__ == "__main__":
 
+    # ---------------------------------------------------------
+    # 1. Setup paths
+    # ---------------------------------------------------------
     DEV_DATA_DIR: Final[str] = (
         "C:/Users/mharvey/Documents/code/riskquant/data/dev"
     )
@@ -61,14 +70,44 @@ if __name__ == "__main__":
         "dev_risk_static_data_config_v01.xlsx"
     )
 
-    # Path to the .xlsx workbook containing the static config sheets.
     xlsx_path = DEV_DATA_DIR + "/" + DEV_DATA_FILE_NAME_STATIC_CONFIG
 
-    # Run the full compile process and print the resulting config object.
+    # ---------------------------------------------------------
+    # 2. Compile the Config
+    # ---------------------------------------------------------
+    print("\n--- Compiling Static Config ---")
     compiled_config = compile_risk_static_config_from_xlsx(path=xlsx_path)
-
-    # The compiled_config.summary() method should provide a concise overview of the config contents.
     print(compiled_config.summary())
 
-    # Print success message and a summary of the compiled config.
+    # ---------------------------------------------------------
+    # 3. Test Risk Factor Resolution for an As-Of Date
+    # ---------------------------------------------------------
+    as_of_date = get_previous_business_date_as_date()
+
+    print(f"\n--- Resolving Risk Factors for As-Of Date: {as_of_date} ---")
+
+    # Use the static method on the mapping class which calls the pure function in resolution.py
+    mapping = RiskFactorNameAbsToRelMapping.from_config(
+        config=compiled_config,
+        as_of_date=as_of_date,
+    )
+
+    # Print a small sample of the resolved mapping to verify
+    mapping_df = mapping.to_df()
+    print(f"\nSuccessfully resolved {len(mapping_df)} absolute risk factors.")
+    print("\nSample of resolved mappings (Absolute -> Relative):")
+    print(mapping_df.to_string())
+
+    # Property accessors for the same data.
+    print("\n\nProperty accessors:")
+    print("\n\nAbsolute to relative name mapping:")
+    print_dict_pretty(mapping.abs_to_rf_name)
+    print("\n\nAbsolute to relative ID mapping:")
+    print_dict_pretty(mapping.abs_to_rf_id)
+    print("\n\nRelative name to relative ID mapping:")
+    print_dict_pretty(mapping.rf_name_to_rf_id)
+
+    # ---------------------------------------------------------
+    # 4. Success
+    # ---------------------------------------------------------
     print_success_message()

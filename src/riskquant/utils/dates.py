@@ -188,10 +188,13 @@ def get_previous_business_date_as_iso_str(
     holiday_dates: Union[List[str], Tuple[str, ...]] = None,
     time_str_to_append_to_date: str = None,
 ) -> str:
-    """ """
     # Ensure holidays is a list of strings.
     if holiday_dates is None:
         holiday_dates = []
+    if isinstance(holiday_dates, tuple):
+        holiday_dates = list(holiday_dates)
+    if not isinstance(holiday_dates, list):
+        raise TypeError("holiday_dates must be a list!")
 
     # Create a custom business day with the holidays.
     custom_business_day = pd.offsets.CustomBusinessDay(holidays=holiday_dates)
@@ -205,3 +208,24 @@ def get_previous_business_date_as_iso_str(
     if time_str_to_append_to_date is not None:
         return date_as_str + " {}".format(time_str_to_append_to_date)
     return date_as_str
+
+
+def get_previous_business_date_as_date(
+    *,
+    lag_in_bus_days: int = 0,
+    holiday_dates: Union[List[str], Tuple[str, ...]] = None,
+    time_str_to_append_to_date: str = None,
+) -> dt.date:
+    # Get as string.
+    date_string = get_previous_business_date_as_iso_str(
+        lag_in_bus_days=lag_in_bus_days,
+        holiday_dates=holiday_dates,
+        time_str_to_append_to_date=time_str_to_append_to_date,
+    )
+
+    # To date.
+    return dt.date.fromisoformat(date_string)
+
+
+if __name__ == "__main__":
+    pass

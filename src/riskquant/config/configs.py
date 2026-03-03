@@ -33,6 +33,7 @@ from riskquant.config.schema_objects import (
     UnitScale,
     UnitType,
 )
+from riskquant.utils.printer import print_success_message
 from riskquant.utils.tenors import parse_bracket_token
 
 
@@ -299,3 +300,7 @@ class RiskStaticConfig:
 
         object.__setattr__(self, "_curve_tenor_index", out)
         return out
+
+
+if __name__ == "__main__":
+    pass
