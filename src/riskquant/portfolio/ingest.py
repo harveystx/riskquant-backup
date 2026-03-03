@@ -7,7 +7,7 @@ from typing import Iterator, Tuple, Final, Iterable
 import numpy as np
 import pandas as pd
 
-from riskquant.config.configs import RiskStaticConfig
+from riskquant.config.deprecated_configs import RiskStaticConfig
 from riskquant.exceptions import PrettyKeyError
 from riskquant.portfolio.constants import (
     NO_FX_RF_REQUIRED,
@@ -28,7 +28,7 @@ from riskquant.utils.dates import (
     is_date_str_valid,
     datetime64D_to_ordinal32,
 )
-from riskquant.utils.printer import as_list_str
+from riskquant.utils.printer import print_as_list_str
 
 
 def iter_trades_from_positions_df(

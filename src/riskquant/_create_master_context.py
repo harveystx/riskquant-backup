@@ -1,6 +1,7 @@
 # src/riskquant/_create_master_context.py
 
 from pathlib import Path
+import time
 from typing import List
 
 
@@ -48,6 +49,11 @@ def main():
 
     # Sort files to ensure the file order remains consistent across runs
     valid_files.sort()
+
+    # Delete existing output file if it exists to ensure a clean slate
+    if out_file.exists():
+        out_file.unlink()
+        time.sleep(1)  # Small delay to ensure file system updates
 
     # 3. Write the optimized context file
     with out_file.open("w", encoding="utf-8") as out:

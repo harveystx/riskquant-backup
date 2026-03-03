@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, Optional, Union
 import numpy as np
 import pandas as pd
 
-from riskquant.config.configs import RiskStaticConfig
+from riskquant.config.deprecated_configs import RiskStaticConfig
 from riskquant.exceptions import PrettyKeyError
 from riskquant.rq_logging import LogContext, get_logger, with_context
 from riskquant.simlab.resolve.proxy import (

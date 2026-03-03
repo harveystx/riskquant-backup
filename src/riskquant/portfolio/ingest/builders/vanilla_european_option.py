@@ -13,7 +13,7 @@ from __future__ import annotations
 import numpy as np
 
 # Import static configuration containing risk factor ID mappings
-from riskquant.config.configs import RiskStaticConfig
+from riskquant.config.deprecated_configs import RiskStaticConfig
 
 # Import custom exception for pretty error formatting
 from riskquant.exceptions import PrettyKeyError

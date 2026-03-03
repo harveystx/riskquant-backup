@@ -2,7 +2,7 @@
 import pandas as pd
 
 from riskquant.exceptions import PrettyKeyError
-from riskquant.utils.printer import as_list_str
+from riskquant.utils.printer import print_as_list_str
 
 
 def require_cols_in_df(df: pd.DataFrame, cols, *, ctx: str) -> None:
@@ -17,7 +17,7 @@ def require_cols_in_df(df: pd.DataFrame, cols, *, ctx: str) -> None:
     # If any required columns are missing, raise an error with a helpful message
     if missing:
         raise ValueError(
-            f"{ctx}: missing required columns:\n {as_list_str(missing)}"
+            f"{ctx}: missing required columns:\n {print_as_list_str(missing)}"
         )
 
 

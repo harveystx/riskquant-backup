@@ -5,7 +5,7 @@ from typing import Iterator, Dict
 
 import numpy as np
 
-from riskquant.config.configs import RiskStaticConfig
+from riskquant.config.deprecated_configs import RiskStaticConfig
 from riskquant.exceptions import PrettyKeyError
 from riskquant.portfolio.blocks.forward_block import ForwardNodeBlock
 from riskquant.portfolio.blocks.spot_block import SpotBlock

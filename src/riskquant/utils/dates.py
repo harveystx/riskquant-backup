@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Iterable, Final
+from typing import Iterable, Final, List, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -30,7 +30,9 @@ def coerce_as_of_date_to_pd_timestamp(
 
     # If caller passed a date (no time), treat it as end-of-day inclusive
     # so 2026-01-02 includes all times on 2026-01-02.
-    if isinstance(as_of_date, dt.date) and not isinstance(as_of_date, dt.datetime):
+    if isinstance(as_of_date, dt.date) and not isinstance(
+        as_of_date, dt.datetime
+    ):
         ts = ts + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
 
     # Normalize tz handling (if any). Adjust policy as you like.
@@ -60,7 +62,9 @@ def is_date_str_valid(date_str: str) -> bool:
 def assert_date_str_is_iso_format(date_str: str) -> None:
     """Assert that date_str is in ISO format 'YYYY-MM-DD'."""
     if not is_date_str_valid(date_str):
-        raise ValueError(f"Date string '{date_str}' is not in 'YYYY-MM-DD' format.")
+        raise ValueError(
+            f"Date string '{date_str}' is not in 'YYYY-MM-DD' format."
+        )
 
 
 def date_str_to_date(date_str: str) -> dt.date:
@@ -176,3 +180,28 @@ def half_year_diff(
     ay, ah = half_year_index(anchor)
     ty, th = half_year_index(target)
     return (ty - ay) * 2 + (th - ah)
+
+
+def get_previous_business_date_as_iso_str(
+    *,
+    lag_in_bus_days: int = 0,
+    holiday_dates: Union[List[str], Tuple[str, ...]] = None,
+    time_str_to_append_to_date: str = None,
+) -> str:
+    """ """
+    # Ensure holidays is a list of strings.
+    if holiday_dates is None:
+        holiday_dates = []
+
+    # Create a custom business day with the holidays.
+    custom_business_day = pd.offsets.CustomBusinessDay(holidays=holiday_dates)
+
+    # Start from today and apply the lag and one additional business day.
+    start_date = dt.datetime.today().date()
+    adjusted_date = start_date - custom_business_day * (lag_in_bus_days + 1)
+    date_as_str = adjusted_date.strftime("%Y-%m-%d")
+
+    # Append the time string if provided, and return.
+    if time_str_to_append_to_date is not None:
+        return date_as_str + " {}".format(time_str_to_append_to_date)
+    return date_as_str

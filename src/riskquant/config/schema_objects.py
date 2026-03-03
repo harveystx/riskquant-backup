@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Optional, Pattern, Tuple
 
+from riskquant.utils.printer import print_success_message
+
 
 # =============== #
 # --- LOOKUPS --- #
@@ -75,13 +77,38 @@ class SurfaceYAxisType:
     y_axis_type_name: str
 
 
+# =================== #
+# --- CONVENTIONS --- #
+# =================== #
+
+
+@dataclass(frozen=True, slots=True)
+class DayCountConvention:
+    day_count_convention: str
+    day_count_convention_id: int
+
+
+@dataclass(frozen=True, slots=True)
+class BusinessDayConvention:
+    business_day_convention: str
+    business_day_convention_id: int
+
+
+@dataclass(frozen=True, slots=True)
+class CompoundingConvention:
+    compounding_convention: str
+    compounding_convention_id: int
+    compounding_type: str
+    frequency_per_year: Optional[float]
+
+
 # ===================== #
 # --- CORE ENTITIES --- #
 # ===================== #
 
 
 @dataclass(frozen=True, slots=True)
-class ContainerMapping:
+class ContainerMeta:
     """
     Metadata for a container (curve, surface, FX spot, etc).
 
@@ -93,6 +120,7 @@ class ContainerMapping:
     container_name: str
     container_name_id: int
 
+    base_ccy: str
     quote_ccy: str
 
     unit_type_name: str
@@ -248,3 +276,7 @@ class RiskFactorProxyMap:
 class HolidayCalendar:
     holiday_calendar_name: str
     holiday_dates: Optional[Tuple[date, ...]]
+
+
+if __name__ == "__main__":
+    pass

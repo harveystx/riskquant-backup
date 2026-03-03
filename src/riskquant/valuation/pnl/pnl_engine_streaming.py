@@ -6,7 +6,7 @@ from typing import Optional
 
 import numpy as np
 
-from riskquant.config.configs import RiskStaticConfig
+from riskquant.config.deprecated_configs import RiskStaticConfig
 from riskquant.exceptions import PrettyKeyError
 from riskquant.market_data.risk_factors.shift_types import (
     SHIFT_LOG_RETURN,

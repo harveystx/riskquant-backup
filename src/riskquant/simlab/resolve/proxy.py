@@ -6,7 +6,7 @@ from typing import Dict, Tuple, Final
 
 import numpy as np
 
-from riskquant.config.configs import RiskStaticConfig
+from riskquant.config.deprecated_configs import RiskStaticConfig
 from riskquant.exceptions import PrettyKeyError
 from riskquant.utils.tenors import parse_bracket_token
 
