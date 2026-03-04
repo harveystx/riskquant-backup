@@ -6,9 +6,9 @@ into runtime config objects.
 
 from __future__ import annotations
 
-from datetime import date
 from pathlib import Path
 from typing import Union
+
 from typing_extensions import Final
 
 from riskquant.config.builder import RiskStaticConfigFrames

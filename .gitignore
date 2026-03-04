@@ -104,7 +104,7 @@ cover/
 dmypy.json
 .pyre/
 .pytype/
-ruff_cache/
+.ruff_cache/
 .pyright/
 .pylint.d/
 

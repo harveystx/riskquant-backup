@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Tuple, Final
+from typing import Dict, Final, Tuple
 
 import numpy as np
 

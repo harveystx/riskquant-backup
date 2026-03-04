@@ -135,42 +135,65 @@ def print_dict(
     print(pad + "}")
 
 
+class _FloatFormatter:
+    __slots__ = ("_fmt", "_zero_tol")
+
+    def __init__(self, spec: str, zero_tol: float = 0.0) -> None:
+        # spec like ".2f", "_.2f", ",.3f"
+        self._fmt = "{:" + spec + "}"
+        self._zero_tol = float(zero_tol)
+
+    def __call__(self, x: float) -> str:
+        # pandas will only call this for float entries
+        if x is None or (isinstance(x, float) and math.isnan(x)):
+            return "nan"
+        if self._zero_tol and abs(x) < self._zero_tol:
+            x = 0.0
+        return self._fmt.format(x)
+
+
 def print_df(
-    df: pd.DataFrame,
+    obj: pd.Series | pd.DataFrame,
+    *,
     index: bool = True,
     max_rows: int | None = None,
     max_cols: int | None = None,
     float_format: str | None = "_.2f",
     add_space_before: bool = True,
     add_space_after: bool = True,
+    zero_tol: float = 0.0,
 ) -> None:
     """
-    Print a DataFrame with optional display controls.
+    Print a Series/DataFrame with optional display controls.
 
     float_format:
         Format specifier like ".2f", "_.2f", ",.3f", etc.
-        Use None to disable formatting.
+        Use None to disable float formatting.
+    zero_tol:
+        If > 0, values with abs(x) < zero_tol are printed as 0.0.
+        Useful to avoid "-0.00".
     """
-
-    if float_format is not None:
-        fmt = "{:" + float_format + "}"
-        formatted = df.to_string(
-            index=index,
-            max_rows=max_rows,
-            max_cols=max_cols,
-            float_format=lambda x: fmt.format(x),
-        )
+    if isinstance(obj, pd.Series):
+        name = obj.name if obj.name is not None else "value"
+        df = obj.to_frame(name=name)
     else:
-        formatted = df.to_string(
-            index=index,
-            max_rows=max_rows,
-            max_cols=max_cols,
-        )
+        df = obj
 
     if add_space_before:
         print()
 
-    print(formatted)
+    if float_format is None:
+        print(df.to_string(index=index, max_rows=max_rows, max_cols=max_cols))
+    else:
+        formatter = _FloatFormatter(float_format, zero_tol=zero_tol)
+        print(
+            df.to_string(
+                index=index,
+                max_rows=max_rows,
+                max_cols=max_cols,
+                float_format=formatter,
+            )
+        )
 
     if add_space_after:
         print()

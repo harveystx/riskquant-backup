@@ -16,7 +16,6 @@ from typing import Optional, Pattern, Tuple
 
 from riskquant.utils.printer import print_success_message
 
-
 # =============== #
 # --- LOOKUPS --- #
 # =============== #

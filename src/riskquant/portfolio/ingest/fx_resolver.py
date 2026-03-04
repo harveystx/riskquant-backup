@@ -1,5 +1,6 @@
 # src\riskquant\portfolio\ingest\fx_resolver.py
 import numpy as np
+
 from riskquant.exceptions import PrettyKeyError
 from riskquant.portfolio.constants import NO_FX_RF_REQUIRED
 from riskquant.portfolio.fx import get_fx_pair_for_under_to_settle_conversion

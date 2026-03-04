@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Iterator, Tuple, Final, Iterable
+from typing import Iterator
 
 import numpy as np
 import pandas as pd
@@ -10,12 +10,10 @@ import pandas as pd
 from riskquant.config.deprecated_configs import RiskStaticConfig
 from riskquant.exceptions import PrettyKeyError
 from riskquant.portfolio.constants import (
-    NO_FX_RF_REQUIRED,
     NO_EXPIRY_DATE_ORDINAL32,
     NO_SETTLEMENT_DATE_ORDINAL32,
 )
 from riskquant.portfolio.fx import (
-    get_fx_pair_for_under_to_settle_conversion,
     validate_ccys_unique,
 )
 from riskquant.portfolio.payloads.forward import ForwardPayload
@@ -24,11 +22,6 @@ from riskquant.portfolio.payloads.vanilla_european_option import (
     VanillaEuropeanOptionPayload,
 )
 from riskquant.portfolio.trades import TradeRecord
-from riskquant.utils.dates import (
-    is_date_str_valid,
-    datetime64D_to_ordinal32,
-)
-from riskquant.utils.printer import print_as_list_str
 
 
 def iter_trades_from_positions_df(

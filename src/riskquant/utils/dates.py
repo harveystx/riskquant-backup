@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Iterable, Final, List, Tuple, Union
+from typing import Final, Iterable, List, Tuple, Union
 
 import numpy as np
 import pandas as pd

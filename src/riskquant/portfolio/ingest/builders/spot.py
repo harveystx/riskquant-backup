@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import numpy as np
 
+# Import IngestBatch for type hinting and batch data structure
+from riskquant.portfolio.ingest.precomputer import IngestBatch
+
 # Import the SpotPayload data structure for spot trade metadata
 from riskquant.portfolio.payloads.spot import SpotPayload
 
 # Import the TradeRecord class for creating standardized trade objects
 from riskquant.portfolio.trades import TradeRecord
-
-# Import IngestBatch for type hinting and batch data structure
-from riskquant.portfolio.ingest.precomputer import IngestBatch
 
 
 def build_spot(

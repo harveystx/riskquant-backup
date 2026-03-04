@@ -1,7 +1,7 @@
 # src/riskquant/_create_master_context.py
 
-from pathlib import Path
 import time
+from pathlib import Path
 from typing import List
 
 
@@ -14,8 +14,8 @@ def main():
         base_dir / "config",
         base_dir / "market_data",
         base_dir / "utils",
-        # base_dir / "portfolio" / "constants.py",
-        # base_dir / "portfolio" / "payloads",
+        base_dir / "portfolio" / "payloads",
+        base_dir / "portfolio" / "constants.py",
         # base_dir / "portfolio" / "blocks",
     ]
 

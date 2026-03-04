@@ -8,16 +8,16 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Dict, Final, Tuple, Optional
+from typing import Dict, Final, Tuple
 
 import pandas as pd
 
 from riskquant.config.configs import RiskStaticConfig
 from riskquant.config.loader import load_risk_static_data_config_xlsx_into_dict
 from riskquant.config.schema_objects import (
+    AliasSchema,
     AssetClass,
     AssetSubclass,
-    AliasSchema,
     BusinessDayConvention,
     Ccy,
     CompoundingConvention,

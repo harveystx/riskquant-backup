@@ -19,10 +19,10 @@ import numpy as np
 
 # Import price source type indicators and date/FX sentinels for defaults
 from riskquant.portfolio.constants import (
-    NO_ID,
     NO_DELIVERY_DATE_ORDINAL32,
-    NO_SETTLEMENT_DATE_ORDINAL32,
     NO_FX_RF_REQUIRED,
+    NO_ID,
+    NO_SETTLEMENT_DATE_ORDINAL32,
 )
 
 
@@ -47,12 +47,66 @@ class _ForwardBasePayload:
     # ========== FX LINKAGES ==========
 
     # FX risk factor ID mapping underlying_ccy -> settlement_ccy.
-    # Sentinel NO_FX_RF_REQUIRED (-1) indicates no FX conversion needed.
+    # Sentinel NO_FX_RF_REQUIRED (-3) indicates no FX conversion needed.
     fx_under_to_settle_rf_id: np.int32 = NO_FX_RF_REQUIRED
 
     # FX risk factor ID mapping strike_ccy -> settlement_ccy.
-    # Sentinel NO_FX_RF_REQUIRED (-1) indicates no FX conversion needed.
+    # Sentinel NO_FX_RF_REQUIRED (-3) indicates no FX conversion needed.
     fx_strike_to_settle_rf_id: np.int32 = NO_FX_RF_REQUIRED
+
+    # ========== VALIDATION IN __post_init__ ==========
+
+    def __post_init__(self) -> None:
+        # Force strict NumPy dtypes to prevent Python object boxing
+        object.__setattr__(
+            self,
+            "quantity",
+            np.float64(self.quantity),
+        )
+        object.__setattr__(
+            self,
+            "strike",
+            np.float64(self.strike),
+        )
+        object.__setattr__(
+            self,
+            "settlement_date_ordinal32",
+            np.int32(self.settlement_date_ordinal32),
+        )
+        object.__setattr__(
+            self,
+            "fx_under_to_settle_rf_id",
+            np.int32(self.fx_under_to_settle_rf_id),
+        )
+        object.__setattr__(
+            self,
+            "fx_strike_to_settle_rf_id",
+            np.int32(self.fx_strike_to_settle_rf_id),
+        )
+
+        # Settlement date ordinal must be non-negative or the NO_SETTLEMENT_DATE_ORDINAL32 sentinel
+        if (
+            self.settlement_date_ordinal32 < 0
+            and self.settlement_date_ordinal32 != NO_SETTLEMENT_DATE_ORDINAL32
+        ):
+            raise ValueError(
+                "settlement_date_ordinal32 must be non-negative or NO_SETTLEMENT_DATE_ORDINAL32 sentinel."
+            )
+
+        # FX risk factor IDs must be either valid non-negative integers or the NO_FX_RF_REQUIRED sentinel
+        for field_name in [
+            "fx_under_to_settle_rf_id",
+            "fx_strike_to_settle_rf_id",
+        ]:
+            field_value = getattr(self, field_name)
+            if field_value == NO_ID:
+                raise ValueError(
+                    f"{field_name} cannot be NO_ID sentinel. Use NO_FX_RF_REQUIRED if no FX conversion is needed."
+                )
+            if field_value != NO_FX_RF_REQUIRED and field_value < 0:
+                raise ValueError(
+                    f"{field_name} must be a non-negative integer or NO_FX_RF_REQUIRED sentinel."
+                )
 
     def __repr__(self) -> str:
         return self.__str__()
@@ -75,7 +129,17 @@ class ForwardNodePayload(_ForwardBasePayload):
     # Resolves to a time series or market surface in scenario shocks.
     price_rf_id: np.int32
 
+    # ========== VALIDATION IN __post_init__ ==========
+
     def __post_init__(self) -> None:
+        _ForwardBasePayload.__post_init__(self)  # Cast base fields
+        object.__setattr__(
+            self,
+            "price_rf_id",
+            np.int32(self.price_rf_id),
+        )  # Cast child field
+
+        # price_rf_id must be a valid non-negative integer (no sentinel allowed)
         if self.price_rf_id == NO_ID:
             raise ValueError(
                 "ForwardNodePayload requires price_rf_id (cannot be sentinel)."
@@ -116,13 +180,30 @@ class ForwardCurvePayload(_ForwardBasePayload):
     # Default is sentinel NO_DELIVERY_DATE_ORDINAL32 if not applicable.
     delivery_date_ordinal32: np.int32
 
+    # ========== VALIDATION IN __post_init__ ==========
+
     def __post_init__(self) -> None:
+        _ForwardBasePayload.__post_init__(self)  # Cast base fields
+        object.__setattr__(
+            self,
+            "price_curve_id",
+            np.int32(self.price_curve_id),
+        )
+        object.__setattr__(
+            self,
+            "delivery_date_ordinal32",
+            np.int32(self.delivery_date_ordinal32),
+        )
+
+        # delivery_date_ordinal32 must be non-negative or the NO_DELIVERY_DATE_ORDINAL32 sentinel
         if self.delivery_date_ordinal32 == NO_DELIVERY_DATE_ORDINAL32:
             raise ValueError(
                 "ForwardCurvePayload requires delivery_date_ordinal32 (cannot be sentinel)."
             )
         if self.delivery_date_ordinal32 < 0:
             raise ValueError("delivery_date_ordinal32 must be non-negative.")
+
+        # price_curve_id must be a valid non-negative integer (no sentinel allowed)
         if self.price_curve_id == NO_ID:
             raise ValueError(
                 "ForwardCurvePayload requires price_curve_id (cannot be sentinel)."
@@ -143,30 +224,3 @@ class ForwardCurvePayload(_ForwardBasePayload):
             f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}"
             f")"
         )
-
-
-if __name__ == "__main__":
-    # Example instantiation of ForwardNodePayload for testing and demonstration
-    fwd_node_payload = ForwardNodePayload(
-        quantity=np.float64(1_000.0),
-        strike=np.float64(1.2345),
-        settlement_date_ordinal32=np.int32(19_100),
-        price_rf_id=np.int32(101),
-        fx_under_to_settle_rf_id=NO_FX_RF_REQUIRED,
-        fx_strike_to_settle_rf_id=NO_FX_RF_REQUIRED,
-    )
-    print("Example ForwardNodePayload:")
-    print(fwd_node_payload)
-
-    # Example instantiation of ForwardCurvePayload for testing and demonstration
-    fwd_curve_payload = ForwardCurvePayload(
-        quantity=np.float64(1_000.0),
-        strike=np.float64(1.2345),
-        delivery_date_ordinal32=np.int32(19_150),
-        settlement_date_ordinal32=np.int32(19_100),
-        price_curve_id=np.int32(202),
-        fx_under_to_settle_rf_id=NO_FX_RF_REQUIRED,
-        fx_strike_to_settle_rf_id=NO_FX_RF_REQUIRED,
-    )
-    print("\nExample ForwardCurvePayload:")
-    print(fwd_curve_payload)

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional, Iterator
+from typing import Iterator, Optional
 
 import numpy as np
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from pandas.api.types import is_datetime64tz_dtype, is_datetime64_any_dtype
+from pandas.api.types import is_datetime64_any_dtype, is_datetime64tz_dtype
 
 from riskquant.utils.dates import datetime64D_to_ordinal32, is_date_str_valid
 

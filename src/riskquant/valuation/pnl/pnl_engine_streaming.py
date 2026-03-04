@@ -9,9 +9,9 @@ import numpy as np
 from riskquant.config.deprecated_configs import RiskStaticConfig
 from riskquant.exceptions import PrettyKeyError
 from riskquant.market_data.risk_factors.shift_types import (
+    SHIFT_DIFFERENCE,
     SHIFT_LOG_RETURN,
     SHIFT_SIMPLE_RETURN,
-    SHIFT_DIFFERENCE,
 )
 from riskquant.market_data.risk_factors.snapshot import RiskFactorLevelSnapshot
 from riskquant.portfolio.compiled import CompiledPortfolio

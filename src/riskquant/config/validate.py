@@ -9,13 +9,13 @@ Design goals:
 """
 
 from typing import Dict, Final
+
 import numpy as np
 import pandas as pd
 
 from riskquant.config.loader import load_risk_static_data_config_xlsx_into_dict
 from riskquant.utils.printer import (
     print_success_message,
-    print_wrapped_text_box,
 )
 
 

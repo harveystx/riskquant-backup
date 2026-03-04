@@ -1,7 +1,7 @@
 # riskquant/valuation/pnl/pnl_writer.py
 from __future__ import annotations
 
-from typing import Protocol, Optional
+from typing import Optional, Protocol
 
 import numpy as np
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Tuple, Optional
+from typing import Optional, Tuple
 
 
 def parse_bracket_token(tenor_token: str) -> Tuple[str, Optional[int]]:

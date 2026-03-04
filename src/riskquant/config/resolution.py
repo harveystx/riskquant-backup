@@ -15,7 +15,6 @@ from typing import (
 import numpy as np
 import pandas as pd
 
-
 # Ensure these utility functions are available in riskquant.utils.tenors
 from riskquant.config.configs import RiskStaticConfig
 from riskquant.utils.tenors import (

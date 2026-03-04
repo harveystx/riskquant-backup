@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from importlib.metadata import version, PackageNotFoundError
+from importlib.metadata import PackageNotFoundError, version
 
 __all__ = ["__version__"]
 

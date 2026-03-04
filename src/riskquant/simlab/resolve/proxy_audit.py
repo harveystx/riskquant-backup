@@ -14,12 +14,12 @@ from riskquant.config.deprecated_configs import RiskStaticConfig
 from riskquant.exceptions import PrettyKeyError
 from riskquant.rq_logging import LogContext, get_logger, with_context
 from riskquant.simlab.resolve.proxy import (
-    ProxyResolution,
-    RES_NOT_SIMULATED,
     RES_CURVE_PROXY,
     RES_DIRECT,
     RES_ID_PROXY,
+    RES_NOT_SIMULATED,
     RES_TENOR_FALLBACK,
+    ProxyResolution,
 )
 
 # TYPE ALIAS

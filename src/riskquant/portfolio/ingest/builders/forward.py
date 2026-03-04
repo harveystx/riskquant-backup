@@ -14,17 +14,17 @@ import numpy as np
 # Import custom exception for pretty error formatting
 from riskquant.exceptions import PrettyKeyError
 
+# Import helper function to check for missing/NA values in batch data
+from riskquant.portfolio.ingest.parser import _is_na_helper as is_na
+
+# Import IngestBatch for type hinting and batch data structure
+from riskquant.portfolio.ingest.precomputer import IngestBatch
+
 # Import the ForwardPayload data structure for forward trade metadata
 from riskquant.portfolio.payloads.forward import ForwardPayload
 
 # Import the TradeRecord class for creating standardized trade objects
 from riskquant.portfolio.trades import TradeRecord
-
-# Import IngestBatch for type hinting and batch data structure
-from riskquant.portfolio.ingest.precomputer import IngestBatch
-
-# Import helper function to check for missing/NA values in batch data
-from riskquant.portfolio.ingest.parser import _is_na_helper as is_na
 
 
 def build_forward(*, ix: int, batch: IngestBatch) -> TradeRecord:

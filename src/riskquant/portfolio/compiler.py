@@ -1,7 +1,7 @@
 # riskquant/portfolio/compile.py
 from __future__ import annotations
 
-from typing import Iterator, Dict
+from typing import Dict, Iterator
 
 import numpy as np
 

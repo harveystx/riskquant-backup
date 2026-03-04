@@ -21,6 +21,12 @@ from riskquant.exceptions import PrettyKeyError
 # Import sentinel constant for detecting missing expiry dates
 from riskquant.portfolio.constants import NO_EXPIRY_DATE_ORDINAL32
 
+# Import helper function to check for missing/NA values in batch data
+from riskquant.portfolio.ingest.parser import _is_na_helper as is_na
+
+# Import IngestBatch for type hinting and batch data structure
+from riskquant.portfolio.ingest.precomputer import IngestBatch
+
 # Import the VanillaEuropeanOptionPayload data structure for option trade metadata
 from riskquant.portfolio.payloads.vanilla_european_option import (
     VanillaEuropeanOptionPayload,
@@ -28,12 +34,6 @@ from riskquant.portfolio.payloads.vanilla_european_option import (
 
 # Import the TradeRecord class for creating standardized trade objects
 from riskquant.portfolio.trades import TradeRecord
-
-# Import IngestBatch for type hinting and batch data structure
-from riskquant.portfolio.ingest.precomputer import IngestBatch
-
-# Import helper function to check for missing/NA values in batch data
-from riskquant.portfolio.ingest.parser import _is_na_helper as is_na
 
 
 def build_vanilla_european_option(

@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from riskquant.portfolio.constants import NO_FX_RF_REQUIRED
+from riskquant.portfolio.constants import NO_FX_RF_REQUIRED, NO_ID
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -51,6 +51,47 @@ class SpotPayload:
     # FX risk factor id for underlying->settlement conversion, or sentinel when not required.
     fx_rf_id: np.int32 = NO_FX_RF_REQUIRED
 
+    # ========== VALIDATION IN __post_init__ ==========
+
+    def __post_init__(self) -> None:
+        # Force strict NumPy dtypes to prevent Python object boxing in kernels
+        object.__setattr__(
+            self,
+            "quantity",
+            np.float64(self.quantity),
+        )
+        object.__setattr__(
+            self,
+            "price_rf_id",
+            np.int32(self.price_rf_id),
+        )
+        object.__setattr__(
+            self,
+            "fx_rf_id",
+            np.int32(self.fx_rf_id),
+        )
+
+        # Validation to catch common errors early
+        # price_rf_id must be a valid non-negative integer (no sentinel allowed)
+        if self.price_rf_id == NO_ID:
+            raise ValueError(
+                "SpotPayload requires price_rf_id (cannot be sentinel)."
+            )
+        if self.price_rf_id < 0:
+            raise ValueError("price_rf_id must be non-negative.")
+
+        # fx_rf_id must be either a valid non-negative integer or the NO_FX_RF_REQUIRED sentinel
+        if self.fx_rf_id == NO_ID:
+            raise ValueError(
+                "SpotPayload requires fx_rf_id (cannot be NO_ID). Use NO_FX_RF_REQUIRED if no FX conversion is needed."
+            )
+
+        # fx_rf_id must be non-negative or the NO_FX_RF_REQUIRED sentinel (negative values other than the sentinel are not allowed)
+        if self.fx_rf_id < 0 and self.fx_rf_id != NO_FX_RF_REQUIRED:
+            raise ValueError(
+                "fx_rf_id must be a non-negative integer or NO_FX_RF_REQUIRED sentinel."
+            )
+
     def __str__(self) -> str:
         # Single-line, human-readable representation for logging and debugging
         return (
@@ -63,14 +104,3 @@ class SpotPayload:
 
     def __repr__(self) -> str:
         return self.__str__()
-
-
-if __name__ == "__main__":
-    # Small usage example showing construction and printing of a SpotPayload.
-    # Example values chosen for illustration only.
-    example = SpotPayload(
-        price_rf_id=np.int32(101),
-        quantity=np.float64(1_000.0),
-        fx_rf_id=NO_FX_RF_REQUIRED,
-    )
-    print(example)

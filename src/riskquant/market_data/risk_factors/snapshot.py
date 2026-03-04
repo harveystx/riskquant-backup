@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from datetime import date
 
 import numpy as np
+import pandas as pd
+
+from riskquant.utils.dates import ordinal32_to_datetime64D
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,3 +124,37 @@ class RiskFactorLevelSnapshot:
         # Bypass dataclass immutability to install the canonicalized arrays.
         object.__setattr__(self, "factor_ids", ids_sorted)
         object.__setattr__(self, "factor_levels", lv_sorted)
+
+    def to_df(self) -> pd.DataFrame:
+        """Return the snapshot as a 1-row wide DataFrame."""
+        # Reshape the 1D levels array into a 2D row vector (1, N)
+        data_2d = self.factor_levels[np.newaxis, :]
+
+        df = pd.DataFrame(
+            data=data_2d,
+            index=pd.DatetimeIndex([self.as_of_date], name="date"),
+            columns=pd.Index(self.factor_ids, name="factor_id"),
+        )
+        return df
+
+    def to_series(self) -> pd.Series:
+        """Return the snapshot as a pandas Series."""
+        return pd.Series(
+            data=self.factor_levels,
+            index=pd.Index(self.factor_ids, name="factor_id"),
+            name=self.as_of_date,
+        )
+
+    @property
+    def df(self) -> pd.DataFrame:
+        """Alias for to_df()."""
+        return self.to_df()
+
+    @property
+    def sr(self) -> pd.Series:
+        """Alias for to_series()."""
+        return self.to_series()
+
+    @property
+    def num_factors(self) -> int:
+        return len(self.factor_ids)

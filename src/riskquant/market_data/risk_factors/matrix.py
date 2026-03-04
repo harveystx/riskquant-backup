@@ -6,22 +6,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Final, Mapping, Optional, Union
+from datetime import date
 
 import numpy as np
 import pandas as pd
-from pandas.api.types import is_datetime64_any_dtype
 
-from riskquant.config.compile import compile_risk_static_config_from_xlsx
-from riskquant.config.resolution import RiskFactorNameAbsToRelMapping
+from riskquant.market_data.risk_factors.snapshot import RiskFactorLevelSnapshot
 from riskquant.utils.dates import (
-    coerce_as_of_date_to_pd_timestamp,
-    date_str_to_date,
     ordinal32_to_datetime64D,
-    datetime64D_to_ordinal32,
 )
-from riskquant.utils.printer import print_df, print_dict, print_success_message
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,25 +137,6 @@ class RiskFactorMatrix:
             object.__setattr__(self, "values", sorted_vals)
 
     # -------------------- Convenience --------------------
-
-    @property
-    def index_dates(self) -> pd.DatetimeIndex:
-        """Return a pandas DatetimeIndex view of the stored dates.
-
-        - If dates are stored as int32 ordinals, convert them to datetime64[D].
-        - Does not copy underlying date storage when possible (uses views).
-        """
-        if np.issubdtype(self.dates.dtype, np.integer):
-            dts = ordinal32_to_datetime64D(self.dates)
-            return pd.DatetimeIndex(dts)
-        else:
-            return pd.DatetimeIndex(self.dates)
-
-    @property
-    def index_factors(self) -> pd.Index:
-        """Return a pandas Index for `factor_ids` (named `factor_id`)."""
-        return pd.Index(self.factor_ids, name="factor_id")
-
     def to_df(self) -> pd.DataFrame:
         """Convert the matrix into a wide pandas DataFrame.
 
@@ -198,6 +172,28 @@ class RiskFactorMatrix:
         Any keyword args are forwarded to `DataFrame.plot`.
         """
         return self.to_df().plot(**kwargs)
+
+    # ----------------------------
+    # 1) PROPERTIES
+    # ----------------------------
+
+    @property
+    def index_dates(self) -> pd.DatetimeIndex:
+        """Return a pandas DatetimeIndex view of the stored dates.
+
+        - If dates are stored as int32 ordinals, convert them to datetime64[D].
+        - Does not copy underlying date storage when possible (uses views).
+        """
+        if np.issubdtype(self.dates.dtype, np.integer):
+            dts = ordinal32_to_datetime64D(self.dates)
+            return pd.DatetimeIndex(dts)
+        else:
+            return pd.DatetimeIndex(self.dates)
+
+    @property
+    def index_factors(self) -> pd.Index:
+        """Return a pandas Index for `factor_ids` (named `factor_id`)."""
+        return pd.Index(self.factor_ids, name="factor_id")
 
     @property
     def df(self) -> pd.DataFrame:
@@ -279,200 +275,7 @@ class RiskFactorMatrix:
         )
 
     # ----------------------------
-    # 4) from_df: accept "datetime-like" indices + enforce sorted/unique cleanly
-    # ----------------------------
-    @staticmethod
-    def from_df(
-        *,
-        df: pd.DataFrame,
-        name_to_id_map: Optional[Mapping[str, int]] = None,
-        use_int32_dates: bool = True,
-        float_dtype: type[np.floating] = np.float32,
-    ) -> "RiskFactorMatrix":
-        """Construct a RiskFactorMatrix from a wide pandas DataFrame.
-
-        Parameters
-        ----------
-        df : pd.DataFrame
-            Wide DataFrame with dates on the index and one column per risk factor.
-        name_to_id_map : Optional[Mapping[str, int]]
-            Optional mapping from column name (string) to integer factor id. If
-            omitted, columns are parsed as integers directly.
-        use_int32_dates : bool
-            If True convert dates to int32 ordinal representation; otherwise
-            keep datetime64[D] dtype.
-        float_dtype : numpy floating type
-            dtype used for the `values` array (default: np.float32).
-
-        Returns
-        -------
-        RiskFactorMatrix
-            Canonicalized matrix with validated shapes, dtypes and contiguity.
-
-        Raises
-        ------
-        ValueError
-            If the index is not date-like, not monotonic increasing, or contains
-            duplicates; or if factor id mapping contains errors.
-
-        Notes
-        -----
-        The function intentionally does not auto-sort the DataFrame rows
-        (dates). If the provided index is unsorted we raise an error because
-        auto-sorting would require an expensive O(T*N) copy of the values.
-        """
-        if not isinstance(df, pd.DataFrame):
-            raise ValueError("Expected a DataFrame!")
-
-        # Accept a wider set of date-like index types; coerce if needed.
-        if not is_datetime64_any_dtype(df.index):
-            # Convert in-place where possible; this preserves row order and
-            # avoids unnecessary copying of the data matrix.
-            df = df.copy(deep=False)
-            df.index = pd.to_datetime(df.index, errors="raise")
-
-        # Enforce invariants early with clear errors (and avoid needless allocations)
-        if df.index.has_duplicates:
-            raise ValueError("DataFrame index (dates) must be unique!")
-        if not df.index.is_monotonic_increasing:
-            raise ValueError(
-                "DataFrame index (dates) must be sorted ascending!"
-            )
-
-        # Dates: obtain a datetime64[D] view and optionally convert to int32 ordinal
-        dts_64D = df.index.to_numpy(dtype="datetime64[D]", copy=False)
-        dates = (
-            datetime64D_to_ordinal32(dts_64D) if use_int32_dates else dts_64D
-        )
-
-        # Columns -> factor_ids: either direct integer parsing or mapping lookup.
-        cols = df.columns
-        n = cols.size
-
-        if name_to_id_map is None:
-            # Parse column labels as integers; will raise on non-integer labels.
-            factor_ids = np.fromiter(
-                (int(c) for c in cols),
-                dtype=np.int32,
-                count=n,
-            )
-        else:
-            # Validate mapping once (cheap for small config dicts) and then map.
-            _validate_mapping_dict(name_to_id_map)
-            factor_ids = np.fromiter(
-                (_require_mapping_key(name_to_id_map, str(c)) for c in cols),
-                dtype=np.int32,
-                count=n,
-            )
-
-        # Canonicalize factor axis BEFORE allocating `values` (avoids extra copies).
-        if n > 1 and np.any(factor_ids[1:] < factor_ids[:-1]):
-            perm = np.argsort(factor_ids, kind="mergesort")
-            factor_ids = factor_ids[perm]
-
-            if np.any(factor_ids[1:] == factor_ids[:-1]):
-                raise ValueError("factor_ids must be unique!")
-
-            # Reorder the DataFrame columns to match the canonical factor order.
-            df = df.iloc[:, perm]
-        else:
-            if n > 1 and np.any(factor_ids[1:] == factor_ids[:-1]):
-                raise ValueError("factor_ids must be unique!")
-
-        # Materialize the numeric matrix as a C-contiguous array with requested dtype.
-        values = np.ascontiguousarray(
-            df.to_numpy(dtype=float_dtype, copy=True, na_value=np.nan)
-        )
-
-        return RiskFactorMatrix(
-            dates=dates, factor_ids=factor_ids, values=values
-        )
-
-    # ----------------------------
-    # 5) from_xlsx: coerce index to datetime + enforce sorted/unique + use Path typing
-    # ----------------------------
-    @staticmethod
-    def from_xlsx(
-        *,
-        path: Union[str, Path],
-        sheet_name: Union[str, int] = 0,
-        name_to_id_map: Optional[Mapping[str, int]] = None,
-        use_int32_dates: bool = True,
-        float_dtype: type[np.floating] = np.float32,
-        as_of_date: Optional[pd.Timestamp] = None,
-    ) -> "RiskFactorMatrix":
-        """Load a RiskFactorMatrix from an Excel workbook/sheet.
-
-        Parameters
-        ----------
-        path : str | Path
-            Path to the Excel file.
-        sheet_name : str | int
-            Sheet name or index to read (forwarded to pandas.read_excel).
-        name_to_id_map : Optional[Mapping[str, int]]
-            Optional mapping for column name -> factor id (same semantics as
-            `from_df`).
-        use_int32_dates : bool
-            If True convert dates to int32 ordinal representation.
-        float_dtype : numpy floating type
-            dtype used for the `values` array.
-        as_of_date : Optional[pd.Timestamp]
-            If provided, rows with date > as_of_date are filtered out.
-
-        Returns
-        -------
-        RiskFactorMatrix
-            Canonicalized matrix constructed from the Excel sheet.
-        """
-        # Read sheet with the first column treated as the index (dates expected).
-        df = pd.read_excel(
-            str(path),
-            sheet_name=sheet_name,
-            index_col=0,
-        )
-
-        # If empty.
-        if df.empty:
-            raise ValueError("dataframe is empty - check: {path}")
-
-        # Convert index to datetime if needed (common for Excel imports).
-        if not is_datetime64_any_dtype(df.index):
-            df.index = pd.to_datetime(df.index, errors="raise")
-
-        # Optional filter by as_of_date; preserves monotonicity if present.
-        if as_of_date is not None:
-            cutoff = coerce_as_of_date_to_pd_timestamp(as_of_date)
-            df = df.loc[df.index <= cutoff]
-
-        # Enforce same sorted/unique contract as `from_df`.
-
-        # Duplicated dates.
-        if df.index.has_duplicates:
-            duplicated = df.index[df.index.duplicated(keep=False)]
-            unique_dupes = duplicated.unique()
-            sample = unique_dupes[:10]
-            raise ValueError(
-                f"Excel sheet index (dates) must be unique.\n"
-                f"Found {len(unique_dupes)} duplicated date(s).\n"
-                f"Sample duplicates: {list(sample)}"
-            )
-
-        # Non-monotonic dates
-        if not df.index.is_monotonic_increasing:
-            raise ValueError(
-                "Excel sheet index (dates) must be sorted ascending!"
-            )
-
-        # Reuse the robust `from_df` constructor for the remaining work.
-        return RiskFactorMatrix.from_df(
-            df=df,
-            name_to_id_map=name_to_id_map,
-            use_int32_dates=use_int32_dates,
-            float_dtype=float_dtype,
-        )
-
-    # ----------------------------
-    # 6) Time-Series Optimization
+    # 4) Time-Series Optimization
     # ----------------------------
     def to_time_series_optimized_array(self) -> np.ndarray:
         """
@@ -505,183 +308,43 @@ class RiskFactorMatrix:
         # We force it back to a contiguous 1D array for optimal cache performance.
         return np.ascontiguousarray(self.values[:, idx])
 
+    # --- GET A SNAPSHOT FOR A TARGET DATE
 
-def _validate_mapping_dict(m: Mapping[str, Any]) -> None:
-    """Validate a small static mapping of risk factor name -> integer id.
+    def get_snapshot(self, target_date: date) -> RiskFactorLevelSnapshot:
+        """
+        Extract a RiskFactorLevelSnapshot for a specific historical date.
 
-    Checks performed:
-      - keys must be non-empty strings
-      - values must be integer-like (reject bool, float, str)
-      - no two keys map to the same integer id
+        Filters out any risk factors that have NaN values for the given date.
+        """
+        from riskquant.utils.dates import date_to_ordinal32
 
-    This helper is optimized for configuration-time validation (small dicts),
-    not for per-row lookups in tight loops.
-    """
-    # Empty/blank key detection (single pass)
-    for k in m.keys():
-        if not isinstance(k, str) or not k.strip():
-            raise ValueError(f"Mapping contains invalid/blank key: {k!r}")
+        # 1. Convert target_date to the internal representation
+        if np.issubdtype(self.dates.dtype, np.integer):
+            target_val = date_to_ordinal32(target_date)
+        else:
+            target_val = np.datetime64(target_date, "D")
 
-    # Ensure values are integer-like and detect duplicates by tracking seen ids.
-    seen: dict[int, str] = {}
-    for k, v in m.items():
-        # `bool` is a subclass of int in Python; explicitly reject it here because
-        # booleans are not valid factor ids.
-        if isinstance(v, (bool,)):
-            raise ValueError(
-                f"Mapping value for '{k}' must be an int id, got bool={v!r}"
+        # 2. Find the exact date index (using binary search since dates are sorted)
+        idx = np.searchsorted(self.dates, target_val)
+
+        if idx >= self.dates.size or self.dates[idx] != target_val:
+            raise KeyError(
+                f"Date {target_date} not found in historical matrix."
             )
 
-        # Accept Python ints and NumPy integer scalars; reject other types.
-        if not isinstance(v, (int, np.integer)):
-            raise ValueError(
-                f"Mapping value for '{k}' must be an int id, got {type(v).__name__}={v!r}"
-            )
+        # 3. Extract the 1D cross-section for this date
+        levels = self.values[idx, :]
 
-        iv = int(v)
-        prev = seen.get(iv)
-        if prev is not None:
-            # Clear, actionable error message when multiple names map to same id.
-            raise ValueError(
-                "Mapping contains duplicate ID assignment:\n"
-                f"  '{prev}' and '{k}' both map to ID={iv}\n"
-                "Each risk factor must have a unique risk_factor_name_id."
-            )
-        seen[iv] = k
+        # 4. Mask out NaNs (factors that didn't exist or lacked data on this date)
+        valid_mask = ~np.isnan(levels)
 
+        valid_ids = self.factor_ids[valid_mask]
+        valid_levels = levels[valid_mask]
 
-def _require_mapping_key(
-    m: Mapping[str, Any],
-    key: str,
-    *,
-    preview_n: int = 25,
-) -> Any:
-    """Lookup `key` in mapping `m` and raise a detailed error if missing.
-
-    This helper provides user-friendly diagnostics on configuration errors by
-    showing a short preview of known keys and a suggested fix. Designed to be
-    inexpensive on the success path (single hash lookup); the preview list is
-    materialized only on error.
-
-    Parameters
-    ----------
-    m : Mapping[str, Any]
-        Mapping from risk factor name to id.
-    key : str
-        Key to lookup (column label converted to string prior to lookup).
-    preview_n : int
-        Maximum number of known keys to show in the error message.
-    """
-    try:
-        return m[key]
-    except KeyError:
-        # Materialize a small preview of keys only when diagnosing a failure --
-        # prevents huge error messages for very large config maps.
-        keys = list(m.keys())
-        n = len(keys)
-        preview = keys[:preview_n]
-        preview_str = ", ".join(preview) + (" ..." if n > preview_n else "")
-
-        raise ValueError(
-            "Risk factor ID mapping lookup failed.\n"
-            f"Missing key: '{key}'\n\n"
-            "Fix:\n"
-            "  Add this risk factor to the STATIC config table that defines risk_factor_name_id.\n"
-            "  Example row to add:\n"
-            f"    risk_factor_name = {key}\n"
-            "    risk_factor_name_id = <new unique integer>\n\n"
-            f"Known keys preview ({min(preview_n, n)} of {n}):\n"
-            f"  {preview_str}\n"
-        ) from None
-
-
-if __name__ == "__main__":
-    # ---------------------------------------------------------
-    # 0. INPUTS
-    # ---------------------------------------------------------
-
-    # AS OF DATE AS STR
-    AS_OF_DATE_STR: Final[str] = "2026-01-02"
-
-    # Path to directory with test data
-    DEV_DATA_DIR: Final[str] = (
-        "C:/Users/mharvey/Documents/code/riskquant/data/dev"
-    )
-
-    # XLSX file name: Risk Static Data
-    DEV_DATA_FILE_NAME_STATIC_CONFIG: Final[str] = (
-        "dev_risk_static_data_config_v01.xlsx"
-    )
-
-    # XLSX file name
-    DEV_DATA_FILE_NAME_RF_LEVELS: Final[str] = "dev_risk_factor_levels_v01.xlsx"
-
-    # ---------------------------------------------------------
-    # 1. AS OF DATE AS DATE
-    # ---------------------------------------------------------
-
-    # Print title.
-    print("\n--- Convert as-of date from str to date ---")
-
-    # As date.
-    as_of_date = date_str_to_date(AS_OF_DATE_STR)
-
-    # ---------------------------------------------------------
-    # 2. COMPILE THE CONFIG
-    # ---------------------------------------------------------
-
-    # Print title.
-    print("\n--- Compiling Static Config ---")
-
-    # Compile the config from the XLSX
-    compiled_config = compile_risk_static_config_from_xlsx(
-        path=DEV_DATA_DIR + "/" + DEV_DATA_FILE_NAME_STATIC_CONFIG,
-    )
-
-    # Print config summary
-    print(compiled_config.summary())
-
-    # ---------------------------------------------------------
-    # 3. RESLOVE RISK FACTORS FOR AS OF DATE
-    # ---------------------------------------------------------
-
-    # Print title.
-    print(f"\n--- Resolving Risk Factors for As-Of Date: {as_of_date} ---")
-
-    # Use the static method on the mapping class which calls the pure function in resolution.py
-    rf_abs_to_rel_mapping = RiskFactorNameAbsToRelMapping.from_config(
-        config=compiled_config,
-        as_of_date=as_of_date,
-    )
-
-    # Print.
-    print("\nRF Abs. Name Mapping:")
-    print_dict(rf_abs_to_rel_mapping.abs_to_rf_name_and_id)
-
-    # ---------------------------------------------------------
-    # 4. LOAD IN HISTORICAL RISK FACTOR LEVELS
-    # ---------------------------------------------------------
-
-    # Print title.
-    print(f"\n--- Loading in historical risk factor levels ---")
-
-    # Load from XLSX.
-    rfm = RiskFactorMatrix.from_xlsx(
-        path=DEV_DATA_DIR + "/" + DEV_DATA_FILE_NAME_RF_LEVELS,
-        name_to_id_map=rf_abs_to_rel_mapping.abs_to_rf_id,
-    )
-
-    # Display basic info about the RFM.
-    print("\nRFM shape:", rfm.shape)
-
-    print("\nRMF Head (first 5 rows, transposed):")
-    print(rfm.head(5).T.to_string())
-    print("\nRMF Tail (last 5 rows, transposed):")
-    print(rfm.tail(5).T.to_string())
-
-    # ---------------------------------------------------------
-    # X. SUCCESS
-    # ---------------------------------------------------------
-
-    # Print success message if everything executed.
-    print_success_message()
+        # Arrays extracted via boolean masks are contiguous, but we pass them
+        # straight to the snapshot which will enforce all constraints anyway.
+        return RiskFactorLevelSnapshot(
+            as_of_date=target_date,
+            factor_ids=valid_ids,
+            factor_levels=valid_levels,
+        )

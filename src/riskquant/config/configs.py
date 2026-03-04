@@ -12,9 +12,9 @@ from typing import Dict, Optional, Tuple
 import numpy as np
 
 from riskquant.config.schema_objects import (
+    AliasSchema,
     AssetClass,
     AssetSubclass,
-    AliasSchema,
     BusinessDayConvention,
     Ccy,
     CompoundingConvention,
@@ -33,7 +33,6 @@ from riskquant.config.schema_objects import (
     UnitScale,
     UnitType,
 )
-from riskquant.utils.printer import print_success_message
 from riskquant.utils.tenors import parse_bracket_token
 
 
