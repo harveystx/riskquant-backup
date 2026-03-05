@@ -14,9 +14,15 @@ def main():
         base_dir / "config",
         base_dir / "market_data",
         base_dir / "utils",
+        # base_dir / "portfolio",
+        base_dir / "portfolio" / "blocks",
+        base_dir / "portfolio" / "ingest",
         base_dir / "portfolio" / "payloads",
+        # base_dir / "portfolio" / "pnl",
         base_dir / "portfolio" / "constants.py",
-        # base_dir / "portfolio" / "blocks",
+        base_dir / "portfolio" / "fx.py",
+        base_dir / "portfolio" / "instruments.py",
+        base_dir / "portfolio" / "trades.py",
     ]
 
     out_file = base_dir / "master_context.txt"
@@ -31,6 +37,8 @@ def main():
         ".pytest_cache",
         "tests",
         "_create_master_context.py",
+        ".ruff_cache",
+        "ruff_cache",
     }
 
     # 2. Two-pass approach: First, gather all valid files

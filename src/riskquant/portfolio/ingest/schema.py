@@ -20,5 +20,6 @@ OPTIONAL_COLS: Final[Tuple[str, ...]] = (
     "strike_ccy",
     "is_call",
     "expiry_date",
+    "delivery_date",
     "settlement_date",
 )

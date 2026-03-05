@@ -11,12 +11,13 @@ from dataclasses import dataclass
 
 # Import numpy for numeric type definitions
 import numpy as np
+from openpyxl.descriptors import Integer
 
-# Import the abstract Payload base class for type polymorphism
-from riskquant.portfolio.payloads.base import Payload
+from riskquant.portfolio import instruments
+from riskquant.portfolio.payloads.base_payload import Payload
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class TradeRecord:
     """
     Immutable data class representing a single trade record.
@@ -25,30 +26,48 @@ class TradeRecord:
     a unique identifier, an instrument reference, and a payload containing
     instrument-specific data (pricing, quantity, strike prices, etc.).
 
-    The class is frozen to ensure immutability and uses slots for memory
-    efficiency. String representations are provided for debugging and
-    logging purposes.
-
     Attributes:
         trade_uid: Unique integer identifier for this specific trade.
-                   Used to track and reference the trade throughout
-                   risk calculations and portfolio analysis.
         instrument_id: Numpy int32 identifier linking to the instrument
-                       definition (e.g., spot, forward, option). This ID
-                       is common across all trades of the same instrument
-                       within a batch.
+                       definition (e.g., spot, forward, option).
         payload: Polymorphic Payload object containing instrument-specific
-                 data. The concrete type (SpotPayload, ForwardPayload, etc.)
-                 is determined by the instrument type and contains all
-                 necessary valuation parameters.
+                 data.
     """
 
-    # Unique identifier for this trade
     trade_uid: int
-    # Instrument definition identifier (references instrument metadata)
     instrument_id: np.int32
-    # Instrument-specific data payload (polymorphic, subclass of Payload)
     payload: Payload
+
+    def __post_init__(self):
+        # trade_uid is expected to be a Python int (not numpy int) for easier handling in dicts and logs
+        if self.trade_uid is None:
+            raise ValueError("trade_uid cannot be None")
+        if not isinstance(self.trade_uid, int):
+            raise TypeError(
+                f"trade_uid must be an int, got {type(self.trade_uid)}"
+            )
+
+        # instrument_id should be a numpy int32 for consistency with batch data
+        if self.instrument_id is None:
+            raise ValueError("instrument_id cannot be None")
+        if not isinstance(self.instrument_id, (int, np.integer)):
+            raise TypeError(
+                f"instrument_id must be a numpy int32, got {type(self.instrument_id)}"
+            )
+        object.__setattr__(self, "instrument_id", np.int32(self.instrument_id))
+        if self.instrument_id not in instruments.ALL_INSTRUMENT_IDS:
+            raise ValueError(
+                f"instrument_id = {self.instrument_id} is not a valid instrument ID. Valid IDs: {instruments.ALL_INSTRUMENT_IDS}"
+            )
+
+        # Payload must be an instance of a subclass of Payload
+        if self.payload is None:
+            raise ValueError("payload cannot be None")
+        if not isinstance(self.payload, Payload):
+            raise TypeError(
+                f"payload must be an instance of Payload, "
+                f"got {type(self.payload)}"
+            )
 
     def __str__(self) -> str:
         """
@@ -69,17 +88,3 @@ class TradeRecord:
             f"  payload={self.payload}\n"
             f")"
         )
-
-    def __repr__(self) -> str:
-        """
-        Return the official string representation of the trade record.
-
-        Delegates to __str__() to provide a consistent, human-readable
-        representation. This is called by Python's repr() function and
-        used when displaying the object in the REPL or logs.
-
-        Returns:
-            str: The same formatted representation as __str__().
-        """
-        # Use the string representation for repr (common pattern for display-friendly objects)
-        return self.__str__()

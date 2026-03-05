@@ -27,10 +27,11 @@ from riskquant.portfolio.constants import (
     NO_ID,
     NO_SETTLEMENT_DATE_ORDINAL32,
 )
+from riskquant.portfolio.payloads.base_payload import Payload
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class _VanillaEuropeanOptionBasePayload:
+class _VanillaEuropeanOptionBasePayload(Payload):
     """
     Common fields shared by vanilla European option payload variants.
     """
@@ -104,46 +105,6 @@ class _VanillaEuropeanOptionBasePayload:
             np.int32(self.fx_strike_to_settle_rf_id),
         )
 
-        # basic call/put validation (optional but cheap)
-        if int(self.is_call) not in (0, 1):
-            raise ValueError("is_call must be 0 (put) or 1 (call).")
-
-        # Expiry date ordinal must be non-negative and cannot be the NO_EXPIRY_DATE_ORDINAL32 sentinel
-        if self.expiry_date_ordinal32 == NO_EXPIRY_DATE_ORDINAL32:
-            raise ValueError(
-                "European option payload requires expiry_date_ordinal32 (cannot be sentinel)."
-            )
-        if self.expiry_date_ordinal32 < 0:
-            raise ValueError("expiry_date_ordinal32 must be non-negative.")
-
-        # Settlement date ordinal must be non-negative or the NO_SETTLEMENT_DATE_ORDINAL32 sentinel
-        if (
-            self.payoff_settlement_date_ordinal32 < 0
-            and self.payoff_settlement_date_ordinal32
-            != NO_SETTLEMENT_DATE_ORDINAL32
-        ):
-            raise ValueError(
-                "payoff_settlement_date_ordinal32 must be non-negative or NO_SETTLEMENT_DATE_ORDINAL32 sentinel."
-            )
-
-        # FX risk factor IDs must be either valid non-negative integers or the NO_FX_RF_REQUIRED sentinel
-        for field_name in [
-            "fx_under_to_settle_rf_id",
-            "fx_strike_to_settle_rf_id",
-        ]:
-            field_value = getattr(self, field_name)
-            if field_value == NO_ID:
-                raise ValueError(
-                    f"{field_name} cannot be NO_ID sentinel. Use NO_FX_RF_REQUIRED if no FX conversion is needed."
-                )
-            if field_value != NO_FX_RF_REQUIRED and field_value < 0:
-                raise ValueError(
-                    f"{field_name} must be a non-negative integer or NO_FX_RF_REQUIRED sentinel."
-                )
-
-    def __repr__(self) -> str:
-        return self.__str__()
-
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class VanillaEuropeanOptionNodePayload(_VanillaEuropeanOptionBasePayload):
@@ -166,20 +127,16 @@ class VanillaEuropeanOptionNodePayload(_VanillaEuropeanOptionBasePayload):
 
     def __post_init__(self) -> None:
         _VanillaEuropeanOptionBasePayload.__post_init__(self)
-
-        # Underlying price_rf_id must be a valid non-negative integer (no sentinel allowed)
-        if self.underlying_price_rf_id == NO_ID:
-            raise ValueError(
-                "underlying_price_rf_id is required (cannot be sentinel)."
-            )
-        if self.underlying_price_rf_id < 0:
-            raise ValueError("underlying_price_rf_id must be non-negative.")
-
-        # vol_rf_id must be a valid non-negative integer (no sentinel allowed)
-        if self.vol_rf_id == NO_ID:
-            raise ValueError("vol_rf_id is required (cannot be sentinel).")
-        if self.vol_rf_id < 0:
-            raise ValueError("vol_rf_id must be non-negative.")
+        object.__setattr__(
+            self,
+            "underlying_price_rf_id",
+            np.int32(self.underlying_price_rf_id),
+        )
+        object.__setattr__(
+            self,
+            "vol_rf_id",
+            np.int32(self.vol_rf_id),
+        )
 
     def __str__(self) -> str:
         """Return a compact single-line representation for logging/debugging."""
@@ -189,12 +146,11 @@ class VanillaEuropeanOptionNodePayload(_VanillaEuropeanOptionBasePayload):
             f"strike={self.strike}, "
             f"is_call={int(self.is_call)}, "
             f"expiry_date_ordinal32={self.expiry_date_ordinal32}, "
-            f"delivery_date_ordinal32={self.payoff_settlement_date_ordinal32},"
             f"payoff_settlement_date_ordinal32={self.payoff_settlement_date_ordinal32}, "
-            f"underlying_price_rf_id={self.underlying_price_rf_id}, "
-            f"vol_rf_id={self.vol_rf_id}, "
             f"fx_under_to_settle_rf_id={self.fx_under_to_settle_rf_id}, "
-            f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}"
+            f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}, "
+            f"underlying_price_rf_id={self.underlying_price_rf_id}, "
+            f"vol_rf_id={self.vol_rf_id}"
             ")"
         )
 
@@ -225,32 +181,21 @@ class VanillaEuropeanOptionCurvePayload(_VanillaEuropeanOptionBasePayload):
 
     def __post_init__(self) -> None:
         _VanillaEuropeanOptionBasePayload.__post_init__(self)
-
-        # Underlying price curve_rf_id must be a valid non-negative integer (no sentinel allowed)
-        if self.underlying_price_curve_rf_id == NO_ID:
-            raise ValueError(
-                "underlying_price_curve_rf_id is required (cannot be sentinel)."
-            )
-        if self.underlying_price_curve_rf_id < 0:
-            raise ValueError(
-                "underlying_price_curve_rf_id must be non-negative."
-            )
-
-        # delivery_date_ordinal32 must be non-negative or the NO_DELIVERY_DATE_ORDINAL32 sentinel
-        if self.delivery_date_ordinal32 == NO_DELIVERY_DATE_ORDINAL32:
-            raise ValueError(
-                "VanillaEuropeanOptionCurvePayload requires delivery_date_ordinal32 (cannot be sentinel)."
-            )
-        if self.delivery_date_ordinal32 < 0:
-            raise ValueError("delivery_date_ordinal32 must be non-negative.")
-
-        # vol_surface_rf_id must be a valid non-negative integer (no sentinel allowed)
-        if self.vol_surface_rf_id == NO_ID:
-            raise ValueError(
-                "vol_surface_rf_id is required (cannot be sentinel)."
-            )
-        if self.vol_surface_rf_id < 0:
-            raise ValueError("vol_surface_rf_id must be non-negative.")
+        object.__setattr__(
+            self,
+            "underlying_price_curve_rf_id",
+            np.int32(self.underlying_price_curve_rf_id),
+        )
+        object.__setattr__(
+            self,
+            "delivery_date_ordinal32",
+            np.int32(self.delivery_date_ordinal32),
+        )
+        object.__setattr__(
+            self,
+            "vol_surface_rf_id",
+            np.int32(self.vol_surface_rf_id),
+        )
 
     def __str__(self) -> str:
         """Return a compact single-line representation for logging/debugging."""
@@ -261,9 +206,10 @@ class VanillaEuropeanOptionCurvePayload(_VanillaEuropeanOptionBasePayload):
             f"is_call={int(self.is_call)}, "
             f"expiry_date_ordinal32={self.expiry_date_ordinal32}, "
             f"payoff_settlement_date_ordinal32={self.payoff_settlement_date_ordinal32}, "
-            f"underlying_price_curve_rf_id={self.underlying_price_curve_rf_id}, "
-            f"vol_surface_rf_id={self.vol_surface_rf_id}, "
             f"fx_under_to_settle_rf_id={self.fx_under_to_settle_rf_id}, "
-            f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}"
+            f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}, "
+            f"underlying_price_curve_rf_id={self.underlying_price_curve_rf_id}, "
+            f"delivery_date_ordinal32={self.delivery_date_ordinal32}, "
+            f"vol_surface_rf_id={self.vol_surface_rf_id}"
             ")"
         )

@@ -71,27 +71,6 @@ class SpotPayload:
             np.int32(self.fx_rf_id),
         )
 
-        # Validation to catch common errors early
-        # price_rf_id must be a valid non-negative integer (no sentinel allowed)
-        if self.price_rf_id == NO_ID:
-            raise ValueError(
-                "SpotPayload requires price_rf_id (cannot be sentinel)."
-            )
-        if self.price_rf_id < 0:
-            raise ValueError("price_rf_id must be non-negative.")
-
-        # fx_rf_id must be either a valid non-negative integer or the NO_FX_RF_REQUIRED sentinel
-        if self.fx_rf_id == NO_ID:
-            raise ValueError(
-                "SpotPayload requires fx_rf_id (cannot be NO_ID). Use NO_FX_RF_REQUIRED if no FX conversion is needed."
-            )
-
-        # fx_rf_id must be non-negative or the NO_FX_RF_REQUIRED sentinel (negative values other than the sentinel are not allowed)
-        if self.fx_rf_id < 0 and self.fx_rf_id != NO_FX_RF_REQUIRED:
-            raise ValueError(
-                "fx_rf_id must be a non-negative integer or NO_FX_RF_REQUIRED sentinel."
-            )
-
     def __str__(self) -> str:
         # Single-line, human-readable representation for logging and debugging
         return (
@@ -101,6 +80,3 @@ class SpotPayload:
             f"fx_rf_id={self.fx_rf_id}"
             f")"
         )
-
-    def __repr__(self) -> str:
-        return self.__str__()

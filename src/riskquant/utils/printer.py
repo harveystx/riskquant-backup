@@ -88,25 +88,24 @@ def print_dict(
     indent: int = 0,
     indent_step: int = 4,
     sort_keys: bool = False,
+    limit: int | None = None,
 ) -> None:
     """
     Pretty-print a dictionary with aligned keys and nested support.
-
-    Designed for low memory overhead:
-        - No large intermediate strings
-        - Streams output directly via print
-        - Minimal recursion footprint
 
     Args:
         d: Dictionary (or mapping) to print.
         indent: Initial indentation level.
         indent_step: Spaces added per nesting level.
         sort_keys: If True, keys are printed alphabetically.
+        limit: Maximum number of keys to print (None = all).
     """
     if not isinstance(d, Mapping):
-        raise TypeError("print_dict_pretty expects a mapping type.")
+        raise TypeError("print_dict expects a mapping type.")
 
-    items = sorted(d.items()) if sort_keys else d.items()
+    items = sorted(d.items()) if sort_keys else list(d.items())
+    if limit is not None:
+        items = items[:limit]
 
     # Compute key width once for alignment
     try:
@@ -128,6 +127,7 @@ def print_dict(
                 indent=indent + indent_step * 2,
                 indent_step=indent_step,
                 sort_keys=sort_keys,
+                limit=None,  # Don't limit nested dicts
             )
         else:
             print(pad + " " * indent_step + f"{key_pad}: {value}")

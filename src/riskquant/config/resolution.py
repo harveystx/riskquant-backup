@@ -25,6 +25,140 @@ from riskquant.utils.tenors import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class RiskFactorNameAbsToRelMapping:
+    as_of_date: date
+    abs_to_rf_name_and_id: Mapping[str, Tuple[str, int]]  # abs -> (rel, id)
+
+    def __post_init__(self) -> None:
+        seen: dict[int, str] = {}
+
+        for abs_name, (rel_name, rf_id) in self.abs_to_rf_name_and_id.items():
+            if not isinstance(rel_name, str):
+                raise ValueError(
+                    f"rel_name for '{abs_name}' must be str, got {type(rel_name).__name__}"
+                )
+            if not isinstance(rf_id, (int, np.integer)):
+                raise ValueError(
+                    f"id for '{abs_name}' must be an integer, got {type(rf_id).__name__}={rf_id!r}"
+                )
+
+            iv = int(rf_id)
+            prev = seen.get(iv)
+            if prev is not None and prev != abs_name:
+                raise ValueError(
+                    "Mapping contains duplicate ID assignment:\n"
+                    f"  '{prev}' and '{abs_name}' both map to ID={iv}\n"
+                    "Each absolute risk factor must map to a unique risk_factor_name_id."
+                )
+            seen[iv] = abs_name
+
+    @staticmethod
+    def from_config(
+        config: RiskStaticConfig,
+        as_of_date: date,
+    ) -> "RiskFactorNameAbsToRelMapping":
+        return build_risk_factor_name_mapping_for_as_of_date(
+            config=config,
+            as_of_date=as_of_date,
+        )
+
+    @overload
+    def get(self, abs_name: str) -> tuple[str, int]: ...
+
+    @overload
+    def get(self, abs_name: Sequence[str]) -> list[tuple[str, int]]: ...
+
+    def get(
+        self,
+        abs_name: str | Sequence[str],
+    ) -> tuple[str, int] | list[tuple[str, int]]:
+        m = self.abs_to_rf_name_and_id
+        if isinstance(abs_name, str):
+            return m[abs_name]
+        return [m[a] for a in abs_name]
+
+    @overload
+    def get_rf_name_for_abs_name(self, abs_name: str) -> str: ...
+
+    @overload
+    def get_rf_name_for_abs_name(
+        self, abs_name: Sequence[str]
+    ) -> list[str]: ...
+
+    def get_rf_name_for_abs_name(
+        self,
+        abs_name: str | Sequence[str],
+    ) -> str | list[str]:
+        m = self.abs_to_rf_name_and_id
+        if isinstance(abs_name, str):
+            return m[abs_name][0]
+        return [m[a][0] for a in abs_name]
+
+    @overload
+    def get_rf_id_for_abs_name(self, abs_name: str) -> int: ...
+
+    @overload
+    def get_rf_id_for_abs_name(self, abs_name: Sequence[str]) -> list[int]: ...
+
+    def get_rf_id_for_abs_name(
+        self,
+        abs_name: str | Sequence[str],
+    ) -> int | list[int]:
+        m = self.abs_to_rf_name_and_id
+        if isinstance(abs_name, str):
+            return m[abs_name][1]
+        return [m[a][1] for a in abs_name]
+
+    def to_df(self) -> pd.DataFrame:
+        """
+        Return a DataFrame with columns:
+          [risk_factor_name, risk_factor_id]
+        Rows are deterministically ordered by absolute_name (the index).
+        """
+        items = sorted(self.abs_to_rf_name_and_id.items(), key=lambda x: x[0])
+        abs_names = [k for k, _ in items]
+        rel_names = [v[0] for _, v in items]
+        ids = np.fromiter(
+            (int(v[1]) for _, v in items), dtype=np.int32, count=len(items)
+        )
+
+        df = pd.DataFrame(
+            {
+                "risk_factor_name": rel_names,
+                "risk_factor_id": ids,
+            },
+            index=pd.Index(abs_names, name="absolute_risk_factor_name"),
+        )
+        return df
+
+    @property
+    def df(self) -> pd.DataFrame:
+        """Alias for to_dataframe(), for convenient access."""
+        return self.to_df()
+
+    @property
+    def abs_to_rf_name(self) -> Dict[str, str]:
+        return {
+            abs_name: str(rf_name_and_id[0])
+            for abs_name, rf_name_and_id in self.abs_to_rf_name_and_id.items()
+        }
+
+    @property
+    def abs_to_rf_id(self) -> Dict[str, int]:
+        return {
+            abs_name: int(rf_name_and_id[1])
+            for abs_name, rf_name_and_id in self.abs_to_rf_name_and_id.items()
+        }
+
+    @property
+    def rf_name_to_rf_id(self) -> Dict[str, int]:
+        return {
+            rf_name_and_id[0]: int(rf_name_and_id[1])
+            for _, rf_name_and_id in self.abs_to_rf_name_and_id.items()
+        }
+
+
 def build_risk_factor_name_mapping_for_as_of_date(
     *,
     config: RiskStaticConfig,
@@ -254,140 +388,6 @@ def build_risk_factor_name_mapping_for_as_of_date(
         as_of_date=as_of_date,
         abs_to_rf_name_and_id=abs_to_rf_name_and_id,
     )
-
-
-@dataclass(frozen=True, slots=True)
-class RiskFactorNameAbsToRelMapping:
-    as_of_date: date
-    abs_to_rf_name_and_id: Mapping[str, Tuple[str, int]]  # abs -> (rel, id)
-
-    def __post_init__(self) -> None:
-        seen: dict[int, str] = {}
-
-        for abs_name, (rel_name, rf_id) in self.abs_to_rf_name_and_id.items():
-            if not isinstance(rel_name, str):
-                raise ValueError(
-                    f"rel_name for '{abs_name}' must be str, got {type(rel_name).__name__}"
-                )
-            if not isinstance(rf_id, (int, np.integer)):
-                raise ValueError(
-                    f"id for '{abs_name}' must be an integer, got {type(rf_id).__name__}={rf_id!r}"
-                )
-
-            iv = int(rf_id)
-            prev = seen.get(iv)
-            if prev is not None and prev != abs_name:
-                raise ValueError(
-                    "Mapping contains duplicate ID assignment:\n"
-                    f"  '{prev}' and '{abs_name}' both map to ID={iv}\n"
-                    "Each absolute risk factor must map to a unique risk_factor_name_id."
-                )
-            seen[iv] = abs_name
-
-    @staticmethod
-    def from_config(
-        config: RiskStaticConfig,
-        as_of_date: date,
-    ) -> "RiskFactorNameAbsToRelMapping":
-        return build_risk_factor_name_mapping_for_as_of_date(
-            config=config,
-            as_of_date=as_of_date,
-        )
-
-    @overload
-    def get(self, abs_name: str) -> tuple[str, int]: ...
-
-    @overload
-    def get(self, abs_name: Sequence[str]) -> list[tuple[str, int]]: ...
-
-    def get(
-        self,
-        abs_name: str | Sequence[str],
-    ) -> tuple[str, int] | list[tuple[str, int]]:
-        m = self.abs_to_rf_name_and_id
-        if isinstance(abs_name, str):
-            return m[abs_name]
-        return [m[a] for a in abs_name]
-
-    @overload
-    def get_rf_name_for_abs_name(self, abs_name: str) -> str: ...
-
-    @overload
-    def get_rf_name_for_abs_name(
-        self, abs_name: Sequence[str]
-    ) -> list[str]: ...
-
-    def get_rf_name_for_abs_name(
-        self,
-        abs_name: str | Sequence[str],
-    ) -> str | list[str]:
-        m = self.abs_to_rf_name_and_id
-        if isinstance(abs_name, str):
-            return m[abs_name][0]
-        return [m[a][0] for a in abs_name]
-
-    @overload
-    def get_rf_id_for_abs_name(self, abs_name: str) -> int: ...
-
-    @overload
-    def get_rf_id_for_abs_name(self, abs_name: Sequence[str]) -> list[int]: ...
-
-    def get_rf_id_for_abs_name(
-        self,
-        abs_name: str | Sequence[str],
-    ) -> int | list[int]:
-        m = self.abs_to_rf_name_and_id
-        if isinstance(abs_name, str):
-            return m[abs_name][1]
-        return [m[a][1] for a in abs_name]
-
-    def to_df(self) -> pd.DataFrame:
-        """
-        Return a DataFrame with columns:
-          [risk_factor_name, risk_factor_id]
-        Rows are deterministically ordered by absolute_name (the index).
-        """
-        items = sorted(self.abs_to_rf_name_and_id.items(), key=lambda x: x[0])
-        abs_names = [k for k, _ in items]
-        rel_names = [v[0] for _, v in items]
-        ids = np.fromiter(
-            (int(v[1]) for _, v in items), dtype=np.int32, count=len(items)
-        )
-
-        df = pd.DataFrame(
-            {
-                "risk_factor_name": rel_names,
-                "risk_factor_id": ids,
-            },
-            index=pd.Index(abs_names, name="absolute_risk_factor_name"),
-        )
-        return df
-
-    @property
-    def df(self) -> pd.DataFrame:
-        """Alias for to_dataframe(), for convenient access."""
-        return self.to_df()
-
-    @property
-    def abs_to_rf_name(self) -> Dict[str, str]:
-        return {
-            abs_name: str(rf_name_and_id[0])
-            for abs_name, rf_name_and_id in self.abs_to_rf_name_and_id.items()
-        }
-
-    @property
-    def abs_to_rf_id(self) -> Dict[str, int]:
-        return {
-            abs_name: int(rf_name_and_id[1])
-            for abs_name, rf_name_and_id in self.abs_to_rf_name_and_id.items()
-        }
-
-    @property
-    def rf_name_to_rf_id(self) -> Dict[str, int]:
-        return {
-            rf_name_and_id[0]: int(rf_name_and_id[1])
-            for _, rf_name_and_id in self.abs_to_rf_name_and_id.items()
-        }
 
 
 if __name__ == "__main__":

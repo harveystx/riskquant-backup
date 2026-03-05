@@ -4,14 +4,18 @@ from typing import Final
 from riskquant.config.compile import compile_risk_static_config_from_xlsx
 from riskquant.config.resolution import RiskFactorNameAbsToRelMapping
 from riskquant.market_data.risk_factors.builder_matrix import (
-    build_risk_factor_matrix_from_df,
     build_risk_factor_matrix_from_xlsx,
 )
-from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.utils.dates import date_str_to_date
 from riskquant.utils.printer import print_df, print_dict, print_success_message
 
 if __name__ == "__main__":
+
+    import warnings
+
+    # Filter out the specific UserWarning from openpyxl
+    warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+
     # ---------------------------------------------------------
     # INPUTS
     # ---------------------------------------------------------

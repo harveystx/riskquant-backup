@@ -24,10 +24,11 @@ from riskquant.portfolio.constants import (
     NO_ID,
     NO_SETTLEMENT_DATE_ORDINAL32,
 )
+from riskquant.portfolio.payloads.base_payload import Payload
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class _ForwardBasePayload:
+class _ForwardBasePayload(Payload):
     """Common fields shared by forward payload variants."""
 
     # ========== ECONOMIC TERMS ==========
@@ -84,33 +85,6 @@ class _ForwardBasePayload:
             np.int32(self.fx_strike_to_settle_rf_id),
         )
 
-        # Settlement date ordinal must be non-negative or the NO_SETTLEMENT_DATE_ORDINAL32 sentinel
-        if (
-            self.settlement_date_ordinal32 < 0
-            and self.settlement_date_ordinal32 != NO_SETTLEMENT_DATE_ORDINAL32
-        ):
-            raise ValueError(
-                "settlement_date_ordinal32 must be non-negative or NO_SETTLEMENT_DATE_ORDINAL32 sentinel."
-            )
-
-        # FX risk factor IDs must be either valid non-negative integers or the NO_FX_RF_REQUIRED sentinel
-        for field_name in [
-            "fx_under_to_settle_rf_id",
-            "fx_strike_to_settle_rf_id",
-        ]:
-            field_value = getattr(self, field_name)
-            if field_value == NO_ID:
-                raise ValueError(
-                    f"{field_name} cannot be NO_ID sentinel. Use NO_FX_RF_REQUIRED if no FX conversion is needed."
-                )
-            if field_value != NO_FX_RF_REQUIRED and field_value < 0:
-                raise ValueError(
-                    f"{field_name} must be a non-negative integer or NO_FX_RF_REQUIRED sentinel."
-                )
-
-    def __repr__(self) -> str:
-        return self.__str__()
-
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ForwardNodePayload(_ForwardBasePayload):
@@ -137,15 +111,7 @@ class ForwardNodePayload(_ForwardBasePayload):
             self,
             "price_rf_id",
             np.int32(self.price_rf_id),
-        )  # Cast child field
-
-        # price_rf_id must be a valid non-negative integer (no sentinel allowed)
-        if self.price_rf_id == NO_ID:
-            raise ValueError(
-                "ForwardNodePayload requires price_rf_id (cannot be sentinel)."
-            )
-        if self.price_rf_id < 0:
-            raise ValueError("price_rf_id must be non-negative.")
+        )
 
     def __str__(self) -> str:
         """Return a compact, single-line string representation for logging and debugging."""
@@ -194,22 +160,6 @@ class ForwardCurvePayload(_ForwardBasePayload):
             "delivery_date_ordinal32",
             np.int32(self.delivery_date_ordinal32),
         )
-
-        # delivery_date_ordinal32 must be non-negative or the NO_DELIVERY_DATE_ORDINAL32 sentinel
-        if self.delivery_date_ordinal32 == NO_DELIVERY_DATE_ORDINAL32:
-            raise ValueError(
-                "ForwardCurvePayload requires delivery_date_ordinal32 (cannot be sentinel)."
-            )
-        if self.delivery_date_ordinal32 < 0:
-            raise ValueError("delivery_date_ordinal32 must be non-negative.")
-
-        # price_curve_id must be a valid non-negative integer (no sentinel allowed)
-        if self.price_curve_id == NO_ID:
-            raise ValueError(
-                "ForwardCurvePayload requires price_curve_id (cannot be sentinel)."
-            )
-        if self.price_curve_id < 0:
-            raise ValueError("price_curve_id must be non-negative.")
 
     def __str__(self) -> str:
         """Return a compact, single-line string representation for logging and debugging."""

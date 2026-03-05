@@ -20,11 +20,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from riskquant.portfolio.blocks.base_block import Block
 
-
-@dataclass(frozen=True, slots=True)
-class SpotBlock(Block):
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SpotBlock:
     """
     Struct-of-arrays for compiled spot trades.
 
