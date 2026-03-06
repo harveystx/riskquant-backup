@@ -1,6 +1,6 @@
 import numpy as np
 
-from riskquant.portfolio.constants import NO_FX_RF_REQUIRED
+from riskquant.constants import NO_FX_RF_REQUIRED
 from riskquant.portfolio.payloads.forward import (
     ForwardCurvePayload,
     ForwardNodePayload,

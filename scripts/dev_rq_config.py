@@ -6,7 +6,7 @@ from riskquant.config.compile import compile_risk_static_config_from_xlsx
 from riskquant.config.loader import load_risk_static_data_config_xlsx_into_dict
 from riskquant.config.validate import validate_static_config_dfs
 from riskquant.config.builder import RiskStaticConfigFrames
-from riskquant.config.resolution import RiskFactorNameAbsToRelMapping
+from riskquant.config.resolution import RiskFactorAbsToRelNameIdMap
 
 
 # Utils imports
@@ -105,16 +105,14 @@ def run_config_demo():
     print(f"Resolving risk factors for As-Of Date: {as_of_date}")
 
     # Generate the mapping
-    mapping = RiskFactorNameAbsToRelMapping.from_config(
+    mapping = RiskFactorAbsToRelNameIdMap.from_config(
         config=config,
         as_of_date=as_of_date,
     )
 
     # Display sample of the mapping
-    print(
-        f"\nSample of absolute to relative name mapping for as_of_date={as_of_date}: \n "
-    )
-    print_dict(mapping.abs_to_rf_name_and_id, limit=100)
+    print(f"\nMapping for as_of_date ({as_of_date}): abs -> (rel, id)\n ")
+    print_dict(mapping.abs_to_rel_name_and_id, limit=100)
 
     # Get the mapping as a DataFrame for easy viewing
     mapping_df = mapping.to_df()
@@ -126,13 +124,17 @@ def run_config_demo():
 
     # Example of accessing the dictionary mappings directly
     sample_abs_name = mapping_df.index[0]
-    resolved_rel_name = mapping.abs_to_rf_name[sample_abs_name]
-    resolved_id = mapping.abs_to_rf_id[sample_abs_name]
+    resolved_rel_name = mapping.abs_to_rel_name[sample_abs_name]
+    resolved_id = mapping.abs_to_rel_id[sample_abs_name]
 
     print(f"\nDictionary Access Example:")
     print(f"  Absolute Name: {sample_abs_name}")
     print(f"  Maps to Rel:   {resolved_rel_name}")
     print(f"  Maps to ID:    {resolved_id}")
+
+    # Inverted mapping example
+    print(f"\nInverted Mapping: rel -> (abs, id):")
+    print_dict(mapping.rel_to_abs_name_and_id, limit=100)
 
     # =========================================================
     # FINISH

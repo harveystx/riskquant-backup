@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 from pandas.api.types import (
     is_datetime64_any_dtype,
-    is_datetime64tz_dtype,
 )
 
 from riskquant.portfolio.ingest.utils import is_na_helper
@@ -64,7 +63,7 @@ def parse_optional_date_series_to_ordinal32(
         return out
 
     # If the dtype of the series is timezone-aware datetime, we should raise an error since we don't support timezones in our date encoding.
-    if is_datetime64tz_dtype(ser.dtype):
+    if isinstance(ser.dtype, pd.DatetimeTZDtype):
         raise TypeError(
             f"Invalid {col_name}: timezone-aware datetimes are not supported."
         )

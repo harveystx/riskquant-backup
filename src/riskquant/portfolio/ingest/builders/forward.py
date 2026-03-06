@@ -7,16 +7,16 @@ from __future__ import annotations
 
 import numpy as np
 
-from riskquant.exceptions import PrettyKeyError
-from riskquant.portfolio import instruments
-from riskquant.portfolio.ingest.utils import is_na_helper
 from riskquant.portfolio.ingest.batch import IngestBatch
+from riskquant.portfolio.instruments import (
+    FORWARD_NODE_ID,
+    FORWARD_CURVE_ID,
+)
 from riskquant.portfolio.payloads.forward import (
     ForwardNodePayload,
     ForwardCurvePayload,
 )
-from riskquant.portfolio.trades import TradeRecord
-from riskquant.portfolio.constants import NO_DELIVERY_DATE_ORDINAL32
+from riskquant.portfolio.trade import TradeRecord
 
 
 def build_forward_node(
@@ -29,7 +29,7 @@ def build_forward_node(
     """
     return TradeRecord(
         trade_uid=int(batch.uids[ix]),
-        instrument_id=np.int32(batch.forward_node_id),
+        instrument_id=FORWARD_NODE_ID,
         payload=ForwardNodePayload(
             quantity=np.float64(batch.qty[ix]),
             strike=np.float64(batch.strike_price[ix]),
@@ -51,7 +51,7 @@ def build_forward_curve(
     """
     return TradeRecord(
         trade_uid=int(batch.uids[ix]),
-        instrument_id=np.int32(batch.forward_curve_id),
+        instrument_id=FORWARD_CURVE_ID,
         payload=ForwardCurvePayload(
             quantity=np.float64(batch.qty[ix]),
             strike=np.float64(batch.strike_price[ix]),

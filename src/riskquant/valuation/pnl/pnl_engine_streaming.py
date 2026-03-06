@@ -14,7 +14,7 @@ from riskquant.market_data.risk_factors.shift_types import (
     SHIFT_SIMPLE_RETURN,
 )
 from riskquant.market_data.risk_factors.snapshot import RiskFactorLevelSnapshot
-from riskquant.portfolio.compiled import CompiledPortfolio
+from riskquant.portfolio.compiled_deprecated import CompiledPortfolio
 from riskquant.simlab.resolve.proxy import ProxyResolution
 from riskquant.simlab.scenarios.base import ScenarioGenerator
 from riskquant.valuation.pnl.pnl_writer import PnlBatchWriter

@@ -7,19 +7,16 @@ from __future__ import annotations
 
 import numpy as np
 
-from riskquant.config.configs import RiskStaticConfig
-from riskquant.exceptions import PrettyKeyError
-from riskquant.portfolio.constants import (
-    NO_DELIVERY_DATE_ORDINAL32,
-    NO_EXPIRY_DATE_ORDINAL32,
-)
-from riskquant.portfolio.ingest.utils import is_na_helper as is_na
 from riskquant.portfolio.ingest.batch import IngestBatch
+from riskquant.portfolio.instruments import (
+    VANILLA_EUROPEAN_OPTION_CURVE_ID,
+    VANILLA_EUROPEAN_OPTION_NODE_ID,
+)
 from riskquant.portfolio.payloads.vanilla_european_option import (
     VanillaEuropeanOptionNodePayload,
     VanillaEuropeanOptionCurvePayload,
 )
-from riskquant.portfolio.trades import TradeRecord
+from riskquant.portfolio.trade import TradeRecord
 
 
 def build_vanilla_european_option_node(
@@ -32,7 +29,7 @@ def build_vanilla_european_option_node(
     """
     return TradeRecord(
         trade_uid=int(batch.uids[ix]),
-        instrument_id=np.int32(batch.vanilla_euro_option_node_id),
+        instrument_id=VANILLA_EUROPEAN_OPTION_NODE_ID,
         payload=VanillaEuropeanOptionNodePayload(
             quantity=np.float64(batch.qty[ix]),
             strike=np.float64(batch.strike_price[ix]),
@@ -57,7 +54,7 @@ def build_vanilla_european_option_curve(
     """
     return TradeRecord(
         trade_uid=int(batch.uids[ix]),
-        instrument_id=np.int32(batch.vanilla_euro_option_curve_id),
+        instrument_id=VANILLA_EUROPEAN_OPTION_CURVE_ID,
         payload=VanillaEuropeanOptionCurvePayload(
             quantity=np.float64(batch.qty[ix]),
             strike=np.float64(batch.strike_price[ix]),

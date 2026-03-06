@@ -2,7 +2,7 @@ from datetime import date
 from typing import Final
 
 from riskquant.config.compile import compile_risk_static_config_from_xlsx
-from riskquant.config.resolution import RiskFactorNameAbsToRelMapping
+from riskquant.config.resolution import RiskFactorAbsToRelNameIdMap
 from riskquant.market_data.risk_factors.builder_matrix import (
     build_risk_factor_matrix_from_xlsx,
 )
@@ -69,14 +69,14 @@ if __name__ == "__main__":
     print(f"\n--- Resolving Risk Factors for As-Of Date: {as_of_date} ---")
 
     # Use the static method on the mapping class which calls the pure function in resolution.py
-    rf_abs_to_rel_mapping = RiskFactorNameAbsToRelMapping.from_config(
+    rf_abs_to_rel_mapping = RiskFactorAbsToRelNameIdMap.from_config(
         config=compiled_config,
         as_of_date=as_of_date,
     )
 
     # Print.
     print("\nRF Abs. Name Mapping:")
-    print_dict(rf_abs_to_rel_mapping.abs_to_rf_name_and_id)
+    print_dict(rf_abs_to_rel_mapping.abs_to_rel_name_and_id)
 
     # ---------------------------------------------------------
     # LOAD IN HISTORICAL RISK FACTOR LEVELS
@@ -88,7 +88,7 @@ if __name__ == "__main__":
     # Load from XLSX.
     rfm = build_risk_factor_matrix_from_xlsx(
         path=DEV_DATA_DIR + "/" + DEV_DATA_FILE_NAME_RF_LEVELS,
-        name_to_id_map=rf_abs_to_rel_mapping.abs_to_rf_id,
+        name_to_id_map=rf_abs_to_rel_mapping.abs_to_rel_id,
     )
 
     # Display basic info about the RFM.

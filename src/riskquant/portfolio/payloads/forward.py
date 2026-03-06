@@ -18,10 +18,8 @@ from dataclasses import dataclass
 import numpy as np
 
 # Import price source type indicators and date/FX sentinels for defaults
-from riskquant.portfolio.constants import (
-    NO_DELIVERY_DATE_ORDINAL32,
+from riskquant.constants import (
     NO_FX_RF_REQUIRED,
-    NO_ID,
     NO_SETTLEMENT_DATE_ORDINAL32,
 )
 from riskquant.portfolio.payloads.base_payload import Payload
@@ -120,9 +118,9 @@ class ForwardNodePayload(_ForwardBasePayload):
             f"quantity={self.quantity}, "
             f"strike={self.strike}, "
             f"settlement_date_ordinal32={self.settlement_date_ordinal32}, "
-            f"price_rf_id={self.price_rf_id}, "
             f"fx_under_to_settle_rf_id={self.fx_under_to_settle_rf_id}, "
-            f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}"
+            f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}, "
+            f"price_rf_id={self.price_rf_id}"
             f")"
         )
 
@@ -167,10 +165,10 @@ class ForwardCurvePayload(_ForwardBasePayload):
             f"ForwardCurvePayload("
             f"quantity={self.quantity}, "
             f"strike={self.strike}, "
-            f"delivery_date_ordinal32={self.delivery_date_ordinal32}, "
             f"settlement_date_ordinal32={self.settlement_date_ordinal32}, "
-            f"price_curve_id={self.price_curve_id}, "
             f"fx_under_to_settle_rf_id={self.fx_under_to_settle_rf_id}, "
-            f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}"
+            f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}, "
+            f"price_curve_id={self.price_curve_id}, "
+            f"delivery_date_ordinal32={self.delivery_date_ordinal32}"
             f")"
         )

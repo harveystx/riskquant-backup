@@ -125,6 +125,11 @@ class RiskStaticConfig:
 
     # --- INTERNAL CACHES --- #
     # Initialized as None; populated lazily on first access using object.__setattr__
+    _container_name_to_container_id: Optional[Dict[str, int]] = field(
+        default=None,
+        repr=False,
+        init=False,
+    )
     _rf_name_to_rf_id: Optional[Dict[str, int]] = field(
         default=None,
         repr=False,
@@ -179,6 +184,20 @@ class RiskStaticConfig:
 
     def get_risk_factor_id(self, risk_factor_name: str) -> int:
         return self.risk_factors_dict[risk_factor_name].risk_factor_name_id
+
+    @property
+    def container_name_to_container_id(self) -> Dict[str, int]:
+        """A build-once cache: container_name -> container_id"""
+        if self._container_name_to_container_id is None:
+            object.__setattr__(
+                self,
+                "_container_name_to_container_id",
+                {
+                    k: v.container_name_id
+                    for k, v in self.container_meta_dict.items()
+                },
+            )
+        return self._container_name_to_container_id
 
     @property
     def rf_name_to_rf_id(self) -> Dict[str, int]:

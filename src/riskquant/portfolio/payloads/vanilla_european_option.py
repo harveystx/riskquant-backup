@@ -20,11 +20,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from riskquant.portfolio.constants import (
-    NO_DELIVERY_DATE_ORDINAL32,
-    NO_EXPIRY_DATE_ORDINAL32,
+from riskquant.constants import (
     NO_FX_RF_REQUIRED,
-    NO_ID,
     NO_SETTLEMENT_DATE_ORDINAL32,
 )
 from riskquant.portfolio.payloads.base_payload import Payload

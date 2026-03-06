@@ -1,4 +1,5 @@
 # riskquant/utils/printer.py
+import math
 from typing import Any, Iterable, Mapping
 
 import pandas as pd

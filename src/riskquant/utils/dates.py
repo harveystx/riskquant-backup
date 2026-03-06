@@ -7,7 +7,8 @@ from typing import Final, Iterable, List, Tuple, Union
 import numpy as np
 import pandas as pd
 
-DATE_EPOCH: Final[dt.date] = dt.date(1970, 1, 1)
+from riskquant.constants import DATE_EPOCH
+
 DATE_EPOCH_AS_DATETIME64D: Final[np.datetime64] = np.datetime64(
     DATE_EPOCH.isoformat(),
     "D",

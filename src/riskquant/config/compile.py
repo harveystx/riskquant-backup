@@ -14,7 +14,7 @@ from typing_extensions import Final
 from riskquant.config.builder import RiskStaticConfigFrames
 from riskquant.config.configs import RiskStaticConfig
 from riskquant.config.loader import load_risk_static_data_config_xlsx_into_dict
-from riskquant.config.resolution import RiskFactorNameAbsToRelMapping
+from riskquant.config.resolution import RiskFactorAbsToRelNameIdMap
 from riskquant.config.validate import validate_static_config_dfs
 from riskquant.utils.dates import get_previous_business_date_as_date
 from riskquant.utils.printer import (
@@ -87,7 +87,7 @@ if __name__ == "__main__":
     print(f"\n--- Resolving Risk Factors for As-Of Date: {as_of_date} ---")
 
     # Use the static method on the mapping class which calls the pure function in resolution.py
-    mapping = RiskFactorNameAbsToRelMapping.from_config(
+    mapping = RiskFactorAbsToRelNameIdMap.from_config(
         config=compiled_config,
         as_of_date=as_of_date,
     )
@@ -101,11 +101,11 @@ if __name__ == "__main__":
     # Property accessors for the same data.
     print("\n\nProperty accessors:")
     print("\n\nAbsolute to relative name mapping:")
-    print_dict(mapping.abs_to_rf_name)
+    print_dict(mapping.abs_to_rel_rf_name)
     print("\n\nAbsolute to relative ID mapping:")
-    print_dict(mapping.abs_to_rf_id)
+    print_dict(mapping.abs_to_rel_id)
     print("\n\nRelative name to relative ID mapping:")
-    print_dict(mapping.rf_name_to_rf_id)
+    print_dict(mapping.rel_rf_name_to_rf_id)
 
     # ---------------------------------------------------------
     # 4. Success

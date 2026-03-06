@@ -12,17 +12,15 @@ def main():
 
     target_paths: List[Path] = [
         base_dir / "config",
+        # base_dir / "hvar",
         base_dir / "market_data",
+        base_dir / "portfolio",
+        # base_dir / "simlab",
         base_dir / "utils",
-        # base_dir / "portfolio",
-        base_dir / "portfolio" / "blocks",
-        base_dir / "portfolio" / "ingest",
-        base_dir / "portfolio" / "payloads",
-        # base_dir / "portfolio" / "pnl",
-        base_dir / "portfolio" / "constants.py",
-        base_dir / "portfolio" / "fx.py",
-        base_dir / "portfolio" / "instruments.py",
-        base_dir / "portfolio" / "trades.py",
+        # base_dir / "valuation",
+        base_dir / "constants.py",
+        base_dir / "exceptions.py",
+        base_dir / "rq_logging.py",
     ]
 
     out_file = base_dir / "master_context.txt"

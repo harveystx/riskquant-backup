@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from riskquant.portfolio.constants import NO_FX_RF_REQUIRED, NO_ID
+from riskquant.constants import NO_FX_RF_REQUIRED
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -2,15 +2,13 @@
 from __future__ import annotations
 
 from bisect import bisect_left
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
-from typing import (
-    Dict,
-    Mapping,
-    Sequence,
-    Tuple,
-    overload,
-)
+
+
+from collections.abc import Iterable, Iterator, Mapping
+from types import MappingProxyType
+from typing import overload
 
 import numpy as np
 import pandas as pd
@@ -25,145 +23,269 @@ from riskquant.utils.tenors import (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class RiskFactorNameAbsToRelMapping:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RiskFactorAbsToRelNameIdMap(Mapping[str, tuple[str, int]]):
     as_of_date: date
-    abs_to_rf_name_and_id: Mapping[str, Tuple[str, int]]  # abs -> (rel, id)
+    abs_to_rel_name_and_id: Mapping[str, tuple[str, int]]  # abs -> (rel, id)
+
+    # NO INIT
+
+    # Inverted mapping for convenient reverse lookups: rel -> (abs, id)
+    _rel_to_abs_name_and_id: Mapping[str, tuple[str, int]] = field(
+        init=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
-        seen: dict[int, str] = {}
 
-        for abs_name, (rel_name, rf_id) in self.abs_to_rf_name_and_id.items():
+        normalized = dict(self.abs_to_rel_name_and_id)
+
+        seen_ids: dict[int, str] = {}
+        seen_rel_names: dict[str, str] = {}
+
+        for abs_name, (rel_name, rf_id) in normalized.items():
+            if not isinstance(abs_name, str):
+                raise ValueError(
+                    f"absolute name must be str, got {type(abs_name).__name__}"
+                )
+
             if not isinstance(rel_name, str):
                 raise ValueError(
                     f"rel_name for '{abs_name}' must be str, got {type(rel_name).__name__}"
                 )
+
             if not isinstance(rf_id, (int, np.integer)):
                 raise ValueError(
                     f"id for '{abs_name}' must be an integer, got {type(rf_id).__name__}={rf_id!r}"
                 )
 
             iv = int(rf_id)
-            prev = seen.get(iv)
-            if prev is not None and prev != abs_name:
+
+            prev_abs_for_id = seen_ids.get(iv)
+            if prev_abs_for_id is not None and prev_abs_for_id != abs_name:
                 raise ValueError(
                     "Mapping contains duplicate ID assignment:\n"
-                    f"  '{prev}' and '{abs_name}' both map to ID={iv}\n"
+                    f"  '{prev_abs_for_id}' and '{abs_name}' both map to ID={iv}\n"
                     "Each absolute risk factor must map to a unique risk_factor_name_id."
                 )
-            seen[iv] = abs_name
+            seen_ids[iv] = abs_name
+
+            prev_abs_for_rel = seen_rel_names.get(rel_name)
+            if prev_abs_for_rel is not None and prev_abs_for_rel != abs_name:
+                raise ValueError(
+                    "Mapping contains duplicate relative risk factor name assignment:\n"
+                    f"  '{prev_abs_for_rel}' and '{abs_name}' both map to rel_name='{rel_name}'\n"
+                    "Each absolute risk factor must map to a unique relative risk factor name."
+                )
+            seen_rel_names[rel_name] = abs_name
+
+        # Construct the reverse mapping for rel_name -> (abs_name, id)
+        object.__setattr__(
+            self,
+            "abs_to_rel_name_and_id",
+            MappingProxyType(normalized),
+        )
+
+        # Construct the reverse mapping for rel_name -> (abs_name, id)
+        reverse = {
+            rel_name: (abs_name, int(rf_id))
+            for abs_name, (rel_name, rf_id) in normalized.items()
+        }
+        object.__setattr__(
+            self,
+            "_rel_to_abs_name_and_id",
+            MappingProxyType(reverse),
+        )
 
     @staticmethod
     def from_config(
         config: RiskStaticConfig,
         as_of_date: date,
-    ) -> "RiskFactorNameAbsToRelMapping":
+    ) -> "RiskFactorAbsToRelNameIdMap":
         return build_risk_factor_name_mapping_for_as_of_date(
             config=config,
             as_of_date=as_of_date,
         )
 
-    @overload
-    def get(self, abs_name: str) -> tuple[str, int]: ...
+    def __getitem__(self, abs_name: str) -> tuple[str, int]:
+        return self.abs_to_rel_name_and_id[abs_name]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.abs_to_rel_name_and_id)
+
+    def __len__(self) -> int:
+        return len(self.abs_to_rel_name_and_id)
 
     @overload
-    def get(self, abs_name: Sequence[str]) -> list[tuple[str, int]]: ...
+    def lookup(self, abs_name: str) -> tuple[str, int]: ...
+    @overload
+    def lookup(self, abs_name: Iterable[str]) -> list[tuple[str, int]]: ...
 
-    def get(
+    def lookup(
         self,
-        abs_name: str | Sequence[str],
+        abs_name: str | Iterable[str],
     ) -> tuple[str, int] | list[tuple[str, int]]:
-        m = self.abs_to_rf_name_and_id
+        m = self.abs_to_rel_name_and_id
         if isinstance(abs_name, str):
             return m[abs_name]
         return [m[a] for a in abs_name]
 
     @overload
-    def get_rf_name_for_abs_name(self, abs_name: str) -> str: ...
-
+    def get_rel_name_for_abs_name(self, abs_name: str) -> str: ...
     @overload
-    def get_rf_name_for_abs_name(
-        self, abs_name: Sequence[str]
+    def get_rel_name_for_abs_name(
+        self, abs_name: Iterable[str]
     ) -> list[str]: ...
 
-    def get_rf_name_for_abs_name(
+    def get_rel_name_for_abs_name(
         self,
-        abs_name: str | Sequence[str],
+        abs_name: str | Iterable[str],
     ) -> str | list[str]:
-        m = self.abs_to_rf_name_and_id
+        m = self.abs_to_rel_name_and_id
         if isinstance(abs_name, str):
             return m[abs_name][0]
         return [m[a][0] for a in abs_name]
 
     @overload
-    def get_rf_id_for_abs_name(self, abs_name: str) -> int: ...
-
+    def get_rel_id_for_abs_name(self, abs_name: str) -> int: ...
     @overload
-    def get_rf_id_for_abs_name(self, abs_name: Sequence[str]) -> list[int]: ...
+    def get_rel_id_for_abs_name(self, abs_name: Iterable[str]) -> list[int]: ...
 
-    def get_rf_id_for_abs_name(
+    def get_rel_id_for_abs_name(
         self,
-        abs_name: str | Sequence[str],
+        abs_name: str | Iterable[str],
     ) -> int | list[int]:
-        m = self.abs_to_rf_name_and_id
+        m = self.abs_to_rel_name_and_id
         if isinstance(abs_name, str):
-            return m[abs_name][1]
-        return [m[a][1] for a in abs_name]
+            return int(m[abs_name][1])
+        return [int(m[a][1]) for a in abs_name]
 
     def to_df(self) -> pd.DataFrame:
-        """
-        Return a DataFrame with columns:
-          [risk_factor_name, risk_factor_id]
-        Rows are deterministically ordered by absolute_name (the index).
-        """
-        items = sorted(self.abs_to_rf_name_and_id.items(), key=lambda x: x[0])
+        items = sorted(self.abs_to_rel_name_and_id.items(), key=lambda x: x[0])
         abs_names = [k for k, _ in items]
         rel_names = [v[0] for _, v in items]
         ids = np.fromiter(
-            (int(v[1]) for _, v in items), dtype=np.int32, count=len(items)
+            (int(v[1]) for _, v in items),
+            dtype=np.int32,
+            count=len(items),
         )
 
-        df = pd.DataFrame(
+        return pd.DataFrame(
             {
                 "risk_factor_name": rel_names,
                 "risk_factor_id": ids,
             },
             index=pd.Index(abs_names, name="absolute_risk_factor_name"),
         )
-        return df
 
     @property
     def df(self) -> pd.DataFrame:
-        """Alias for to_dataframe(), for convenient access."""
+        """Alias for to_df(), for convenient access."""
         return self.to_df()
 
     @property
-    def abs_to_rf_name(self) -> Dict[str, str]:
+    def abs_to_rel_name(self) -> dict[str, str]:
         return {
-            abs_name: str(rf_name_and_id[0])
-            for abs_name, rf_name_and_id in self.abs_to_rf_name_and_id.items()
+            abs_name: rf_name
+            for abs_name, (rf_name, _) in self.abs_to_rel_name_and_id.items()
         }
 
     @property
-    def abs_to_rf_id(self) -> Dict[str, int]:
+    def abs_to_rel_id(self) -> dict[str, int]:
         return {
-            abs_name: int(rf_name_and_id[1])
-            for abs_name, rf_name_and_id in self.abs_to_rf_name_and_id.items()
+            abs_name: int(rf_id)
+            for abs_name, (_, rf_id) in self.abs_to_rel_name_and_id.items()
         }
 
     @property
-    def rf_name_to_rf_id(self) -> Dict[str, int]:
+    def rel_to_abs_name(self) -> dict[str, str]:
         return {
-            rf_name_and_id[0]: int(rf_name_and_id[1])
-            for _, rf_name_and_id in self.abs_to_rf_name_and_id.items()
+            rf_name: abs_name
+            for abs_name, (rf_name, _) in self.abs_to_rel_name_and_id.items()
         }
+
+    @property
+    def rel_name_to_id(self) -> dict[str, int]:
+        return {
+            rf_name: int(rf_id)
+            for _, (rf_name, rf_id) in self.abs_to_rel_name_and_id.items()
+        }
+
+    # --- INVERTED MAPPINGS FOR CONVENIENCE --- #
+
+    # rel -> (abs, id)
+
+    @property
+    def rel_to_abs_name_and_id(self) -> Mapping[str, tuple[str, int]]:
+        return self._rel_to_abs_name_and_id
+
+    # Scalar lookups: rel_name -> (abs_name, id)
+    @overload
+    def get_abs_name_and_id_for_rel_name(
+        self, rel_name: str
+    ) -> tuple[str, int]: ...
+    @overload
+    def get_abs_name_and_id_for_rel_name(
+        self, rel_name: Iterable[str]
+    ) -> list[tuple[str, int]]: ...
+
+    def get_abs_name_and_id_for_rel_name(
+        self,
+        rel_name: str | Iterable[str],
+    ) -> tuple[str, int] | list[tuple[str, int]]:
+        m = self.rel_to_abs_name_and_id
+        if isinstance(rel_name, str):
+            return m[rel_name]
+        return [m[r] for r in rel_name]
+
+    # Scalar lookups: rel_name -> abs_name
+    @overload
+    def get_abs_name_for_rel_name(
+        self,
+        rel_name: str,
+    ) -> str: ...
+    @overload
+    def get_abs_name_for_rel_name(
+        self,
+        rel_name: Iterable[str],
+    ) -> list[str]: ...
+
+    def get_abs_name_for_rel_name(
+        self,
+        rel_name: str | Iterable[str],
+    ) -> str | list[str]:
+        m = self.rel_to_abs_name_and_id
+        if isinstance(rel_name, str):
+            return m[rel_name][0]
+        return [m[r][0] for r in rel_name]
+
+    # Scalar lookups: rel_name -> id
+    @overload
+    def get_id_for_rel_name(
+        self,
+        rel_name: str,
+    ) -> int: ...
+    @overload
+    def get_id_for_rel_name(
+        self,
+        rel_name: Iterable[str],
+    ) -> list[int]: ...
+
+    def get_id_for_rel_name(
+        self,
+        rel_name: str | Iterable[str],
+    ) -> int | list[int]:
+        m = self.rel_to_abs_name_and_id
+        if isinstance(rel_name, str):
+            return int(m[rel_name][1])
+        return [int(m[r][1]) for r in rel_name]
 
 
 def build_risk_factor_name_mapping_for_as_of_date(
     *,
     config: RiskStaticConfig,
     as_of_date: date,
-) -> RiskFactorNameAbsToRelMapping:
+) -> RiskFactorAbsToRelNameIdMap:
     """
     Resolve relative risk factor names into absolute names for a given as_of_date.
 
@@ -171,7 +293,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
         - Interrogates `config.risk_factors_dict` to define the universe of valid factors.
         - Translates each relative factor to its absolute name based on spot roll rules.
     """
-    abs_to_rf_name_and_id: Dict[str, Tuple[str, int]] = {}
+    abs_to_rel_name_and_id: dict[str, tuple[str, int]] = {}
 
     for rf in config.risk_factors_dict.values():
         rf_rel_name = rf.risk_factor_name
@@ -199,7 +321,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
                     "container_name={rf_container_name!r}"
                 )
             # Scalar factors just map to themselves (no term structure to roll)
-            abs_to_rf_name_and_id[rf_rel_name] = (rf_rel_name, rf_rel_name_id)
+            abs_to_rel_name_and_id[rf_rel_name] = (rf_rel_name, rf_rel_name_id)
             continue
 
         # Get alias schema
@@ -221,7 +343,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
                     f"Risk factor ID tenor_token ({rf_tenor_token}) must be None for alias_kind = 'NONE'.\n"
                     f"relative={rf_rel_name!r}\ncurve_name={rf_container_name!r}"
                 )
-            abs_to_rf_name_and_id[rf_rel_name] = (rf_rel_name, rf_rel_name_id)
+            abs_to_rel_name_and_id[rf_rel_name] = (rf_rel_name, rf_rel_name_id)
             continue
 
         elif rf_alias.alias_kind == "LABEL":
@@ -237,7 +359,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
                     f"relative={rf_rel_name!r}\ncurve_name={rf_container_name!r}"
                 )
             rf_abs_name = f"{rf_container_name}_{label}"
-            abs_to_rf_name_and_id[rf_abs_name] = (rf_rel_name, rf_rel_name_id)
+            abs_to_rel_name_and_id[rf_abs_name] = (rf_rel_name, rf_rel_name_id)
             continue
 
         elif rf_alias.alias_kind == "OFFSET":
@@ -299,7 +421,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
                     months_to_add=int(tenor_token_signed_offset),
                 )
                 rf_abs_name = f"{rf_container_name}_{fmt_date_as_str_yyyymm(rf_abs_date_yyyymm01)}"
-                abs_to_rf_name_and_id[rf_abs_name] = (
+                abs_to_rel_name_and_id[rf_abs_name] = (
                     rf_rel_name,
                     rf_rel_name_id,
                 )
@@ -317,7 +439,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
                 )
                 year = spot_year + int(tenor_token_signed_offset)
                 rf_abs_name = f"{rf_container_name}_{year:04d}"
-                abs_to_rf_name_and_id[rf_abs_name] = (
+                abs_to_rel_name_and_id[rf_abs_name] = (
                     rf_rel_name,
                     rf_rel_name_id,
                 )
@@ -371,7 +493,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
                 )
                 rf_abs_name = f"{rf_container_name}_{yyyymmdd_str}"
 
-                abs_to_rf_name_and_id[rf_abs_name] = (
+                abs_to_rel_name_and_id[rf_abs_name] = (
                     rf_rel_name,
                     rf_rel_name_id,
                 )
@@ -384,9 +506,9 @@ def build_risk_factor_name_mapping_for_as_of_date(
                     f"curve_name={rf_container_name!r}\nrelative={rf_rel_name!r}\n"
                 )
 
-    return RiskFactorNameAbsToRelMapping(
+    return RiskFactorAbsToRelNameIdMap(
         as_of_date=as_of_date,
-        abs_to_rf_name_and_id=abs_to_rf_name_and_id,
+        abs_to_rel_name_and_id=abs_to_rel_name_and_id,
     )
 
 

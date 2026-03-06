@@ -9,6 +9,8 @@
 - config\resolution.py
 - config\schema_objects.py
 - config\validate.py
+- constants.py
+- exceptions.py
 - market_data\__init__.py
 - market_data\curves\__init__.py
 - market_data\curves\extrapolation_methods.py
@@ -20,14 +22,15 @@
 - market_data\risk_factors\matrix.py
 - market_data\risk_factors\shift_types.py
 - market_data\risk_factors\snapshot.py
+- portfolio\__init__.py
 - portfolio\blocks\__init__.py
 - portfolio\blocks\forward_block.py
 - portfolio\blocks\spot_block.py
 - portfolio\blocks\vanilla_european_option_block.py
-- portfolio\constants.py
 - portfolio\fx.py
 - portfolio\ingest\__init__.py
 - portfolio\ingest\batch.py
+- portfolio\ingest\batch_builder.py
 - portfolio\ingest\builders\__init__.py
 - portfolio\ingest\builders\forward.py
 - portfolio\ingest\builders\spot.py
@@ -44,7 +47,10 @@
 - portfolio\payloads\forward.py
 - portfolio\payloads\spot.py
 - portfolio\payloads\vanilla_european_option.py
-- portfolio\trades.py
+- portfolio\pnl\__init__.py
+- portfolio\pnl\results.py
+- portfolio\trade.py
+- rq_logging.py
 - utils\__init__.py
 - utils\dates.py
 - utils\memory.py
@@ -506,7 +512,7 @@ from typing_extensions import Final
 from riskquant.config.builder import RiskStaticConfigFrames
 from riskquant.config.configs import RiskStaticConfig
 from riskquant.config.loader import load_risk_static_data_config_xlsx_into_dict
-from riskquant.config.resolution import RiskFactorNameAbsToRelMapping
+from riskquant.config.resolution import RiskFactorAbsToRelNameIdMap
 from riskquant.config.validate import validate_static_config_dfs
 from riskquant.utils.dates import get_previous_business_date_as_date
 from riskquant.utils.printer import (
@@ -579,7 +585,7 @@ if __name__ == "__main__":
     print(f"\n--- Resolving Risk Factors for As-Of Date: {as_of_date} ---")
 
     # Use the static method on the mapping class which calls the pure function in resolution.py
-    mapping = RiskFactorNameAbsToRelMapping.from_config(
+    mapping = RiskFactorAbsToRelNameIdMap.from_config(
         config=compiled_config,
         as_of_date=as_of_date,
     )
@@ -593,11 +599,11 @@ if __name__ == "__main__":
     # Property accessors for the same data.
     print("\n\nProperty accessors:")
     print("\n\nAbsolute to relative name mapping:")
-    print_dict(mapping.abs_to_rf_name)
+    print_dict(mapping.abs_to_rel_rf_name)
     print("\n\nAbsolute to relative ID mapping:")
-    print_dict(mapping.abs_to_rf_id)
+    print_dict(mapping.abs_to_rel_id)
     print("\n\nRelative name to relative ID mapping:")
-    print_dict(mapping.rf_name_to_rf_id)
+    print_dict(mapping.rel_rf_name_to_rf_id)
 
     # ---------------------------------------------------------
     # 4. Success
@@ -735,6 +741,11 @@ class RiskStaticConfig:
 
     # --- INTERNAL CACHES --- #
     # Initialized as None; populated lazily on first access using object.__setattr__
+    _container_name_to_container_id: Optional[Dict[str, int]] = field(
+        default=None,
+        repr=False,
+        init=False,
+    )
     _rf_name_to_rf_id: Optional[Dict[str, int]] = field(
         default=None,
         repr=False,
@@ -789,6 +800,20 @@ class RiskStaticConfig:
 
     def get_risk_factor_id(self, risk_factor_name: str) -> int:
         return self.risk_factors_dict[risk_factor_name].risk_factor_name_id
+
+    @property
+    def container_name_to_container_id(self) -> Dict[str, int]:
+        """A build-once cache: container_name -> container_id"""
+        if self._container_name_to_container_id is None:
+            object.__setattr__(
+                self,
+                "_container_name_to_container_id",
+                {
+                    k: v.container_name_id
+                    for k, v in self.container_meta_dict.items()
+                },
+            )
+        return self._container_name_to_container_id
 
     @property
     def rf_name_to_rf_id(self) -> Dict[str, int]:
@@ -1057,15 +1082,13 @@ if __name__ == "__main__":
 from __future__ import annotations
 
 from bisect import bisect_left
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
-from typing import (
-    Dict,
-    Mapping,
-    Sequence,
-    Tuple,
-    overload,
-)
+
+
+from collections.abc import Iterable, Iterator, Mapping
+from types import MappingProxyType
+from typing import overload
 
 import numpy as np
 import pandas as pd
@@ -1080,145 +1103,269 @@ from riskquant.utils.tenors import (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class RiskFactorNameAbsToRelMapping:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RiskFactorAbsToRelNameIdMap(Mapping[str, tuple[str, int]]):
     as_of_date: date
-    abs_to_rf_name_and_id: Mapping[str, Tuple[str, int]]  # abs -> (rel, id)
+    abs_to_rel_name_and_id: Mapping[str, tuple[str, int]]  # abs -> (rel, id)
+
+    # NO INIT
+
+    # Inverted mapping for convenient reverse lookups: rel -> (abs, id)
+    _rel_to_abs_name_and_id: Mapping[str, tuple[str, int]] = field(
+        init=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
-        seen: dict[int, str] = {}
 
-        for abs_name, (rel_name, rf_id) in self.abs_to_rf_name_and_id.items():
+        normalized = dict(self.abs_to_rel_name_and_id)
+
+        seen_ids: dict[int, str] = {}
+        seen_rel_names: dict[str, str] = {}
+
+        for abs_name, (rel_name, rf_id) in normalized.items():
+            if not isinstance(abs_name, str):
+                raise ValueError(
+                    f"absolute name must be str, got {type(abs_name).__name__}"
+                )
+
             if not isinstance(rel_name, str):
                 raise ValueError(
                     f"rel_name for '{abs_name}' must be str, got {type(rel_name).__name__}"
                 )
+
             if not isinstance(rf_id, (int, np.integer)):
                 raise ValueError(
                     f"id for '{abs_name}' must be an integer, got {type(rf_id).__name__}={rf_id!r}"
                 )
 
             iv = int(rf_id)
-            prev = seen.get(iv)
-            if prev is not None and prev != abs_name:
+
+            prev_abs_for_id = seen_ids.get(iv)
+            if prev_abs_for_id is not None and prev_abs_for_id != abs_name:
                 raise ValueError(
                     "Mapping contains duplicate ID assignment:\n"
-                    f"  '{prev}' and '{abs_name}' both map to ID={iv}\n"
+                    f"  '{prev_abs_for_id}' and '{abs_name}' both map to ID={iv}\n"
                     "Each absolute risk factor must map to a unique risk_factor_name_id."
                 )
-            seen[iv] = abs_name
+            seen_ids[iv] = abs_name
+
+            prev_abs_for_rel = seen_rel_names.get(rel_name)
+            if prev_abs_for_rel is not None and prev_abs_for_rel != abs_name:
+                raise ValueError(
+                    "Mapping contains duplicate relative risk factor name assignment:\n"
+                    f"  '{prev_abs_for_rel}' and '{abs_name}' both map to rel_name='{rel_name}'\n"
+                    "Each absolute risk factor must map to a unique relative risk factor name."
+                )
+            seen_rel_names[rel_name] = abs_name
+
+        # Construct the reverse mapping for rel_name -> (abs_name, id)
+        object.__setattr__(
+            self,
+            "abs_to_rel_name_and_id",
+            MappingProxyType(normalized),
+        )
+
+        # Construct the reverse mapping for rel_name -> (abs_name, id)
+        reverse = {
+            rel_name: (abs_name, int(rf_id))
+            for abs_name, (rel_name, rf_id) in normalized.items()
+        }
+        object.__setattr__(
+            self,
+            "_rel_to_abs_name_and_id",
+            MappingProxyType(reverse),
+        )
 
     @staticmethod
     def from_config(
         config: RiskStaticConfig,
         as_of_date: date,
-    ) -> "RiskFactorNameAbsToRelMapping":
+    ) -> "RiskFactorAbsToRelNameIdMap":
         return build_risk_factor_name_mapping_for_as_of_date(
             config=config,
             as_of_date=as_of_date,
         )
 
-    @overload
-    def get(self, abs_name: str) -> tuple[str, int]: ...
+    def __getitem__(self, abs_name: str) -> tuple[str, int]:
+        return self.abs_to_rel_name_and_id[abs_name]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.abs_to_rel_name_and_id)
+
+    def __len__(self) -> int:
+        return len(self.abs_to_rel_name_and_id)
 
     @overload
-    def get(self, abs_name: Sequence[str]) -> list[tuple[str, int]]: ...
+    def lookup(self, abs_name: str) -> tuple[str, int]: ...
+    @overload
+    def lookup(self, abs_name: Iterable[str]) -> list[tuple[str, int]]: ...
 
-    def get(
+    def lookup(
         self,
-        abs_name: str | Sequence[str],
+        abs_name: str | Iterable[str],
     ) -> tuple[str, int] | list[tuple[str, int]]:
-        m = self.abs_to_rf_name_and_id
+        m = self.abs_to_rel_name_and_id
         if isinstance(abs_name, str):
             return m[abs_name]
         return [m[a] for a in abs_name]
 
     @overload
-    def get_rf_name_for_abs_name(self, abs_name: str) -> str: ...
-
+    def get_rel_name_for_abs_name(self, abs_name: str) -> str: ...
     @overload
-    def get_rf_name_for_abs_name(
-        self, abs_name: Sequence[str]
+    def get_rel_name_for_abs_name(
+        self, abs_name: Iterable[str]
     ) -> list[str]: ...
 
-    def get_rf_name_for_abs_name(
+    def get_rel_name_for_abs_name(
         self,
-        abs_name: str | Sequence[str],
+        abs_name: str | Iterable[str],
     ) -> str | list[str]:
-        m = self.abs_to_rf_name_and_id
+        m = self.abs_to_rel_name_and_id
         if isinstance(abs_name, str):
             return m[abs_name][0]
         return [m[a][0] for a in abs_name]
 
     @overload
-    def get_rf_id_for_abs_name(self, abs_name: str) -> int: ...
-
+    def get_rel_id_for_abs_name(self, abs_name: str) -> int: ...
     @overload
-    def get_rf_id_for_abs_name(self, abs_name: Sequence[str]) -> list[int]: ...
+    def get_rel_id_for_abs_name(self, abs_name: Iterable[str]) -> list[int]: ...
 
-    def get_rf_id_for_abs_name(
+    def get_rel_id_for_abs_name(
         self,
-        abs_name: str | Sequence[str],
+        abs_name: str | Iterable[str],
     ) -> int | list[int]:
-        m = self.abs_to_rf_name_and_id
+        m = self.abs_to_rel_name_and_id
         if isinstance(abs_name, str):
-            return m[abs_name][1]
-        return [m[a][1] for a in abs_name]
+            return int(m[abs_name][1])
+        return [int(m[a][1]) for a in abs_name]
 
     def to_df(self) -> pd.DataFrame:
-        """
-        Return a DataFrame with columns:
-          [risk_factor_name, risk_factor_id]
-        Rows are deterministically ordered by absolute_name (the index).
-        """
-        items = sorted(self.abs_to_rf_name_and_id.items(), key=lambda x: x[0])
+        items = sorted(self.abs_to_rel_name_and_id.items(), key=lambda x: x[0])
         abs_names = [k for k, _ in items]
         rel_names = [v[0] for _, v in items]
         ids = np.fromiter(
-            (int(v[1]) for _, v in items), dtype=np.int32, count=len(items)
+            (int(v[1]) for _, v in items),
+            dtype=np.int32,
+            count=len(items),
         )
 
-        df = pd.DataFrame(
+        return pd.DataFrame(
             {
                 "risk_factor_name": rel_names,
                 "risk_factor_id": ids,
             },
             index=pd.Index(abs_names, name="absolute_risk_factor_name"),
         )
-        return df
 
     @property
     def df(self) -> pd.DataFrame:
-        """Alias for to_dataframe(), for convenient access."""
+        """Alias for to_df(), for convenient access."""
         return self.to_df()
 
     @property
-    def abs_to_rf_name(self) -> Dict[str, str]:
+    def abs_to_rel_name(self) -> dict[str, str]:
         return {
-            abs_name: str(rf_name_and_id[0])
-            for abs_name, rf_name_and_id in self.abs_to_rf_name_and_id.items()
+            abs_name: rf_name
+            for abs_name, (rf_name, _) in self.abs_to_rel_name_and_id.items()
         }
 
     @property
-    def abs_to_rf_id(self) -> Dict[str, int]:
+    def abs_to_rel_id(self) -> dict[str, int]:
         return {
-            abs_name: int(rf_name_and_id[1])
-            for abs_name, rf_name_and_id in self.abs_to_rf_name_and_id.items()
+            abs_name: int(rf_id)
+            for abs_name, (_, rf_id) in self.abs_to_rel_name_and_id.items()
         }
 
     @property
-    def rf_name_to_rf_id(self) -> Dict[str, int]:
+    def rel_to_abs_name(self) -> dict[str, str]:
         return {
-            rf_name_and_id[0]: int(rf_name_and_id[1])
-            for _, rf_name_and_id in self.abs_to_rf_name_and_id.items()
+            rf_name: abs_name
+            for abs_name, (rf_name, _) in self.abs_to_rel_name_and_id.items()
         }
+
+    @property
+    def rel_name_to_id(self) -> dict[str, int]:
+        return {
+            rf_name: int(rf_id)
+            for _, (rf_name, rf_id) in self.abs_to_rel_name_and_id.items()
+        }
+
+    # --- INVERTED MAPPINGS FOR CONVENIENCE --- #
+
+    # rel -> (abs, id)
+
+    @property
+    def rel_to_abs_name_and_id(self) -> Mapping[str, tuple[str, int]]:
+        return self._rel_to_abs_name_and_id
+
+    # Scalar lookups: rel_name -> (abs_name, id)
+    @overload
+    def get_abs_name_and_id_for_rel_name(
+        self, rel_name: str
+    ) -> tuple[str, int]: ...
+    @overload
+    def get_abs_name_and_id_for_rel_name(
+        self, rel_name: Iterable[str]
+    ) -> list[tuple[str, int]]: ...
+
+    def get_abs_name_and_id_for_rel_name(
+        self,
+        rel_name: str | Iterable[str],
+    ) -> tuple[str, int] | list[tuple[str, int]]:
+        m = self.rel_to_abs_name_and_id
+        if isinstance(rel_name, str):
+            return m[rel_name]
+        return [m[r] for r in rel_name]
+
+    # Scalar lookups: rel_name -> abs_name
+    @overload
+    def get_abs_name_for_rel_name(
+        self,
+        rel_name: str,
+    ) -> str: ...
+    @overload
+    def get_abs_name_for_rel_name(
+        self,
+        rel_name: Iterable[str],
+    ) -> list[str]: ...
+
+    def get_abs_name_for_rel_name(
+        self,
+        rel_name: str | Iterable[str],
+    ) -> str | list[str]:
+        m = self.rel_to_abs_name_and_id
+        if isinstance(rel_name, str):
+            return m[rel_name][0]
+        return [m[r][0] for r in rel_name]
+
+    # Scalar lookups: rel_name -> id
+    @overload
+    def get_id_for_rel_name(
+        self,
+        rel_name: str,
+    ) -> int: ...
+    @overload
+    def get_id_for_rel_name(
+        self,
+        rel_name: Iterable[str],
+    ) -> list[int]: ...
+
+    def get_id_for_rel_name(
+        self,
+        rel_name: str | Iterable[str],
+    ) -> int | list[int]:
+        m = self.rel_to_abs_name_and_id
+        if isinstance(rel_name, str):
+            return int(m[rel_name][1])
+        return [int(m[r][1]) for r in rel_name]
 
 
 def build_risk_factor_name_mapping_for_as_of_date(
     *,
     config: RiskStaticConfig,
     as_of_date: date,
-) -> RiskFactorNameAbsToRelMapping:
+) -> RiskFactorAbsToRelNameIdMap:
     """
     Resolve relative risk factor names into absolute names for a given as_of_date.
 
@@ -1226,7 +1373,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
         - Interrogates `config.risk_factors_dict` to define the universe of valid factors.
         - Translates each relative factor to its absolute name based on spot roll rules.
     """
-    abs_to_rf_name_and_id: Dict[str, Tuple[str, int]] = {}
+    abs_to_rel_name_and_id: dict[str, tuple[str, int]] = {}
 
     for rf in config.risk_factors_dict.values():
         rf_rel_name = rf.risk_factor_name
@@ -1254,7 +1401,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
                     "container_name={rf_container_name!r}"
                 )
             # Scalar factors just map to themselves (no term structure to roll)
-            abs_to_rf_name_and_id[rf_rel_name] = (rf_rel_name, rf_rel_name_id)
+            abs_to_rel_name_and_id[rf_rel_name] = (rf_rel_name, rf_rel_name_id)
             continue
 
         # Get alias schema
@@ -1276,7 +1423,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
                     f"Risk factor ID tenor_token ({rf_tenor_token}) must be None for alias_kind = 'NONE'.\n"
                     f"relative={rf_rel_name!r}\ncurve_name={rf_container_name!r}"
                 )
-            abs_to_rf_name_and_id[rf_rel_name] = (rf_rel_name, rf_rel_name_id)
+            abs_to_rel_name_and_id[rf_rel_name] = (rf_rel_name, rf_rel_name_id)
             continue
 
         elif rf_alias.alias_kind == "LABEL":
@@ -1292,7 +1439,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
                     f"relative={rf_rel_name!r}\ncurve_name={rf_container_name!r}"
                 )
             rf_abs_name = f"{rf_container_name}_{label}"
-            abs_to_rf_name_and_id[rf_abs_name] = (rf_rel_name, rf_rel_name_id)
+            abs_to_rel_name_and_id[rf_abs_name] = (rf_rel_name, rf_rel_name_id)
             continue
 
         elif rf_alias.alias_kind == "OFFSET":
@@ -1354,7 +1501,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
                     months_to_add=int(tenor_token_signed_offset),
                 )
                 rf_abs_name = f"{rf_container_name}_{fmt_date_as_str_yyyymm(rf_abs_date_yyyymm01)}"
-                abs_to_rf_name_and_id[rf_abs_name] = (
+                abs_to_rel_name_and_id[rf_abs_name] = (
                     rf_rel_name,
                     rf_rel_name_id,
                 )
@@ -1372,7 +1519,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
                 )
                 year = spot_year + int(tenor_token_signed_offset)
                 rf_abs_name = f"{rf_container_name}_{year:04d}"
-                abs_to_rf_name_and_id[rf_abs_name] = (
+                abs_to_rel_name_and_id[rf_abs_name] = (
                     rf_rel_name,
                     rf_rel_name_id,
                 )
@@ -1426,7 +1573,7 @@ def build_risk_factor_name_mapping_for_as_of_date(
                 )
                 rf_abs_name = f"{rf_container_name}_{yyyymmdd_str}"
 
-                abs_to_rf_name_and_id[rf_abs_name] = (
+                abs_to_rel_name_and_id[rf_abs_name] = (
                     rf_rel_name,
                     rf_rel_name_id,
                 )
@@ -1439,9 +1586,9 @@ def build_risk_factor_name_mapping_for_as_of_date(
                     f"curve_name={rf_container_name!r}\nrelative={rf_rel_name!r}\n"
                 )
 
-    return RiskFactorNameAbsToRelMapping(
+    return RiskFactorAbsToRelNameIdMap(
         as_of_date=as_of_date,
-        abs_to_rf_name_and_id=abs_to_rf_name_and_id,
+        abs_to_rel_name_and_id=abs_to_rel_name_and_id,
     )
 
 
@@ -1869,6 +2016,83 @@ if __name__ == "__main__":
 
     # If we reach this point without exceptions, all validations have passed.
     print_success_message()
+
+```
+
+### FILE: constants.py ###
+```python
+# src/riskquant/constants.py
+
+"""
+Common constants used across the riskquant codebase.
+
+This module separates:
+- typed sentinel values used in numeric payloads / arrays
+- general configuration constants used by the portfolio engine
+"""
+
+from __future__ import annotations
+from datetime import date
+
+import numpy as np
+
+
+# ==============================================================================
+# Typed sentinel values for payload fields
+# ==============================================================================
+# These must stay numpy scalars where dtype compatibility matters.
+
+NO_ID = np.int32(-1)
+NO_UIX = np.int32(-2)
+NO_FX_RF_REQUIRED = np.int32(-3)
+
+NO_DELIVERY_DATE_ORDINAL32 = np.int32(-4)
+NO_SETTLEMENT_DATE_ORDINAL32 = np.int32(-5)
+NO_EXPIRY_DATE_ORDINAL32 = np.int32(-6)
+
+NOT_OPTION = np.int8(-7)
+
+
+# ==============================================================================
+# Date encoding
+# ==============================================================================
+
+DATE_EPOCH: date = date(1970, 1, 1)
+
+
+# ==============================================================================
+# Numeric configuration
+# ==============================================================================
+
+ROUND_DECIMALS_LEVEL = 8
+ROUND_DECIMALS_QUANTITY = 8
+ROUND_DECIMALS_STRIKE_PRICE = 8
+
+POSITION_DUST_TOLERANCE = 1e-8
+
+# ==========================================
+# --- NAMING CONVENTIONS
+# ==========================================
+
+# Prefix expected by the engine to map an underlying asset to its volatility surface/node
+VOL_RISK_FACTOR_PREFIX: str = "vol_"
+
+```
+
+### FILE: exceptions.py ###
+```python
+# riskquant/exceptions.py
+
+
+class PrettyKeyError(KeyError):
+    """
+    KeyError variant that prints the message using str(...) instead of repr(...),
+    allowing multi-line, human-readable diagnostics while preserving KeyError
+    semantics.
+    """
+
+    def __str__(self) -> str:
+        return str(self.args[0])
 
 ```
 
@@ -2964,6 +3188,11 @@ class RiskFactorLevelSnapshot:
 
 ```
 
+### FILE: portfolio\__init__.py ###
+```python
+# src\riskquant\portfolio\__init__.py
+```
+
 ### FILE: portfolio\blocks\__init__.py ###
 ```python
 # src\riskquant\portfolio\blocks\__init__.py
@@ -3205,72 +3434,6 @@ class VanillaEuropeanOptionCurveBlock(_VanillaEuropeanOptionBaseBlock):
 
 ```
 
-### FILE: portfolio\constants.py ###
-```python
-# src/riskquant/portfolio/constants.py
-
-"""
-Common portfolio sentinel constants.
-
-"""
-
-import numpy as np
-from enum import Enum
-
-
-class PortfolioConstants(Enum):
-    # Sentinel for missing ID
-    NO_ID = np.int32(-1)
-
-    # Sentinel for "no UIX   in blocks
-    NO_UIX = np.int32(-2)
-
-    # FX sentinel: indicates that no FX risk factor is required for a conversion
-    # (i.e., underlying_ccy == settlement_ccy or no FX conversion applies).
-    NO_FX_RF_REQUIRED = np.int32(-3)
-
-    # No delivery date specified or relevant for the position, encoded as an int32 ordinal (days since DATE_EPOCH).
-    NO_DELIVERY_DATE_ORDINAL32 = np.int32(-4)
-
-    # No settlement date specified or relevant for the position, encoded as an int32 ordinal.
-    NO_SETTLEMENT_DATE_ORDINAL32 = np.int32(-5)
-
-    # No option expiry date specified or relevant for the position, encoded as an int32 ordinal.
-    NO_EXPIRY_DATE_ORDINAL32 = np.int32(-6)
-
-
-# --- SENTINELS FOR "MISSING" IDS (payload fields stay numeric) ---
-NO_ID: np.int32 = np.int32(PortfolioConstants.NO_ID.value)  # missing ID
-
-
-# --- SENTINEL FOR "NO UIX" IN BLOCKS ---
-NO_UIX: np.int32 = np.int32(PortfolioConstants.NO_UIX.value)
-
-
-# FX sentinel: indicates that no FX risk factor is required for a conversion
-# (i.e., underlying_ccy == settlement_ccy or no FX conversion applies).
-NO_FX_RF_REQUIRED: np.int32 = np.int32(
-    PortfolioConstants.NO_FX_RF_REQUIRED.value
-)
-
-# Sentinel for missing delivery date encoded as an int32 ordinal (days since DATE_EPOCH). Delivery dates are used in the forward block for economic exposure timing but are not required for discounting, which is anchored to settlement dates. This sentinel indicates that no delivery date is specified or relevant for the position. Sometimes price_rf_id may refere to a specific risk factor where the price is not dependent on a delivery date, such as a spot price or a forward curve point with no specific delivery date. In other cases, the price_rf_id that is itself an entire curve/surface/cube and the delivery date must be used to identify the specific point on the curve/surface/cube that defines the economic exposure. In these cases, the delivery date is required and must be specified as an ordinal32. The NO_DELIVERY_DATE_ORDINAL32 sentinel is used to indicate that no delivery date is specified or relevant for the position, which can occur when price_rf_id references a risk factor where the price is not dependent on a delivery date.
-NO_DELIVERY_DATE_ORDINAL32: np.int32 = np.int32(
-    PortfolioConstants.NO_DELIVERY_DATE_ORDINAL32.value
-)
-
-# Sentinel for missing settlement/payment date encoded as an int32 ordinal
-# (days since DATE_EPOCH). Used by ForwardPayload as `settlement_date_ordinal32`.
-NO_SETTLEMENT_DATE_ORDINAL32: np.int32 = np.int32(
-    PortfolioConstants.NO_SETTLEMENT_DATE_ORDINAL32.value
-)
-
-# Sentinel for missing option expiry date encoded as an int32 ordinal.
-NO_EXPIRY_DATE_ORDINAL32: np.int32 = np.int32(
-    PortfolioConstants.NO_EXPIRY_DATE_ORDINAL32.value
-)
-
-```
-
 ### FILE: portfolio\fx.py ###
 ```python
 # riskquant/portfolio/fx.py
@@ -3322,13 +3485,407 @@ def get_fx_pair_for_under_to_settle_conversion(
 
 ### FILE: portfolio\ingest\batch.py ###
 ```python
-# src\riskquant\portfolio\ingest\batch.py
+# src/riskquant/portfolio/ingest/batch.py
+"""
+Struct-of-Arrays (SoA) container for a validated batch of trades.
+"""
+
+from dataclasses import dataclass
+import numpy as np
+from pandas import DataFrame, Series, NaT
+
+from riskquant.constants import (
+    NO_FX_RF_REQUIRED,
+    NO_DELIVERY_DATE_ORDINAL32,
+    NO_SETTLEMENT_DATE_ORDINAL32,
+    NO_EXPIRY_DATE_ORDINAL32,
+    NOT_OPTION,
+)
+from riskquant.utils.dates import ordinal32_to_datetime64D
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class IngestBatch:
+    """
+    Pristine, contiguous array container for trade ingestion.
+    """
+
+    # Number of trades in this batch
+    size: int
+
+    # ========== ROUTING / DISPATCH ==========
+    instrument_ids: np.ndarray
+
+    # ========== CORE IDENTITY & ECONOMICS ==========
+    uids: np.ndarray
+    qty: np.ndarray
+    strike_price: np.ndarray
+    is_call: np.ndarray
+
+    # ========== DATES (ORDINAL32) ==========
+    settle_ord: np.ndarray
+    delivery_ord: np.ndarray
+    expiry_ord: np.ndarray
+
+    # ========== MARKET & FX LINKAGES (UNIVERSE INDICES) ==========
+    fx_under_to_settle: np.ndarray
+    fx_strike_to_settle: np.ndarray
+    price_rf_ids: np.ndarray
+    price_curve_ids: np.ndarray
+    vol_rf_ids: np.ndarray
+    vol_surface_rf_ids: np.ndarray
+
+    def to_df(self) -> DataFrame:
+        """
+        Reconstructs a Pandas DataFrame from the SoA arrays for auditing and debugging.
+        Translates ordinals back to datetimes and applies NaT/NaN for sentinels.
+        """
+
+        def decode_dates(ord_array: np.ndarray, sentinel: int) -> Series:
+            mask = ord_array == sentinel
+            dts = ordinal32_to_datetime64D(ord_array)
+            s = Series(dts)
+            s[mask] = NaT
+            return s
+
+        def mask_fx(fx_array: np.ndarray) -> Series:
+            s = Series(fx_array, dtype=object)
+            s[fx_array == NO_FX_RF_REQUIRED] = "NONE"
+            return s
+
+        return DataFrame(
+            {
+                # IDS
+                "uid": self.uids,
+                "instrument_id": self.instrument_ids,
+                # ECONOMICS
+                "qty": self.qty,
+                "strike_price": Series(self.strike_price).replace(0.0, np.nan),
+                "is_call": Series(self.is_call).replace(NOT_OPTION, np.nan),
+                # DATES
+                "expiry_date": decode_dates(
+                    self.expiry_ord,
+                    NO_EXPIRY_DATE_ORDINAL32,
+                ),
+                "delivery_date": decode_dates(
+                    self.delivery_ord,
+                    NO_DELIVERY_DATE_ORDINAL32,
+                ),
+                "settle_date": decode_dates(
+                    self.settle_ord,
+                    NO_SETTLEMENT_DATE_ORDINAL32,
+                ),
+                # LINKAGES
+                "price_rf_id": self.price_rf_ids,
+                "price_curve_id": self.price_curve_ids,
+                "vol_rf_id": self.vol_rf_ids,
+                "vol_surface_rf_id": self.vol_surface_rf_ids,
+                "fx_u2s": mask_fx(self.fx_under_to_settle),
+                "fx_k2s": mask_fx(self.fx_strike_to_settle),
+            }
+        )
+
+    @property
+    def df(self) -> DataFrame:
+        """
+        Alias for .to_df() to allow easy access to the reconstructed DataFrame.
+        """
+        return self.to_df()
+
+```
+
+### FILE: portfolio\ingest\batch_builder.py ###
+```python
+# src/riskquant/portfolio/ingest/batch_builder.py
+"""
+Builds the pristine SoA IngestBatch from raw Pandas DataFrames.
+Acts as the extraction and translation layer before trade generation,
+ensuring all "Shift Left" validations pass before allocating memory.
+"""
+
+import numpy as np
+import pandas as pd
+
+from riskquant.portfolio.instruments import Instrument
+from riskquant.constants import (
+    NO_DELIVERY_DATE_ORDINAL32,
+    NO_ID,
+    NO_SETTLEMENT_DATE_ORDINAL32,
+    NO_EXPIRY_DATE_ORDINAL32,
+    NOT_OPTION,
+    VOL_RISK_FACTOR_PREFIX,
+)
+from riskquant.portfolio.ingest.batch import IngestBatch
+from riskquant.portfolio.ingest.schema import REQUIRED_BASE_COLS
+from riskquant.portfolio.ingest.validator import (
+    require_cols_in_df,
+    require_non_nan_in_series,
+    require_non_zero_values,
+    require_positive_values,
+    validate_instruments,
+    validate_is_call_flags,
+    validate_conditional_option_fields,
+    validate_uids_unique,
+)
+from riskquant.portfolio.ingest.parser import (
+    parse_optional_date_series_to_ordinal32,
+)
+from riskquant.portfolio.ingest.fx_resolver import resolve_fx_rf_ids_inplace
+
+
+def build_ingest_batch(
+    *,
+    df: pd.DataFrame,
+    rf_name_to_rf_id: dict[str, int],
+    container_name_to_container_id: dict[str, int],
+) -> IngestBatch:
+    """
+    Consume a raw positions DataFrame, validate it, translate strings to
+    system integer IDs, and output a highly optimized IngestBatch.
+    """
+    n = len(df)
+    if n == 0:
+        raise ValueError("Cannot build IngestBatch from an empty DataFrame.")
+
+    # ==========================================
+    # 1. BULK VALIDATION ("SHIFT LEFT")
+    # ==========================================
+
+    # Check base schema and NaNs
+    require_cols_in_df(df, REQUIRED_BASE_COLS, ctx="Positions Ingest")
+    for col in REQUIRED_BASE_COLS:
+        require_non_nan_in_series(df[col], ctx=f"Column '{col}'")
+
+    # Domain logic validations
+    validate_instruments(df["instrument"], ctx="Instrument Validation")
+    validate_conditional_option_fields(df, ctx="Option Fields Validation")
+
+    # Core Identity and Economic Validations
+    validate_uids_unique(df["uid"], ctx="UID Validation")
+    require_non_zero_values(df["quantity"], ctx="Quantity Validation")
+
+    # Optional but if present, must be valid
+    if "is_call" in df.columns:
+        validate_is_call_flags(df["is_call"], ctx="is_call Validation")
+    if "strike_price" in df.columns:
+        require_positive_values(
+            df["strike_price"], ctx="Strike Price Validation"
+        )
+
+    # ==========================================
+    # 2. TRANSLATE INSTRUMENTS & UIDs
+    # ==========================================
+
+    # Validate UIDs are unique before we convert to numpy arrays, since Pandas has nice tools for this.
+    validate_uids_unique(df["uid"], ctx="UID Uniqueness Validation")
+
+    # UIDs and quantities are core to all trades, so we require them and convert to arrays early.
+    uids = df["uid"].to_numpy(dtype=np.int64)
+
+    # Quntity can be positive or negative, but not zero or NaN/Inf, so we validate and convert to float64 for safety.
+    qty = df["quantity"].to_numpy(dtype=np.float64)
+
+    # We already validated the strings exist in the Enum, so this list comprehension is safe and fast
+    instrument_ids = np.array(
+        [Instrument[inst].value for inst in df["instrument"]],
+        dtype=np.int32,
+    )
+
+    # ==========================================
+    # 3. TRANSLATE RISK FACTOR MAPPINGS
+    # ==========================================
+
+    # Fast boolean masks
+    is_container_mask = (
+        df["instrument"].str.endswith("CURVE").to_numpy(dtype=bool)
+    )
+    is_option_mask = (
+        df["instrument"].str.contains("OPTION").to_numpy(dtype=bool)
+    )
+
+    # --- PRICE MAPPINGS ---
+    # Map Nodes (SPOT, FORWARD_NODE, VANILLA_EUROPEAN_OPTION_NODE)
+    node_underlyings = df.loc[~is_container_mask, "underlying"]
+    mapped_nodes = node_underlyings.map(rf_name_to_rf_id)
+    require_non_nan_in_series(mapped_nodes, ctx="Mapped Node Underlying IDs")
+
+    # Map Containers (FORWARD_CURVE, VANILLA_EUROPEAN_OPTION_CURVE)
+    container_underlyings = df.loc[is_container_mask, "underlying"]
+    mapped_containers = container_underlyings.map(
+        container_name_to_container_id
+    )
+    require_non_nan_in_series(mapped_containers, ctx="Mapped Container IDs")
+
+    # Pre-allocate arrays filled with the NO_ID sentinel
+    price_rf_ids = np.full(n, NO_ID, dtype=np.int32)
+    price_curve_ids = np.full(n, NO_ID, dtype=np.int32)
+    vol_rf_ids = np.full(n, NO_ID, dtype=np.int32)
+    vol_surface_rf_ids = np.full(n, NO_ID, dtype=np.int32)
+
+    # Slot the translated PRICE integer IDs
+    price_rf_ids[~is_container_mask] = mapped_nodes.to_numpy(dtype=np.int32)
+    price_curve_ids[is_container_mask] = mapped_containers.to_numpy(
+        dtype=np.int32
+    )
+
+    # --- VOLATILITY MAPPINGS (Options Only) ---
+    if is_option_mask.any():
+        option_nodes_mask = is_option_mask & ~is_container_mask
+        option_curves_mask = is_option_mask & is_container_mask
+
+        if option_nodes_mask.any():
+            # Vectorized string prepend
+            vol_nodes = (
+                VOL_RISK_FACTOR_PREFIX + df.loc[option_nodes_mask, "underlying"]
+            )
+            mapped_vol_nodes = vol_nodes.map(rf_name_to_rf_id)
+            require_non_nan_in_series(
+                mapped_vol_nodes,
+                ctx="Mapped Vol Node IDs",
+            )
+            vol_rf_ids[option_nodes_mask] = mapped_vol_nodes.to_numpy(
+                dtype=np.int32
+            )
+
+        if option_curves_mask.any():
+            # Vectorized string prepend
+            vol_curves = (
+                VOL_RISK_FACTOR_PREFIX
+                + df.loc[option_curves_mask, "underlying"]
+            )
+            mapped_vol_curves = vol_curves.map(container_name_to_container_id)
+            require_non_nan_in_series(
+                mapped_vol_curves,
+                ctx="Mapped Vol Surface IDs",
+            )
+            vol_surface_rf_ids[option_curves_mask] = mapped_vol_curves.to_numpy(
+                dtype=np.int32
+            )
+
+    # ==========================================
+    # 4. HANDLE OPTIONAL COLUMNS (Economics)
+    # ==========================================
+
+    # Strike price
+    if "strike_price" in df.columns:
+        strike_price = df["strike_price"].fillna(0.0).to_numpy(dtype=np.float64)
+    else:
+        strike_price = np.zeros(n, dtype=np.float64)
+
+    # is_call flag (only relevant for options, but we allow it on all rows for simplicity)
+    if "is_call" in df.columns:
+        # Fill missing with NOT_OPTION sentinel
+        is_call = df["is_call"].fillna(NOT_OPTION).to_numpy(dtype=np.int8)
+    else:
+        is_call = np.full(n, NOT_OPTION, dtype=np.int8)
+
+    # ==========================================
+    # 5. PARSE DATES TO ORDINAL32
+    # ==========================================
+    # The parser function handles Sentinels automatically if the column is missing or blank
+    delivery_ord = parse_optional_date_series_to_ordinal32(
+        df.get("delivery_date", pd.Series(index=df.index, dtype=object)),
+        col_name="delivery_date",
+        sentinel=NO_DELIVERY_DATE_ORDINAL32,
+    )
+    settle_ord = parse_optional_date_series_to_ordinal32(
+        df.get("settlement_date", pd.Series(index=df.index, dtype=object)),
+        col_name="settlement_date",
+        sentinel=NO_SETTLEMENT_DATE_ORDINAL32,
+    )
+    expiry_ord = parse_optional_date_series_to_ordinal32(
+        df.get("expiry_date", pd.Series(index=df.index, dtype=object)),
+        col_name="expiry_date",
+        sentinel=NO_EXPIRY_DATE_ORDINAL32,
+    )
+
+    # ==========================================
+    # 6. RESOLVE FX LINKAGES IN BULK
+    # ==========================================
+    underlying_ccy = df["underlying_ccy"].to_numpy(dtype=object)
+    settlement_ccy = df["settlement_ccy"].to_numpy(dtype=object)
+
+    # If strike_ccy is provided, fill the blank/NaN rows with the underlying_ccy.
+    # If the column is entirely missing, default to underlying_ccy.
+    if "strike_ccy" in df.columns:
+        strike_ccy = (
+            df["strike_ccy"].fillna(df["underlying_ccy"]).to_numpy(dtype=object)
+        )
+    else:
+        strike_ccy = df["underlying_ccy"].to_numpy(dtype=object)
+
+    fx_under_to_settle = np.empty(n, dtype=np.int32)
+    resolve_fx_rf_ids_inplace(
+        base_ccy=underlying_ccy,
+        settlement_ccy=settlement_ccy,
+        out_fx_rf_ids=fx_under_to_settle,
+        rf_name_to_rf_id=rf_name_to_rf_id,
+    )
+
+    fx_strike_to_settle = np.empty(n, dtype=np.int32)
+    resolve_fx_rf_ids_inplace(
+        base_ccy=strike_ccy,
+        settlement_ccy=settlement_ccy,
+        out_fx_rf_ids=fx_strike_to_settle,
+        rf_name_to_rf_id=rf_name_to_rf_id,
+    )
+
+    # ==========================================
+    # 7. PACK THE DUMB BATCH
+    # ==========================================
+    return IngestBatch(
+        size=n,
+        # --- IDS ---
+        instrument_ids=instrument_ids,
+        uids=uids,
+        # --- ECONOMICS ---
+        qty=qty,
+        strike_price=strike_price,
+        is_call=is_call,
+        # --- DATES ---
+        settle_ord=settle_ord,
+        delivery_ord=delivery_ord,
+        expiry_ord=expiry_ord,
+        # --- FX LINKAGES ---
+        fx_under_to_settle=fx_under_to_settle,
+        fx_strike_to_settle=fx_strike_to_settle,
+        # --- UNDERLYING LINKAGES
+        price_rf_ids=price_rf_ids,
+        price_curve_ids=price_curve_ids,
+        # --- VOL LINKAGES
+        vol_rf_ids=vol_rf_ids,
+        vol_surface_rf_ids=vol_surface_rf_ids,
+    )
 
 ```
 
 ### FILE: portfolio\ingest\builders\__init__.py ###
 ```python
-# src\riskquant\portfolio\ingest\builders\__init__.py
+# src/riskquant/portfolio/ingest/builders/__init__.py
+"""
+Facade for the TradeRecord builders.
+Exposes all builder functions so the dispatcher can import them cleanly.
+"""
+
+# Assuming you put the functions in files named after the instruments:
+from .spot import build_spot
+from .forward import (
+    build_forward_node,
+    build_forward_curve,
+)
+from .vanilla_european_option import (
+    build_vanilla_european_option_node,
+    build_vanilla_european_option_curve,
+)
+
+# Explicitly declare what is available to the outside world
+__all__ = [
+    "build_spot",
+    "build_forward_node",
+    "build_forward_curve",
+    "build_vanilla_european_option_node",
+    "build_vanilla_european_option_curve",
+]
 
 ```
 
@@ -3343,16 +3900,16 @@ from __future__ import annotations
 
 import numpy as np
 
-from riskquant.exceptions import PrettyKeyError
-from riskquant.portfolio import instruments
-from riskquant.portfolio.ingest.utils import is_na_helper
 from riskquant.portfolio.ingest.batch import IngestBatch
+from riskquant.portfolio.instruments import (
+    FORWARD_NODE_ID,
+    FORWARD_CURVE_ID,
+)
 from riskquant.portfolio.payloads.forward import (
     ForwardNodePayload,
     ForwardCurvePayload,
 )
-from riskquant.portfolio.trades import TradeRecord
-from riskquant.portfolio.constants import NO_DELIVERY_DATE_ORDINAL32
+from riskquant.portfolio.trade import TradeRecord
 
 
 def build_forward_node(
@@ -3365,7 +3922,7 @@ def build_forward_node(
     """
     return TradeRecord(
         trade_uid=int(batch.uids[ix]),
-        instrument_id=np.int32(batch.forward_node_id),
+        instrument_id=FORWARD_NODE_ID,
         payload=ForwardNodePayload(
             quantity=np.float64(batch.qty[ix]),
             strike=np.float64(batch.strike_price[ix]),
@@ -3387,7 +3944,7 @@ def build_forward_curve(
     """
     return TradeRecord(
         trade_uid=int(batch.uids[ix]),
-        instrument_id=np.int32(batch.forward_curve_id),
+        instrument_id=FORWARD_CURVE_ID,
         payload=ForwardCurvePayload(
             quantity=np.float64(batch.qty[ix]),
             strike=np.float64(batch.strike_price[ix]),
@@ -3411,14 +3968,15 @@ Module for building spot trade records from ingested batch data.
 
 import numpy as np
 from riskquant.portfolio.ingest.batch import IngestBatch
+from riskquant.portfolio.instruments import SPOT_ID
 from riskquant.portfolio.payloads.spot import SpotPayload
-from riskquant.portfolio.trades import TradeRecord
+from riskquant.portfolio.trade import TradeRecord
 
 
 def build_spot(*, ix: int, batch: IngestBatch) -> TradeRecord:
     return TradeRecord(
         trade_uid=int(batch.uids[ix]),
-        instrument_id=np.int32(batch.spot_id),
+        instrument_id=SPOT_ID,
         payload=SpotPayload(
             quantity=np.float64(batch.qty[ix]),
             price_rf_id=np.int32(batch.price_rf_ids[ix]),
@@ -3439,19 +3997,16 @@ from __future__ import annotations
 
 import numpy as np
 
-from riskquant.config.configs import RiskStaticConfig
-from riskquant.exceptions import PrettyKeyError
-from riskquant.portfolio.constants import (
-    NO_DELIVERY_DATE_ORDINAL32,
-    NO_EXPIRY_DATE_ORDINAL32,
-)
-from riskquant.portfolio.ingest.utils import is_na_helper as is_na
 from riskquant.portfolio.ingest.batch import IngestBatch
+from riskquant.portfolio.instruments import (
+    VANILLA_EUROPEAN_OPTION_CURVE_ID,
+    VANILLA_EUROPEAN_OPTION_NODE_ID,
+)
 from riskquant.portfolio.payloads.vanilla_european_option import (
     VanillaEuropeanOptionNodePayload,
     VanillaEuropeanOptionCurvePayload,
 )
-from riskquant.portfolio.trades import TradeRecord
+from riskquant.portfolio.trade import TradeRecord
 
 
 def build_vanilla_european_option_node(
@@ -3464,7 +4019,7 @@ def build_vanilla_european_option_node(
     """
     return TradeRecord(
         trade_uid=int(batch.uids[ix]),
-        instrument_id=np.int32(batch.vanilla_euro_option_node_id),
+        instrument_id=VANILLA_EUROPEAN_OPTION_NODE_ID,
         payload=VanillaEuropeanOptionNodePayload(
             quantity=np.float64(batch.qty[ix]),
             strike=np.float64(batch.strike_price[ix]),
@@ -3489,7 +4044,7 @@ def build_vanilla_european_option_curve(
     """
     return TradeRecord(
         trade_uid=int(batch.uids[ix]),
-        instrument_id=np.int32(batch.vanilla_euro_option_curve_id),
+        instrument_id=VANILLA_EUROPEAN_OPTION_CURVE_ID,
         payload=VanillaEuropeanOptionCurvePayload(
             quantity=np.float64(batch.qty[ix]),
             strike=np.float64(batch.strike_price[ix]),
@@ -3508,7 +4063,50 @@ def build_vanilla_european_option_curve(
 
 ### FILE: portfolio\ingest\dispatcher.py ###
 ```python
-# src\riskquant\portfolio\ingest\dispatcher.py
+# src/riskquant/portfolio/ingest/dispatcher.py
+
+from typing import Callable, Iterator
+
+from riskquant.portfolio.trade import TradeRecord
+from riskquant.portfolio.instruments import (
+    SPOT_ID,
+    FORWARD_NODE_ID,
+    FORWARD_CURVE_ID,
+    VANILLA_EUROPEAN_OPTION_NODE_ID,
+    VANILLA_EUROPEAN_OPTION_CURVE_ID,
+)
+from riskquant.portfolio.ingest.batch import IngestBatch
+from riskquant.portfolio.ingest.builders import (
+    build_spot,
+    build_forward_node,
+    build_forward_curve,
+    build_vanilla_european_option_node,
+    build_vanilla_european_option_curve,
+)
+
+BuilderFunc = Callable[..., TradeRecord]
+
+# O(1) Routing table - No more if/elif branches!
+DISPATCH_TABLE: dict[int, BuilderFunc] = {
+    int(SPOT_ID): build_spot,
+    int(FORWARD_NODE_ID): build_forward_node,
+    int(FORWARD_CURVE_ID): build_forward_curve,
+    int(VANILLA_EUROPEAN_OPTION_NODE_ID): build_vanilla_european_option_node,
+    int(VANILLA_EUROPEAN_OPTION_CURVE_ID): build_vanilla_european_option_curve,
+}
+
+
+def iter_trades_from_batch(batch: IngestBatch) -> Iterator[TradeRecord]:
+    """
+    O(1) dispatch loop. Yields compiled TradeRecords.
+    Because validation is already done, this loop is blazingly fast.
+    """
+    instrument_ids = batch.instrument_ids
+    size = batch.size
+
+    for ix in range(size):
+        # Look up the correct function using the integer ID, then execute it
+        yield DISPATCH_TABLE[instrument_ids[ix]](ix=ix, batch=batch)
 
 ```
 
@@ -3518,7 +4116,7 @@ def build_vanilla_european_option_curve(
 import numpy as np
 
 from riskquant.exceptions import PrettyKeyError
-from riskquant.portfolio.constants import NO_FX_RF_REQUIRED
+from riskquant.constants import NO_FX_RF_REQUIRED
 from riskquant.portfolio.fx import get_fx_pair_for_under_to_settle_conversion
 
 
@@ -3588,7 +4186,6 @@ import numpy as np
 import pandas as pd
 from pandas.api.types import (
     is_datetime64_any_dtype,
-    is_datetime64tz_dtype,
 )
 
 from riskquant.portfolio.ingest.utils import is_na_helper
@@ -3645,7 +4242,7 @@ def parse_optional_date_series_to_ordinal32(
         return out
 
     # If the dtype of the series is timezone-aware datetime, we should raise an error since we don't support timezones in our date encoding.
-    if is_datetime64tz_dtype(ser.dtype):
+    if isinstance(ser.dtype, pd.DatetimeTZDtype):
         raise TypeError(
             f"Invalid {col_name}: timezone-aware datetimes are not supported."
         )
@@ -3769,14 +4366,19 @@ def is_na_helper(x: object) -> bool:
 
 ### FILE: portfolio\ingest\validator.py ###
 ```python
-# src\riskquant\portfolio\ingest\validator.py
-from typing import Iterable
+# src/riskquant/portfolio/ingest/validator.py
 
+from typing import Iterable
 import numpy as np
 import pandas as pd
 
+from riskquant.constants import POSITION_DUST_TOLERANCE
 from riskquant.exceptions import PrettyKeyError
-from riskquant.utils.printer import as_list_str, print_as_list_str
+from riskquant.portfolio.instruments import Instrument
+from riskquant.utils.printer import as_list_str
+
+# Grab valid names straight from your enum
+VALID_INSTRUMENT_NAMES = {member.name for member in Instrument}
 
 
 def require_cols_in_df(
@@ -3785,32 +4387,10 @@ def require_cols_in_df(
     *,
     ctx: str,
 ) -> None:
-    """Check that the specified columns are present in the DataFrame, and raise an error with a helpful message if any are missing.
-
-    Args:
-        df: The DataFrame to check for the presence of the required columns.
-        cols: An iterable of column names that are required to be present in the DataFrame.
-        ctx: A string providing context for error messages, such as the name of the sheet or the type of data being validated.
-
-    Raises:
-        TypeError: If the input df is not a pandas DataFrame.
-        ValueError: If any of the required columns are missing from the DataFrame, with a message listing the missing columns.
-
-    Returns:
-        None if all required columns are present in the DataFrame.
-    """
-    # Smoke test that the input is a DataFrame, since the error messages are
-    # more helpful than if we just let it fail with an AttributeError later on
-    if not isinstance(df, pd.DataFrame):
-        raise TypeError(f"{ctx}: expected a pandas DataFrame, got {type(df)}")
-
-    # Get the list of missing columns, if any
     missing = [c for c in cols if c not in df.columns]
-
-    # If any required columns are missing, raise an error with a helpful message
     if missing:
         raise ValueError(
-            f"{ctx}: missing required columns: \n" f"{as_list_str(missing)}"
+            f"{ctx}: missing required columns: \n{as_list_str(missing)}"
         )
 
 
@@ -3819,34 +4399,148 @@ def require_non_nan_in_series(
     *,
     ctx: str,
 ) -> None:
-    """
-    Require that ser contains no missing values (None/NaN/pd.NA) and no infinities.
-    """
-    if not isinstance(ser, pd.Series):
-        raise TypeError(f"{ctx}: expected a pandas Series, got {type(ser)}")
-
-    # 1) Missing values (works for all dtypes, including nullable dtypes)
-    na_mask = ser.isna()
-
-    # 2) Non-finite values (only meaningful for numeric dtypes)
-    # Use vectorized check when possible; otherwise treat as "no inf check".
-    inf_mask = pd.Series(False, index=ser.index)
-
-    # Handle numeric dtypes (includes pandas nullable Float64)
+    bad_mask = ser.isna()
     if pd.api.types.is_numeric_dtype(ser.dtype):
-        # Convert to numpy array; for nullable floats, pandas produces float array with np.nan for missing.
         arr = ser.to_numpy(dtype="float64", na_value=np.nan)
-        inf_mask = pd.Series(np.isinf(arr), index=ser.index)
-
-    bad_mask = na_mask | inf_mask
+        bad_mask = bad_mask | pd.Series(np.isinf(arr), index=ser.index)
 
     if bad_mask.any():
         bad_idx = ser.index[bad_mask].tolist()
-        num_bad = len(bad_idx)
-        preview = bad_idx[:25]
         raise PrettyKeyError(
-            f"{ctx}: found {num_bad:_.0f} invalid values (NA or ±inf) at row indices: \n"
-            f"{as_list_str(preview)}"
+            f"{ctx}: found {len(bad_idx)} invalid values at rows: {bad_idx[:10]}"
+        )
+
+
+def require_positive_values(
+    ser: pd.Series,
+    *,
+    ctx: str,
+) -> None:
+    valid_mask = ser.notna()
+    violators_mask = ser[valid_mask].to_numpy(dtype=np.float64) <= 0
+    if violators_mask.any():
+        bad_idx = ser[valid_mask].index[violators_mask].tolist()
+        raise ValueError(
+            f"{ctx}: found {len(bad_idx)} non-positive values at rows: {bad_idx[:10]}"
+        )
+
+
+def validate_instruments(
+    ser: pd.Series,
+    *,
+    ctx: str,
+) -> None:
+    """Vectorized check to ensure all instruments match the defined Enum."""
+    invalid_mask = ~ser.isin(VALID_INSTRUMENT_NAMES)
+
+    if invalid_mask.any():
+        bad_idx = ser.index[invalid_mask].tolist()
+        bad_vals = ser[invalid_mask].unique()
+        raise ValueError(
+            f"{ctx}: Invalid instruments detected {bad_vals.tolist()} "
+            f"at rows: {bad_idx[:10]}. Valid options are: {VALID_INSTRUMENT_NAMES}"
+        )
+
+
+def validate_is_call_flags(
+    ser: pd.Series,
+    *,
+    ctx: str,
+) -> None:
+    """Ensure is_call is strictly 0 (put), 1 (call), or missing/NaN."""
+    # We only care about rows where the user actually provided a value
+    valid_mask = ser.notna()
+
+    # Check if any provided values are NOT 0 or 1
+    provided_vals = ser[valid_mask]
+    violators_mask = ~provided_vals.isin([0, 1, 0.0, 1.0])
+
+    if violators_mask.any():
+        bad_idx = provided_vals.index[violators_mask].tolist()
+        bad_vals = provided_vals[violators_mask].unique()
+        raise ValueError(
+            f"{ctx}: 'is_call' must be 0, 1, or blank. Found {bad_vals.tolist()} "
+            f"at rows: {bad_idx[:10]}"
+        )
+
+
+def validate_conditional_option_fields(
+    df: pd.DataFrame,
+    *,
+    ctx: str,
+) -> None:
+    """
+    Cross-column validation: If it is an option, it MUST have a strike and expiry.
+    """
+    # Create a fast mask for any row that is an option
+    is_option_mask = df["instrument"].str.contains("OPTION", na=False)
+
+    if not is_option_mask.any():
+        return  # No options to check
+
+    # Check strikes
+    if (
+        "strike_price" not in df.columns
+        or df.loc[is_option_mask, "strike_price"].isna().any()
+    ):
+        bad_idx = df[
+            is_option_mask
+            & df.get("strike_price", pd.Series(np.nan, index=df.index)).isna()
+        ].index.tolist()
+        raise ValueError(
+            f"{ctx}: Options must have a 'strike_price'. Missing at rows: {bad_idx[:10]}"
+        )
+
+    # Check expiries
+    if (
+        "expiry_date" not in df.columns
+        or df.loc[is_option_mask, "expiry_date"].isna().any()
+    ):
+        bad_idx = df[
+            is_option_mask
+            & df.get("expiry_date", pd.Series(np.nan, index=df.index)).isna()
+        ].index.tolist()
+        raise ValueError(
+            f"{ctx}: Options must have an 'expiry_date'. Missing at rows: {bad_idx[:10]}"
+        )
+
+
+def validate_uids_unique(ser: pd.Series, *, ctx: str) -> None:
+    """
+    Ensure all trade UIDs are strictly unique across the ingestion batch.
+    """
+    if not ser.is_unique:
+        # Only pay the cost of finding the exact duplicates if we fail
+        duplicates = ser[ser.duplicated()].unique()
+        raise ValueError(
+            f"{ctx}: Trade UIDs must be strictly unique. "
+            f"Found duplicates: {duplicates.tolist()[:10]}"
+        )
+
+
+def require_non_zero_values(
+    ser: pd.Series,
+    *,
+    ctx: str,
+    tol: float = POSITION_DUST_TOLERANCE,
+) -> None:
+    """
+    Vectorized check to ensure values are meaningfully non-zero.
+    Uses the engine's global dust tolerance to filter out upstream float artifacts.
+    """
+    valid_mask = ser.notna()
+    arr = ser[valid_mask].to_numpy(dtype=np.float64)
+
+    # Vectorized check for values that are effectively zero
+    violators_mask = np.abs(arr) < tol
+
+    if violators_mask.any():
+        bad_idx = ser[valid_mask].index[violators_mask].tolist()
+        preview = bad_idx[:25]
+        raise ValueError(
+            f"{ctx}: found {len(bad_idx):_.0f} trades with effectively zero quantity (abs(qty) < {tol}). "
+            f"Zero-quantity and 'dust' trades carry no risk and must be filtered out upstream. "
+            f"Row indices: \n{as_list_str(preview)}"
         )
 
 ```
@@ -3940,10 +4634,8 @@ from dataclasses import dataclass
 import numpy as np
 
 # Import price source type indicators and date/FX sentinels for defaults
-from riskquant.portfolio.constants import (
-    NO_DELIVERY_DATE_ORDINAL32,
+from riskquant.constants import (
     NO_FX_RF_REQUIRED,
-    NO_ID,
     NO_SETTLEMENT_DATE_ORDINAL32,
 )
 from riskquant.portfolio.payloads.base_payload import Payload
@@ -4042,9 +4734,9 @@ class ForwardNodePayload(_ForwardBasePayload):
             f"quantity={self.quantity}, "
             f"strike={self.strike}, "
             f"settlement_date_ordinal32={self.settlement_date_ordinal32}, "
-            f"price_rf_id={self.price_rf_id}, "
             f"fx_under_to_settle_rf_id={self.fx_under_to_settle_rf_id}, "
-            f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}"
+            f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}, "
+            f"price_rf_id={self.price_rf_id}"
             f")"
         )
 
@@ -4089,11 +4781,11 @@ class ForwardCurvePayload(_ForwardBasePayload):
             f"ForwardCurvePayload("
             f"quantity={self.quantity}, "
             f"strike={self.strike}, "
-            f"delivery_date_ordinal32={self.delivery_date_ordinal32}, "
             f"settlement_date_ordinal32={self.settlement_date_ordinal32}, "
-            f"price_curve_id={self.price_curve_id}, "
             f"fx_under_to_settle_rf_id={self.fx_under_to_settle_rf_id}, "
-            f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}"
+            f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}, "
+            f"price_curve_id={self.price_curve_id}, "
+            f"delivery_date_ordinal32={self.delivery_date_ordinal32}"
             f")"
         )
 
@@ -4127,7 +4819,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from riskquant.portfolio.constants import NO_FX_RF_REQUIRED, NO_ID
+from riskquant.constants import NO_FX_RF_REQUIRED
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -4210,11 +4902,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from riskquant.portfolio.constants import (
-    NO_DELIVERY_DATE_ORDINAL32,
-    NO_EXPIRY_DATE_ORDINAL32,
+from riskquant.constants import (
     NO_FX_RF_REQUIRED,
-    NO_ID,
     NO_SETTLEMENT_DATE_ORDINAL32,
 )
 from riskquant.portfolio.payloads.base_payload import Payload
@@ -4406,91 +5095,71 @@ class VanillaEuropeanOptionCurvePayload(_VanillaEuropeanOptionBasePayload):
 
 ```
 
-### FILE: portfolio\trades.py ###
+### FILE: portfolio\pnl\__init__.py ###
 ```python
-"""
-Module for defining standardized trade record data structures.
+# src\riskquant\portfolio\pnl\__init__.py
+```
 
-This module provides the core TradeRecord class which represents a single
-trade with its unique identifier, associated instrument, and type-specific
-payload containing all relevant pricing and valuation data.
-"""
+### FILE: portfolio\pnl\results.py ###
+```python
+# riskquant/portfolio/pnl/results.py
+from __future__ import annotations
 
-# Import dataclass decorator for creating immutable data structures
 from dataclasses import dataclass
 
-# Import numpy for numeric type definitions
 import numpy as np
-from openpyxl.descriptors import Integer
 
-from riskquant.portfolio import instruments
+
+@dataclass(frozen=True, slots=True)
+class PnlResult:
+    """
+    Result container for position-level PnL simulations.
+
+    Attributes:
+        trade_uids: (M,) int64 array; row i of pnl corresponds to trade_uids[i]
+        pnl:        (M, S) PnL matrix, expressed in each trade's settlement_ccy
+    """
+
+    trade_uids: np.ndarray  # int64, shape (M,)
+    pnl: np.ndarray  # float32/64, shape (M, S), contiguous
+
+```
+
+### FILE: portfolio\trade.py ###
+```python
+# src/riskquant/portfolio/trade.py
+"""
+Module for defining standardized trade record data structures.
+"""
+
+from dataclasses import dataclass
+import numpy as np
+
 from riskquant.portfolio.payloads.base_payload import Payload
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TradeRecord:
     """
-    Immutable data class representing a single trade record.
+    Immutable, high-performance container representing a single trade record.
 
-    TradeRecord encapsulates the fundamental information for any trade:
-    a unique identifier, an instrument reference, and a payload containing
-    instrument-specific data (pricing, quantity, strike prices, etc.).
+    Assumes all data has been strictly validated and typed by the upstream
+    IngestBatch vectorizer before instantiation.
 
     Attributes:
         trade_uid: Unique integer identifier for this specific trade.
-        instrument_id: Numpy int32 identifier linking to the instrument
-                       definition (e.g., spot, forward, option).
-        payload: Polymorphic Payload object containing instrument-specific
-                 data.
+        instrument_id: Numpy int32 identifier linking to the instrument Enum.
+        payload: Polymorphic Payload object containing instrument-specific data.
     """
 
     trade_uid: int
     instrument_id: np.int32
     payload: Payload
 
-    def __post_init__(self):
-        # trade_uid is expected to be a Python int (not numpy int) for easier handling in dicts and logs
-        if self.trade_uid is None:
-            raise ValueError("trade_uid cannot be None")
-        if not isinstance(self.trade_uid, int):
-            raise TypeError(
-                f"trade_uid must be an int, got {type(self.trade_uid)}"
-            )
-
-        # instrument_id should be a numpy int32 for consistency with batch data
-        if self.instrument_id is None:
-            raise ValueError("instrument_id cannot be None")
-        if not isinstance(self.instrument_id, (int, np.integer)):
-            raise TypeError(
-                f"instrument_id must be a numpy int32, got {type(self.instrument_id)}"
-            )
-        object.__setattr__(self, "instrument_id", np.int32(self.instrument_id))
-        if self.instrument_id not in instruments.ALL_INSTRUMENT_IDS:
-            raise ValueError(
-                f"instrument_id = {self.instrument_id} is not a valid instrument ID. Valid IDs: {instruments.ALL_INSTRUMENT_IDS}"
-            )
-
-        # Payload must be an instance of a subclass of Payload
-        if self.payload is None:
-            raise ValueError("payload cannot be None")
-        if not isinstance(self.payload, Payload):
-            raise TypeError(
-                f"payload must be an instance of Payload, "
-                f"got {type(self.payload)}"
-            )
-
     def __str__(self) -> str:
         """
         Return a formatted string representation of the trade record.
-
-        Produces a multi-line human-readable string showing the trade UID,
-        instrument ID, and the string representation of the payload object.
-        Useful for debugging, logging, and interactive inspection.
-
-        Returns:
-            str: A formatted string representation of all trade record fields.
         """
-        # Format the trade record as a multi-line string with proper indentation
         return (
             f"TradeRecord(\n"
             f"  trade_uid={self.trade_uid},\n"
@@ -4498,6 +5167,78 @@ class TradeRecord:
             f"  payload={self.payload}\n"
             f")"
         )
+
+```
+
+### FILE: rq_logging.py ###
+```python
+# riskquant/rq_logging.py
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
+
+_DEFAULT_FORMAT = "%(asctime)s %(levelname)s %(name)s - %(message)s"
+
+
+def configure_logging(
+    *,
+    level: str | int = "INFO",
+    fmt: str = _DEFAULT_FORMAT,
+) -> None:
+    """
+    Configure root logging (intended for scripts / CLIs / notebooks).
+
+    Library code should NOT call this automatically.
+    """
+    logging.basicConfig(level=level, format=fmt)
+
+
+def get_logger(name: str) -> logging.Logger:
+    return logging.getLogger(name)
+
+
+@dataclass(frozen=True, slots=True)
+class LogContext:
+    """
+    Structured context you want consistently attached to log records.
+
+    Keep this small; it flows into every record for an object.
+    """
+
+    component: str
+    object_name: Optional[str] = None
+    object_id: Optional[str] = None
+
+    def to_extra(self) -> Dict[str, Any]:
+        # Put under a single key to avoid clobbering LogRecord attrs.
+        return {
+            "rq": {
+                "component": self.component,
+                "object_name": self.object_name,
+                "object_id": self.object_id,
+            }
+        }
+
+
+class ContextLoggerAdapter(logging.LoggerAdapter):
+    """
+    Keeps contextual fields attached to log records.
+    """
+
+    def process(self, msg, kwargs):
+        extra = kwargs.get("extra")
+        base = dict(self.extra)  # adapter's extra
+        if extra:
+            # merge; nested dicts are simplest (rq namespace)
+            base.update(extra)
+        kwargs["extra"] = base
+        return msg, kwargs
+
+
+def with_context(logger: logging.Logger, ctx: LogContext) -> logging.LoggerAdapter:
+    return ContextLoggerAdapter(logger, ctx.to_extra())
 
 ```
 
@@ -4517,7 +5258,8 @@ from typing import Final, Iterable, List, Tuple, Union
 import numpy as np
 import pandas as pd
 
-DATE_EPOCH: Final[dt.date] = dt.date(1970, 1, 1)
+from riskquant.constants import DATE_EPOCH
+
 DATE_EPOCH_AS_DATETIME64D: Final[np.datetime64] = np.datetime64(
     DATE_EPOCH.isoformat(),
     "D",
@@ -4778,6 +5520,7 @@ if __name__ == "__main__":
 ### FILE: utils\printer.py ###
 ```python
 # riskquant/utils/printer.py
+import math
 from typing import Any, Iterable, Mapping
 
 import pandas as pd
