@@ -218,6 +218,36 @@ class RiskStaticConfigFrames:
             {k: v.shift_type_id for k, v in shift_types_dict.items()}
         )
 
+        # HOLIDAY CALENDARS
+
+        # Get df.
+        holiday_df = self.holiday_calendars
+
+        # print(holiday_df.to_string())
+
+        # Assuming df is your loaded holiday calendar DataFrame
+        # 1. Ensure the dates are actual Python date objects (not pandas Timestamps or strings)
+        holiday_df["holiday_date"] = pd.to_datetime(
+            holiday_df["holiday_date"]
+        ).dt.date
+
+        # 2. Group by the calendar name and aggregate the dates into a set
+        # We also rename the output column to 'holiday_dates' to match builder.py
+        aggregated_calendars = (
+            holiday_df.groupby("holiday_calendar_name")["holiday_date"]
+            .apply(set)
+            .reset_index(name="holiday_dates")
+        )
+
+        # 3. Now you can convert this to a list of dicts to feed your builder!
+        calendar_records = aggregated_calendars.to_dict(orient="records")
+
+        # Example of what calendar_records looks like now:
+        # [
+        #     {'holiday_calendar_name': 'NL', 'holiday_dates': {datetime.date(2026, 1, 1)}},
+        #     {'holiday_calendar_name': 'US', 'holiday_dates': {datetime.date(2026, 1, 1)}}
+        # ]
+
         # Instantiating the HolidayCalendar schema
         holiday_calendars_dict = {
             str(r["holiday_calendar_name"]): HolidayCalendar(
@@ -228,7 +258,7 @@ class RiskStaticConfigFrames:
                     else set()
                 ),
             )
-            for r in _iter_df(self.holiday_calendars)
+            for r in calendar_records
         }
 
         # ======================= #
@@ -391,35 +421,3 @@ class RiskStaticConfigFrames:
             risk_factor_proxies_dict=risk_factor_proxies_dict,
             holiday_calendars_dict=holiday_calendars_dict,
         )
-
-
-if __name__ == "__main__":
-
-    DEV_DATA_DIR: Final[str] = (
-        "C:/Users/mharvey/Documents/code/riskquant/data/dev"
-    )
-
-    DEV_DATA_FILE_NAME_STATIC_CONFIG: Final[str] = (
-        "dev_risk_static_data_config_v01.xlsx"
-    )
-
-    # Path to the .xlsx workbook containing the static config sheets.
-    xlsx_path = DEV_DATA_DIR + "/" + DEV_DATA_FILE_NAME_STATIC_CONFIG
-
-    # 1. Load config dataframes into a dictionary (with optimized dtypes).
-    dict_of_dfs = load_risk_static_data_config_xlsx_into_dict(path=xlsx_path)
-
-    # 2. Vectorized fail-fast validation of raw DataFrames (C-level uniqueness & FK checks).
-    validate_static_config_dfs(dict_of_dfs)
-
-    # 3. Create the lightweight frames container (now stripped of heavy validation logic).
-    frames_config = RiskStaticConfigFrames(**dict_of_dfs)
-
-    # 4. Compile the DataFrames into our highly efficient, slot-based python structures.
-    compiled_config = frames_config.compile()
-
-    # 5. Print summary of the compiled config to confirm successful compilation.
-    print(compiled_config.summary())
-
-    # 4. Print success message and a summary of the loaded frames config.
-    print_success_message()

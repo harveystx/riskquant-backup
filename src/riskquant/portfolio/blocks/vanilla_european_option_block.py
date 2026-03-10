@@ -56,13 +56,17 @@ class _VanillaEuropeanOptionBaseBlock:
 
     # ========== FX LINKAGES ==========
 
-    # Index into compiled FX universe mapping underlying_ccy -> settlement_ccy,
-    # or sentinel when no FX conversion is required. dtype: int32
+    # Index into the compiled FX factor universe, or sentinel when no FX needed. dtype: int32 (np.int32)
     fx_under_to_settle_uix: np.ndarray
-
-    # Index into compiled FX universe mapping strike_ccy -> settlement_ccy,
-    # or sentinel when no FX conversion is required. dtype: int32
     fx_strike_to_settle_uix: np.ndarray
+
+    # Flag to indicate if the math needs to invert the FX rate (1/X)
+    fx_under_to_settle_invert: np.ndarray  # bool or int8
+    fx_strike_to_settle_invert: np.ndarray  # bool or int8
+
+    # ========== DISCOUNT LINKAGES ==========
+    under_discount_curve_uix: np.ndarray
+    strike_discount_curve_uix: np.ndarray
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

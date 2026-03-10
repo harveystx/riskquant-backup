@@ -103,6 +103,11 @@ def load_risk_static_data_config_xlsx_into_dict(
 
 if __name__ == "__main__":
 
+    import warnings
+
+    # Filter out the specific UserWarning from openpyxl
+    warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+
     DEV_DATA_DIR: Final[str] = (
         "C:/Users/mharvey/Documents/code/riskquant/data/dev"
     )

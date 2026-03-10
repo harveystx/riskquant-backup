@@ -10,11 +10,21 @@ import pandas as pd
 
 from riskquant.portfolio.instruments import Instrument
 from riskquant.constants import (
+    # ID sentinels
+    NO_PRICE_ID,
+    NO_PRICE_CURVE_ID,
+    NO_VOL_ID,
+    # No discount curve sentinel
+    NO_DISCOUNT_CURVE_ID,
+    # No FX required sentinel
+    NO_FX_RF_REQUIRED,
+    # Date sentinels
     NO_DELIVERY_DATE_ORDINAL32,
-    NO_ID,
     NO_SETTLEMENT_DATE_ORDINAL32,
     NO_EXPIRY_DATE_ORDINAL32,
+    # Not option sentinel
     NOT_OPTION,
+    # Volatility risk factor prefix
     VOL_RISK_FACTOR_PREFIX,
 )
 from riskquant.portfolio.ingest.batch import IngestBatch
@@ -40,6 +50,8 @@ def build_ingest_batch(
     df: pd.DataFrame,
     rf_name_to_rf_id: dict[str, int],
     container_name_to_container_id: dict[str, int],
+    rf_id_to_ccy: dict[int, str],
+    container_id_to_ccy: dict[int, str],
 ) -> IngestBatch:
     """
     Consume a raw positions DataFrame, validate it, translate strings to
@@ -118,11 +130,11 @@ def build_ingest_batch(
     )
     require_non_nan_in_series(mapped_containers, ctx="Mapped Container IDs")
 
-    # Pre-allocate arrays filled with the NO_ID sentinel
-    price_rf_ids = np.full(n, NO_ID, dtype=np.int32)
-    price_curve_ids = np.full(n, NO_ID, dtype=np.int32)
-    vol_rf_ids = np.full(n, NO_ID, dtype=np.int32)
-    vol_surface_rf_ids = np.full(n, NO_ID, dtype=np.int32)
+    # Pre-allocate arrays filled with the defualt no ID sentinels.
+    price_rf_ids = np.full(n, NO_PRICE_ID, dtype=np.int32)
+    price_curve_ids = np.full(n, NO_PRICE_CURVE_ID, dtype=np.int32)
+    vol_rf_ids = np.full(n, NO_VOL_ID, dtype=np.int32)
+    vol_surface_rf_ids = np.full(n, NO_VOL_ID, dtype=np.int32)
 
     # Slot the translated PRICE integer IDs
     price_rf_ids[~is_container_mask] = mapped_nodes.to_numpy(dtype=np.int32)
@@ -204,33 +216,97 @@ def build_ingest_batch(
     # ==========================================
     # 6. RESOLVE FX LINKAGES IN BULK
     # ==========================================
-    underlying_ccy = df["underlying_ccy"].to_numpy(dtype=object)
+    # Derive underlying currency from the resolved Risk Factor and Container IDs
+    underlying_ccy_series = pd.Series(index=df.index, dtype=object)
+    underlying_ccy_series.loc[~is_container_mask] = mapped_nodes.map(
+        rf_id_to_ccy
+    )
+    underlying_ccy_series.loc[is_container_mask] = mapped_containers.map(
+        container_id_to_ccy
+    )
+
+    require_non_nan_in_series(
+        underlying_ccy_series, ctx="Underlying Currency Config Resolution"
+    )
+
+    underlying_ccy = underlying_ccy_series.to_numpy(dtype=object)
     settlement_ccy = df["settlement_ccy"].to_numpy(dtype=object)
 
     # If strike_ccy is provided, fill the blank/NaN rows with the underlying_ccy.
     # If the column is entirely missing, default to underlying_ccy.
     if "strike_ccy" in df.columns:
         strike_ccy = (
-            df["strike_ccy"].fillna(df["underlying_ccy"]).to_numpy(dtype=object)
+            df["strike_ccy"]
+            .fillna(underlying_ccy_series)
+            .to_numpy(dtype=object)
         )
     else:
-        strike_ccy = df["underlying_ccy"].to_numpy(dtype=object)
+        strike_ccy = underlying_ccy
 
-    fx_under_to_settle = np.empty(n, dtype=np.int32)
+    fx_under_to_settle_ids = np.empty(n, dtype=np.int32)
+    fx_under_to_settle_invert = np.empty(n, dtype=np.int32)
     resolve_fx_rf_ids_inplace(
         base_ccy=underlying_ccy,
         settlement_ccy=settlement_ccy,
-        out_fx_rf_ids=fx_under_to_settle,
+        out_fx_rf_ids=fx_under_to_settle_ids,
+        out_fx_invert=fx_under_to_settle_invert,
         rf_name_to_rf_id=rf_name_to_rf_id,
     )
 
-    fx_strike_to_settle = np.empty(n, dtype=np.int32)
+    fx_strike_to_settle_ids = np.empty(n, dtype=np.int32)
+    fx_strike_to_settle_invert = np.empty(n, dtype=np.int32)
     resolve_fx_rf_ids_inplace(
         base_ccy=strike_ccy,
         settlement_ccy=settlement_ccy,
-        out_fx_rf_ids=fx_strike_to_settle,
+        out_fx_rf_ids=fx_strike_to_settle_ids,
+        out_fx_invert=fx_strike_to_settle_invert,
         rf_name_to_rf_id=rf_name_to_rf_id,
     )
+
+    # ==========================================
+    # 6.1 CLEAN UP NON-STRIKE INSTRUMENTS
+    # ==========================================
+
+    # SPOT trades do not have strikes. Mask out their strike FX linkages.
+    is_spot_mask = (df["instrument"] == "SPOT").to_numpy(dtype=bool)
+    fx_strike_to_settle_ids[is_spot_mask] = NO_FX_RF_REQUIRED
+    fx_strike_to_settle_invert[is_spot_mask] = 0
+
+    # ==========================================
+    # 6.5 RESOLVE DISCOUNT CURVES (TRADE LEVEL)
+    # ==========================================
+
+    # If the trade file doesn't provide the curves, then there is no discounting and we can fill with NO_DISCOUNT_CURVE_ID sentinel. If the columns are present, we map the names to IDs and validate they exist in the system.
+
+    # Discounting for underlying
+    if "under_discount_curve" in df.columns:
+        mapped_under_dc = df["under_discount_curve"].map(
+            container_name_to_container_id
+        )
+        under_discount_curve_ids = mapped_under_dc.fillna(
+            NO_DISCOUNT_CURVE_ID
+        ).to_numpy(dtype=np.int32)
+    else:
+        under_discount_curve_ids = np.full(
+            n,
+            NO_DISCOUNT_CURVE_ID,
+            dtype=np.int32,
+        )
+
+    # Dicounting for strike.
+    if "strike_discount_curve" in df.columns:
+        mapped_strike_dc = df["strike_discount_curve"].map(
+            container_name_to_container_id
+        )
+        strike_discount_curve_ids = mapped_strike_dc.fillna(
+            NO_DISCOUNT_CURVE_ID
+        ).to_numpy(dtype=np.int32)
+    else:
+        strike_discount_curve_ids = np.full(
+            n,
+            NO_DISCOUNT_CURVE_ID,
+            dtype=np.int32,
+        )
 
     # ==========================================
     # 7. PACK THE DUMB BATCH
@@ -249,12 +325,18 @@ def build_ingest_batch(
         delivery_ord=delivery_ord,
         expiry_ord=expiry_ord,
         # --- FX LINKAGES ---
-        fx_under_to_settle=fx_under_to_settle,
-        fx_strike_to_settle=fx_strike_to_settle,
+        fx_under_to_settle_ids=fx_under_to_settle_ids,
+        fx_strike_to_settle_ids=fx_strike_to_settle_ids,
+        # --- FX INVERT FLAGS ---
+        fx_under_to_settle_invert=fx_under_to_settle_invert,
+        fx_strike_to_settle_invert=fx_strike_to_settle_invert,
         # --- UNDERLYING LINKAGES
         price_rf_ids=price_rf_ids,
         price_curve_ids=price_curve_ids,
         # --- VOL LINKAGES
         vol_rf_ids=vol_rf_ids,
         vol_surface_rf_ids=vol_surface_rf_ids,
+        # --- DISCOUNT CURVE LINKAGES ---
+        under_discount_curve_ids=under_discount_curve_ids,
+        strike_discount_curve_ids=strike_discount_curve_ids,
     )

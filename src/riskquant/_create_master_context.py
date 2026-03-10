@@ -12,12 +12,14 @@ def main():
 
     target_paths: List[Path] = [
         base_dir / "config",
-        # base_dir / "hvar",
+        # # base_dir / "hvar",  # EXCLUDED
         base_dir / "market_data",
         base_dir / "portfolio",
-        # base_dir / "simlab",
+        # base_dir / "portfolio" / "payloads",
+        # base_dir / "portfolio" / "blocks",
+        # base_dir / "simlab",  # EXCLUDED
         base_dir / "utils",
-        # base_dir / "valuation",
+        # base_dir / "valuation",  # EXCLUDED
         base_dir / "constants.py",
         base_dir / "exceptions.py",
         base_dir / "rq_logging.py",

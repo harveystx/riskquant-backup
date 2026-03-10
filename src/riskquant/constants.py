@@ -19,15 +19,25 @@ import numpy as np
 # ==============================================================================
 # These must stay numpy scalars where dtype compatibility matters.
 
-NO_ID = np.int32(-1)
-NO_UIX = np.int32(-2)
-NO_FX_RF_REQUIRED = np.int32(-3)
+# Sentinel for "no valid ID" in any of the ID fields (instrument, universe index, risk factor, curve).
+NO_UIX = np.int32(-1)
+NO_PRICE_ID = np.int32(-2)
+NO_PRICE_CURVE_ID = np.int32(-3)
+NO_VOL_ID = np.int32(-4)
 
-NO_DELIVERY_DATE_ORDINAL32 = np.int32(-4)
-NO_SETTLEMENT_DATE_ORDINAL32 = np.int32(-5)
-NO_EXPIRY_DATE_ORDINAL32 = np.int32(-6)
+# Sentinel for "no discount curve" in the discount curve linkage fields.
+NO_DISCOUNT_CURVE_ID = np.int32(-5)
 
-NOT_OPTION = np.int8(-7)
+# No FX rate required (e.g. for SPOT trades where the underlying and settlement currencies are the same).
+NO_FX_RF_REQUIRED = np.int32(-6)
+
+# Sentinels for missing dates in the date fields (settlement, delivery, expiry).
+NO_DELIVERY_DATE_ORDINAL32 = np.int32(-7)
+NO_SETTLEMENT_DATE_ORDINAL32 = np.int32(-8)
+NO_EXPIRY_DATE_ORDINAL32 = np.int32(-9)
+
+# Sentinel for "not an option" in the is_call field.
+NOT_OPTION = np.int8(-10)
 
 
 # ==============================================================================

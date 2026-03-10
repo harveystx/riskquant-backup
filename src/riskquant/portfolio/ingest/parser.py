@@ -2,6 +2,7 @@
 
 
 from __future__ import annotations
+from datetime import date, datetime
 
 import numpy as np
 import pandas as pd
@@ -97,7 +98,7 @@ def parse_optional_date_series_to_ordinal32(
             )
 
         # Now we know x is not NA, so we can parse it according to the accepted input types.
-        if isinstance(x, (pd.Timestamp, np.datetime64)):
+        if isinstance(x, (pd.Timestamp, np.datetime64, datetime, date)):
             d64[k] = np.datetime64(x, "D")
             continue
 
@@ -106,16 +107,17 @@ def parse_optional_date_series_to_ordinal32(
             xs = x.strip()
             if not _is_date_str_valid(xs):
                 raise ValueError(
-                    f"Invalid {col_name}='{xs}' at row {int(i)} "
-                    "(expected strict YYYY-MM-DD)."
+                    f"Invalid {col_name}='{xs}' at row {int(i)}!"
+                    f"Got a string that is not a valid date in YYYY-MM-DD format: '{xs}'. "
+                    "Expected strict YYYY-MM-DD."
                 )
             d64[k] = np.datetime64(xs, "D")
             continue
 
         # If we get here, it means x is not NA and not one of the accepted types, so we will raise an error with a helpful message.
         raise TypeError(
-            f"Invalid {col_name} type at row {int(i)}: {type(x).__name__}. "
-            "Expected YYYY-MM-DD string, pandas Timestamp, or datetime64."
+            f"Invalid {col_name} type at row {int(i)}: value = {x}, type = {type(x).__name__}. "
+            "Expected YYYY-MM-DD string, pandas Timestamp, datetime, or date."
         )
 
     # At this point, we have successfully parsed all the non-NA values into the d64 array as datetime64[D]. We can now convert them to ordinal32 and store them in the output array at the correct indices.

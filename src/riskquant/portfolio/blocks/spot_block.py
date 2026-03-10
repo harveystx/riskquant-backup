@@ -52,5 +52,8 @@ class SpotBlock:
     # Index into the compiled price factor universe for this row. dtype: int32 (np.int32)
     price_uix: np.ndarray
 
-    # Index into the compiled FX factor universe, or sentinel (-1) when no FX needed. dtype: int32 (np.int32)
+    # Index into the compiled FX factor universe, or sentinel when no FX needed. dtype: int32 (np.int32)
     fx_uix: np.ndarray
+
+    # Flag to indicate if the math needs to invert the FX rate (1/X)
+    fx_invert: np.ndarray  # bool or int8

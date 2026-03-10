@@ -1,5 +1,7 @@
 # riskquant/utils/printer.py
+from datetime import date, datetime
 import math
+import time
 from typing import Any, Iterable, Mapping
 
 import pandas as pd
@@ -73,8 +75,9 @@ def print_wrapped_text_box(
 
 
 def print_success_message() -> None:
+    s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print_wrapped_text_box(
-        "SUCCESS! CODE RAN SUCCESSFULLY!",
+        f"{s}: SUCCESS! CODE RAN SUCCESSFULLY!",
         width=60,
         padding=2,
         corner_char="*",

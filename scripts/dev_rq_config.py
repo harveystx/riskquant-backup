@@ -44,6 +44,10 @@ def run_config_demo():
     print("\n--- Config Summary ---")
     print(config.summary())
 
+    print("\n - Holiday Calendars:")
+    for hc_name, hc in config.holiday_calendars_dict.items():
+        print(f"  - {hc_name}: {len(hc.holiday_dates)} holidays")
+
     # =========================================================
     # METHOD B: The Granular Step-by-Step Approach
     # Useful if you ever load data from a database instead of Excel
@@ -91,6 +95,14 @@ def run_config_demo():
     print(f"  - Asset Class: {container_meta.asset_class}")
     print(f"  - Dimension:   {container_meta.container_dim}")
     print(f"  - Shift Type:  {container_meta.shift_type_name}")
+
+    # RF ID to CCY example
+    print(f"\nRF ID to Currency mapping:")
+    print_dict(config.rf_id_to_ccy, limit=100)
+
+    # Container ID to CCY example
+    print(f"\nContainer ID to Currency mapping:")
+    print_dict(config.container_id_to_ccy, limit=100)
 
     # =========================================================
     # DEMO 2: Risk Factor Resolution (resolution.py)

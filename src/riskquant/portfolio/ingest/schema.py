@@ -9,7 +9,6 @@ REQUIRED_BASE_COLS: Final[Tuple[str, ...]] = (
     "instrument",
     "quantity",
     "underlying",
-    "underlying_ccy",
     "settlement_ccy",
 )
 
@@ -22,4 +21,6 @@ OPTIONAL_COLS: Final[Tuple[str, ...]] = (
     "expiry_date",
     "delivery_date",
     "settlement_date",
+    "under_discount_curve",
+    "strike_discount_curve",
 )

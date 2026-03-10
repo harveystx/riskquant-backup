@@ -1,0 +1,196 @@
+from matplotlib import container
+import pandas as pd
+from typing import Final
+from riskquant.portfolio.compiled import CompiledPortfolio
+from riskquant.utils.printer import print_df, print_success_message
+from riskquant.utils.dates import get_previous_business_date_as_date
+from riskquant.config.compile import compile_risk_static_config_from_xlsx
+from riskquant.portfolio.ingest.batch_builder import build_ingest_batch
+from riskquant.config.resolution import RiskFactorAbsToRelNameIdMap
+
+
+def run_compiled_demo():
+
+    # --- INPUTS ---
+
+    # Paths to data files (Update these to match your local environment)
+
+    # Path to dev directory containing dev input data
+    dev_data_dir: Final[str] = (
+        "C:/Users/mharvey/Documents/code/riskquant/data/dev"
+    )
+
+    # Path to config file
+    dev_config_file: Final[str] = "dev_risk_static_data_config_v01.xlsx"
+    xlsx_path_dev_config_file = f"{dev_data_dir}/{dev_config_file}"
+
+    # Path to position file
+    dev_pos_file: Final[str] = "dev_positions_v01.xlsx"
+    xlsx_path_dev_pos_file = f"{dev_data_dir}/{dev_pos_file}"
+
+    # Set an As-Of Date
+    as_of_date = get_previous_business_date_as_date()
+
+    # --- LOAD CONFIG DATAFRAMES INTO A RISK STATIC CONFIG OBJECT ---
+
+    # Print
+    print(
+        f"\n--- Loading and compiling config from: {xlsx_path_dev_config_file} ---"
+    )
+
+    # This single call loads, validates, and compiles the Excel file into pure Python objects.
+    config = compile_risk_static_config_from_xlsx(
+        path=xlsx_path_dev_config_file
+    )
+
+    # --- GET RISK FACTOR MAPPING ---
+
+    # Print
+    print(f"\n--- Resolving risk factors for As-Of Date: {as_of_date} ---")
+
+    # Generate the mapping
+    rf_mapping = RiskFactorAbsToRelNameIdMap.from_config(
+        config=config,
+        as_of_date=as_of_date,
+    )
+
+    # --- LOAD POSITIONS DATAFRAME ---
+
+    print(f"\n--- Loading raw positions from: {xlsx_path_dev_pos_file} ---")
+
+    # In a real environment, you might specify a sheet name.
+    raw_df = pd.read_excel(xlsx_path_dev_pos_file)
+
+    # Display the raw DataFrame to verify it loaded correctly
+    print("\nRaw Positions DataFrame:")
+    print_df(raw_df, index=False, float_format="_.2f", zero_tol=1e-8)
+
+    # --- BUILD THE INGEST BATCH ---
+
+    # Build the IngestBatch
+    print("\n--- Validating, Translating, and Building IngestBatch ---")
+    batch = build_ingest_batch(
+        df=raw_df,
+        rf_name_to_rf_id=rf_mapping.abs_to_rel_id,
+        container_name_to_container_id=config.container_name_to_container_id,
+        rf_id_to_ccy=config.rf_id_to_ccy,
+        container_id_to_ccy=config.container_id_to_ccy,
+    )
+
+    # --- AUDIT THE OUTPUT BATCH ---
+
+    # Audit the output
+    print("\n--- Auditing internal arrays via .to_df() ---")
+
+    # Use your print_df utility to display the reconstructed DataFrame nicely
+    print_df(batch.df, float_format="_.2f", zero_tol=1e-8)
+
+    # --- COMPILE PORTFOLIO ---
+
+    print("\n--- Compiling the Batch into CompiledPortfolio ---")
+    portfolio = CompiledPortfolio.from_ingest_batch(batch)
+
+    print(
+        f"Total trades packed into CompiledPortfolio: "
+        f"{portfolio.total_trades}"
+    )
+    print("\nPopulated Runtime Blocks:")
+
+    p = print
+
+    # Iterate dynamically over whatever blocks got created
+    for bk in portfolio.iter_blocks():
+        block_name = bk.__class__.__name__
+        num_trades = len(bk.trade_uids)
+        p(f" - {block_name}: {num_trades} trades")
+
+    # For blocks with many internal arrays, we can print those out too to verify the struct-of-arrays layout is correct.
+
+    # Spot Block
+    if portfolio.spot is not None:
+        p("\n--- SpotBlock Internal Arrays (max 5) ---")
+        bl = portfolio.spot
+        p(f"Trade UIDs:                 {bl.trade_uids[:5]}")
+        p(f"Quantities:                 {bl.qty[:5]}")
+        p(f"Underlying Price UIX:       {bl.price_uix[:5]}")
+        p(f"FX U2S UIX:                 {bl.fx_uix[:5]}")
+        p(f"FX Invert Flag:             {bl.fx_invert[:5]}")
+
+    # Forward Node Block
+    if portfolio.forward_node is not None:
+        p("\n--- ForwardNodeBlock Internal Arrays ---")
+        bl = portfolio.forward_node
+        p(f"Trade UIDs:                 {bl.trade_uids}")
+        p(f"Quantities:                 {bl.qty}")
+        p(f"Strikes:                    {bl.strike}")
+        p(f"Settlement Ordinals:        {bl.settlement_date_ordinal32}")
+        p(f"FX U2S UIX:                 {bl.fx_under_to_settle_uix}")
+        p(f"FX K2S UIX:                 {bl.fx_strike_to_settle_uix}")
+        p(f"Under Discount Curve UIX:   {bl.under_discount_curve_uix}")
+        p(f"Strike Discount Curve UIX:  {bl.strike_discount_curve_uix}")
+        p(f"Underlying Price UIX:       {bl.price_uix}")
+
+    # Forward Curve Block
+    if portfolio.forward_curve is not None:
+        p("\n--- ForwardCurveBlock Internal Arrays ---")
+        bl = portfolio.forward_curve
+        p(f"Trade UIDs:                 {bl.trade_uids}")
+        p(f"Quantities:                 {bl.qty}")
+        p(f"Strikes:                    {bl.strike}")
+        p(f"Settlement Ordinals:        {bl.settlement_date_ordinal32}")
+        p(f"Delivery Ordinals:          {bl.delivery_date_ordinal32}")
+        p(f"FX U2S UIX:                 {bl.fx_under_to_settle_uix}")
+        p(f"FX K2S UIX:                 {bl.fx_strike_to_settle_uix}")
+        p(f"Under Discount Curve UIX:   {bl.under_discount_curve_uix}")
+        p(f"Strike Discount Curve UIX:  {bl.strike_discount_curve_uix}")
+        p(f"Underlying Curve UIX:       {bl.price_curve_uix}")
+
+    # Vanilla European Option Blocks have many internal arrays worth inspecting
+
+    # Vanilla European Option Node Block
+    if portfolio.vanilla_european_option_node is not None:
+        p("\n--- VanillaEuropeanOptionNodeBlock Internal Arrays ---")
+        bl = portfolio.vanilla_european_option_node
+        p(f"Trade UIDs:                 {bl.trade_uids}")
+        p(f"Quantities:                 {bl.qty}")
+        p(f"Strikes:                    {bl.strike}")
+        p(f"Is Call (Int8 Array):       {bl.is_call}")
+        p(f"Expiry Date Ordinals:       {bl.expiry_date_ordinal32}")
+        p(f"Payoff Settlement Ordinals: {bl.payoff_settlement_date_ordinal32}")
+        p(f"FX U2S UIX:                 {bl.fx_under_to_settle_uix}")
+        p(f"FX K2S UIX:                 {bl.fx_strike_to_settle_uix}")
+        p(f"Under Discount Curve UIX:   {bl.under_discount_curve_uix}")
+        p(f"Strike Discount Curve UIX:  {bl.strike_discount_curve_uix}")
+        p(f"Underlying Price UIX:       {bl.underlying_price_uix}")
+        p(f"Implied Vol UIX:            {bl.vol_uix}")
+
+    # Vanilla European Option Curve Block
+    if portfolio.vanilla_european_option_curve is not None:
+        p("\n--- VanillaEuropeanOptionCurveBlock Internal Arrays ---")
+        bl = portfolio.vanilla_european_option_curve
+        p(f"Trade UIDs:                 {bl.trade_uids}")
+        p(f"Quantities:                 {bl.qty}")
+        p(f"Strikes:                    {bl.strike}")
+        p(f"Is Call (Int8 Array):       {bl.is_call}")
+        p(f"Expiry Date Ordinals:       {bl.expiry_date_ordinal32}")
+        p(f"Payoff Settlement Ordinals: {bl.payoff_settlement_date_ordinal32}")
+        p(f"FX U2S UIX:                 {bl.fx_under_to_settle_uix}")
+        p(f"FX K2S UIX:                 {bl.fx_strike_to_settle_uix}")
+        p(f"Under Discount Curve UIX:   {bl.under_discount_curve_uix}")
+        p(f"Strike Discount Curve UIX:  {bl.strike_discount_curve_uix}")
+        p(f"Underlying Curve UIX:       {bl.underlying_price_curve_uix}")
+        p(f"Implied Vol UIX:            {bl.vol_surface_uix}")
+
+    # --- FINISH ---
+    print_success_message()
+
+
+if __name__ == "__main__":
+
+    import warnings
+
+    # Filter out the specific UserWarning from openpyxl
+    warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+
+    # Run the compiled demo
+    run_compiled_demo()

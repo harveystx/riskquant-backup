@@ -27,29 +27,25 @@
 - portfolio\blocks\forward_block.py
 - portfolio\blocks\spot_block.py
 - portfolio\blocks\vanilla_european_option_block.py
+- portfolio\compiled.py
+- portfolio\compilers\__init__.py
+- portfolio\compilers\instruments\__init__.py
+- portfolio\compilers\instruments\forward.py
+- portfolio\compilers\instruments\spot.py
+- portfolio\compilers\instruments\vanilla_european_option.py
+- portfolio\compilers\registry.py
 - portfolio\fx.py
 - portfolio\ingest\__init__.py
 - portfolio\ingest\batch.py
 - portfolio\ingest\batch_builder.py
-- portfolio\ingest\builders\__init__.py
-- portfolio\ingest\builders\forward.py
-- portfolio\ingest\builders\spot.py
-- portfolio\ingest\builders\vanilla_european_option.py
-- portfolio\ingest\dispatcher.py
 - portfolio\ingest\fx_resolver.py
 - portfolio\ingest\parser.py
 - portfolio\ingest\schema.py
 - portfolio\ingest\utils.py
 - portfolio\ingest\validator.py
 - portfolio\instruments.py
-- portfolio\payloads\__init__.py
-- portfolio\payloads\base_payload.py
-- portfolio\payloads\forward.py
-- portfolio\payloads\spot.py
-- portfolio\payloads\vanilla_european_option.py
 - portfolio\pnl\__init__.py
 - portfolio\pnl\results.py
-- portfolio\trade.py
 - rq_logging.py
 - utils\__init__.py
 - utils\dates.py
@@ -286,6 +282,36 @@ class RiskStaticConfigFrames:
             {k: v.shift_type_id for k, v in shift_types_dict.items()}
         )
 
+        # HOLIDAY CALENDARS
+
+        # Get df.
+        holiday_df = self.holiday_calendars
+
+        # print(holiday_df.to_string())
+
+        # Assuming df is your loaded holiday calendar DataFrame
+        # 1. Ensure the dates are actual Python date objects (not pandas Timestamps or strings)
+        holiday_df["holiday_date"] = pd.to_datetime(
+            holiday_df["holiday_date"]
+        ).dt.date
+
+        # 2. Group by the calendar name and aggregate the dates into a set
+        # We also rename the output column to 'holiday_dates' to match builder.py
+        aggregated_calendars = (
+            holiday_df.groupby("holiday_calendar_name")["holiday_date"]
+            .apply(set)
+            .reset_index(name="holiday_dates")
+        )
+
+        # 3. Now you can convert this to a list of dicts to feed your builder!
+        calendar_records = aggregated_calendars.to_dict(orient="records")
+
+        # Example of what calendar_records looks like now:
+        # [
+        #     {'holiday_calendar_name': 'NL', 'holiday_dates': {datetime.date(2026, 1, 1)}},
+        #     {'holiday_calendar_name': 'US', 'holiday_dates': {datetime.date(2026, 1, 1)}}
+        # ]
+
         # Instantiating the HolidayCalendar schema
         holiday_calendars_dict = {
             str(r["holiday_calendar_name"]): HolidayCalendar(
@@ -296,7 +322,7 @@ class RiskStaticConfigFrames:
                     else set()
                 ),
             )
-            for r in _iter_df(self.holiday_calendars)
+            for r in calendar_records
         }
 
         # ======================= #
@@ -459,38 +485,6 @@ class RiskStaticConfigFrames:
             risk_factor_proxies_dict=risk_factor_proxies_dict,
             holiday_calendars_dict=holiday_calendars_dict,
         )
-
-
-if __name__ == "__main__":
-
-    DEV_DATA_DIR: Final[str] = (
-        "C:/Users/mharvey/Documents/code/riskquant/data/dev"
-    )
-
-    DEV_DATA_FILE_NAME_STATIC_CONFIG: Final[str] = (
-        "dev_risk_static_data_config_v01.xlsx"
-    )
-
-    # Path to the .xlsx workbook containing the static config sheets.
-    xlsx_path = DEV_DATA_DIR + "/" + DEV_DATA_FILE_NAME_STATIC_CONFIG
-
-    # 1. Load config dataframes into a dictionary (with optimized dtypes).
-    dict_of_dfs = load_risk_static_data_config_xlsx_into_dict(path=xlsx_path)
-
-    # 2. Vectorized fail-fast validation of raw DataFrames (C-level uniqueness & FK checks).
-    validate_static_config_dfs(dict_of_dfs)
-
-    # 3. Create the lightweight frames container (now stripped of heavy validation logic).
-    frames_config = RiskStaticConfigFrames(**dict_of_dfs)
-
-    # 4. Compile the DataFrames into our highly efficient, slot-based python structures.
-    compiled_config = frames_config.compile()
-
-    # 5. Print summary of the compiled config to confirm successful compilation.
-    print(compiled_config.summary())
-
-    # 4. Print success message and a summary of the loaded frames config.
-    print_success_message()
 
 ```
 
@@ -773,6 +767,16 @@ class RiskStaticConfig:
         repr=False,
         init=False,
     )
+    _rf_id_to_ccy: Optional[Dict[int, str]] = field(
+        default=None,
+        repr=False,
+        init=False,
+    )
+    _container_id_to_ccy: Optional[Dict[int, str]] = field(
+        default=None,
+        repr=False,
+        init=False,
+    )
 
     def __post_init__(self) -> None:
         if not self.container_meta_dict:
@@ -935,9 +939,36 @@ class RiskStaticConfig:
         object.__setattr__(self, "_curve_tenor_index", out)
         return out
 
+    @property
+    def rf_id_to_ccy(self) -> Dict[int, str]:
+        """A build-once cache mapping both risk factor IDs to their quote currency."""
+        if self._rf_id_to_ccy is None:
+            out: Dict[int, str] = {}
 
-if __name__ == "__main__":
-    pass
+            # Map all Risk Factor Names to their parent container's quote_ccy
+            for _, rf in self.risk_factors_dict.items():
+                parent_container_meta = self.container_meta_dict[
+                    rf.container_name
+                ]
+                out[rf.risk_factor_name_id] = parent_container_meta.quote_ccy
+
+            object.__setattr__(self, "_rf_id_to_ccy", out)
+
+        return self._rf_id_to_ccy
+
+    @property
+    def container_id_to_ccy(self) -> Dict[int, str]:
+        """A build-once cache mapping both container IDs to their quote currency."""
+        if self._container_id_to_ccy is None:
+            out: Dict[int, str] = {}
+
+            # Map all Container Names directly to their quote_ccy
+            for _, c_meta in self.container_meta_dict.items():
+                out[c_meta.container_name_id] = c_meta.quote_ccy
+
+            object.__setattr__(self, "_container_id_to_ccy", out)
+
+        return self._container_id_to_ccy
 
 ```
 
@@ -1047,6 +1078,11 @@ def load_risk_static_data_config_xlsx_into_dict(
 
 
 if __name__ == "__main__":
+
+    import warnings
+
+    # Filter out the specific UserWarning from openpyxl
+    warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 
     DEV_DATA_DIR: Final[str] = (
         "C:/Users/mharvey/Documents/code/riskquant/data/dev"
@@ -2042,15 +2078,25 @@ import numpy as np
 # ==============================================================================
 # These must stay numpy scalars where dtype compatibility matters.
 
-NO_ID = np.int32(-1)
-NO_UIX = np.int32(-2)
-NO_FX_RF_REQUIRED = np.int32(-3)
+# Sentinel for "no valid ID" in any of the ID fields (instrument, universe index, risk factor, curve).
+NO_UIX = np.int32(-1)
+NO_PRICE_ID = np.int32(-2)
+NO_PRICE_CURVE_ID = np.int32(-3)
+NO_VOL_ID = np.int32(-4)
 
-NO_DELIVERY_DATE_ORDINAL32 = np.int32(-4)
-NO_SETTLEMENT_DATE_ORDINAL32 = np.int32(-5)
-NO_EXPIRY_DATE_ORDINAL32 = np.int32(-6)
+# Sentinel for "no discount curve" in the discount curve linkage fields.
+NO_DISCOUNT_CURVE_ID = np.int32(-5)
 
-NOT_OPTION = np.int8(-7)
+# No FX rate required (e.g. for SPOT trades where the underlying and settlement currencies are the same).
+NO_FX_RF_REQUIRED = np.int32(-6)
+
+# Sentinels for missing dates in the date fields (settlement, delivery, expiry).
+NO_DELIVERY_DATE_ORDINAL32 = np.int32(-7)
+NO_SETTLEMENT_DATE_ORDINAL32 = np.int32(-8)
+NO_EXPIRY_DATE_ORDINAL32 = np.int32(-9)
+
+# Sentinel for "not an option" in the is_call field.
+NOT_OPTION = np.int8(-10)
 
 
 # ==============================================================================
@@ -3231,8 +3277,18 @@ class _ForwardBaseBlock:
     settlement_date_ordinal32: np.ndarray
 
     # ========== FX MARKET LINKAGES ==========
+    
+    # Index into the compiled FX factor universe, or sentinel when no FX needed. dtype: int32 (np.int32)
     fx_under_to_settle_uix: np.ndarray
     fx_strike_to_settle_uix: np.ndarray
+
+    # Flag to indicate if the math needs to invert the FX rate (1/X)
+    fx_under_to_settle_invert: np.ndarray  # bool or int8
+    fx_strike_to_settle_invert: np.ndarray # bool or int8
+
+    # ========== DISCOUNT LINKAGES ==========
+    under_discount_curve_uix: np.ndarray
+    strike_discount_curve_uix: np.ndarray
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -3320,8 +3376,11 @@ class SpotBlock:
     # Index into the compiled price factor universe for this row. dtype: int32 (np.int32)
     price_uix: np.ndarray
 
-    # Index into the compiled FX factor universe, or sentinel (-1) when no FX needed. dtype: int32 (np.int32)
+    # Index into the compiled FX factor universe, or sentinel when no FX needed. dtype: int32 (np.int32)
     fx_uix: np.ndarray
+
+    # Flag to indicate if the math needs to invert the FX rate (1/X)
+    fx_invert: np.ndarray  # bool or int8
 
 ```
 
@@ -3385,13 +3444,17 @@ class _VanillaEuropeanOptionBaseBlock:
 
     # ========== FX LINKAGES ==========
 
-    # Index into compiled FX universe mapping underlying_ccy -> settlement_ccy,
-    # or sentinel when no FX conversion is required. dtype: int32
+    # Index into the compiled FX factor universe, or sentinel when no FX needed. dtype: int32 (np.int32)
     fx_under_to_settle_uix: np.ndarray
-
-    # Index into compiled FX universe mapping strike_ccy -> settlement_ccy,
-    # or sentinel when no FX conversion is required. dtype: int32
     fx_strike_to_settle_uix: np.ndarray
+
+    # Flag to indicate if the math needs to invert the FX rate (1/X)
+    fx_under_to_settle_invert: np.ndarray  # bool or int8
+    fx_strike_to_settle_invert: np.ndarray  # bool or int8
+
+    # ========== DISCOUNT LINKAGES ==========
+    under_discount_curve_uix: np.ndarray
+    strike_discount_curve_uix: np.ndarray
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -3431,6 +3494,398 @@ class VanillaEuropeanOptionCurveBlock(_VanillaEuropeanOptionBaseBlock):
 
     # Index into compiled volatility surface universe. dtype: int32
     vol_surface_uix: np.ndarray
+
+```
+
+### FILE: portfolio\compiled.py ###
+```python
+# src/riskquant/portfolio/compiled.py
+"""
+Compiles IngestBatch SoA containers into runtime-oriented Struct-of-Arrays blocks.
+
+Design goals
+------------
+- Pure C-level NumPy slicing from ingestion to runtime.
+- Zero Python loops over individual trade rows.
+- Immutable compiled runtime container for pricing/risk kernels.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, fields
+from typing import Callable, Optional, TypeAlias
+
+from riskquant.portfolio.compilers.registry import COMPILER_REGISTRY
+from riskquant.portfolio.ingest.batch import IngestBatch
+
+from riskquant.portfolio.blocks.spot_block import SpotBlock
+from riskquant.portfolio.blocks.forward_block import (
+    ForwardNodeBlock,
+    ForwardCurveBlock,
+)
+from riskquant.portfolio.blocks.vanilla_european_option_block import (
+    VanillaEuropeanOptionNodeBlock,
+    VanillaEuropeanOptionCurveBlock,
+)
+
+# ============================================================
+# Type aliases
+# ============================================================
+
+BlockType: TypeAlias = (
+    SpotBlock
+    | ForwardNodeBlock
+    | ForwardCurveBlock
+    | VanillaEuropeanOptionNodeBlock
+    | VanillaEuropeanOptionCurveBlock
+)
+
+# Compilers now take the full batch and return a Block if any trades match.
+CompilerFn: TypeAlias = Callable[[IngestBatch], Optional[BlockType]]
+
+# ============================================================
+# Runtime container
+# ============================================================
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CompiledPortfolio:
+    """
+    Immutable runtime container of instrument-homogeneous SoA blocks.
+    """
+
+    spot: Optional[SpotBlock] = None
+    forward_node: Optional[ForwardNodeBlock] = None
+    forward_curve: Optional[ForwardCurveBlock] = None
+    vanilla_european_option_node: Optional[VanillaEuropeanOptionNodeBlock] = (
+        None
+    )
+    vanilla_european_option_curve: Optional[VanillaEuropeanOptionCurveBlock] = (
+        None
+    )
+
+    def iter_blocks(self) -> tuple[BlockType, ...]:
+        """
+        Return all non-None blocks in a stable field order.
+        """
+        blocks: list[BlockType] = []
+        for f in fields(self):
+            block = getattr(self, f.name)
+            if block is not None:
+                blocks.append(block)
+        return tuple(blocks)
+
+    @property
+    def total_trades(self) -> int:
+        """
+        Total number of trades across all compiled blocks.
+        """
+        total = 0
+        for block in self.iter_blocks():
+            total += len(block.trade_uids)
+        return total
+
+    @classmethod
+    def from_ingest_batch(
+        cls,
+        batch: IngestBatch,
+    ) -> "CompiledPortfolio":
+        """
+        Consume a validated SoA IngestBatch and compile it directly into SoA blocks
+        using vectorized NumPy masking. Zero scalar instantiation.
+        """
+        compiled_fields: dict[str, Optional[BlockType]] = {}
+
+        # Dispatch the full batch to every compiler in the registry.
+        # The compiler will apply its own boolean mask and slice the arrays.
+        for instrument_id, spec in COMPILER_REGISTRY.items():
+            compiled_fields[spec.field_name] = spec.compiler(batch)
+
+        return cls(**compiled_fields)
+
+```
+
+### FILE: portfolio\compilers\__init__.py ###
+```python
+
+```
+
+### FILE: portfolio\compilers\instruments\__init__.py ###
+```python
+# src\riskquant\portfolio\compilers\instruments\__init__.py
+
+```
+
+### FILE: portfolio\compilers\instruments\forward.py ###
+```python
+# src/riskquant/portfolio/compilers/forward.py
+from __future__ import annotations
+
+import numpy as np
+from typing import Optional
+
+from riskquant.portfolio.instruments import FORWARD_NODE_ID, FORWARD_CURVE_ID
+from riskquant.portfolio.ingest.batch import IngestBatch
+from riskquant.portfolio.blocks.forward_block import (
+    ForwardNodeBlock,
+    ForwardCurveBlock,
+)
+
+
+def compile_forward_node(batch: IngestBatch) -> Optional[ForwardNodeBlock]:
+    # 1. Create the boolean mask for this instrument
+    mask = batch.instrument_ids == FORWARD_NODE_ID
+
+    # 2. Early exit if no trades found
+    if not np.any(mask):
+        return None
+
+    # 3. Vectorized slice directly into the SoA block
+    return ForwardNodeBlock(
+        trade_uids=batch.uids[mask],
+        qty=batch.qty[mask],
+        strike=batch.strike_price[mask],
+        settlement_date_ordinal32=batch.settle_ord[mask],
+        fx_under_to_settle_uix=batch.fx_under_to_settle_ids[mask],
+        fx_strike_to_settle_uix=batch.fx_strike_to_settle_ids[mask],
+        fx_under_to_settle_invert=batch.fx_under_to_settle_invert[mask].astype(
+            bool
+        ),
+        fx_strike_to_settle_invert=batch.fx_strike_to_settle_invert[
+            mask
+        ].astype(bool),
+        under_discount_curve_uix=batch.under_discount_curve_ids[mask],
+        strike_discount_curve_uix=batch.strike_discount_curve_ids[mask],
+        price_uix=batch.price_rf_ids[mask],
+    )
+
+
+def compile_forward_curve(batch: IngestBatch) -> Optional[ForwardCurveBlock]:
+    mask = batch.instrument_ids == FORWARD_CURVE_ID
+    if not np.any(mask):
+        return None
+
+    return ForwardCurveBlock(
+        trade_uids=batch.uids[mask],
+        qty=batch.qty[mask],
+        strike=batch.strike_price[mask],
+        settlement_date_ordinal32=batch.settle_ord[mask],
+        fx_under_to_settle_uix=batch.fx_under_to_settle_ids[mask],
+        fx_strike_to_settle_uix=batch.fx_strike_to_settle_ids[mask],
+        fx_under_to_settle_invert=batch.fx_under_to_settle_invert[mask].astype(
+            bool
+        ),
+        fx_strike_to_settle_invert=batch.fx_strike_to_settle_invert[
+            mask
+        ].astype(bool),
+        under_discount_curve_uix=batch.under_discount_curve_ids[mask],
+        strike_discount_curve_uix=batch.strike_discount_curve_ids[mask],
+        price_curve_uix=batch.price_curve_ids[mask],
+        delivery_date_ordinal32=batch.delivery_ord[mask],
+    )
+
+```
+
+### FILE: portfolio\compilers\instruments\spot.py ###
+```python
+# src/riskquant/portfolio/compilers/spot.py
+from __future__ import annotations
+from typing import Optional
+import numpy as np
+
+from riskquant.portfolio.instruments import SPOT_ID
+from riskquant.portfolio.ingest.batch import IngestBatch
+from riskquant.portfolio.blocks.spot_block import SpotBlock
+
+
+def compile_spot(batch: IngestBatch) -> Optional[SpotBlock]:
+    mask = batch.instrument_ids == SPOT_ID
+
+    if not np.any(mask):
+        return None
+
+    return SpotBlock(
+        trade_uids=batch.uids[mask],
+        qty=batch.qty[mask],
+        price_uix=batch.price_rf_ids[mask],
+        fx_uix=batch.fx_under_to_settle_ids[mask],
+        fx_invert=batch.fx_under_to_settle_invert[mask].astype(bool),
+    )
+
+```
+
+### FILE: portfolio\compilers\instruments\vanilla_european_option.py ###
+```python
+# src/riskquant/portfolio/compilers/vanilla_european_option.py
+from __future__ import annotations
+from typing import Optional
+import numpy as np
+
+from riskquant.portfolio.instruments import (
+    VANILLA_EUROPEAN_OPTION_NODE_ID,
+    VANILLA_EUROPEAN_OPTION_CURVE_ID,
+)
+from riskquant.portfolio.ingest.batch import IngestBatch
+from riskquant.portfolio.blocks.vanilla_european_option_block import (
+    VanillaEuropeanOptionNodeBlock,
+    VanillaEuropeanOptionCurveBlock,
+)
+
+
+def compile_vanilla_euro_option_node(
+    batch: IngestBatch,
+) -> Optional[VanillaEuropeanOptionNodeBlock]:
+    mask = batch.instrument_ids == VANILLA_EUROPEAN_OPTION_NODE_ID
+    if not np.any(mask):
+        return None
+
+    return VanillaEuropeanOptionNodeBlock(
+        trade_uids=batch.uids[mask],
+        qty=batch.qty[mask],
+        strike=batch.strike_price[mask],
+        is_call=batch.is_call[mask],
+        expiry_date_ordinal32=batch.expiry_ord[mask],
+        payoff_settlement_date_ordinal32=batch.settle_ord[mask],
+        fx_under_to_settle_uix=batch.fx_under_to_settle_ids[mask],
+        fx_strike_to_settle_uix=batch.fx_strike_to_settle_ids[mask],
+        fx_under_to_settle_invert=batch.fx_under_to_settle_invert[mask].astype(
+            bool
+        ),
+        fx_strike_to_settle_invert=batch.fx_strike_to_settle_invert[
+            mask
+        ].astype(bool),
+        under_discount_curve_uix=batch.under_discount_curve_ids[mask],
+        strike_discount_curve_uix=batch.strike_discount_curve_ids[mask],
+        underlying_price_uix=batch.price_rf_ids[mask],
+        vol_uix=batch.vol_rf_ids[mask],
+    )
+
+
+def compile_vanilla_euro_option_curve(
+    batch: IngestBatch,
+) -> Optional[VanillaEuropeanOptionCurveBlock]:
+    mask = batch.instrument_ids == VANILLA_EUROPEAN_OPTION_CURVE_ID
+    if not np.any(mask):
+        return None
+
+    return VanillaEuropeanOptionCurveBlock(
+        trade_uids=batch.uids[mask],
+        qty=batch.qty[mask],
+        strike=batch.strike_price[mask],
+        is_call=batch.is_call[mask],
+        expiry_date_ordinal32=batch.expiry_ord[mask],
+        payoff_settlement_date_ordinal32=batch.settle_ord[mask],
+        fx_under_to_settle_uix=batch.fx_under_to_settle_ids[mask],
+        fx_strike_to_settle_uix=batch.fx_strike_to_settle_ids[mask],
+        fx_under_to_settle_invert=batch.fx_under_to_settle_invert[mask].astype(
+            bool
+        ),
+        fx_strike_to_settle_invert=batch.fx_strike_to_settle_invert[
+            mask
+        ].astype(bool),
+        under_discount_curve_uix=batch.under_discount_curve_ids[mask],
+        strike_discount_curve_uix=batch.strike_discount_curve_ids[mask],
+        underlying_price_curve_uix=batch.price_curve_ids[mask],
+        delivery_date_ordinal32=batch.delivery_ord[mask],
+        vol_surface_uix=batch.vol_surface_rf_ids[mask],
+    )
+
+```
+
+### FILE: portfolio\compilers\registry.py ###
+```python
+# src/riskquant/portfolio/compilers/registry.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Callable, Final, Optional, TypeAlias
+
+from riskquant.portfolio.compilers.instruments.spot import (
+    compile_spot,
+)
+from riskquant.portfolio.compilers.instruments.forward import (
+    compile_forward_curve,
+    compile_forward_node,
+)
+from riskquant.portfolio.compilers.instruments.vanilla_european_option import (
+    compile_vanilla_euro_option_curve,
+    compile_vanilla_euro_option_node,
+)
+from riskquant.portfolio.ingest.batch import IngestBatch
+from riskquant.portfolio.instruments import (
+    SPOT_ID,
+    FORWARD_NODE_ID,
+    FORWARD_CURVE_ID,
+    VANILLA_EUROPEAN_OPTION_NODE_ID,
+    VANILLA_EUROPEAN_OPTION_CURVE_ID,
+)
+
+from riskquant.portfolio.blocks.spot_block import (
+    SpotBlock,
+)
+from riskquant.portfolio.blocks.forward_block import (
+    ForwardNodeBlock,
+    ForwardCurveBlock,
+)
+from riskquant.portfolio.blocks.vanilla_european_option_block import (
+    VanillaEuropeanOptionNodeBlock,
+    VanillaEuropeanOptionCurveBlock,
+)
+
+
+# ============================================================
+# Type aliases
+# ============================================================
+
+BlockType: TypeAlias = (
+    SpotBlock
+    | ForwardNodeBlock
+    | ForwardCurveBlock
+    | VanillaEuropeanOptionNodeBlock
+    | VanillaEuropeanOptionCurveBlock
+)
+
+# Updated to take the entire batch natively
+CompilerFn: TypeAlias = Callable[[IngestBatch], Optional[BlockType]]
+
+
+# ============================================================
+# Registry
+# ============================================================
+
+
+@dataclass(frozen=True, slots=True)
+class _CompilerSpec:
+    field_name: str
+    compiler: CompilerFn
+
+
+# Removed the lambda wrappers to pass the function reference directly,
+# avoiding unnecessary call overhead in the dispatch loop.
+COMPILER_REGISTRY: Final[dict[int, _CompilerSpec]] = {
+    int(SPOT_ID): _CompilerSpec(
+        field_name="spot",
+        compiler=compile_spot,
+    ),
+    int(FORWARD_NODE_ID): _CompilerSpec(
+        field_name="forward_node",
+        compiler=compile_forward_node,
+    ),
+    int(FORWARD_CURVE_ID): _CompilerSpec(
+        field_name="forward_curve",
+        compiler=compile_forward_curve,
+    ),
+    int(VANILLA_EUROPEAN_OPTION_NODE_ID): _CompilerSpec(
+        field_name="vanilla_european_option_node",
+        compiler=compile_vanilla_euro_option_node,
+    ),
+    int(VANILLA_EUROPEAN_OPTION_CURVE_ID): _CompilerSpec(
+        field_name="vanilla_european_option_curve",
+        compiler=compile_vanilla_euro_option_curve,
+    ),
+    # Add others as required
+}
 
 ```
 
@@ -3495,12 +3950,14 @@ import numpy as np
 from pandas import DataFrame, Series, NaT
 
 from riskquant.constants import (
+    NO_DISCOUNT_CURVE_ID,
     NO_FX_RF_REQUIRED,
     NO_DELIVERY_DATE_ORDINAL32,
     NO_SETTLEMENT_DATE_ORDINAL32,
     NO_EXPIRY_DATE_ORDINAL32,
     NOT_OPTION,
 )
+from riskquant.portfolio import fx
 from riskquant.utils.dates import ordinal32_to_datetime64D
 
 
@@ -3528,12 +3985,16 @@ class IngestBatch:
     expiry_ord: np.ndarray
 
     # ========== MARKET & FX LINKAGES (UNIVERSE INDICES) ==========
-    fx_under_to_settle: np.ndarray
-    fx_strike_to_settle: np.ndarray
+    fx_under_to_settle_ids: np.ndarray
+    fx_under_to_settle_invert: np.ndarray
+    fx_strike_to_settle_ids: np.ndarray
+    fx_strike_to_settle_invert: np.ndarray
     price_rf_ids: np.ndarray
     price_curve_ids: np.ndarray
     vol_rf_ids: np.ndarray
     vol_surface_rf_ids: np.ndarray
+    under_discount_curve_ids: np.ndarray
+    strike_discount_curve_ids: np.ndarray
 
     def to_df(self) -> DataFrame:
         """
@@ -3551,6 +4012,15 @@ class IngestBatch:
         def mask_fx(fx_array: np.ndarray) -> Series:
             s = Series(fx_array, dtype=object)
             s[fx_array == NO_FX_RF_REQUIRED] = "NONE"
+            return s
+
+        def mask_fx_invert(fx_invert_array: np.ndarray) -> Series:
+            s = Series(fx_invert_array, dtype=bool)
+            return s
+
+        def mask_curve(curve_array: np.ndarray) -> Series:
+            s = Series(curve_array, dtype=object)
+            s[curve_array == NO_DISCOUNT_CURVE_ID] = "NONE"
             return s
 
         return DataFrame(
@@ -3580,8 +4050,18 @@ class IngestBatch:
                 "price_curve_id": self.price_curve_ids,
                 "vol_rf_id": self.vol_rf_ids,
                 "vol_surface_rf_id": self.vol_surface_rf_ids,
-                "fx_u2s": mask_fx(self.fx_under_to_settle),
-                "fx_k2s": mask_fx(self.fx_strike_to_settle),
+                "fx_u2s": mask_fx(self.fx_under_to_settle_ids),
+                "fx_u2s_invert": mask_fx_invert(self.fx_under_to_settle_invert),
+                "fx_k2s": mask_fx(self.fx_strike_to_settle_ids),
+                "fx_k2s_invert": mask_fx_invert(
+                    self.fx_strike_to_settle_invert
+                ),
+                "under_discount_curve_id": mask_curve(
+                    self.under_discount_curve_ids
+                ),
+                "strike_discount_curve_id": mask_curve(
+                    self.strike_discount_curve_ids
+                ),
             }
         )
 
@@ -3608,11 +4088,21 @@ import pandas as pd
 
 from riskquant.portfolio.instruments import Instrument
 from riskquant.constants import (
+    # ID sentinels
+    NO_PRICE_ID,
+    NO_PRICE_CURVE_ID,
+    NO_VOL_ID,
+    # No discount curve sentinel
+    NO_DISCOUNT_CURVE_ID,
+    # No FX required sentinel
+    NO_FX_RF_REQUIRED,
+    # Date sentinels
     NO_DELIVERY_DATE_ORDINAL32,
-    NO_ID,
     NO_SETTLEMENT_DATE_ORDINAL32,
     NO_EXPIRY_DATE_ORDINAL32,
+    # Not option sentinel
     NOT_OPTION,
+    # Volatility risk factor prefix
     VOL_RISK_FACTOR_PREFIX,
 )
 from riskquant.portfolio.ingest.batch import IngestBatch
@@ -3638,6 +4128,8 @@ def build_ingest_batch(
     df: pd.DataFrame,
     rf_name_to_rf_id: dict[str, int],
     container_name_to_container_id: dict[str, int],
+    rf_id_to_ccy: dict[int, str],
+    container_id_to_ccy: dict[int, str],
 ) -> IngestBatch:
     """
     Consume a raw positions DataFrame, validate it, translate strings to
@@ -3716,11 +4208,11 @@ def build_ingest_batch(
     )
     require_non_nan_in_series(mapped_containers, ctx="Mapped Container IDs")
 
-    # Pre-allocate arrays filled with the NO_ID sentinel
-    price_rf_ids = np.full(n, NO_ID, dtype=np.int32)
-    price_curve_ids = np.full(n, NO_ID, dtype=np.int32)
-    vol_rf_ids = np.full(n, NO_ID, dtype=np.int32)
-    vol_surface_rf_ids = np.full(n, NO_ID, dtype=np.int32)
+    # Pre-allocate arrays filled with the defualt no ID sentinels.
+    price_rf_ids = np.full(n, NO_PRICE_ID, dtype=np.int32)
+    price_curve_ids = np.full(n, NO_PRICE_CURVE_ID, dtype=np.int32)
+    vol_rf_ids = np.full(n, NO_VOL_ID, dtype=np.int32)
+    vol_surface_rf_ids = np.full(n, NO_VOL_ID, dtype=np.int32)
 
     # Slot the translated PRICE integer IDs
     price_rf_ids[~is_container_mask] = mapped_nodes.to_numpy(dtype=np.int32)
@@ -3802,33 +4294,97 @@ def build_ingest_batch(
     # ==========================================
     # 6. RESOLVE FX LINKAGES IN BULK
     # ==========================================
-    underlying_ccy = df["underlying_ccy"].to_numpy(dtype=object)
+    # Derive underlying currency from the resolved Risk Factor and Container IDs
+    underlying_ccy_series = pd.Series(index=df.index, dtype=object)
+    underlying_ccy_series.loc[~is_container_mask] = mapped_nodes.map(
+        rf_id_to_ccy
+    )
+    underlying_ccy_series.loc[is_container_mask] = mapped_containers.map(
+        container_id_to_ccy
+    )
+
+    require_non_nan_in_series(
+        underlying_ccy_series, ctx="Underlying Currency Config Resolution"
+    )
+
+    underlying_ccy = underlying_ccy_series.to_numpy(dtype=object)
     settlement_ccy = df["settlement_ccy"].to_numpy(dtype=object)
 
     # If strike_ccy is provided, fill the blank/NaN rows with the underlying_ccy.
     # If the column is entirely missing, default to underlying_ccy.
     if "strike_ccy" in df.columns:
         strike_ccy = (
-            df["strike_ccy"].fillna(df["underlying_ccy"]).to_numpy(dtype=object)
+            df["strike_ccy"]
+            .fillna(underlying_ccy_series)
+            .to_numpy(dtype=object)
         )
     else:
-        strike_ccy = df["underlying_ccy"].to_numpy(dtype=object)
+        strike_ccy = underlying_ccy
 
-    fx_under_to_settle = np.empty(n, dtype=np.int32)
+    fx_under_to_settle_ids = np.empty(n, dtype=np.int32)
+    fx_under_to_settle_invert = np.empty(n, dtype=np.int32)
     resolve_fx_rf_ids_inplace(
         base_ccy=underlying_ccy,
         settlement_ccy=settlement_ccy,
-        out_fx_rf_ids=fx_under_to_settle,
+        out_fx_rf_ids=fx_under_to_settle_ids,
+        out_fx_invert=fx_under_to_settle_invert,
         rf_name_to_rf_id=rf_name_to_rf_id,
     )
 
-    fx_strike_to_settle = np.empty(n, dtype=np.int32)
+    fx_strike_to_settle_ids = np.empty(n, dtype=np.int32)
+    fx_strike_to_settle_invert = np.empty(n, dtype=np.int32)
     resolve_fx_rf_ids_inplace(
         base_ccy=strike_ccy,
         settlement_ccy=settlement_ccy,
-        out_fx_rf_ids=fx_strike_to_settle,
+        out_fx_rf_ids=fx_strike_to_settle_ids,
+        out_fx_invert=fx_strike_to_settle_invert,
         rf_name_to_rf_id=rf_name_to_rf_id,
     )
+
+    # ==========================================
+    # 6.1 CLEAN UP NON-STRIKE INSTRUMENTS
+    # ==========================================
+
+    # SPOT trades do not have strikes. Mask out their strike FX linkages.
+    is_spot_mask = (df["instrument"] == "SPOT").to_numpy(dtype=bool)
+    fx_strike_to_settle_ids[is_spot_mask] = NO_FX_RF_REQUIRED
+    fx_strike_to_settle_invert[is_spot_mask] = 0
+
+    # ==========================================
+    # 6.5 RESOLVE DISCOUNT CURVES (TRADE LEVEL)
+    # ==========================================
+
+    # If the trade file doesn't provide the curves, then there is no discounting and we can fill with NO_DISCOUNT_CURVE_ID sentinel. If the columns are present, we map the names to IDs and validate they exist in the system.
+
+    # Discounting for underlying
+    if "under_discount_curve" in df.columns:
+        mapped_under_dc = df["under_discount_curve"].map(
+            container_name_to_container_id
+        )
+        under_discount_curve_ids = mapped_under_dc.fillna(
+            NO_DISCOUNT_CURVE_ID
+        ).to_numpy(dtype=np.int32)
+    else:
+        under_discount_curve_ids = np.full(
+            n,
+            NO_DISCOUNT_CURVE_ID,
+            dtype=np.int32,
+        )
+
+    # Dicounting for strike.
+    if "strike_discount_curve" in df.columns:
+        mapped_strike_dc = df["strike_discount_curve"].map(
+            container_name_to_container_id
+        )
+        strike_discount_curve_ids = mapped_strike_dc.fillna(
+            NO_DISCOUNT_CURVE_ID
+        ).to_numpy(dtype=np.int32)
+    else:
+        strike_discount_curve_ids = np.full(
+            n,
+            NO_DISCOUNT_CURVE_ID,
+            dtype=np.int32,
+        )
 
     # ==========================================
     # 7. PACK THE DUMB BATCH
@@ -3847,266 +4403,21 @@ def build_ingest_batch(
         delivery_ord=delivery_ord,
         expiry_ord=expiry_ord,
         # --- FX LINKAGES ---
-        fx_under_to_settle=fx_under_to_settle,
-        fx_strike_to_settle=fx_strike_to_settle,
+        fx_under_to_settle_ids=fx_under_to_settle_ids,
+        fx_strike_to_settle_ids=fx_strike_to_settle_ids,
+        # --- FX INVERT FLAGS ---
+        fx_under_to_settle_invert=fx_under_to_settle_invert,
+        fx_strike_to_settle_invert=fx_strike_to_settle_invert,
         # --- UNDERLYING LINKAGES
         price_rf_ids=price_rf_ids,
         price_curve_ids=price_curve_ids,
         # --- VOL LINKAGES
         vol_rf_ids=vol_rf_ids,
         vol_surface_rf_ids=vol_surface_rf_ids,
+        # --- DISCOUNT CURVE LINKAGES ---
+        under_discount_curve_ids=under_discount_curve_ids,
+        strike_discount_curve_ids=strike_discount_curve_ids,
     )
-
-```
-
-### FILE: portfolio\ingest\builders\__init__.py ###
-```python
-# src/riskquant/portfolio/ingest/builders/__init__.py
-"""
-Facade for the TradeRecord builders.
-Exposes all builder functions so the dispatcher can import them cleanly.
-"""
-
-# Assuming you put the functions in files named after the instruments:
-from .spot import build_spot
-from .forward import (
-    build_forward_node,
-    build_forward_curve,
-)
-from .vanilla_european_option import (
-    build_vanilla_european_option_node,
-    build_vanilla_european_option_curve,
-)
-
-# Explicitly declare what is available to the outside world
-__all__ = [
-    "build_spot",
-    "build_forward_node",
-    "build_forward_curve",
-    "build_vanilla_european_option_node",
-    "build_vanilla_european_option_curve",
-]
-
-```
-
-### FILE: portfolio\ingest\builders\forward.py ###
-```python
-# src/riskquant/portfolio/ingest/builders/forward.py
-"""
-Module for building forward trade records from ingested batch data.
-"""
-
-from __future__ import annotations
-
-import numpy as np
-
-from riskquant.portfolio.ingest.batch import IngestBatch
-from riskquant.portfolio.instruments import (
-    FORWARD_NODE_ID,
-    FORWARD_CURVE_ID,
-)
-from riskquant.portfolio.payloads.forward import (
-    ForwardNodePayload,
-    ForwardCurvePayload,
-)
-from riskquant.portfolio.trade import TradeRecord
-
-
-def build_forward_node(
-    *,
-    ix: int,
-    batch: IngestBatch,
-) -> TradeRecord:
-    """
-    Build a forward node trade record priced off a single node (requires settlement date but not delivery date).
-    """
-    return TradeRecord(
-        trade_uid=int(batch.uids[ix]),
-        instrument_id=FORWARD_NODE_ID,
-        payload=ForwardNodePayload(
-            quantity=np.float64(batch.qty[ix]),
-            strike=np.float64(batch.strike_price[ix]),
-            settlement_date_ordinal32=np.int32(batch.settle_ord[ix]),
-            fx_under_to_settle_rf_id=np.int32(batch.fx_under_to_settle[ix]),
-            fx_strike_to_settle_rf_id=np.int32(batch.fx_strike_to_settle[ix]),
-            price_rf_id=np.int32(batch.price_rf_ids[ix]),
-        ),
-    )
-
-
-def build_forward_curve(
-    *,
-    ix: int,
-    batch: IngestBatch,
-) -> TradeRecord:
-    """
-    Build a forward trade record priced off a curve (requires delivery date).
-    """
-    return TradeRecord(
-        trade_uid=int(batch.uids[ix]),
-        instrument_id=FORWARD_CURVE_ID,
-        payload=ForwardCurvePayload(
-            quantity=np.float64(batch.qty[ix]),
-            strike=np.float64(batch.strike_price[ix]),
-            settlement_date_ordinal32=np.int32(batch.settle_ord[ix]),
-            fx_under_to_settle_rf_id=np.int32(batch.fx_under_to_settle[ix]),
-            fx_strike_to_settle_rf_id=np.int32(batch.fx_strike_to_settle[ix]),
-            price_curve_id=np.int32(batch.price_curve_ids[ix]),
-            delivery_date_ordinal32=np.int32(batch.delivery_ord[ix]),
-        ),
-    )
-
-```
-
-### FILE: portfolio\ingest\builders\spot.py ###
-```python
-# src/riskquant/portfolio/ingest/builders/spot.py
-"""
-Module for building spot trade records from ingested batch data.
-"""
-
-
-import numpy as np
-from riskquant.portfolio.ingest.batch import IngestBatch
-from riskquant.portfolio.instruments import SPOT_ID
-from riskquant.portfolio.payloads.spot import SpotPayload
-from riskquant.portfolio.trade import TradeRecord
-
-
-def build_spot(*, ix: int, batch: IngestBatch) -> TradeRecord:
-    return TradeRecord(
-        trade_uid=int(batch.uids[ix]),
-        instrument_id=SPOT_ID,
-        payload=SpotPayload(
-            quantity=np.float64(batch.qty[ix]),
-            price_rf_id=np.int32(batch.price_rf_ids[ix]),
-            fx_rf_id=np.int32(batch.fx_under_to_settle[ix]),
-        ),
-    )
-
-```
-
-### FILE: portfolio\ingest\builders\vanilla_european_option.py ###
-```python
-# src/riskquant/portfolio/ingest/builders/vanilla_european_option.py
-"""
-Module for building vanilla European option trade records from ingested batch data.
-"""
-
-from __future__ import annotations
-
-import numpy as np
-
-from riskquant.portfolio.ingest.batch import IngestBatch
-from riskquant.portfolio.instruments import (
-    VANILLA_EUROPEAN_OPTION_CURVE_ID,
-    VANILLA_EUROPEAN_OPTION_NODE_ID,
-)
-from riskquant.portfolio.payloads.vanilla_european_option import (
-    VanillaEuropeanOptionNodePayload,
-    VanillaEuropeanOptionCurvePayload,
-)
-from riskquant.portfolio.trade import TradeRecord
-
-
-def build_vanilla_european_option_node(
-    *,
-    ix: int,
-    batch: IngestBatch,
-) -> TradeRecord:
-    """
-    Build a vanilla European option trade record priced off a single node (requires expiry date but not delivery date).
-    """
-    return TradeRecord(
-        trade_uid=int(batch.uids[ix]),
-        instrument_id=VANILLA_EUROPEAN_OPTION_NODE_ID,
-        payload=VanillaEuropeanOptionNodePayload(
-            quantity=np.float64(batch.qty[ix]),
-            strike=np.float64(batch.strike_price[ix]),
-            is_call=np.int8(int(batch.is_call[ix])),
-            expiry_date_ordinal32=np.int32(batch.expiry_ord[ix]),
-            payoff_settlement_date_ordinal32=np.int32(batch.settle_ord[ix]),
-            fx_under_to_settle_rf_id=np.int32(batch.fx_under_to_settle[ix]),
-            fx_strike_to_settle_rf_id=np.int32(batch.fx_strike_to_settle[ix]),
-            underlying_price_rf_id=np.int32(batch.price_rf_ids[ix]),
-            vol_rf_id=np.int32(batch.vol_rf_ids[ix]),
-        ),
-    )
-
-
-def build_vanilla_european_option_curve(
-    *,
-    ix: int,
-    batch: IngestBatch,
-) -> TradeRecord:
-    """
-    Build a vanilla European option trade record priced off curves/surfaces.
-    """
-    return TradeRecord(
-        trade_uid=int(batch.uids[ix]),
-        instrument_id=VANILLA_EUROPEAN_OPTION_CURVE_ID,
-        payload=VanillaEuropeanOptionCurvePayload(
-            quantity=np.float64(batch.qty[ix]),
-            strike=np.float64(batch.strike_price[ix]),
-            is_call=np.int8(int(batch.is_call[ix])),
-            expiry_date_ordinal32=np.int32(batch.expiry_ord[ix]),
-            payoff_settlement_date_ordinal32=np.int32(batch.settle_ord[ix]),
-            fx_under_to_settle_rf_id=np.int32(batch.fx_under_to_settle[ix]),
-            fx_strike_to_settle_rf_id=np.int32(batch.fx_strike_to_settle[ix]),
-            underlying_price_curve_rf_id=np.int32(batch.price_curve_ids[ix]),
-            delivery_date_ordinal32=np.int32(batch.delivery_ord[ix]),
-            vol_surface_rf_id=np.int32(batch.vol_surface_rf_ids[ix]),
-        ),
-    )
-
-```
-
-### FILE: portfolio\ingest\dispatcher.py ###
-```python
-# src/riskquant/portfolio/ingest/dispatcher.py
-
-from typing import Callable, Iterator
-
-from riskquant.portfolio.trade import TradeRecord
-from riskquant.portfolio.instruments import (
-    SPOT_ID,
-    FORWARD_NODE_ID,
-    FORWARD_CURVE_ID,
-    VANILLA_EUROPEAN_OPTION_NODE_ID,
-    VANILLA_EUROPEAN_OPTION_CURVE_ID,
-)
-from riskquant.portfolio.ingest.batch import IngestBatch
-from riskquant.portfolio.ingest.builders import (
-    build_spot,
-    build_forward_node,
-    build_forward_curve,
-    build_vanilla_european_option_node,
-    build_vanilla_european_option_curve,
-)
-
-BuilderFunc = Callable[..., TradeRecord]
-
-# O(1) Routing table - No more if/elif branches!
-DISPATCH_TABLE: dict[int, BuilderFunc] = {
-    int(SPOT_ID): build_spot,
-    int(FORWARD_NODE_ID): build_forward_node,
-    int(FORWARD_CURVE_ID): build_forward_curve,
-    int(VANILLA_EUROPEAN_OPTION_NODE_ID): build_vanilla_european_option_node,
-    int(VANILLA_EUROPEAN_OPTION_CURVE_ID): build_vanilla_european_option_curve,
-}
-
-
-def iter_trades_from_batch(batch: IngestBatch) -> Iterator[TradeRecord]:
-    """
-    O(1) dispatch loop. Yields compiled TradeRecords.
-    Because validation is already done, this loop is blazingly fast.
-    """
-    instrument_ids = batch.instrument_ids
-    size = batch.size
-
-    for ix in range(size):
-        # Look up the correct function using the integer ID, then execute it
-        yield DISPATCH_TABLE[instrument_ids[ix]](ix=ix, batch=batch)
 
 ```
 
@@ -4125,17 +4436,20 @@ def resolve_fx_rf_ids_inplace(
     base_ccy: np.ndarray,  # (n,) object/str
     settlement_ccy: np.ndarray,  # (n,) object/str
     out_fx_rf_ids: np.ndarray,  # (n,) int32
+    out_fx_invert: np.ndarray,  # (n,) int32
     rf_name_to_rf_id: dict[str, int],
 ) -> None:
     """
     Resolve FX RF IDs for rows where base_ccy != settlement_ccy.
 
-    out_fx_rf_ids is filled with FX_NONE then overwritten for quanto rows.
+    out_fx_rf_ids is filled with NO_FX_RF_REQUIRED then overwritten for quanto rows.
+    out_fx_invert is filled with 0, and set to 1 if the inverted FX pair is used.
     """
-    # Initialize all FX RF IDs to NO_FX_RF_REQUIRED, which indicates no FX conversion needed.
+    # Initialize default states (No FX required, not inverted)
     out_fx_rf_ids.fill(np.int32(NO_FX_RF_REQUIRED))
+    out_fx_invert.fill(0)
 
-    # Get a boolean mask for rows where base_ccy != settlement_ccy, since those are the only rows that require FX conversion.
+    # Get a boolean mask for rows where base_ccy != settlement_ccy
     mask = base_ccy != settlement_ccy
 
     # Early exit if there are no rows that require FX conversion.
@@ -4149,29 +4463,44 @@ def resolve_fx_rf_ids_inplace(
     fx_pair_fn = get_fx_pair_for_under_to_settle_conversion
     rf_name_to_rf_id_map = rf_name_to_rf_id
 
-    # Loop over the rows that require FX conversion and resolve the FX RF ID for each one.
+    # Loop over the rows that require FX conversion and resolve the FX RF ID
     for i in qidx:
-        # Get the FX pair for this row based on the base_ccy and settlement_ccy.
-        fx_pair = fx_pair_fn(
-            underlying_ccy=str(base_ccy[i]),
-            settlement_ccy=str(settlement_ccy[i]),
+        b_ccy_str = str(base_ccy[i])
+        s_ccy_str = str(settlement_ccy[i])
+
+        # Get the FX pair for this row
+        fx_pair_std = fx_pair_fn(
+            underlying_ccy=b_ccy_str,
+            settlement_ccy=s_ccy_str,
         )
 
-        # If the FX pair is an empty string, it means that no FX conversion is needed, so we can leave the FX RF ID as NO_FX_RF_REQUIRED.
-        if fx_pair == "":
-            out_fx_rf_ids[i] = np.int32(NO_FX_RF_REQUIRED)
+        # If the FX pair is an empty string, it means no FX conversion is needed.
+        if fx_pair_std == "":
             continue
 
-        # Now look up the FX RF ID for this FX pair in the rf_name_to_rf_id mapping.
-        try:
-            out_fx_rf_ids[i] = np.int32(rf_name_to_rf_id_map[fx_pair])
-        except KeyError as e:
-            raise PrettyKeyError(
-                "Missing FX spot risk factor for currency conversion:\n"
-                f"- fx_pair={fx_pair!r}\n"
-                f"- base_ccy={base_ccy[i]!r}\n"
-                f"- settlement_ccy={settlement_ccy[i]!r}\n"
-            ) from e
+        # 1. Try the standard FX pair first
+        if fx_pair_std in rf_name_to_rf_id_map:
+            out_fx_rf_ids[i] = np.int32(rf_name_to_rf_id_map[fx_pair_std])
+            continue
+
+        # 2. Try the inverted FX pair
+        # Assuming your standard nomenclature is BaseQuote (e.g., EURUSD)
+        fx_pair_inv = f"{s_ccy_str}{b_ccy_str}"
+        if fx_pair_inv in rf_name_to_rf_id_map:
+            out_fx_rf_ids[i] = np.int32(rf_name_to_rf_id_map[fx_pair_inv])
+            out_fx_invert[i] = (
+                1  # Flag this row for mathematical inversion later
+            )
+            continue
+
+        # 3. Neither pair exists in the static config
+        raise PrettyKeyError(
+            "Missing FX spot risk factor for currency conversion:\n"
+            f"- Searched for standard: {fx_pair_std!r}\n"
+            f"- Searched for inverted: {fx_pair_inv!r}\n"
+            f"- base_ccy={b_ccy_str!r}\n"
+            f"- settlement_ccy={s_ccy_str!r}\n"
+        )
 
 ```
 
@@ -4181,6 +4510,7 @@ def resolve_fx_rf_ids_inplace(
 
 
 from __future__ import annotations
+from datetime import date, datetime
 
 import numpy as np
 import pandas as pd
@@ -4276,7 +4606,7 @@ def parse_optional_date_series_to_ordinal32(
             )
 
         # Now we know x is not NA, so we can parse it according to the accepted input types.
-        if isinstance(x, (pd.Timestamp, np.datetime64)):
+        if isinstance(x, (pd.Timestamp, np.datetime64, datetime, date)):
             d64[k] = np.datetime64(x, "D")
             continue
 
@@ -4285,16 +4615,17 @@ def parse_optional_date_series_to_ordinal32(
             xs = x.strip()
             if not _is_date_str_valid(xs):
                 raise ValueError(
-                    f"Invalid {col_name}='{xs}' at row {int(i)} "
-                    "(expected strict YYYY-MM-DD)."
+                    f"Invalid {col_name}='{xs}' at row {int(i)}!"
+                    f"Got a string that is not a valid date in YYYY-MM-DD format: '{xs}'. "
+                    "Expected strict YYYY-MM-DD."
                 )
             d64[k] = np.datetime64(xs, "D")
             continue
 
         # If we get here, it means x is not NA and not one of the accepted types, so we will raise an error with a helpful message.
         raise TypeError(
-            f"Invalid {col_name} type at row {int(i)}: {type(x).__name__}. "
-            "Expected YYYY-MM-DD string, pandas Timestamp, or datetime64."
+            f"Invalid {col_name} type at row {int(i)}: value = {x}, type = {type(x).__name__}. "
+            "Expected YYYY-MM-DD string, pandas Timestamp, datetime, or date."
         )
 
     # At this point, we have successfully parsed all the non-NA values into the d64 array as datetime64[D]. We can now convert them to ordinal32 and store them in the output array at the correct indices.
@@ -4318,7 +4649,6 @@ REQUIRED_BASE_COLS: Final[Tuple[str, ...]] = (
     "instrument",
     "quantity",
     "underlying",
-    "underlying_ccy",
     "settlement_ccy",
 )
 
@@ -4331,6 +4661,8 @@ OPTIONAL_COLS: Final[Tuple[str, ...]] = (
     "expiry_date",
     "delivery_date",
     "settlement_date",
+    "under_discount_curve",
+    "strike_discount_curve",
 )
 
 ```
@@ -4592,509 +4924,6 @@ ALL_INSTRUMENT_IDS: set[np.int32] = Instrument.all_instrument_ids()
 
 ```
 
-### FILE: portfolio\payloads\__init__.py ###
-```python
-# src\riskquant\portfolio\payloads\__init__.py
-```
-
-### FILE: portfolio\payloads\base_payload.py ###
-```python
-from dataclasses import dataclass
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class Payload:
-    """
-    Abstract base class for all trade payloads.
-    """
-
-    pass
-
-```
-
-### FILE: portfolio\payloads\forward.py ###
-```python
-"""
-Payload definition for forward contract trades.
-
-This module defines a lightweight, immutable container for forward positions.
-The payload stores only numeric identifiers, primitive fields, and date ordinals
-(int32 days-since-epoch). External pricers and valuation engines resolve the
-identifiers to market data and perform pricing, discounting, and FX conversions.
-
-Key design principle:
-  Exposure timing (via `price_rf_id` and `price_source_type`) is intentionally
-  decoupled from settlement timing (`settlement_date_ordinal32`). This enables
-  support for forwards on long-dated production with arbitrary payment schedules,
-  power and commodity contracts, and custom discounting logic.
-"""
-
-from dataclasses import dataclass
-
-import numpy as np
-
-# Import price source type indicators and date/FX sentinels for defaults
-from riskquant.constants import (
-    NO_FX_RF_REQUIRED,
-    NO_SETTLEMENT_DATE_ORDINAL32,
-)
-from riskquant.portfolio.payloads.base_payload import Payload
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class _ForwardBasePayload(Payload):
-    """Common fields shared by forward payload variants."""
-
-    # ========== ECONOMIC TERMS ==========
-
-    # Signed quantity/notional (long > 0, short < 0). dtype: np.float64
-    quantity: np.float64
-
-    # Strike/forward level K in trade currency units. dtype: np.float64
-    strike: np.float64
-
-    # ========== SETTLEMENT DATE ==========
-
-    # Settlement/payment date encoded as int32 ordinal (days since DATE_EPOCH).
-    # Used exclusively for discounting. Default sentinel indicates no discounting.
-    settlement_date_ordinal32: np.int32 = NO_SETTLEMENT_DATE_ORDINAL32
-
-    # ========== FX LINKAGES ==========
-
-    # FX risk factor ID mapping underlying_ccy -> settlement_ccy.
-    # Sentinel NO_FX_RF_REQUIRED (-3) indicates no FX conversion needed.
-    fx_under_to_settle_rf_id: np.int32 = NO_FX_RF_REQUIRED
-
-    # FX risk factor ID mapping strike_ccy -> settlement_ccy.
-    # Sentinel NO_FX_RF_REQUIRED (-3) indicates no FX conversion needed.
-    fx_strike_to_settle_rf_id: np.int32 = NO_FX_RF_REQUIRED
-
-    # ========== VALIDATION IN __post_init__ ==========
-
-    def __post_init__(self) -> None:
-        # Force strict NumPy dtypes to prevent Python object boxing
-        object.__setattr__(
-            self,
-            "quantity",
-            np.float64(self.quantity),
-        )
-        object.__setattr__(
-            self,
-            "strike",
-            np.float64(self.strike),
-        )
-        object.__setattr__(
-            self,
-            "settlement_date_ordinal32",
-            np.int32(self.settlement_date_ordinal32),
-        )
-        object.__setattr__(
-            self,
-            "fx_under_to_settle_rf_id",
-            np.int32(self.fx_under_to_settle_rf_id),
-        )
-        object.__setattr__(
-            self,
-            "fx_strike_to_settle_rf_id",
-            np.int32(self.fx_strike_to_settle_rf_id),
-        )
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class ForwardNodePayload(_ForwardBasePayload):
-    """
-    Immutable payload for a forward contract position.
-
-    Encodes the minimal economic and market-linkage information required
-    by pricers and valuation engines. All fields use compact NumPy dtypes
-    to support efficient array-based processing and serialization.
-
-    """
-
-    # ========== UNDERLYING LINKAGES ==========
-
-    # Unique identifier for the forward price/curve node used by the pricer.
-    # Resolves to a time series or market surface in scenario shocks.
-    price_rf_id: np.int32
-
-    # ========== VALIDATION IN __post_init__ ==========
-
-    def __post_init__(self) -> None:
-        _ForwardBasePayload.__post_init__(self)  # Cast base fields
-        object.__setattr__(
-            self,
-            "price_rf_id",
-            np.int32(self.price_rf_id),
-        )
-
-    def __str__(self) -> str:
-        """Return a compact, single-line string representation for logging and debugging."""
-        return (
-            f"ForwardNodePayload("
-            f"quantity={self.quantity}, "
-            f"strike={self.strike}, "
-            f"settlement_date_ordinal32={self.settlement_date_ordinal32}, "
-            f"fx_under_to_settle_rf_id={self.fx_under_to_settle_rf_id}, "
-            f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}, "
-            f"price_rf_id={self.price_rf_id}"
-            f")"
-        )
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class ForwardCurvePayload(_ForwardBasePayload):
-    """
-    Immutable payload for a forward contract position when the price is sourced from a curve and the delivery_date_ordinal32 is used to determine the curve point for pricing and valuation.
-
-    """
-
-    # ========== UNDERLYING LINKAGES ==========
-
-    # Unique identifier for the forward price/curve node used by the pricer.
-    # Resolves to a time series or market surface in scenario shocks.
-    price_curve_id: np.int32
-
-    # ========== DELIVERY DATE (ORDINAL) ==========
-
-    # Physical delivery date encoded as int32 ordinal (days since DATE_EPOCH).
-    # Default is sentinel NO_DELIVERY_DATE_ORDINAL32 if not applicable.
-    delivery_date_ordinal32: np.int32
-
-    # ========== VALIDATION IN __post_init__ ==========
-
-    def __post_init__(self) -> None:
-        _ForwardBasePayload.__post_init__(self)  # Cast base fields
-        object.__setattr__(
-            self,
-            "price_curve_id",
-            np.int32(self.price_curve_id),
-        )
-        object.__setattr__(
-            self,
-            "delivery_date_ordinal32",
-            np.int32(self.delivery_date_ordinal32),
-        )
-
-    def __str__(self) -> str:
-        """Return a compact, single-line string representation for logging and debugging."""
-        return (
-            f"ForwardCurvePayload("
-            f"quantity={self.quantity}, "
-            f"strike={self.strike}, "
-            f"settlement_date_ordinal32={self.settlement_date_ordinal32}, "
-            f"fx_under_to_settle_rf_id={self.fx_under_to_settle_rf_id}, "
-            f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}, "
-            f"price_curve_id={self.price_curve_id}, "
-            f"delivery_date_ordinal32={self.delivery_date_ordinal32}"
-            f")"
-        )
-
-```
-
-### FILE: portfolio\payloads\spot.py ###
-```python
-"""
-Payload for spot positions.
-
-This lightweight, immutable container holds the minimal numeric
-information required to price and risk a spot position. It stores only
-primitive numeric types (NumPy dtypes) so it can be stored in compact
-arrays and passed efficiently to vectorized valuation kernels.
-
-Fields
-------
-quantity
-    Signed position size (float64). Positive values represent long
-    exposure; negative values represent short exposure.
-price_rf_id
-    Integer identifier (np.int32) referring to the price/forward risk
-    factor that provides market data for this spot position.
-fx_rf_id
-    Integer identifier (np.int32) for FX conversion underlying_ccy ->
-    settlement_ccy. Uses the sentinel `NO_FX_RF_REQUIRED` when no FX
-    conversion is needed.
-"""
-
-from dataclasses import dataclass
-
-import numpy as np
-
-from riskquant.constants import NO_FX_RF_REQUIRED
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class SpotPayload:
-    """Immutable payload for a single spot trade.
-
-    The class is frozen to guarantee immutability and uses slots to
-    reduce per-instance memory overhead. All fields are NumPy dtypes
-    to remain compatible with array-based processing.
-    """
-
-    # ========== ECONOMIC TERMS ==========
-
-    # Signed quantity / notional for the spot position. dtype: np.float64
-    quantity: np.float64
-
-    # ========== UNDERLYING LINKAGES ==========
-
-    # Price risk factor id used to look up market data for this position. dtype: np.int32
-    price_rf_id: np.int32
-
-    # ========== FX LINKAGES ==========
-
-    # FX risk factor id for underlying->settlement conversion, or sentinel when not required.
-    fx_rf_id: np.int32 = NO_FX_RF_REQUIRED
-
-    # ========== VALIDATION IN __post_init__ ==========
-
-    def __post_init__(self) -> None:
-        # Force strict NumPy dtypes to prevent Python object boxing in kernels
-        object.__setattr__(
-            self,
-            "quantity",
-            np.float64(self.quantity),
-        )
-        object.__setattr__(
-            self,
-            "price_rf_id",
-            np.int32(self.price_rf_id),
-        )
-        object.__setattr__(
-            self,
-            "fx_rf_id",
-            np.int32(self.fx_rf_id),
-        )
-
-    def __str__(self) -> str:
-        # Single-line, human-readable representation for logging and debugging
-        return (
-            f"SpotPayload("
-            f"quantity={self.quantity}, "
-            f"price_rf_id={self.price_rf_id}, "
-            f"fx_rf_id={self.fx_rf_id}"
-            f")"
-        )
-
-```
-
-### FILE: portfolio\payloads\vanilla_european_option.py ###
-```python
-"""
-Payload definition for vanilla European option trades.
-
-This module defines a compact, immutable container that encodes the
-minimal economic and market-linkage information required by option pricers
-and valuation engines. The payload deliberately carries identifiers
-for risk factors (price, vol, FX) and a date encoded as an ordinal32
-(days since DATE_EPOCH), rather than storing strings or full market
-objects. This keeps memory footprint small and makes the payload
-well-suited for large portfolios and high-throughput simulation.
-
-Notes on expiry encoding:
-  - The payload uses `expiry_date_ordinal32` (int32 days-since-epoch)
-    to represent the option expiry date, aligning with how settlement
-    dates are encoded in ForwardPayload (`settlement_date_ordinal32`).
-  - The sentinel value `NO_EXPIRY_DATE` indicates a missing expiry.
-"""
-
-from dataclasses import dataclass
-
-import numpy as np
-
-from riskquant.constants import (
-    NO_FX_RF_REQUIRED,
-    NO_SETTLEMENT_DATE_ORDINAL32,
-)
-from riskquant.portfolio.payloads.base_payload import Payload
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class _VanillaEuropeanOptionBasePayload(Payload):
-    """
-    Common fields shared by vanilla European option payload variants.
-    """
-
-    # ========== ECONOMIC TERMS ==========
-
-    # Signed position size (contracts / notional)
-    quantity: np.float64
-
-    # Strike price K expressed in strike currency units
-    strike: np.float64
-
-    # 1 => call, 0 => put; stored as int8 for compactness
-    is_call: np.int8
-
-    # ========== EXPIRY DATE ==========
-
-    # Expiry encoded as int32 ordinal (days since DATE_EPOCH). Matches ForwardPayload.
-    expiry_date_ordinal32: np.int32
-
-    # ========== SETTLEMENT DATE ==========
-
-    # Optional settlement date (days-since-epoch). Used for discounting only. dtype: np.int32
-    payoff_settlement_date_ordinal32: np.int32 = NO_SETTLEMENT_DATE_ORDINAL32
-
-    # ========== FX LINKAGES ==========
-
-    # FX id for underlying_ccy -> settlement_ccy, or FX_NONE if no conversion
-    fx_under_to_settle_rf_id: np.int32 = NO_FX_RF_REQUIRED
-
-    # FX id for strike_ccy -> settlement_ccy, or FX_NONE if no conversion
-    fx_strike_to_settle_rf_id: np.int32 = NO_FX_RF_REQUIRED
-
-    # ========== VALIDATION IN __post_init__ ==========
-
-    def __post_init__(self) -> None:
-        # Force strict NumPy dtypes to prevent Python object boxing
-        object.__setattr__(
-            self,
-            "quantity",
-            np.float64(self.quantity),
-        )
-        object.__setattr__(
-            self,
-            "strike",
-            np.float64(self.strike),
-        )
-        object.__setattr__(
-            self,
-            "is_call",
-            np.int8(self.is_call),
-        )
-        object.__setattr__(
-            self,
-            "expiry_date_ordinal32",
-            np.int32(self.expiry_date_ordinal32),
-        )
-        object.__setattr__(
-            self,
-            "payoff_settlement_date_ordinal32",
-            np.int32(self.payoff_settlement_date_ordinal32),
-        )
-        object.__setattr__(
-            self,
-            "fx_under_to_settle_rf_id",
-            np.int32(self.fx_under_to_settle_rf_id),
-        )
-        object.__setattr__(
-            self,
-            "fx_strike_to_settle_rf_id",
-            np.int32(self.fx_strike_to_settle_rf_id),
-        )
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class VanillaEuropeanOptionNodePayload(_VanillaEuropeanOptionBasePayload):
-    """
-    Immutable payload for a single vanilla European option position when
-    the underlying price is sourced from a node.
-    """
-
-    # ========== UNDERLYING LINKAGE ==========
-
-    # ID referencing the underlying price/forward risk factor used by the pricer
-    underlying_price_rf_id: np.int32
-
-    # ========== VOL LINKAGE ==========
-
-    # Implied volatility risk factor id (volatility series used by pricer). This is a node-level risk factor id that resolves to a time series in scenario shocks. It is a separate risk factor from the price_rf_id because some pricers require a separate vol input, and the vol may be sourced from a different node than the price (e.g., a volatility surface vs. a forward curve).
-    vol_rf_id: np.int32
-
-    # ========== VALIDATION IN __post_init__ ==========
-
-    def __post_init__(self) -> None:
-        _VanillaEuropeanOptionBasePayload.__post_init__(self)
-        object.__setattr__(
-            self,
-            "underlying_price_rf_id",
-            np.int32(self.underlying_price_rf_id),
-        )
-        object.__setattr__(
-            self,
-            "vol_rf_id",
-            np.int32(self.vol_rf_id),
-        )
-
-    def __str__(self) -> str:
-        """Return a compact single-line representation for logging/debugging."""
-        return (
-            "VanillaEuropeanOptionNodePayload("
-            f"quantity={self.quantity}, "
-            f"strike={self.strike}, "
-            f"is_call={int(self.is_call)}, "
-            f"expiry_date_ordinal32={self.expiry_date_ordinal32}, "
-            f"payoff_settlement_date_ordinal32={self.payoff_settlement_date_ordinal32}, "
-            f"fx_under_to_settle_rf_id={self.fx_under_to_settle_rf_id}, "
-            f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}, "
-            f"underlying_price_rf_id={self.underlying_price_rf_id}, "
-            f"vol_rf_id={self.vol_rf_id}"
-            ")"
-        )
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class VanillaEuropeanOptionCurvePayload(_VanillaEuropeanOptionBasePayload):
-    """
-    Immutable payload for a single vanilla European option position when
-    the underlying price is sourced from a curve.
-    """
-
-    # ========== UNDERLYING CURVE LINKAGE ==========
-
-    # ID referencing the underlying price/forward risk factor used by the pricer
-    underlying_price_curve_rf_id: np.int32
-
-    # ========== DELIVERY LINKAGE ==========
-
-    # Physical delivery date encoded as int32 ordinal (days since DATE_EPOCH). Used to determine curve point for pricing and valuation. Default is sentinel NO_DELIVERY_DATE_ORDINAL32 if not applicable.
-    delivery_date_ordinal32: np.int32
-
-    # ========== VOL LINKAGE ==========
-
-    # Implied volatility risk factor id (volatility series used by pricer). This is a surface-level risk factor id that resolves to a surface in scenario shocks. It is a separate risk factor from the price_rf_id because some pricers require a separate vol input, and the vol may be sourced from a different node than the price (e.g., a volatility surface vs. a forward curve). The final vol used for pricing is interpolated from the vol surface based on the expiry date and strike (money-ness) of the option.
-    vol_surface_rf_id: np.int32
-
-    # ========== VALIDATION IN __post_init__ ==========
-
-    def __post_init__(self) -> None:
-        _VanillaEuropeanOptionBasePayload.__post_init__(self)
-        object.__setattr__(
-            self,
-            "underlying_price_curve_rf_id",
-            np.int32(self.underlying_price_curve_rf_id),
-        )
-        object.__setattr__(
-            self,
-            "delivery_date_ordinal32",
-            np.int32(self.delivery_date_ordinal32),
-        )
-        object.__setattr__(
-            self,
-            "vol_surface_rf_id",
-            np.int32(self.vol_surface_rf_id),
-        )
-
-    def __str__(self) -> str:
-        """Return a compact single-line representation for logging/debugging."""
-        return (
-            "VanillaEuropeanOptionCurvePayload("
-            f"quantity={self.quantity}, "
-            f"strike={self.strike}, "
-            f"is_call={int(self.is_call)}, "
-            f"expiry_date_ordinal32={self.expiry_date_ordinal32}, "
-            f"payoff_settlement_date_ordinal32={self.payoff_settlement_date_ordinal32}, "
-            f"fx_under_to_settle_rf_id={self.fx_under_to_settle_rf_id}, "
-            f"fx_strike_to_settle_rf_id={self.fx_strike_to_settle_rf_id}, "
-            f"underlying_price_curve_rf_id={self.underlying_price_curve_rf_id}, "
-            f"delivery_date_ordinal32={self.delivery_date_ordinal32}, "
-            f"vol_surface_rf_id={self.vol_surface_rf_id}"
-            ")"
-        )
-
-```
-
 ### FILE: portfolio\pnl\__init__.py ###
 ```python
 # src\riskquant\portfolio\pnl\__init__.py
@@ -5122,51 +4951,6 @@ class PnlResult:
 
     trade_uids: np.ndarray  # int64, shape (M,)
     pnl: np.ndarray  # float32/64, shape (M, S), contiguous
-
-```
-
-### FILE: portfolio\trade.py ###
-```python
-# src/riskquant/portfolio/trade.py
-"""
-Module for defining standardized trade record data structures.
-"""
-
-from dataclasses import dataclass
-import numpy as np
-
-from riskquant.portfolio.payloads.base_payload import Payload
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class TradeRecord:
-    """
-    Immutable, high-performance container representing a single trade record.
-
-    Assumes all data has been strictly validated and typed by the upstream
-    IngestBatch vectorizer before instantiation.
-
-    Attributes:
-        trade_uid: Unique integer identifier for this specific trade.
-        instrument_id: Numpy int32 identifier linking to the instrument Enum.
-        payload: Polymorphic Payload object containing instrument-specific data.
-    """
-
-    trade_uid: int
-    instrument_id: np.int32
-    payload: Payload
-
-    def __str__(self) -> str:
-        """
-        Return a formatted string representation of the trade record.
-        """
-        return (
-            f"TradeRecord(\n"
-            f"  trade_uid={self.trade_uid},\n"
-            f"  instrument_id={self.instrument_id},\n"
-            f"  payload={self.payload}\n"
-            f")"
-        )
 
 ```
 
@@ -5520,7 +5304,9 @@ if __name__ == "__main__":
 ### FILE: utils\printer.py ###
 ```python
 # riskquant/utils/printer.py
+from datetime import date, datetime
 import math
+import time
 from typing import Any, Iterable, Mapping
 
 import pandas as pd
@@ -5594,8 +5380,9 @@ def print_wrapped_text_box(
 
 
 def print_success_message() -> None:
+    s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print_wrapped_text_box(
-        "SUCCESS! CODE RAN SUCCESSFULLY!",
+        f"{s}: SUCCESS! CODE RAN SUCCESSFULLY!",
         width=60,
         padding=2,
         corner_char="*",

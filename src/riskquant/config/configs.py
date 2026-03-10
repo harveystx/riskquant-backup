@@ -157,6 +157,16 @@ class RiskStaticConfig:
         repr=False,
         init=False,
     )
+    _rf_id_to_ccy: Optional[Dict[int, str]] = field(
+        default=None,
+        repr=False,
+        init=False,
+    )
+    _container_id_to_ccy: Optional[Dict[int, str]] = field(
+        default=None,
+        repr=False,
+        init=False,
+    )
 
     def __post_init__(self) -> None:
         if not self.container_meta_dict:
@@ -319,6 +329,33 @@ class RiskStaticConfig:
         object.__setattr__(self, "_curve_tenor_index", out)
         return out
 
+    @property
+    def rf_id_to_ccy(self) -> Dict[int, str]:
+        """A build-once cache mapping both risk factor IDs to their quote currency."""
+        if self._rf_id_to_ccy is None:
+            out: Dict[int, str] = {}
 
-if __name__ == "__main__":
-    pass
+            # Map all Risk Factor Names to their parent container's quote_ccy
+            for _, rf in self.risk_factors_dict.items():
+                parent_container_meta = self.container_meta_dict[
+                    rf.container_name
+                ]
+                out[rf.risk_factor_name_id] = parent_container_meta.quote_ccy
+
+            object.__setattr__(self, "_rf_id_to_ccy", out)
+
+        return self._rf_id_to_ccy
+
+    @property
+    def container_id_to_ccy(self) -> Dict[int, str]:
+        """A build-once cache mapping both container IDs to their quote currency."""
+        if self._container_id_to_ccy is None:
+            out: Dict[int, str] = {}
+
+            # Map all Container Names directly to their quote_ccy
+            for _, c_meta in self.container_meta_dict.items():
+                out[c_meta.container_name_id] = c_meta.quote_ccy
+
+            object.__setattr__(self, "_container_id_to_ccy", out)
+
+        return self._container_id_to_ccy
