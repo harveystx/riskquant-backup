@@ -12,7 +12,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+import re
 from typing import Optional, Pattern, Tuple
+
+import pandas as pd
 
 from riskquant.utils.printer import print_success_message
 
@@ -223,9 +226,34 @@ class RiskFactor:
 @dataclass(frozen=True, slots=True)
 class TenorSchema:
     tenor_type_name: str
-    tenor_units: str
+    tenor_unit: str
     digits: int
-    regex: Pattern[str]
+    token_regex: Optional[Pattern[str]]
+    abs_name_regex: Optional[Pattern[str]]
+    rel_name_regex: Optional[Pattern[str]]
+    abs_name_example: str
+    rel_name_example: str
+
+    def __str__(self) -> str:
+        """Returns a human-readable, formatted tree of the schema rules."""
+        # Helper to safely extract the raw string pattern from the compiled regex
+        fmt_re = lambda r: f"'{r.pattern}'" if r else "None"
+
+        return (
+            f"TenorSchema('{self.tenor_type_name}')\n"
+            f"  ├─ Tenor Unit: {self.tenor_unit} (Digits: {self.digits})\n"
+            f"  ├─ Regex Rules:\n"
+            f"  │   ├─ Token:    {fmt_re(self.token_regex)}\n"
+            f"  │   ├─ Absolute: {fmt_re(self.abs_name_regex)}\n"
+            f"  │   └─ Relative: {fmt_re(self.rel_name_regex)}\n"
+            f"  └─ Examples:\n"
+            f"      ├─ Absolute: '{self.abs_name_example}'\n"
+            f"      └─ Relative: '{self.rel_name_example}'"
+        )
+
+    def __repr__(self) -> str:
+        """Fallback to the pretty string when printing from a list or dict."""
+        return self.__str__()
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,25 +275,6 @@ class SpotRollRule:
     post_roll_shift: Optional[int]
 
 
-# ===================== #
-# --- PROXY MAPPING --- #
-# ===================== #
-
-
-@dataclass(frozen=True, slots=True)
-class ContainerProxyMap:
-    container_name: str
-    proxy_container_name: str
-    proxy_container_vol_scaling_factor: Optional[float]
-
-
-@dataclass(frozen=True, slots=True)
-class RiskFactorProxyMap:
-    risk_factor_name: str
-    proxy_risk_factor_name: str
-    proxy_risk_factor_vol_scaling_factor: Optional[float]
-
-
 # ======================== #
 # --- HOLIDAY CALENDAR --- #
 # ======================== #
@@ -275,10 +284,3 @@ class RiskFactorProxyMap:
 class HolidayCalendar:
     holiday_calendar_name: str
     holiday_dates: Optional[Tuple[date, ...]]
-
-
-if __name__ == "__main__":
-    Ccy(ccy="USDEUR", ccy_id=1)
-
-    # Print success message
-    print_success_message()

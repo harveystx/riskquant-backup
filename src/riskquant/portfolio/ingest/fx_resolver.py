@@ -1,9 +1,9 @@
-# src\riskquant\portfolio\ingest\fx_resolver.py
+# src/riskquant/portfolio/ingest/fx_resolver.py
 import numpy as np
+import pandas as pd
 
 from riskquant.exceptions import PrettyKeyError
 from riskquant.constants import NO_FX_RF_REQUIRED
-from riskquant.portfolio.fx import get_fx_pair_for_under_to_settle_conversion
 
 
 def resolve_fx_rf_ids_inplace(
@@ -15,10 +15,8 @@ def resolve_fx_rf_ids_inplace(
     rf_name_to_rf_id: dict[str, int],
 ) -> None:
     """
-    Resolve FX RF IDs for rows where base_ccy != settlement_ccy.
-
-    out_fx_rf_ids is filled with NO_FX_RF_REQUIRED then overwritten for quanto rows.
-    out_fx_invert is filled with 0, and set to 1 if the inverted FX pair is used.
+    Vectorized resolution of FX RF IDs for rows where base_ccy != settlement_ccy.
+    Completely eliminates Python for-loops and regex string matching.
     """
     # Initialize default states (No FX required, not inverted)
     out_fx_rf_ids.fill(np.int32(NO_FX_RF_REQUIRED))
@@ -31,48 +29,39 @@ def resolve_fx_rf_ids_inplace(
     if not np.any(mask):
         return
 
-    # Get the indices of the rows that require FX conversion.
-    qidx = np.nonzero(mask)[0]
+    # Extract strings for mismatched rows
+    b_str = base_ccy[mask].astype(str)
+    s_str = settlement_ccy[mask].astype(str)
 
-    # Local bindings for efficiency in the loop
-    fx_pair_fn = get_fx_pair_for_under_to_settle_conversion
-    rf_name_to_rf_id_map = rf_name_to_rf_id
+    # Fast vectorized string concatenation for currency pairs
+    std_pairs = np.char.add(b_str, s_str)
+    inv_pairs = np.char.add(s_str, b_str)
 
-    # Loop over the rows that require FX conversion and resolve the FX RF ID
-    for i in qidx:
-        b_ccy_str = str(base_ccy[i])
-        s_ccy_str = str(settlement_ccy[i])
+    # Map directly via Pandas (C-level hash lookup)
+    std_mapped = pd.Series(std_pairs).map(rf_name_to_rf_id).to_numpy()
+    inv_mapped = pd.Series(inv_pairs).map(rf_name_to_rf_id).to_numpy()
 
-        # Get the FX pair for this row
-        fx_pair_std = fx_pair_fn(
-            underlying_ccy=b_ccy_str,
-            settlement_ccy=s_ccy_str,
-        )
+    # Identify which mapping succeeded
+    std_valid = ~np.isnan(std_mapped)
+    inv_valid = ~np.isnan(inv_mapped)
 
-        # If the FX pair is an empty string, it means no FX conversion is needed.
-        if fx_pair_std == "":
-            continue
-
-        # 1. Try the standard FX pair first
-        if fx_pair_std in rf_name_to_rf_id_map:
-            out_fx_rf_ids[i] = np.int32(rf_name_to_rf_id_map[fx_pair_std])
-            continue
-
-        # 2. Try the inverted FX pair
-        # Assuming your standard nomenclature is BaseQuote (e.g., EURUSD)
-        fx_pair_inv = f"{s_ccy_str}{b_ccy_str}"
-        if fx_pair_inv in rf_name_to_rf_id_map:
-            out_fx_rf_ids[i] = np.int32(rf_name_to_rf_id_map[fx_pair_inv])
-            out_fx_invert[i] = (
-                1  # Flag this row for mathematical inversion later
-            )
-            continue
-
-        # 3. Neither pair exists in the static config
+    # Find failures
+    missing_mask = ~(std_valid | inv_valid)
+    if np.any(missing_mask):
+        bad_b = b_str[missing_mask][0]
+        bad_s = s_str[missing_mask][0]
         raise PrettyKeyError(
             "Missing FX spot risk factor for currency conversion:\n"
-            f"- Searched for standard: {fx_pair_std!r}\n"
-            f"- Searched for inverted: {fx_pair_inv!r}\n"
-            f"- base_ccy={b_ccy_str!r}\n"
-            f"- settlement_ccy={s_ccy_str!r}\n"
+            f"- Searched for standard: '{bad_b}{bad_s}'\n"
+            f"- Searched for inverted: '{bad_s}{bad_b}'\n"
+            f"- base_ccy='{bad_b}'\n"
+            f"- settlement_ccy='{bad_s}'\n"
         )
+
+    # Use standard where valid, else fallback to inverted
+    final_ids = np.where(std_valid, std_mapped, inv_mapped).astype(np.int32)
+    final_inverts = np.where(std_valid, 0, 1).astype(np.int32)
+
+    # Slot back into output arrays
+    out_fx_rf_ids[mask] = final_ids
+    out_fx_invert[mask] = final_inverts

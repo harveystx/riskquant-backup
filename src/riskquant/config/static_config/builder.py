@@ -8,13 +8,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Dict, Final, Tuple
+from typing import Dict, Tuple
 
 import pandas as pd
 
-from riskquant.config.configs import RiskStaticConfig
-from riskquant.config.loader import load_risk_static_data_config_xlsx_into_dict
-from riskquant.config.schema_objects import (
+from riskquant.config.static_config.static_config import RiskStaticConfig
+from riskquant.config.static_config.schema_objects import (
     AliasSchema,
     AssetClass,
     AssetSubclass,
@@ -22,13 +21,11 @@ from riskquant.config.schema_objects import (
     Ccy,
     CompoundingConvention,
     ContainerMeta,
-    ContainerProxyMap,
     DayCountConvention,
     ExtrapolationMethod,
     HolidayCalendar,
     InterpolationMethod,
     RiskFactor,
-    RiskFactorProxyMap,
     ShiftType,
     SpotRollRule,
     SurfaceYAxisType,
@@ -36,11 +33,9 @@ from riskquant.config.schema_objects import (
     UnitScale,
     UnitType,
 )
-from riskquant.config.validate import validate_static_config_dfs
 from riskquant.market_data.risk_factors.shift_types import (
     validate_shift_types_dict,
 )
-from riskquant.utils.printer import print_success_message
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,8 +59,6 @@ class RiskStaticConfigFrames:
     - shift_types,
     - interpolation_methods,
     - extrapolation_methods,
-    - container_proxies,
-    - risk_factor_proxies,
     - holiday_calendars,
     - day_count_conventions,
     - business_day_conventions,
@@ -92,10 +85,6 @@ class RiskStaticConfigFrames:
     shift_types: pd.DataFrame
     interpolation_methods: pd.DataFrame
     extrapolation_methods: pd.DataFrame
-
-    # Mappings
-    container_proxies: pd.DataFrame
-    risk_factor_proxies: pd.DataFrame
 
     # Calendars / conventions
     holiday_calendars: pd.DataFrame
@@ -311,16 +300,35 @@ class RiskStaticConfigFrames:
         # ======================= #
         # --- SCHEMAS / RULES --- #
         # ======================= #
+
+        # TENOR SCHEMA
         tenor_schema_dict = {
             str(r["tenor_type_name"]): TenorSchema(
                 tenor_type_name=str(r["tenor_type_name"]),
-                tenor_units=str(r["tenor_units"]),
+                tenor_unit=str(r["tenor_unit"]),
                 digits=int(r["digits"]),
-                regex=re.compile(str(r["regex"])) if r.get("regex") else None,
+                token_regex=(
+                    re.compile(str(r["token_regex"]))
+                    if pd.notna(r.get("token_regex"))
+                    else None
+                ),
+                abs_name_regex=(
+                    re.compile(str(r["abs_name_regex"]))
+                    if pd.notna(r.get("abs_name_regex"))
+                    else None
+                ),
+                rel_name_regex=(
+                    re.compile(str(r["rel_name_regex"]))
+                    if pd.notna(r.get("rel_name_regex"))
+                    else None
+                ),
+                abs_name_example=str(r.get("abs_name_example", "")),
+                rel_name_example=str(r.get("rel_name_example", "")),
             )
             for r in _iter_df(self.tenor_schema)
         }
 
+        # ALIAS SCHEMA
         alias_schema_dict = {
             str(r["alias_type_name"]): AliasSchema(
                 alias_type_name=str(r["alias_type_name"]),
@@ -330,6 +338,7 @@ class RiskStaticConfigFrames:
             for r in _iter_df(self.alias_schema)
         }
 
+        # SURFACE Y-AXIS SCHEMA
         surface_y_axis_schema_dict = {
             str(r["y_axis_type_name"]): SurfaceYAxisType(
                 y_axis_type_name=str(r["y_axis_type_name"])
@@ -337,6 +346,7 @@ class RiskStaticConfigFrames:
             for r in _iter_df(self.surface_y_axis_schema)
         }
 
+        # SPOT ROLL RULES SCHEMA
         spot_roll_rules_dict: Dict[Tuple[str, str], SpotRollRule] = {}
         for r in _iter_df(self.spot_roll_rules):
             key = (str(r["spot_roll_rule_name"]), str(r["tenor_type_name"]))
@@ -351,54 +361,37 @@ class RiskStaticConfigFrames:
                 post_roll_shift=r.get("post_roll_shift"),
             )
 
-        # ======================= #
-        # --- PROXIES         --- #
-        # ======================= #
-        curve_proxies_dict = {
-            str(r["container_name"]): ContainerProxyMap(
-                container_name=str(r["container_name"]),
-                proxy_container_name=str(r["proxy_container_name"]),
-                proxy_container_vol_scaling_factor=float(
-                    r.get("proxy_container_vol_scaling_factor", 1.0) or 1.0
-                ),
-            )
-            for r in _iter_df(self.container_proxies)
-        }
+        # # ======================= #
+        # # --- PROXIES         --- #
+        # # ======================= #
 
-        risk_factor_proxies_dict = {
-            str(r["risk_factor_name"]): RiskFactorProxyMap(
-                risk_factor_name=str(r["risk_factor_name"]),
-                proxy_risk_factor_name=str(r["proxy_risk_factor_name"]),
-                proxy_risk_factor_vol_scaling_factor=float(
-                    r.get("proxy_risk_factor_vol_scaling_factor", 1.0) or 1.0
-                ),
-            )
-            for r in _iter_df(self.risk_factor_proxies)
-        }
+        # # Container proxies
+        # container_proxies_dict = {
+        #     str(r["container_name"]): ContainerProxyMap(
+        #         container_name=str(r["container_name"]),
+        #         proxy_container_name=str(r["proxy_container_name"]),
+        #         proxy_container_vol_scaling_factor=float(
+        #             r.get("proxy_container_vol_scaling_factor", 1.0) or 1.0
+        #         ),
+        #     )
+        #     for r in _iter_df(self.container_proxies)
+        # }
+
+        # # Risk factor proxies
+        # risk_factor_proxies_dict = {
+        #     str(r["risk_factor_name"]): RiskFactorProxyMap(
+        #         risk_factor_name=str(r["risk_factor_name"]),
+        #         proxy_risk_factor_name=str(r["proxy_risk_factor_name"]),
+        #         proxy_risk_factor_vol_scaling_factor=float(
+        #             r.get("proxy_risk_factor_vol_scaling_factor", 1.0) or 1.0
+        #         ),
+        #     )
+        #     for r in _iter_df(self.risk_factor_proxies)
+        # }
 
         # ======================= #
         # --- FINALIZE CONFIG --- #
         # ======================= #
-        # - container_meta,
-        # - risk_factors,
-        # - tenor_schema,
-        # - alias_schema,
-        # - spot_roll_rules,
-        # - asset_classes,
-        # - asset_subclasses,
-        # - unit_types,
-        # - unit_scales,
-        # - surface_y_axis_schema,
-        # - ccy,
-        # - shift_types,
-        # - interpolation_methods,
-        # - extrapolation_methods,
-        # - container_proxies,
-        # - risk_factor_proxies,
-        # - holiday_calendars,
-        # - day_count_conventions,
-        # - business_day_conventions,
-        # - compounding_conventions.
         return RiskStaticConfig(
             container_meta_dict=container_meta_dict,
             risk_factors_dict=risk_factors_dict,
@@ -417,7 +410,5 @@ class RiskStaticConfigFrames:
             extrapolation_methods_dict=extrapolation_methods_dict,
             ccy_dict=ccy_dict,
             shift_types_dict=shift_types_dict,
-            curve_proxies_dict=curve_proxies_dict,
-            risk_factor_proxies_dict=risk_factor_proxies_dict,
             holiday_calendars_dict=holiday_calendars_dict,
         )

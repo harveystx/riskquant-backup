@@ -2,10 +2,13 @@ import pandas as pd
 from typing import Final
 from riskquant.utils.printer import print_df, print_success_message
 from riskquant.utils.dates import get_previous_business_date_as_date
-from riskquant.config.compile import compile_risk_static_config_from_xlsx
+from riskquant.config.static_config.compile import (
+    compile_risk_static_config_from_xlsx,
+)
 from riskquant.portfolio.ingest.batch_builder import build_ingest_batch
-from riskquant.config.resolution import RiskFactorAbsToRelNameIdMap
-from riskquant.portfolio.ingest.dispatcher import iter_trades_from_batch
+from riskquant.config.static_config.resolution import (
+    RiskFactorAbsToRelNameIdMap,
+)
 
 
 def run_batch_builder_demo():
@@ -77,18 +80,6 @@ def run_batch_builder_demo():
 
     # Use your print_df utility to display the reconstructed DataFrame nicely
     print_df(batch.df, float_format="_.2f", zero_tol=1e-8)
-
-    # --- DISPATCHER ---
-
-    # ... append to the very bottom of the script ...
-    print("\n--- Dispatching IngestBatch to Trade Builders ---")
-    trades = list(iter_trades_from_batch(batch))
-
-    print(f"Successfully compiled {len(trades)} TradeRecord objects!")
-
-    # Let's inspect a complex trade to prove the routing worked
-    print("\nSample Compiled Trade (Row 23 - Vanilla Option Node):")
-    print(trades[23])
 
     # --- FINISH ---
     print_success_message()

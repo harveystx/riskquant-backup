@@ -2,21 +2,38 @@
 from __future__ import annotations
 
 from enum import IntEnum
+from re import S
 from typing import Mapping
 
 import numpy as np
 
 
 class ShiftType(IntEnum):
+    NO_SHIFT = -1
     LOG_RETURN = 1
     SIMPLE_RETURN = 2
     DIFFERENCE = 3
 
 
 # Kernel-friendly int8 constants (avoid repeated casts in hot code)
+SHIFT_NO_SHIFT: np.int8 = np.int8(ShiftType.NO_SHIFT)
 SHIFT_LOG_RETURN: np.int8 = np.int8(ShiftType.LOG_RETURN)
 SHIFT_SIMPLE_RETURN: np.int8 = np.int8(ShiftType.SIMPLE_RETURN)
 SHIFT_DIFFERENCE: np.int8 = np.int8(ShiftType.DIFFERENCE)
+
+
+# Names tuple
+SHIFT_TYPE_NAMES: tuple[str, ...] = tuple(
+    method.name.upper() for method in ShiftType
+)
+
+# Registry
+SHIFT_TYPE_REGISTRY: dict[str, np.int8] = {
+    "NO_SHIFT": SHIFT_NO_SHIFT,
+    "LOG_RETURN": SHIFT_LOG_RETURN,
+    "SIMPLE_RETURN": SHIFT_SIMPLE_RETURN,
+    "DIFFERENCE": SHIFT_DIFFERENCE,
+}
 
 
 def validate_shift_types_dict(shift_types_dict: Mapping[str, int]) -> None:

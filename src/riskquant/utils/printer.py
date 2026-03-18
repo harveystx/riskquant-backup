@@ -1,4 +1,4 @@
-# riskquant/utils/printer.py
+# src/riskquant/utils/printer.py
 from datetime import date, datetime
 import math
 import time
@@ -80,9 +80,9 @@ def print_success_message() -> None:
         f"{s}: SUCCESS! CODE RAN SUCCESSFULLY!",
         width=60,
         padding=2,
-        corner_char="*",
-        top_border="=",
-        bottom_border="=",
+        # corner_char="*",
+        # top_border="=",
+        # bottom_border="=",
     )
 
 
@@ -201,3 +201,38 @@ def print_df(
 
     if add_space_after:
         print()
+
+
+def print_calling_file(
+    *,
+    width: int = 70,
+    padding: int = 1,
+    add_space_before: bool = True,
+    add_space_after: bool = True,
+) -> None:
+    """
+    Print the name of the Python file that called this function inside a wrapped text box.
+    """
+    import inspect
+    import os
+
+    frame = inspect.currentframe()
+    try:
+        caller_frame = frame.f_back if frame else None
+        filename = (
+            caller_frame.f_code.co_filename if caller_frame else "<unknown>"
+        )
+        filename = os.path.basename(filename)
+    finally:
+        # Explicitly delete frame references to avoid reference cycles
+        del frame
+
+    dt_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    print_wrapped_text_box(
+        f"{dt_str}: RUNNING FILE: {filename}",
+        width=width,
+        padding=padding,
+        add_space_before=add_space_before,
+        add_space_after=add_space_after,
+    )

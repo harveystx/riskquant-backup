@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 # Ensure these utility functions are available in riskquant.utils.tenors
-from riskquant.config.configs import RiskStaticConfig
+from riskquant.config.static_config.static_config import RiskStaticConfig
 from riskquant.utils.tenors import (
     add_months_to_date_and_return_yyyymm01,
     fmt_date_as_str_yyyymm,
@@ -499,6 +499,43 @@ def build_risk_factor_name_mapping_for_as_of_date(
                 )
                 continue
 
+            # Inside your resolution block in resolution.py:
+
+            elif (
+                rf_tenor_type_name == "TENOR_HY_LABEL"
+                and rf_spot_roll_method == "HALF_YEAR_BY_LABEL"
+            ):
+                # 1. Use the offset we already extracted via parse_bracket_token
+                offset = int(tenor_token_signed_offset)
+
+                # 2. Determine the "current" half-year based on the as-of date
+                current_year = as_of_date.year
+                # If month is 1-6, it's index 0 (FH). If 7-12, it's index 1 (BH).
+                current_half_idx = 0 if as_of_date.month <= 6 else 1
+
+                # 3. Calculate the absolute half-year mathematically
+                total_half_years = (
+                    (current_year * 2) + current_half_idx + offset
+                )
+
+                target_year = total_half_years // 2
+                target_half_idx = total_half_years % 2
+
+                # 4. Map the index back to your specific schema labels
+                target_label = "FH" if target_half_idx == 0 else "BH"
+
+                # 5. Construct the absolute name matching your abs_name_regex
+                rf_abs_name = (
+                    f"{rf_container_name}_{target_year:04d}_{target_label}"
+                )
+
+                # 6. Save it to the mapping dictionary so it isn't lost!
+                abs_to_rel_name_and_id[rf_abs_name] = (
+                    rf_rel_name,
+                    rf_rel_name_id,
+                )
+                continue
+
             else:
                 raise ValueError(
                     "Unsupported OFFSET resolution combination: "
@@ -510,7 +547,3 @@ def build_risk_factor_name_mapping_for_as_of_date(
         as_of_date=as_of_date,
         abs_to_rel_name_and_id=abs_to_rel_name_and_id,
     )
-
-
-if __name__ == "__main__":
-    pass

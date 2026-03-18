@@ -1,21 +1,10 @@
 # src/riskquant/portfolio/compiled.py
-"""
-Compiles IngestBatch SoA containers into runtime-oriented Struct-of-Arrays blocks.
-
-Design goals
-------------
-- Pure C-level NumPy slicing from ingestion to runtime.
-- Zero Python loops over individual trade rows.
-- Immutable compiled runtime container for pricing/risk kernels.
-"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
-from typing import Callable, Optional, TypeAlias
-
-from riskquant.portfolio.compilers.registry import COMPILER_REGISTRY
-from riskquant.portfolio.ingest.batch import IngestBatch
+from dataclasses import dataclass, field
+from typing import Optional, TypeAlias
+import numpy as np
 
 from riskquant.portfolio.blocks.spot_block import SpotBlock
 from riskquant.portfolio.blocks.forward_block import (
@@ -39,18 +28,33 @@ BlockType: TypeAlias = (
     | VanillaEuropeanOptionCurveBlock
 )
 
-# Compilers now take the full batch and return a Block if any trades match.
-CompilerFn: TypeAlias = Callable[[IngestBatch], Optional[BlockType]]
+# ============================================================
+# Field order (CRITICAL for performance)
+# ============================================================
+
+_FIELD_NAMES = (
+    "spot",
+    "forward_node",
+    "forward_curve",
+    "vanilla_european_option_node",
+    "vanilla_european_option_curve",
+)
 
 # ============================================================
 # Runtime container
 # ============================================================
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True)
 class CompiledPortfolio:
     """
     Immutable runtime container of instrument-homogeneous SoA blocks.
+
+    Design:
+    - Zero reflection (no dataclasses.fields usage)
+    - Predictable field order
+    - Fast iteration
+    - Minimal Python overhead
     """
 
     spot: Optional[SpotBlock] = None
@@ -63,41 +67,58 @@ class CompiledPortfolio:
         None
     )
 
+    # Temporal coordinates required by the MarketDataMatrix builder
+    unique_dates_ordinal32: np.ndarray = field(
+        default_factory=lambda: np.empty(0, dtype=np.int32)
+    )
+
+    # ------------------------------------------------------------
+    # Fast iteration (no reflection)
+    # ------------------------------------------------------------
     def iter_blocks(self) -> tuple[BlockType, ...]:
         """
-        Return all non-None blocks in a stable field order.
+        Return all non-None blocks in stable order.
         """
-        blocks: list[BlockType] = []
-        for f in fields(self):
-            block = getattr(self, f.name)
-            if block is not None:
-                blocks.append(block)
-        return tuple(blocks)
+        return tuple(
+            block
+            for name in _FIELD_NAMES
+            if (block := getattr(self, name)) is not None
+        )
 
+    # ------------------------------------------------------------
+    # Fast aggregate metrics
+    # ------------------------------------------------------------
     @property
     def total_trades(self) -> int:
         """
         Total number of trades across all compiled blocks.
         """
         total = 0
-        for block in self.iter_blocks():
-            total += len(block.trade_uids)
+        for name in _FIELD_NAMES:
+            block = getattr(self, name)
+            if block is not None:
+                total += len(block.trade_uids)
         return total
 
+    # ------------------------------------------------------------
+    # Constructor helper (avoids kwargs overhead)
+    # ------------------------------------------------------------
     @classmethod
-    def from_ingest_batch(
-        cls,
-        batch: IngestBatch,
+    def from_compiled_fields(
+        cls, compiled_fields: dict[str, BlockType], unique_dates: np.ndarray
     ) -> "CompiledPortfolio":
         """
-        Consume a validated SoA IngestBatch and compile it directly into SoA blocks
-        using vectorized NumPy masking. Zero scalar instantiation.
+        Fast construction from dict without dynamic kwargs overhead.
         """
-        compiled_fields: dict[str, Optional[BlockType]] = {}
-
-        # Dispatch the full batch to every compiler in the registry.
-        # The compiler will apply its own boolean mask and slice the arrays.
-        for instrument_id, spec in COMPILER_REGISTRY.items():
-            compiled_fields[spec.field_name] = spec.compiler(batch)
-
-        return cls(**compiled_fields)
+        return cls(
+            spot=compiled_fields.get("spot"),
+            forward_node=compiled_fields.get("forward_node"),
+            forward_curve=compiled_fields.get("forward_curve"),
+            vanilla_european_option_node=compiled_fields.get(
+                "vanilla_european_option_node"
+            ),
+            vanilla_european_option_curve=compiled_fields.get(
+                "vanilla_european_option_curve"
+            ),
+            unique_dates_ordinal32=unique_dates,
+        )

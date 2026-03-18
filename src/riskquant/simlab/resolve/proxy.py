@@ -6,7 +6,7 @@ from typing import Dict, Final, Tuple
 
 import numpy as np
 
-from riskquant.config.deprecated_configs import RiskStaticConfig
+from riskquant.config.static_config.static_config import RiskStaticConfig
 from riskquant.exceptions import PrettyKeyError
 from riskquant.utils.tenors import parse_bracket_token
 
@@ -19,14 +19,14 @@ RES_NOT_SIMULATED: Final[np.int8] = np.int8(-1)
 RES_DIRECT: Final[np.int8] = np.int8(0)
 RES_TENOR_FALLBACK: Final[np.int8] = np.int8(1)
 RES_ID_PROXY: Final[np.int8] = np.int8(2)
-RES_CURVE_PROXY: Final[np.int8] = np.int8(3)
+RES_CONTAINER_PROXY: Final[np.int8] = np.int8(3)
 
 # ======================================================= #
 # --- COMPILED OUTPUT: REQUIRED -> SOURCE (PROXY) MAP --- #
 # ======================================================= #
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ProxyResolution:
     """
     Compiled proxy mapping between portfolio-required risk factors and
@@ -77,10 +77,11 @@ class ProxyResolution:
     resolution_code : (N,) int8
         Per-required-id resolution type code:
 
-          - RES_DIRECT        (0): required_id exists directly in market data universe B
-          - RES_ID_PROXY      (2): explicit ID-level proxy (risk_factor_proxies) applied
-          - RES_CURVE_PROXY   (3): explicit curve-level proxy (curve_proxies) applied
-          - RES_TENOR_FALLBACK(1): same-curve nearest-tenor fallback within B applied
+          - RES_NOT_SIMULATED     (-1): required_id is not simulated (e.g. shift type = "none")
+          - RES_DIRECT            (0): required_id exists directly in market data universe B
+          - RES_TENOR_FALLBACK    (1): same-container nearest-tenor fallback within B applied
+          - RES_ID_PROXY          (2): explicit ID-level proxy (risk_factor_proxies) applied
+          - RES_CONTAINER_PROXY   (3): explicit container-level proxy (container_proxies) applied
     """
 
     # Attribute list
@@ -106,7 +107,7 @@ def _nearest_offset_match(
     """
     Nearest neighbor selection on signed OFFSET tenors.
 
-    - offsets_sorted: sorted int32 offsets for proxy curve
+    - offsets_sorted: sorted int32 offsets for proxy container, aligned with rf_ids_sorted
     - rf_ids_sorted:  rf_id aligned with offsets_sorted
     - target:         required signed offset to match
 
@@ -126,24 +127,24 @@ def _nearest_offset_match(
     return int(rf_ids_sorted[j])
 
 
-def _build_available_curve_tenor_index(
+def _build_available_container_tenor_index(
     *,
     cfg: RiskStaticConfig,
     market_data_factor_ids: np.ndarray,  # (Nb,) int32 (B)
 ) -> Dict[str, Tuple[np.ndarray, np.ndarray, Dict[str, int]]]:
     """
-    Build a per-curve tenor lookup restricted to the IDs that actually exist in market data (B).
+    Build a per-container tenor lookup restricted to the IDs that actually exist in market data (B).
 
     Output:
-        curve_name -> (offsets_sorted, rf_ids_sorted, label_to_rf_id)
+        container_name -> (offsets_sorted, rf_ids_sorted, label_to_rf_id)
 
-    This is used for the default "same-curve extrapolation" behavior:
-      - if required_id is missing in B but the curve exists in B, match to nearest tenor on the same curve.
+    This is used for the default "same-container extrapolation" behavior:
+      - if required_id is missing in B but the container exists in B, match to nearest tenor on the same container.
 
     Notes (CPU/RAM):
-      - Allocates small per-curve Python lists/dicts, proportional to Nb (market data size), not config size.
-      - Uses cfg.rf_id_to_risk_factor for O(1) id -> (curve, tenor_token).
-      - Sorting is per-curve and typically small.
+      - Allocates small per-container Python lists/dicts, proportional to Nb (market data size), not config size.
+      - Uses cfg.rf_id_to_risk_factor for O(1) id -> (container, tenor_token).
+      - Sorting is per-container and typically small.
     """
     # --- COLLECT OFFSETS + LABELS FOR IDS PRESENT IN MARKET DATA --- #
     offsets: Dict[str, list[int]] = {}
@@ -157,41 +158,41 @@ def _build_available_curve_tenor_index(
         rf = rf_by_id.get(rid)
         if rf is None:
             # Market data contains an id unknown to config: fail-fast, because
-            # tenor/curve matching is undefined without config metadata.
+            # tenor/container matching is undefined without config metadata.
             raise PrettyKeyError(
                 f"market_data_factor_id not found in config: {rid}"
             )
 
-        curve = rf.container_name
+        container = rf.container_name
         tok = rf.tenor_token
 
         if tok is None:
             # NONE tenor => empty label key
-            labels.setdefault(curve, {})[""] = rid
+            labels.setdefault(container, {})[""] = rid
             continue
 
         unit, off = parse_bracket_token(tok)
         if off is None:
             # LABEL tenor => exact label match
-            labels.setdefault(curve, {})[unit] = rid
+            labels.setdefault(container, {})[unit] = rid
         else:
             # OFFSET tenor => nearest neighbor match
-            offsets.setdefault(curve, []).append(int(off))
-            offset_ids.setdefault(curve, []).append(rid)
+            offsets.setdefault(container, []).append(int(off))
+            offset_ids.setdefault(container, []).append(rid)
 
     # --- MATERIALIZE SORTED ARRAYS PER CURVE --- #
     out: Dict[str, Tuple[np.ndarray, np.ndarray, Dict[str, int]]] = {}
 
-    for curve, olist in offsets.items():
-        ids_list = offset_ids[curve]
+    for container, olist in offsets.items():
+        ids_list = offset_ids[container]
         o = np.asarray(olist, dtype=np.int32)
         r = np.asarray(ids_list, dtype=np.int32)
         idx = np.argsort(o, kind="mergesort")  # deterministic ties
-        out[curve] = (o[idx], r[idx], labels.get(curve, {}))
+        out[container] = (o[idx], r[idx], labels.get(container, {}))
 
-    for curve, d in labels.items():
-        if curve not in out:
-            out[curve] = (
+    for container, d in labels.items():
+        if container not in out:
+            out[container] = (
                 np.empty(0, dtype=np.int32),
                 np.empty(0, dtype=np.int32),
                 d,
@@ -224,20 +225,20 @@ def resolve_required_factor_ids_to_market_data_factor_ids(
       (2) ID-level proxy (explicit, highest override):
             - cfg.rf_id_to_proxy_rf_id[required_id] -> (proxy_id, scale)
 
-      (3) Curve-level proxy (explicit, second override):
-            - map required curve -> proxy curve via cfg.curve_proxies_dict
-            - match tenor on proxy curve (LABEL exact match; OFFSET nearest match)
-            - apply curve-level scaling factor
+      (3) Container-level proxy (explicit, second override):
+            - map required container -> proxy container via cfg.container_proxies_dict
+            - match tenor on proxy container (LABEL exact match; OFFSET nearest match)
+            - apply container-level scaling factor
 
-      (4) Same-curve tenor fallback (default extrapolation, lowest priority):
-            - if required_id missing but the curve exists in B, match tenor on the *same* curve
+      (4) Same-container tenor fallback (default extrapolation, lowest priority):
+            - if required_id missing but the container exists in B, match tenor on the *same* container
               (LABEL exact match; OFFSET nearest match, including extrapolation to end points)
             - scale = 1.0
 
     IMPORTANT DESIGN RULE:
       - This resolver selects *data sources only*.
       - Any metadata (ccy / shift type / risk factor group) must come from the
-        *required* curve later, not from the proxy curve.
+        *required* container later, not from the proxy container.
     """
 
     # --- SMOKE TESTS --- #
@@ -263,22 +264,22 @@ def resolve_required_factor_ids_to_market_data_factor_ids(
     # Local bindings reduce attribute resolution overhead inside the per-id loop.
     id_proxy_get = cfg.rf_id_to_proxy_rf_id.get
     rf_by_id = cfg.rf_id_to_risk_factor
-    curve_proxy_get = cfg.curve_proxies_dict.get
+    container_proxy_get = cfg.container_proxies_dict.get
 
-    # --- BUILD MARKET-DATA-RESTRICTED CURVE INDEX (FOR CURVE PROXY + TENOR FALLBACK) --- #
+    # --- BUILD MARKET-DATA-RESTRICTED CONTAINER INDEX (FOR CONTAINER PROXY + TENOR FALLBACK) --- #
     #
     # Critical design rule:
     #   Any chosen source_id must exist in market data universe B.
     # Therefore:
-    #   - same-curve fallback matches tenors using only IDs that exist in B
-    #   - curve-level proxy also matches tenors using only IDs that exist in B
+    #   - same-container fallback matches tenors using only IDs that exist in B
+    #   - container-level proxy also matches tenors using only IDs that exist in B
     #
     # This prevents "config-only" proxy IDs that are absent from market data.
-    avail_curve_index = _build_available_curve_tenor_index(
+    avail_container_index = _build_available_container_tenor_index(
         cfg=cfg,
         market_data_factor_ids=market_data_factor_ids,
     )
-    avail_curve_index_get = avail_curve_index.get
+    avail_container_index_get = avail_container_index.get
 
     # --- OUTPUT ARRAYS --- #
     num_required_ids = int(required_factor_ids.shape[0])
@@ -305,16 +306,16 @@ def resolve_required_factor_ids_to_market_data_factor_ids(
         # --- (0) REQUIRED METADATA LOOKUP (CURVE + TENOR TOKEN) --- #
         # ============================================================ #
         #
-        # We need curve_name and tenor_token for:
-        #   - curve-level proxy tenor matching
-        #   - same-curve tenor fallback matching
+        # We need container_name and tenor_token for:
+        #   - container-level proxy tenor matching
+        #   - same-container tenor fallback matching
         rf = rf_by_id.get(required_id)
         if rf is None:
             raise PrettyKeyError(
                 f"Required factor_id not found in config: {required_id}"
             )
 
-        required_curve = rf.container_name
+        required_container = rf.container_name
         tok = rf.tenor_token
         if tok is None:
             target_unit = ""
@@ -348,62 +349,62 @@ def resolve_required_factor_ids_to_market_data_factor_ids(
                     raise PrettyKeyError(
                         "ID-level proxy resolved to missing market data factor_id:\n"
                         f"- required_id={required_id}\n"
-                        f"- required_curve={required_curve!r}\n"
+                        f"- required_container={required_container!r}\n"
                         f"- proxy_id={source_id}\n"
                     )
 
             else:
                 # ===================================================== #
-                # --- (3) CURVE-LEVEL PROXY (EXPLICIT OVERRIDE) --- #
+                # --- (3) CONTAINER-LEVEL PROXY (EXPLICIT OVERRIDE) --- #
                 # ===================================================== #
                 #
-                # Second priority override: if the curve has been configured to proxy
-                # onto another curve, use that proxy curve's data + tenor matching.
-                cp = curve_proxy_get(required_curve)
+                # Second priority override: if the container has been configured to proxy
+                # onto another container, use that proxy container's data + tenor matching.
+                cp = container_proxy_get(required_container)
                 if cp is not None:
-                    proxy_curve = cp.proxy_curve_name
-                    curve_scale = float(
-                        cp.proxy_curve_vol_scaling_factor or 1.0
+                    proxy_container = cp.proxy_container_name
+                    container_scale = float(
+                        cp.proxy_container_vol_scaling_factor or 1.0
                     )
 
-                    # --- MARKET-DATA-RESTRICTED TENOR MATCH ON PROXY CURVE --- #
+                    # --- MARKET-DATA-RESTRICTED TENOR MATCH ON PROXY CONTAINER --- #
                     #
-                    # We match on proxy_curve using only IDs that exist in B, otherwise
+                    # We match on proxy_container using only IDs that exist in B, otherwise
                     # we'd select an ID not present in the matrix (the original bug).
-                    ci_px = avail_curve_index_get(proxy_curve)
+                    ci_px = avail_container_index_get(proxy_container)
                     if ci_px is None:
                         raise PrettyKeyError(
-                            "Curve-level proxy curve has no market data coverage:\n"
+                            "Container-level proxy container has no market data coverage:\n"
                             f"- required_id={required_id}\n"
-                            f"- required_curve={required_curve!r}\n"
-                            f"- proxy_curve={proxy_curve!r}\n"
+                            f"- required_container={required_container!r}\n"
+                            f"- proxy_container={proxy_container!r}\n"
                             f"- tenor_token={tok!r}\n"
                         )
 
                     offsets_sorted_px, rf_ids_sorted_px, label_map_px = ci_px
 
-                    # LABEL/NONE tenor: exact label match on proxy curve (within B)
+                    # LABEL/NONE tenor: exact label match on proxy container (within B)
                     if target_off is None:
                         sid2 = label_map_px.get(target_unit)
                         if sid2 is None:
                             raise PrettyKeyError(
-                                "Cannot proxy LABEL/NONE tenor onto proxy curve (no matching label in market data):\n"
+                                "Cannot proxy LABEL/NONE tenor onto proxy container (no matching label in market data):\n"
                                 f"- required_id={required_id}\n"
-                                f"- required_curve={required_curve!r}\n"
-                                f"- proxy_curve={proxy_curve!r}\n"
+                                f"- required_container={required_container!r}\n"
+                                f"- proxy_container={proxy_container!r}\n"
                                 f"- tenor_token={tok!r}\n"
                                 f"- label={target_unit!r}\n"
                             )
                         source_id = int(sid2)
 
-                    # OFFSET tenor: nearest signed offset match on proxy curve (within B)
+                    # OFFSET tenor: nearest signed offset match on proxy container (within B)
                     else:
                         if offsets_sorted_px.shape[0] == 0:
                             raise PrettyKeyError(
-                                "Proxy curve has no OFFSET tenors in market data to match required tenor:\n"
+                                "Proxy container has no OFFSET tenors in market data to match required tenor:\n"
                                 f"- required_id={required_id}\n"
-                                f"- required_curve={required_curve!r}\n"
-                                f"- proxy_curve={proxy_curve!r}\n"
+                                f"- required_container={required_container!r}\n"
+                                f"- proxy_container={proxy_container!r}\n"
                                 f"- tenor_token={tok!r}\n"
                             )
                         source_id = _nearest_offset_match(
@@ -415,57 +416,57 @@ def resolve_required_factor_ids_to_market_data_factor_ids(
                     # Defensive: should always be in B by construction.
                     if avail_get(source_id) is None:
                         raise PrettyKeyError(
-                            "Internal error: curve-level proxy produced id not in market data:\n"
+                            "Internal error: container-level proxy produced id not in market data:\n"
                             f"- required_id={required_id}\n"
-                            f"- required_curve={required_curve!r}\n"
-                            f"- proxy_curve={proxy_curve!r}\n"
+                            f"- required_container={required_container!r}\n"
+                            f"- proxy_container={proxy_container!r}\n"
                             f"- proxy_id={source_id}\n"
                         )
 
-                    sc = curve_scale
-                    rc = RES_CURVE_PROXY
+                    sc = container_scale
+                    rc = RES_CONTAINER_PROXY
 
                 else:
                     # =============================================================== #
-                    # --- (4) SAME-CURVE TENOR FALLBACK (DEFAULT EXTRAPOLATION) --- #
+                    # --- (4) SAME-C CONTAINER TENOR FALLBACK (DEFAULT EXTRAPOLATION) --- #
                     # =============================================================== #
                     #
-                    # Lowest priority behavior: if we have the curve in market data but
+                    # Lowest priority behavior: if we have the container in market data but
                     # not the exact tenor point, map to the nearest available tenor on
-                    # the *same curve within B* (end-point extrapolation by selection).
-                    ci_av = avail_curve_index_get(required_curve)
+                    # the *same container within B* (end-point extrapolation by selection).
+                    ci_av = avail_container_index_get(required_container)
                     if ci_av is None:
                         raise PrettyKeyError(
                             "Missing history for required_id and no proxy configured:\n"
                             f"- required_id={required_id}\n"
-                            f"- required_curve={required_curve!r}\n"
+                            f"- required_container={required_container!r}\n"
                             f"- tenor_token={tok!r}\n"
-                            "No ID proxy, no curve proxy, and curve not present in market data universe.\n"
+                            "No ID proxy, no container proxy, and container not present in market data universe.\n"
                         )
 
                     offsets_sorted, rf_ids_sorted, label_map = ci_av
 
-                    # LABEL/NONE tenor: exact label match on same curve (within B)
+                    # LABEL/NONE tenor: exact label match on same container (within B)
                     if target_off is None:
                         sid2 = label_map.get(target_unit)
                         if sid2 is None:
                             raise PrettyKeyError(
-                                "Same-curve fallback failed for LABEL/NONE tenor:\n"
+                                "Same-container fallback failed for LABEL/NONE tenor:\n"
                                 f"- required_id={required_id}\n"
-                                f"- required_curve={required_curve!r}\n"
+                                f"- required_container={required_container!r}\n"
                                 f"- tenor_token={tok!r}\n"
                                 f"- label={target_unit!r}\n"
-                                "Curve exists in market data, but no matching label exists.\n"
+                                "Container exists in market data, but no matching label exists.\n"
                             )
                         source_id = int(sid2)
 
-                    # OFFSET tenor: nearest signed offset match on same curve (within B)
+                    # OFFSET tenor: nearest signed offset match on same container (within B)
                     else:
                         if offsets_sorted.shape[0] == 0:
                             raise PrettyKeyError(
-                                "Same-curve fallback failed: curve has no OFFSET tenors in market data:\n"
+                                "Same-container fallback failed: container has no OFFSET tenors in market data:\n"
                                 f"- required_id={required_id}\n"
-                                f"- required_curve={required_curve!r}\n"
+                                f"- required_container={required_container!r}\n"
                                 f"- tenor_token={tok!r}\n"
                             )
                         source_id = _nearest_offset_match(
@@ -477,9 +478,9 @@ def resolve_required_factor_ids_to_market_data_factor_ids(
                     # Defensive: should always be in B by construction.
                     if avail_get(source_id) is None:
                         raise PrettyKeyError(
-                            "Internal error: same-curve fallback produced id not in market data:\n"
+                            "Internal error: same-container fallback produced id not in market data:\n"
                             f"- required_id={required_id}\n"
-                            f"- required_curve={required_curve!r}\n"
+                            f"- required_container={required_container!r}\n"
                             f"- resolved_source_id={source_id}\n"
                         )
 

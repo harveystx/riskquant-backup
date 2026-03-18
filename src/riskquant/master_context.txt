@@ -2,19 +2,29 @@
 
 ### DIRECTORY STRUCTURE & FILES INCLUDED ###
 - config\__init__.py
-- config\builder.py
-- config\compile.py
-- config\configs.py
-- config\loader.py
-- config\resolution.py
-- config\schema_objects.py
-- config\validate.py
+- config\proxy_config\__init__.py
+- config\proxy_config\builder.py
+- config\proxy_config\compile.py
+- config\proxy_config\loader.py
+- config\proxy_config\proxy_config.py
+- config\proxy_config\schema_objects.py
+- config\proxy_config\validate.py
+- config\static_config\__init__.py
+- config\static_config\builder.py
+- config\static_config\compile.py
+- config\static_config\loader.py
+- config\static_config\resolution.py
+- config\static_config\schema_objects.py
+- config\static_config\static_config.py
+- config\static_config\validate.py
 - constants.py
-- exceptions.py
 - market_data\__init__.py
+- market_data\builder.py
 - market_data\curves\__init__.py
-- market_data\curves\extrapolation_methods.py
-- market_data\curves\interpolation_methods.py
+- market_data\curves\extrap_methods.py
+- market_data\curves\interp_defs.py
+- market_data\curves\interp_dispatch.py
+- market_data\curves\interp_methods.py
 - market_data\risk_factors\__init__.py
 - market_data\risk_factors\builder_matrix.py
 - market_data\risk_factors\builder_snapshot.py
@@ -22,8 +32,11 @@
 - market_data\risk_factors\matrix.py
 - market_data\risk_factors\shift_types.py
 - market_data\risk_factors\snapshot.py
+- market_data\state.py
+- market_data\surfaces\y_axes_types.py
 - portfolio\__init__.py
 - portfolio\blocks\__init__.py
+- portfolio\blocks\base_block.py
 - portfolio\blocks\forward_block.py
 - portfolio\blocks\spot_block.py
 - portfolio\blocks\vanilla_european_option_block.py
@@ -34,6 +47,7 @@
 - portfolio\compilers\instruments\spot.py
 - portfolio\compilers\instruments\vanilla_european_option.py
 - portfolio\compilers\registry.py
+- portfolio\engine.py
 - portfolio\fx.py
 - portfolio\ingest\__init__.py
 - portfolio\ingest\batch.py
@@ -46,12 +60,20 @@
 - portfolio\instruments.py
 - portfolio\pnl\__init__.py
 - portfolio\pnl\results.py
-- rq_logging.py
 - utils\__init__.py
 - utils\dates.py
 - utils\memory.py
 - utils\printer.py
 - utils\tenors.py
+- valuation\__init__.py
+- valuation\engine.py
+- valuation\models\black_scholes.py
+- valuation\pricers\__init__.py
+- valuation\pricers\forward_curve.py
+- valuation\pricers\forward_node.py
+- valuation\pricers\spot.py
+- valuation\pricers\vanilla_european_option_curve.py
+- valuation\pricers\vanilla_european_option_node.py
 
 ============================================================
 
@@ -60,7 +82,479 @@
 # src/riskquant/config/__init__.py
 ```
 
-### FILE: config\builder.py ###
+### FILE: config\proxy_config\__init__.py ###
+```python
+
+```
+
+### FILE: config\proxy_config\builder.py ###
+```python
+# src/riskquant/config/proxy_config/builder.py
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Dict, Union
+
+import pandas as pd
+
+from riskquant.config.static_config.static_config import RiskStaticConfig
+from riskquant.config.proxy_config.schema_objects import ProxyMap
+from riskquant.config.proxy_config.proxy_config import ProxyTopology
+from riskquant.config.proxy_config.loader import load_proxy_config_xlsx_into_df
+from riskquant.exceptions import PrettyKeyError
+
+
+def build_proxy_topology_from_df(
+    df: pd.DataFrame,
+    static_config: RiskStaticConfig,
+) -> ProxyTopology:
+    """
+    Parses a unified proxy mapping dataframe into a ProxyTopology,
+    using RiskStaticConfig to validate names and look up integer IDs.
+    """
+    container_proxies: Dict[str, ProxyMap] = {}
+    rf_proxies: Dict[str, ProxyMap] = {}
+
+    # Iterate and route to the correct dictionary
+    # (Note: df is assumed to be pre-filtered for active rows by the loader)
+    for _, row in df.iterrows():
+        level = str(row["proxying_level"]).strip().lower()
+        req_name = str(row["required_name"]).strip()
+        proxy_name = str(row["proxy_name"]).strip()
+
+        # Safely handle the optional scaling factor
+        vol_scale = row.get("vol_scaling_factor")
+        vol_scale = (
+            1.0 if pd.isna(vol_scale) or vol_scale is None else float(vol_scale)
+        )
+
+        if level == "container":
+            # Validate against static config
+            if req_name not in static_config.container_name_to_container_id:
+                raise PrettyKeyError(
+                    f"Proxy Config Error: required_name '{req_name}' not found in static container metadata."
+                )
+            if proxy_name not in static_config.container_name_to_container_id:
+                raise PrettyKeyError(
+                    f"Proxy Config Error: proxy_name '{proxy_name}' not found in static container metadata."
+                )
+
+            container_proxies[req_name] = ProxyMap(
+                proxying_level="container",
+                required_name=req_name,
+                proxy_name=proxy_name,
+                vol_scaling_factor=vol_scale,
+            )
+
+        elif level == "risk_factor":
+            # Validate against static config
+            if req_name not in static_config.rf_name_to_rf_id:
+                raise PrettyKeyError(
+                    f"Proxy Config Error: required_name '{req_name}' not found in static risk factors."
+                )
+            if proxy_name not in static_config.rf_name_to_rf_id:
+                raise PrettyKeyError(
+                    f"Proxy Config Error: proxy_name '{proxy_name}' not found in static risk factors."
+                )
+
+            rf_proxies[req_name] = ProxyMap(
+                proxying_level="risk_factor",
+                required_name=req_name,
+                proxy_name=proxy_name,
+                vol_scaling_factor=vol_scale,
+            )
+
+        else:
+            raise ValueError(
+                f"Unknown proxying_level '{level}' for '{req_name}'. "
+                "Must be strictly 'container' or 'risk_factor'."
+            )
+
+    # Construct the topology (which pre-compiles the C-level int maps)
+    return ProxyTopology.build(
+        container_proxies=container_proxies,
+        rf_proxies=rf_proxies,
+        container_name_to_container_id=static_config.container_name_to_container_id,
+        rf_name_to_rf_id=static_config.rf_name_to_rf_id,
+    )
+
+
+# def build_proxy_topology_from_xlsx(
+#     path: Union[str, Path],
+#     static_config: RiskStaticConfig,
+#     sheet_name: str = "proxy_config",
+# ) -> ProxyTopology:
+#     """
+#     Convenience loader to read the proxy Excel sheet and build the topology.
+#     """
+#     df = load_proxy_config_xlsx_into_df(path=path, sheet_name=sheet_name)
+#     return build_proxy_topology_from_df(df, static_config)
+
+```
+
+### FILE: config\proxy_config\compile.py ###
+```python
+# src/riskquant/config/proxy_config/compile.py
+from __future__ import annotations
+from pathlib import Path
+from typing import Optional, Union
+
+from riskquant.config.static_config.static_config import RiskStaticConfig
+from riskquant.config.proxy_config.proxy_config import ProxyTopology
+from riskquant.config.proxy_config.loader import load_proxy_config_xlsx_into_df
+from riskquant.config.proxy_config.validate import (
+    validate_proxy_config_df,
+)
+from riskquant.config.proxy_config.builder import build_proxy_topology_from_df
+
+
+def compile_proxy_topology_from_xlsx(
+    path: Union[str, Path],
+    static_config: RiskStaticConfig,
+    sheet_name: Optional[str] = "proxy_config",
+) -> ProxyTopology:
+
+    # 1. Load the active proxy config rows into a DataFrame.
+    proxy_df = load_proxy_config_xlsx_into_df(path=path, sheet_name=sheet_name)
+
+    # 2. Vectorized fail-fast validation of the raw DataFrame schema and logic.
+    validate_proxy_config_df(proxy_df)
+
+    # 3. Build the topology, validating against the static config and compiling C-level int maps.
+    topology = build_proxy_topology_from_df(
+        df=proxy_df,
+        static_config=static_config,
+    )
+
+    # Return the compiled topology object, ready for use in the system.
+    return topology
+
+```
+
+### FILE: config\proxy_config\loader.py ###
+```python
+# src/riskquant/config/proxy_config/loader.py
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Optional, Union
+
+import pandas as pd
+
+
+def load_proxy_config_xlsx_into_df(
+    *,
+    path: Union[str, Path],
+    sheet_name: Optional[str] = "proxy_config",
+) -> pd.DataFrame:
+    """
+    Load proxy configuration from Excel and return active rows only.
+    """
+
+    path_str = str(path)
+
+    with pd.ExcelFile(path_str, engine="openpyxl") as xls:
+        available = xls.sheet_names
+
+        if sheet_name is not None and sheet_name not in available:
+            raise ValueError(
+                f"Missing required sheet '{sheet_name}' in '{path_str}'. "
+                f"Available sheets: {available}"
+            )
+
+        df = pd.read_excel(xls, sheet_name=sheet_name)
+
+    df = df.convert_dtypes()
+
+    if "is_active" in df.columns:
+        mask = df["is_active"].fillna(False).astype(bool)
+        if mask.any():
+            df = df[mask]
+            df = df.drop(columns=["is_active"])
+            df = df.reset_index(drop=True)
+
+    return df
+
+```
+
+### FILE: config\proxy_config\proxy_config.py ###
+```python
+# src/riskquant/config/proxy_config/proxy_config.py
+
+from __future__ import annotations
+from dataclasses import dataclass
+from typing import Dict, Optional, Tuple
+
+import pandas as pd
+
+from riskquant.config.proxy_config.schema_objects import ProxyMap
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ProxyTopology:
+    """
+    Immutable container for proxy mappings.
+    Maintains both the human-readable string maps and the compiled integer maps
+    required for fast C-level kernel execution.
+    """
+
+    container_proxies_dict: Dict[str, ProxyMap]
+    risk_factor_proxies_dict: Dict[str, ProxyMap]
+
+    # Stored lightweight mappings for easy dataframe visualization and override resolution
+    container_name_to_container_id: Dict[str, int]
+    rf_name_to_rf_id: Dict[str, int]
+
+    # Pre-compiled for O(1) integer kernel access: required_id -> (proxy_id, scaling_factor)
+    container_id_to_proxy_container_id: Dict[int, Tuple[int, float]]
+    rf_id_to_proxy_rf_id: Dict[int, Tuple[int, float]]
+
+    @classmethod
+    def build(
+        cls,
+        container_proxies: Dict[str, ProxyMap],
+        rf_proxies: Dict[str, ProxyMap],
+        container_name_to_container_id: Dict[str, int],
+        rf_name_to_rf_id: Dict[str, int],
+    ) -> "ProxyTopology":
+        """Factory method to construct ProxyTopology with pre-compiled integer maps."""
+
+        # Build container ID to proxy container ID map (including multiplier)
+        container_id_to_proxy_container_id = {
+            container_name_to_container_id[cp.required_name]: (
+                container_name_to_container_id[cp.proxy_name],
+                float(
+                    cp.vol_scaling_factor
+                    if cp.vol_scaling_factor is not None
+                    else 1.0
+                ),
+            )
+            for cp in container_proxies.values()
+        }
+
+        # Build risk factor ID to proxy risk factor ID map (including multiplier)
+        rf_id_to_proxy_rf_id = {
+            rf_name_to_rf_id[rp.required_name]: (
+                rf_name_to_rf_id[rp.proxy_name],
+                float(
+                    rp.vol_scaling_factor
+                    if rp.vol_scaling_factor is not None
+                    else 1.0
+                ),
+            )
+            for rp in rf_proxies.values()
+        }
+
+        return cls(
+            container_proxies_dict=container_proxies,
+            risk_factor_proxies_dict=rf_proxies,
+            container_name_to_container_id=container_name_to_container_id,
+            rf_name_to_rf_id=rf_name_to_rf_id,
+            container_id_to_proxy_container_id=container_id_to_proxy_container_id,
+            rf_id_to_proxy_rf_id=rf_id_to_proxy_rf_id,
+        )
+
+    def with_overrides(
+        self,
+        container_proxy_overrides: Optional[Dict[str, ProxyMap]] = None,
+        rf_proxy_overrides: Optional[Dict[str, ProxyMap]] = None,
+        # Optional updated mappings, defaults to existing ones if not provided
+        container_name_to_container_id: Optional[Dict[str, int]] = None,
+        rf_name_to_rf_id: Optional[Dict[str, int]] = None,
+    ) -> "ProxyTopology":
+        """
+        Creates a new ProxyTopology by safely layering overrides on top of the base defaults.
+        Recompiles the fast integer maps automatically.
+        """
+        new_containers = dict(self.container_proxies_dict)
+        if container_proxy_overrides:
+            new_containers.update(container_proxy_overrides)
+
+        new_rfs = dict(self.risk_factor_proxies_dict)
+        if rf_proxy_overrides:
+            new_rfs.update(rf_proxy_overrides)
+
+        return ProxyTopology.build(
+            container_proxies=new_containers,
+            rf_proxies=new_rfs,
+            container_name_to_container_id=container_name_to_container_id
+            or self.container_name_to_container_id,
+            rf_name_to_rf_id=rf_name_to_rf_id or self.rf_name_to_rf_id,
+        )
+
+    def to_df(self) -> pd.DataFrame:
+        """
+        Consolidates both container and risk factor proxies into a single
+        pandas DataFrame for easy visualization and auditing.
+        """
+        records = []
+
+        # Process container proxies
+        for cp in self.container_proxies_dict.values():
+            records.append(
+                {
+                    "proxying_level": cp.proxying_level,
+                    "required_name": cp.required_name,
+                    "required_name_id": self.container_name_to_container_id[
+                        cp.required_name
+                    ],
+                    "proxy_name": cp.proxy_name,
+                    "proxy_name_id": self.container_name_to_container_id[
+                        cp.proxy_name
+                    ],
+                    "vol_scaling_factor": float(
+                        cp.vol_scaling_factor
+                        if cp.vol_scaling_factor is not None
+                        else 1.0
+                    ),
+                }
+            )
+
+        # Process risk factor proxies
+        for rp in self.risk_factor_proxies_dict.values():
+            records.append(
+                {
+                    "proxying_level": rp.proxying_level,
+                    "required_name": rp.required_name,
+                    "required_name_id": self.rf_name_to_rf_id[rp.required_name],
+                    "proxy_name": rp.proxy_name,
+                    "proxy_name_id": self.rf_name_to_rf_id[rp.proxy_name],
+                    "vol_scaling_factor": float(
+                        rp.vol_scaling_factor
+                        if rp.vol_scaling_factor is not None
+                        else 1.0
+                    ),
+                }
+            )
+
+        df = pd.DataFrame(
+            records,
+            columns=[
+                "proxying_level",
+                "required_name",
+                "required_name_id",
+                "proxy_name",
+                "proxy_name_id",
+                "vol_scaling_factor",
+            ],
+        )
+        return df
+
+    @property
+    def df(self) -> pd.DataFrame:
+        """Alias for .to_df() for quick notebook access."""
+        return self.to_df()
+
+```
+
+### FILE: config\proxy_config\schema_objects.py ###
+```python
+# src/riskquant/config/proxy_config/schema_objects.py
+
+
+from dataclasses import dataclass
+
+from typing import Optional
+
+
+@dataclass(frozen=True, slots=True)
+class ProxyMap:
+    proxying_level: str  # "container" or "risk_factor"
+    required_name: str
+    proxy_name: str
+    vol_scaling_factor: Optional[float]
+
+```
+
+### FILE: config\proxy_config\validate.py ###
+```python
+# src/riskquant/config/proxy_config/validate.py
+
+import pandas as pd
+
+
+def validate_proxy_config_df(df: pd.DataFrame) -> None:
+    """
+    Performs vectorized validation on the raw proxy configuration DataFrame.
+    Checks for schema correctness, uniqueness constraints, and logical errors.
+
+    Args:
+        df: The active rows of the proxy configuration DataFrame.
+
+    Raises:
+        ValueError: If any validation constraints are violated.
+    """
+    if df.empty:
+        return  # An empty proxy map is valid (no proxies applied)
+
+    # 1. Check Required Columns
+    required_columns = {"proxying_level", "required_name", "proxy_name"}
+    missing_cols = required_columns - set(df.columns)
+    if missing_cols:
+        raise ValueError(
+            f"Proxy config validation failed: Missing required columns {missing_cols}. "
+            f"Found columns: {list(df.columns)}"
+        )
+
+    # 2. Check for Missing/Null Values in Key Columns
+    has_nulls = (
+        df[["proxying_level", "required_name", "proxy_name"]].isnull().any()
+    )
+    if has_nulls.any():
+        null_cols = has_nulls[has_nulls].index.tolist()
+        raise ValueError(
+            f"Proxy config validation failed: Found null values in required columns: {null_cols}. "
+            "Names and proxying levels cannot be blank."
+        )
+
+    # 3. Check Domain Constraints on proxying_level
+    valid_levels = {"container", "risk_factor"}
+    invalid_levels = df[~df["proxying_level"].isin(valid_levels)]
+    if not invalid_levels.empty:
+        bad_values = invalid_levels["proxying_level"].unique().tolist()
+        raise ValueError(
+            f"Proxy config validation failed: Invalid proxying_level(s) found: {bad_values}. "
+            f"Must be one of {valid_levels}."
+        )
+
+    # 4. Check Uniqueness Constraints
+    # A single required_name cannot be proxied to multiple different proxies within the same level
+    duplicates = df[
+        df.duplicated(subset=["proxying_level", "required_name"], keep=False)
+    ]
+    if not duplicates.empty:
+        raise ValueError(
+            "Proxy config validation failed: Found duplicate mapping rules for the same required_name. "
+            f"Conflicting rows:\n{duplicates[['proxying_level', 'required_name', 'proxy_name']].to_string(index=False)}"
+        )
+
+    # 5. Check Logical Constraints (Self-Referencing)
+    # A proxy cannot proxy to itself (this would create a pointless loop)
+    self_referencing = df[df["required_name"] == df["proxy_name"]]
+    if not self_referencing.empty:
+        raise ValueError(
+            "Proxy config validation failed: A required_name cannot proxy to itself. "
+            f"Invalid rows:\n{self_referencing[['proxying_level', 'required_name']].to_string(index=False)}"
+        )
+
+    # 6. Required names should not be duplicated across levels (e.g. a container and a risk factor with the same name)
+    name_counts = df["required_name"].value_counts()
+    duplicated_names = name_counts[name_counts > 1].index.tolist()
+    if duplicated_names:
+        raise ValueError(
+            "Proxy config validation failed: Found required_name(s) duplicated across proxying levels. "
+            f"Duplicated names: {duplicated_names}. Required names must be unique across the entire config."
+        )
+
+```
+
+### FILE: config\static_config\__init__.py ###
+```python
+
+```
+
+### FILE: config\static_config\builder.py ###
 ```python
 # src/riskquant/config/builder.py
 """
@@ -72,13 +566,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Dict, Final, Tuple
+from typing import Dict, Tuple
 
 import pandas as pd
 
-from riskquant.config.configs import RiskStaticConfig
-from riskquant.config.loader import load_risk_static_data_config_xlsx_into_dict
-from riskquant.config.schema_objects import (
+from riskquant.config.static_config.static_config import RiskStaticConfig
+from riskquant.config.static_config.schema_objects import (
     AliasSchema,
     AssetClass,
     AssetSubclass,
@@ -86,13 +579,11 @@ from riskquant.config.schema_objects import (
     Ccy,
     CompoundingConvention,
     ContainerMeta,
-    ContainerProxyMap,
     DayCountConvention,
     ExtrapolationMethod,
     HolidayCalendar,
     InterpolationMethod,
     RiskFactor,
-    RiskFactorProxyMap,
     ShiftType,
     SpotRollRule,
     SurfaceYAxisType,
@@ -100,11 +591,9 @@ from riskquant.config.schema_objects import (
     UnitScale,
     UnitType,
 )
-from riskquant.config.validate import validate_static_config_dfs
 from riskquant.market_data.risk_factors.shift_types import (
     validate_shift_types_dict,
 )
-from riskquant.utils.printer import print_success_message
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,8 +617,6 @@ class RiskStaticConfigFrames:
     - shift_types,
     - interpolation_methods,
     - extrapolation_methods,
-    - container_proxies,
-    - risk_factor_proxies,
     - holiday_calendars,
     - day_count_conventions,
     - business_day_conventions,
@@ -156,10 +643,6 @@ class RiskStaticConfigFrames:
     shift_types: pd.DataFrame
     interpolation_methods: pd.DataFrame
     extrapolation_methods: pd.DataFrame
-
-    # Mappings
-    container_proxies: pd.DataFrame
-    risk_factor_proxies: pd.DataFrame
 
     # Calendars / conventions
     holiday_calendars: pd.DataFrame
@@ -375,16 +858,35 @@ class RiskStaticConfigFrames:
         # ======================= #
         # --- SCHEMAS / RULES --- #
         # ======================= #
+
+        # TENOR SCHEMA
         tenor_schema_dict = {
             str(r["tenor_type_name"]): TenorSchema(
                 tenor_type_name=str(r["tenor_type_name"]),
-                tenor_units=str(r["tenor_units"]),
+                tenor_unit=str(r["tenor_unit"]),
                 digits=int(r["digits"]),
-                regex=re.compile(str(r["regex"])) if r.get("regex") else None,
+                token_regex=(
+                    re.compile(str(r["token_regex"]))
+                    if pd.notna(r.get("token_regex"))
+                    else None
+                ),
+                abs_name_regex=(
+                    re.compile(str(r["abs_name_regex"]))
+                    if pd.notna(r.get("abs_name_regex"))
+                    else None
+                ),
+                rel_name_regex=(
+                    re.compile(str(r["rel_name_regex"]))
+                    if pd.notna(r.get("rel_name_regex"))
+                    else None
+                ),
+                abs_name_example=str(r.get("abs_name_example", "")),
+                rel_name_example=str(r.get("rel_name_example", "")),
             )
             for r in _iter_df(self.tenor_schema)
         }
 
+        # ALIAS SCHEMA
         alias_schema_dict = {
             str(r["alias_type_name"]): AliasSchema(
                 alias_type_name=str(r["alias_type_name"]),
@@ -394,6 +896,7 @@ class RiskStaticConfigFrames:
             for r in _iter_df(self.alias_schema)
         }
 
+        # SURFACE Y-AXIS SCHEMA
         surface_y_axis_schema_dict = {
             str(r["y_axis_type_name"]): SurfaceYAxisType(
                 y_axis_type_name=str(r["y_axis_type_name"])
@@ -401,6 +904,7 @@ class RiskStaticConfigFrames:
             for r in _iter_df(self.surface_y_axis_schema)
         }
 
+        # SPOT ROLL RULES SCHEMA
         spot_roll_rules_dict: Dict[Tuple[str, str], SpotRollRule] = {}
         for r in _iter_df(self.spot_roll_rules):
             key = (str(r["spot_roll_rule_name"]), str(r["tenor_type_name"]))
@@ -415,54 +919,37 @@ class RiskStaticConfigFrames:
                 post_roll_shift=r.get("post_roll_shift"),
             )
 
-        # ======================= #
-        # --- PROXIES         --- #
-        # ======================= #
-        curve_proxies_dict = {
-            str(r["container_name"]): ContainerProxyMap(
-                container_name=str(r["container_name"]),
-                proxy_container_name=str(r["proxy_container_name"]),
-                proxy_container_vol_scaling_factor=float(
-                    r.get("proxy_container_vol_scaling_factor", 1.0) or 1.0
-                ),
-            )
-            for r in _iter_df(self.container_proxies)
-        }
+        # # ======================= #
+        # # --- PROXIES         --- #
+        # # ======================= #
 
-        risk_factor_proxies_dict = {
-            str(r["risk_factor_name"]): RiskFactorProxyMap(
-                risk_factor_name=str(r["risk_factor_name"]),
-                proxy_risk_factor_name=str(r["proxy_risk_factor_name"]),
-                proxy_risk_factor_vol_scaling_factor=float(
-                    r.get("proxy_risk_factor_vol_scaling_factor", 1.0) or 1.0
-                ),
-            )
-            for r in _iter_df(self.risk_factor_proxies)
-        }
+        # # Container proxies
+        # container_proxies_dict = {
+        #     str(r["container_name"]): ContainerProxyMap(
+        #         container_name=str(r["container_name"]),
+        #         proxy_container_name=str(r["proxy_container_name"]),
+        #         proxy_container_vol_scaling_factor=float(
+        #             r.get("proxy_container_vol_scaling_factor", 1.0) or 1.0
+        #         ),
+        #     )
+        #     for r in _iter_df(self.container_proxies)
+        # }
+
+        # # Risk factor proxies
+        # risk_factor_proxies_dict = {
+        #     str(r["risk_factor_name"]): RiskFactorProxyMap(
+        #         risk_factor_name=str(r["risk_factor_name"]),
+        #         proxy_risk_factor_name=str(r["proxy_risk_factor_name"]),
+        #         proxy_risk_factor_vol_scaling_factor=float(
+        #             r.get("proxy_risk_factor_vol_scaling_factor", 1.0) or 1.0
+        #         ),
+        #     )
+        #     for r in _iter_df(self.risk_factor_proxies)
+        # }
 
         # ======================= #
         # --- FINALIZE CONFIG --- #
         # ======================= #
-        # - container_meta,
-        # - risk_factors,
-        # - tenor_schema,
-        # - alias_schema,
-        # - spot_roll_rules,
-        # - asset_classes,
-        # - asset_subclasses,
-        # - unit_types,
-        # - unit_scales,
-        # - surface_y_axis_schema,
-        # - ccy,
-        # - shift_types,
-        # - interpolation_methods,
-        # - extrapolation_methods,
-        # - container_proxies,
-        # - risk_factor_proxies,
-        # - holiday_calendars,
-        # - day_count_conventions,
-        # - business_day_conventions,
-        # - compounding_conventions.
         return RiskStaticConfig(
             container_meta_dict=container_meta_dict,
             risk_factors_dict=risk_factors_dict,
@@ -481,14 +968,12 @@ class RiskStaticConfigFrames:
             extrapolation_methods_dict=extrapolation_methods_dict,
             ccy_dict=ccy_dict,
             shift_types_dict=shift_types_dict,
-            curve_proxies_dict=curve_proxies_dict,
-            risk_factor_proxies_dict=risk_factor_proxies_dict,
             holiday_calendars_dict=holiday_calendars_dict,
         )
 
 ```
 
-### FILE: config\compile.py ###
+### FILE: config\static_config\compile.py ###
 ```python
 # src/riskquant/config/compile.py
 """
@@ -501,18 +986,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Union
 
-from typing_extensions import Final
 
-from riskquant.config.builder import RiskStaticConfigFrames
-from riskquant.config.configs import RiskStaticConfig
-from riskquant.config.loader import load_risk_static_data_config_xlsx_into_dict
-from riskquant.config.resolution import RiskFactorAbsToRelNameIdMap
-from riskquant.config.validate import validate_static_config_dfs
-from riskquant.utils.dates import get_previous_business_date_as_date
-from riskquant.utils.printer import (
-    print_dict,
-    print_success_message,
+from riskquant.config.static_config.builder import RiskStaticConfigFrames
+from riskquant.config.static_config.static_config import RiskStaticConfig
+from riskquant.config.static_config.loader import (
+    load_risk_static_data_config_xlsx_into_dict,
 )
+from riskquant.config.static_config.validate import validate_static_config_dfs
 
 
 def compile_risk_static_config_from_xlsx(
@@ -548,431 +1028,9 @@ def compile_risk_static_config_from_xlsx(
     # 5. Return the compiled config object ready for use in runtime/model code.
     return compiled_config
 
-
-if __name__ == "__main__":
-
-    # ---------------------------------------------------------
-    # 1. Setup paths
-    # ---------------------------------------------------------
-    DEV_DATA_DIR: Final[str] = (
-        "C:/Users/mharvey/Documents/code/riskquant/data/dev"
-    )
-
-    DEV_DATA_FILE_NAME_STATIC_CONFIG: Final[str] = (
-        "dev_risk_static_data_config_v01.xlsx"
-    )
-
-    xlsx_path = DEV_DATA_DIR + "/" + DEV_DATA_FILE_NAME_STATIC_CONFIG
-
-    # ---------------------------------------------------------
-    # 2. Compile the Config
-    # ---------------------------------------------------------
-    print("\n--- Compiling Static Config ---")
-    compiled_config = compile_risk_static_config_from_xlsx(path=xlsx_path)
-    print(compiled_config.summary())
-
-    # ---------------------------------------------------------
-    # 3. Test Risk Factor Resolution for an As-Of Date
-    # ---------------------------------------------------------
-    as_of_date = get_previous_business_date_as_date()
-
-    print(f"\n--- Resolving Risk Factors for As-Of Date: {as_of_date} ---")
-
-    # Use the static method on the mapping class which calls the pure function in resolution.py
-    mapping = RiskFactorAbsToRelNameIdMap.from_config(
-        config=compiled_config,
-        as_of_date=as_of_date,
-    )
-
-    # Print a small sample of the resolved mapping to verify
-    mapping_df = mapping.to_df()
-    print(f"\nSuccessfully resolved {len(mapping_df)} absolute risk factors.")
-    print("\nSample of resolved mappings (Absolute -> Relative):")
-    print(mapping_df.to_string())
-
-    # Property accessors for the same data.
-    print("\n\nProperty accessors:")
-    print("\n\nAbsolute to relative name mapping:")
-    print_dict(mapping.abs_to_rel_rf_name)
-    print("\n\nAbsolute to relative ID mapping:")
-    print_dict(mapping.abs_to_rel_id)
-    print("\n\nRelative name to relative ID mapping:")
-    print_dict(mapping.rel_rf_name_to_rf_id)
-
-    # ---------------------------------------------------------
-    # 4. Success
-    # ---------------------------------------------------------
-    print_success_message()
-
 ```
 
-### FILE: config\configs.py ###
-```python
-# src/riskquant/config/configs.py
-"""
-Runtime configuration containers.
-Strictly native Python structures (no Pandas/DataFrames) for maximum efficiency.
-"""
-
-from __future__ import annotations
-
-from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
-
-import numpy as np
-
-from riskquant.config.schema_objects import (
-    AliasSchema,
-    AssetClass,
-    AssetSubclass,
-    BusinessDayConvention,
-    Ccy,
-    CompoundingConvention,
-    ContainerMeta,
-    ContainerProxyMap,
-    DayCountConvention,
-    ExtrapolationMethod,
-    HolidayCalendar,
-    InterpolationMethod,
-    RiskFactor,
-    RiskFactorProxyMap,
-    ShiftType,
-    SpotRollRule,
-    SurfaceYAxisType,
-    TenorSchema,
-    UnitScale,
-    UnitType,
-)
-from riskquant.utils.tenors import parse_bracket_token
-
-
-@dataclass(frozen=True, slots=True)
-class RiskStaticConfig:
-    """
-    Container for risk static configuration tables for runtime use.
-    No pandas DataFrames here - just pure Python structures for maximum efficiency.
-    """
-
-    # Core
-    container_meta_dict: Dict[str, ContainerMeta] = field(
-        init=True,
-        repr=False,
-    )
-    risk_factors_dict: Dict[str, RiskFactor] = field(
-        init=True,
-        repr=False,
-    )
-
-    # Schemas & Rules
-    tenor_schema_dict: Dict[str, TenorSchema] = field(
-        init=True,
-        repr=False,
-    )
-    alias_schema_dict: Dict[str, AliasSchema] = field(
-        init=True,
-        repr=False,
-    )
-    spot_roll_rules_dict: Dict[Tuple[str, str], SpotRollRule] = field(
-        init=True, repr=False
-    )
-    surface_y_axis_schema_dict: Dict[str, SurfaceYAxisType] = field(
-        init=True, repr=False
-    )
-
-    # Lookups
-    asset_classes_dict: Dict[str, AssetClass] = field(
-        init=True,
-        repr=False,
-    )
-    asset_subclasses_dict: Dict[str, AssetSubclass] = field(
-        init=True, repr=False
-    )
-    unit_types_dict: Dict[str, UnitType] = field(
-        init=True,
-        repr=False,
-    )
-    unit_scales_dict: Dict[str, UnitScale] = field(
-        init=True,
-        repr=False,
-    )
-    day_count_conventions_dict: Dict[str, DayCountConvention] = field(
-        init=True, repr=False
-    )
-    business_day_conventions_dict: Dict[str, BusinessDayConvention] = field(
-        init=True, repr=False
-    )
-    compounding_conventions_dict: Dict[str, CompoundingConvention] = field(
-        init=True, repr=False
-    )
-    interpolation_methods_dict: Dict[str, InterpolationMethod] = field(
-        init=True, repr=False
-    )
-    extrapolation_methods_dict: Dict[str, ExtrapolationMethod] = field(
-        init=True, repr=False
-    )
-    ccy_dict: Dict[str, Ccy] = field(
-        init=True,
-        repr=False,
-    )
-    shift_types_dict: Dict[str, ShiftType] = field(
-        init=True,
-        repr=False,
-    )
-
-    # Proxies & Calendars
-    curve_proxies_dict: Dict[str, ContainerProxyMap] = field(
-        init=True,
-        repr=False,
-    )
-    risk_factor_proxies_dict: Dict[str, RiskFactorProxyMap] = field(
-        init=True,
-        repr=False,
-    )
-    holiday_calendars_dict: Dict[str, HolidayCalendar] = field(
-        init=True,
-        repr=False,
-    )
-
-    # --- INTERNAL CACHES --- #
-    # Initialized as None; populated lazily on first access using object.__setattr__
-    _container_name_to_container_id: Optional[Dict[str, int]] = field(
-        default=None,
-        repr=False,
-        init=False,
-    )
-    _rf_name_to_rf_id: Optional[Dict[str, int]] = field(
-        default=None,
-        repr=False,
-        init=False,
-    )
-    _rf_id_to_proxy_rf_id: Optional[Dict[int, Tuple[int, float]]] = field(
-        default=None,
-        repr=False,
-        init=False,
-    )
-    _rf_id_to_risk_factor: Optional[Dict[int, RiskFactor]] = field(
-        default=None,
-        repr=False,
-        init=False,
-    )
-    _rf_id_to_shift_type_id: Optional[Dict[int, int]] = field(
-        default=None,
-        repr=False,
-        init=False,
-    )
-    _curve_tenor_index: Optional[
-        Dict[str, Tuple[np.ndarray, np.ndarray, Dict[str, int]]]
-    ] = field(
-        default=None,
-        repr=False,
-        init=False,
-    )
-    _rf_id_to_ccy: Optional[Dict[int, str]] = field(
-        default=None,
-        repr=False,
-        init=False,
-    )
-    _container_id_to_ccy: Optional[Dict[int, str]] = field(
-        default=None,
-        repr=False,
-        init=False,
-    )
-
-    def __post_init__(self) -> None:
-        if not self.container_meta_dict:
-            raise ValueError(
-                "container_meta_dict is empty. Check your container_meta sheet and 'active' flags."
-            )
-        if not self.risk_factors_dict:
-            raise ValueError(
-                "risk_factors_dict is empty. Check your risk_factors sheet and 'active' flags."
-            )
-
-    def summary(self) -> str:
-        lines = [
-            "=== Risk Static Config Summary ===",
-            f"Containers Mapped: {len(self.container_meta_dict)}",
-            f"Risk Factors: {len(self.risk_factors_dict)}",
-            f"Asset Classes: {len(self.asset_classes_dict)}",
-            f"Currencies: {len(self.ccy_dict)}",
-            f"Shift Types: {len(self.shift_types_dict)}",
-            f"Container Proxies: {len(self.curve_proxies_dict)}",
-            f"Risk Factor Proxies: {len(self.risk_factor_proxies_dict)}",
-            "==================================",
-        ]
-        return "\n".join(lines)
-
-    def get_risk_factor_id(self, risk_factor_name: str) -> int:
-        return self.risk_factors_dict[risk_factor_name].risk_factor_name_id
-
-    @property
-    def container_name_to_container_id(self) -> Dict[str, int]:
-        """A build-once cache: container_name -> container_id"""
-        if self._container_name_to_container_id is None:
-            object.__setattr__(
-                self,
-                "_container_name_to_container_id",
-                {
-                    k: v.container_name_id
-                    for k, v in self.container_meta_dict.items()
-                },
-            )
-        return self._container_name_to_container_id
-
-    @property
-    def rf_name_to_rf_id(self) -> Dict[str, int]:
-        """A build-once cache: risk_factor_name -> risk_factor_name_id"""
-        if self._rf_name_to_rf_id is None:
-            object.__setattr__(
-                self,
-                "_rf_name_to_rf_id",
-                {
-                    k: v.risk_factor_name_id
-                    for k, v in self.risk_factors_dict.items()
-                },
-            )
-        return self._rf_name_to_rf_id
-
-    @property
-    def rf_id_to_proxy_rf_id(self) -> Dict[int, Tuple[int, float]]:
-        """A build-once cache of RF ID-level proxy overrides: required_rf_id -> (proxy_rf_id, vol_scale)"""
-        if self._rf_id_to_proxy_rf_id is None:
-            rf_name_map = self.rf_name_to_rf_id
-            out: Dict[int, Tuple[int, float]] = {}
-            for p in self.risk_factor_proxies_dict.values():
-                rf_id = int(rf_name_map[p.risk_factor_name])
-                proxy_rf_id = int(rf_name_map[p.proxy_risk_factor_name])
-                scale = float(p.proxy_risk_factor_vol_scaling_factor or 1.0)
-                out[rf_id] = (proxy_rf_id, scale)
-            object.__setattr__(self, "_rf_id_to_proxy_rf_id", out)
-        return self._rf_id_to_proxy_rf_id
-
-    @property
-    def rf_id_to_risk_factor(self) -> Dict[int, RiskFactor]:
-        """Cached mapping: risk_factor_name_id (int) -> RiskFactor"""
-        if self._rf_id_to_risk_factor is None:
-            out: Dict[int, RiskFactor] = {}
-            for rf in self.risk_factors_dict.values():
-                rf_id = int(rf.risk_factor_name_id)
-                if rf_id in out:
-                    raise ValueError(
-                        f"Duplicate risk_factor_name_id detected: {rf_id}"
-                    )
-                out[rf_id] = rf
-            object.__setattr__(self, "_rf_id_to_risk_factor", out)
-        return self._rf_id_to_risk_factor
-
-    @property
-    def rf_id_to_shift_type_id(self) -> Dict[int, int]:
-        """Cached mapping: risk_factor_name_id (int) -> shift_type_id (int)"""
-        if self._rf_id_to_shift_type_id is None:
-            out: Dict[int, int] = {}
-            for rf in self.risk_factors_dict.values():
-                rf_id = int(rf.risk_factor_name_id)
-                cm = self.container_meta_dict.get(rf.container_name)
-                if cm is None:
-                    raise KeyError(
-                        f"curve_name={rf.container_name!r} not found in container_meta_dict."
-                    )
-
-                st_obj = self.shift_types_dict.get(cm.shift_type_name)
-                if st_obj is None:
-                    raise KeyError(
-                        f"shift_type_name={cm.shift_type_name!r} not found in shift_types_dict."
-                    )
-
-                out[rf_id] = int(st_obj.shift_type_id)
-            object.__setattr__(self, "_rf_id_to_shift_type_id", out)
-        return self._rf_id_to_shift_type_id
-
-    @property
-    def curve_tenor_index(
-        self,
-    ) -> Dict[str, Tuple[np.ndarray, np.ndarray, Dict[str, int]]]:
-        """Cached per-curve tenor lookup used by curve-level proxy resolution."""
-        if self._curve_tenor_index is not None:
-            return self._curve_tenor_index
-
-        offsets: Dict[str, list[int]] = {}
-        offset_ids: Dict[str, list[int]] = {}
-        labels: Dict[str, Dict[str, int]] = {}
-
-        for rf_id, rf in self.rf_id_to_risk_factor.items():
-            rf_curve_name = rf.container_name
-            rf_tenor_token = rf.tenor_token
-
-            if rf_tenor_token is None:
-                labels.setdefault(rf_curve_name, {})[""] = int(rf_id)
-                continue
-
-            rf_unit, rf_offset = parse_bracket_token(rf_tenor_token)
-
-            if rf_offset is None:
-                labels.setdefault(rf_curve_name, {})[rf_unit] = int(rf_id)
-            else:
-                offsets.setdefault(rf_curve_name, []).append(int(rf_offset))
-                offset_ids.setdefault(rf_curve_name, []).append(int(rf_id))
-
-        out: Dict[str, Tuple[np.ndarray, np.ndarray, Dict[str, int]]] = {}
-
-        for rf_curve_name, rf_offset_list in offsets.items():
-            rf_ids_list = offset_ids[rf_curve_name]
-            rf_offsets_arr = np.asarray(rf_offset_list, dtype=np.int32)
-            rf_ids_arr = np.asarray(rf_ids_list, dtype=np.int32)
-
-            rf_offset_idx = np.argsort(rf_offsets_arr, kind="mergesort")
-
-            out[rf_curve_name] = (
-                rf_offsets_arr[rf_offset_idx],
-                rf_ids_arr[rf_offset_idx],
-                labels.get(rf_curve_name, {}),
-            )
-
-        for rf_curve_name, rf_curve_label_to_rf_id in labels.items():
-            if rf_curve_name not in out:
-                out[rf_curve_name] = (
-                    np.empty(0, dtype=np.int32),
-                    np.empty(0, dtype=np.int32),
-                    rf_curve_label_to_rf_id,
-                )
-
-        object.__setattr__(self, "_curve_tenor_index", out)
-        return out
-
-    @property
-    def rf_id_to_ccy(self) -> Dict[int, str]:
-        """A build-once cache mapping both risk factor IDs to their quote currency."""
-        if self._rf_id_to_ccy is None:
-            out: Dict[int, str] = {}
-
-            # Map all Risk Factor Names to their parent container's quote_ccy
-            for _, rf in self.risk_factors_dict.items():
-                parent_container_meta = self.container_meta_dict[
-                    rf.container_name
-                ]
-                out[rf.risk_factor_name_id] = parent_container_meta.quote_ccy
-
-            object.__setattr__(self, "_rf_id_to_ccy", out)
-
-        return self._rf_id_to_ccy
-
-    @property
-    def container_id_to_ccy(self) -> Dict[int, str]:
-        """A build-once cache mapping both container IDs to their quote currency."""
-        if self._container_id_to_ccy is None:
-            out: Dict[int, str] = {}
-
-            # Map all Container Names directly to their quote_ccy
-            for _, c_meta in self.container_meta_dict.items():
-                out[c_meta.container_name_id] = c_meta.quote_ccy
-
-            object.__setattr__(self, "_container_id_to_ccy", out)
-
-        return self._container_id_to_ccy
-
-```
-
-### FILE: config\loader.py ###
+### FILE: config\static_config\loader.py ###
 ```python
 # src/riskquant/config/loader.py
 from __future__ import annotations
@@ -981,8 +1039,6 @@ from pathlib import Path
 from typing import Dict, Final, Iterable, Mapping, Optional, Union
 
 import pandas as pd
-
-from riskquant.utils.printer import print_as_list_str, print_success_message
 
 
 def write_config_dict_to_llm_txt(
@@ -1076,43 +1132,9 @@ def load_risk_static_data_config_xlsx_into_dict(
     # Return a regular dict to avoid potential issues with pandas' internal dict subclass
     return clean_dict_of_dfs
 
-
-if __name__ == "__main__":
-
-    import warnings
-
-    # Filter out the specific UserWarning from openpyxl
-    warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
-
-    DEV_DATA_DIR: Final[str] = (
-        "C:/Users/mharvey/Documents/code/riskquant/data/dev"
-    )
-
-    DEV_DATA_FILE_NAME_STATIC_CONFIG: Final[str] = (
-        "dev_risk_static_data_config_v01.xlsx"
-    )
-
-    # Path to the .xlsx workbook containing the static config sheets.
-    xlsx_path = DEV_DATA_DIR + "/" + DEV_DATA_FILE_NAME_STATIC_CONFIG
-
-    # Load the config sheets into a dictionary of DataFrames.
-    dict_of_dfs = load_risk_static_data_config_xlsx_into_dict(path=xlsx_path)
-
-    # Write the loaded config dict to an LLM-friendly text file for inspection/debugging.
-    write_config_dict_to_llm_txt(
-        data=dict_of_dfs,
-        output_path=Path(DEV_DATA_DIR) / "dev_risk_static_data_config_llm.txt",
-    )
-
-    # Print the loaded sheet names to confirm successful load.
-    print_as_list_str(dict_of_dfs.keys())
-
-    # Print success message to confirm that the test ran without errors.
-    print_success_message()
-
 ```
 
-### FILE: config\resolution.py ###
+### FILE: config\static_config\resolution.py ###
 ```python
 # src/riskquant/config/resolution.py
 from __future__ import annotations
@@ -1130,7 +1152,7 @@ import numpy as np
 import pandas as pd
 
 # Ensure these utility functions are available in riskquant.utils.tenors
-from riskquant.config.configs import RiskStaticConfig
+from riskquant.config.static_config.static_config import RiskStaticConfig
 from riskquant.utils.tenors import (
     add_months_to_date_and_return_yyyymm01,
     fmt_date_as_str_yyyymm,
@@ -1615,6 +1637,43 @@ def build_risk_factor_name_mapping_for_as_of_date(
                 )
                 continue
 
+            # Inside your resolution block in resolution.py:
+
+            elif (
+                rf_tenor_type_name == "TENOR_HY_LABEL"
+                and rf_spot_roll_method == "HALF_YEAR_BY_LABEL"
+            ):
+                # 1. Use the offset we already extracted via parse_bracket_token
+                offset = int(tenor_token_signed_offset)
+
+                # 2. Determine the "current" half-year based on the as-of date
+                current_year = as_of_date.year
+                # If month is 1-6, it's index 0 (FH). If 7-12, it's index 1 (BH).
+                current_half_idx = 0 if as_of_date.month <= 6 else 1
+
+                # 3. Calculate the absolute half-year mathematically
+                total_half_years = (
+                    (current_year * 2) + current_half_idx + offset
+                )
+
+                target_year = total_half_years // 2
+                target_half_idx = total_half_years % 2
+
+                # 4. Map the index back to your specific schema labels
+                target_label = "FH" if target_half_idx == 0 else "BH"
+
+                # 5. Construct the absolute name matching your abs_name_regex
+                rf_abs_name = (
+                    f"{rf_container_name}_{target_year:04d}_{target_label}"
+                )
+
+                # 6. Save it to the mapping dictionary so it isn't lost!
+                abs_to_rel_name_and_id[rf_abs_name] = (
+                    rf_rel_name,
+                    rf_rel_name_id,
+                )
+                continue
+
             else:
                 raise ValueError(
                     "Unsupported OFFSET resolution combination: "
@@ -1627,13 +1686,9 @@ def build_risk_factor_name_mapping_for_as_of_date(
         abs_to_rel_name_and_id=abs_to_rel_name_and_id,
     )
 
-
-if __name__ == "__main__":
-    pass
-
 ```
 
-### FILE: config\schema_objects.py ###
+### FILE: config\static_config\schema_objects.py ###
 ```python
 # src/riskquant/config/schema_objects.py
 """
@@ -1649,7 +1704,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+import re
 from typing import Optional, Pattern, Tuple
+
+import pandas as pd
 
 from riskquant.utils.printer import print_success_message
 
@@ -1860,9 +1918,34 @@ class RiskFactor:
 @dataclass(frozen=True, slots=True)
 class TenorSchema:
     tenor_type_name: str
-    tenor_units: str
+    tenor_unit: str
     digits: int
-    regex: Pattern[str]
+    token_regex: Optional[Pattern[str]]
+    abs_name_regex: Optional[Pattern[str]]
+    rel_name_regex: Optional[Pattern[str]]
+    abs_name_example: str
+    rel_name_example: str
+
+    def __str__(self) -> str:
+        """Returns a human-readable, formatted tree of the schema rules."""
+        # Helper to safely extract the raw string pattern from the compiled regex
+        fmt_re = lambda r: f"'{r.pattern}'" if r else "None"
+
+        return (
+            f"TenorSchema('{self.tenor_type_name}')\n"
+            f"  ├─ Tenor Unit: {self.tenor_unit} (Digits: {self.digits})\n"
+            f"  ├─ Regex Rules:\n"
+            f"  │   ├─ Token:    {fmt_re(self.token_regex)}\n"
+            f"  │   ├─ Absolute: {fmt_re(self.abs_name_regex)}\n"
+            f"  │   └─ Relative: {fmt_re(self.rel_name_regex)}\n"
+            f"  └─ Examples:\n"
+            f"      ├─ Absolute: '{self.abs_name_example}'\n"
+            f"      └─ Relative: '{self.rel_name_example}'"
+        )
+
+    def __repr__(self) -> str:
+        """Fallback to the pretty string when printing from a list or dict."""
+        return self.__str__()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1884,25 +1967,6 @@ class SpotRollRule:
     post_roll_shift: Optional[int]
 
 
-# ===================== #
-# --- PROXY MAPPING --- #
-# ===================== #
-
-
-@dataclass(frozen=True, slots=True)
-class ContainerProxyMap:
-    container_name: str
-    proxy_container_name: str
-    proxy_container_vol_scaling_factor: Optional[float]
-
-
-@dataclass(frozen=True, slots=True)
-class RiskFactorProxyMap:
-    risk_factor_name: str
-    proxy_risk_factor_name: str
-    proxy_risk_factor_vol_scaling_factor: Optional[float]
-
-
 # ======================== #
 # --- HOLIDAY CALENDAR --- #
 # ======================== #
@@ -1913,16 +1977,378 @@ class HolidayCalendar:
     holiday_calendar_name: str
     holiday_dates: Optional[Tuple[date, ...]]
 
+```
 
-if __name__ == "__main__":
-    Ccy(ccy="USDEUR", ccy_id=1)
+### FILE: config\static_config\static_config.py ###
+```python
+# src/riskquant/config/configs/static_config.py
+"""
+Runtime configuration containers.
+Strictly native Python structures (no Pandas/DataFrames) for maximum efficiency.
+"""
 
-    # Print success message
-    print_success_message()
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Dict, Optional, Tuple
+
+import numpy as np
+
+from riskquant.config.static_config.schema_objects import (
+    AliasSchema,
+    AssetClass,
+    AssetSubclass,
+    BusinessDayConvention,
+    Ccy,
+    CompoundingConvention,
+    ContainerMeta,
+    DayCountConvention,
+    ExtrapolationMethod,
+    HolidayCalendar,
+    InterpolationMethod,
+    RiskFactor,
+    ShiftType,
+    SpotRollRule,
+    SurfaceYAxisType,
+    TenorSchema,
+    UnitScale,
+    UnitType,
+)
+from riskquant.utils.tenors import parse_bracket_token
+
+
+@dataclass(frozen=True, slots=True)
+class RiskStaticConfig:
+    """
+    Container for risk static configuration tables for runtime use.
+    No pandas DataFrames here - just pure Python structures for maximum efficiency.
+    """
+
+    # Core
+    container_meta_dict: Dict[str, ContainerMeta] = field(
+        init=True,
+        repr=False,
+    )
+    risk_factors_dict: Dict[str, RiskFactor] = field(
+        init=True,
+        repr=False,
+    )
+
+    # Schemas & Rules
+    tenor_schema_dict: Dict[str, TenorSchema] = field(
+        init=True,
+        repr=False,
+    )
+    alias_schema_dict: Dict[str, AliasSchema] = field(
+        init=True,
+        repr=False,
+    )
+    spot_roll_rules_dict: Dict[Tuple[str, str], SpotRollRule] = field(
+        init=True, repr=False
+    )
+    surface_y_axis_schema_dict: Dict[str, SurfaceYAxisType] = field(
+        init=True, repr=False
+    )
+
+    # Lookups
+    asset_classes_dict: Dict[str, AssetClass] = field(
+        init=True,
+        repr=False,
+    )
+    asset_subclasses_dict: Dict[str, AssetSubclass] = field(
+        init=True, repr=False
+    )
+    unit_types_dict: Dict[str, UnitType] = field(
+        init=True,
+        repr=False,
+    )
+    unit_scales_dict: Dict[str, UnitScale] = field(
+        init=True,
+        repr=False,
+    )
+    day_count_conventions_dict: Dict[str, DayCountConvention] = field(
+        init=True,
+        repr=False,
+    )
+    business_day_conventions_dict: Dict[str, BusinessDayConvention] = field(
+        init=True,
+        repr=False,
+    )
+    compounding_conventions_dict: Dict[str, CompoundingConvention] = field(
+        init=True,
+        repr=False,
+    )
+    interpolation_methods_dict: Dict[str, InterpolationMethod] = field(
+        init=True,
+        repr=False,
+    )
+    extrapolation_methods_dict: Dict[str, ExtrapolationMethod] = field(
+        init=True,
+        repr=False,
+    )
+    ccy_dict: Dict[str, Ccy] = field(
+        init=True,
+        repr=False,
+    )
+    shift_types_dict: Dict[str, ShiftType] = field(
+        init=True,
+        repr=False,
+    )
+
+    # Calendars
+    holiday_calendars_dict: Dict[str, HolidayCalendar] = field(
+        init=True,
+        repr=False,
+    )
+
+    # --- INTERNAL CACHES --- #
+    # Initialized as None; populated lazily on first access using object.__setattr__
+    _container_name_to_container_id: Optional[Dict[str, int]] = field(
+        default=None,
+        repr=False,
+        init=False,
+    )
+    _rf_name_to_rf_id: Optional[Dict[str, int]] = field(
+        default=None,
+        repr=False,
+        init=False,
+    )
+    _rf_id_to_risk_factor: Optional[Dict[int, RiskFactor]] = field(
+        default=None,
+        repr=False,
+        init=False,
+    )
+    _rf_id_to_shift_type_id: Optional[Dict[int, int]] = field(
+        default=None,
+        repr=False,
+        init=False,
+    )
+    _curve_tenor_index: Optional[
+        Dict[str, Tuple[np.ndarray, np.ndarray, Dict[str, int]]]
+    ] = field(
+        default=None,
+        repr=False,
+        init=False,
+    )
+    _rf_id_to_ccy: Optional[Dict[int, str]] = field(
+        default=None,
+        repr=False,
+        init=False,
+    )
+    _container_id_to_ccy: Optional[Dict[int, str]] = field(
+        default=None,
+        repr=False,
+        init=False,
+    )
+
+    @property
+    def num_risk_factors(self) -> int:
+        return len(self.risk_factors_dict)
+
+    @property
+    def num_containers(self) -> int:
+        return len(self.container_meta_dict)
+
+    @property
+    def max_risk_factor_id(self) -> int:
+        """The maximum risk_factor_name_id across all risk factors. Useful for sizing arrays."""
+        return max(
+            rf.risk_factor_name_id for rf in self.risk_factors_dict.values()
+        )
+
+    def __post_init__(self) -> None:
+        if not self.container_meta_dict:
+            raise ValueError(
+                "container_meta_dict is empty. Check your container_meta sheet and 'active' flags."
+            )
+        if not self.risk_factors_dict:
+            raise ValueError(
+                "risk_factors_dict is empty. Check your risk_factors sheet and 'active' flags."
+            )
+
+    def summary(self) -> str:
+        lines = [
+            "=== Risk Static Config Summary ===",
+            f"Containers Mapped: {len(self.container_meta_dict)}",
+            f"Risk Factors: {len(self.risk_factors_dict)}",
+            f"Asset Classes: {len(self.asset_classes_dict)}",
+            f"Currencies: {len(self.ccy_dict)}",
+            f"Shift Types: {len(self.shift_types_dict)}",
+            "==================================",
+        ]
+        return "\n".join(lines)
+
+    def get_risk_factor_id(self, risk_factor_name: str) -> int:
+        return self.risk_factors_dict[risk_factor_name].risk_factor_name_id
+
+    @property
+    def container_name_to_container_id(self) -> Dict[str, int]:
+        """A build-once cache: container_name -> container_id"""
+        if self._container_name_to_container_id is None:
+            object.__setattr__(
+                self,
+                "_container_name_to_container_id",
+                {
+                    k: v.container_name_id
+                    for k, v in self.container_meta_dict.items()
+                },
+            )
+        return self._container_name_to_container_id
+
+    @property
+    def rf_name_to_rf_id(self) -> Dict[str, int]:
+        """A build-once cache: risk_factor_name -> risk_factor_name_id"""
+        if self._rf_name_to_rf_id is None:
+            object.__setattr__(
+                self,
+                "_rf_name_to_rf_id",
+                {
+                    k: v.risk_factor_name_id
+                    for k, v in self.risk_factors_dict.items()
+                },
+            )
+        return self._rf_name_to_rf_id
+
+    # @property
+    # def rf_id_to_proxy_rf_id(self) -> Dict[int, Tuple[int, float]]:
+    #     """A build-once cache of RF ID-level proxy overrides: required_rf_id -> (proxy_rf_id, vol_scale)"""
+    #     if self._rf_id_to_proxy_rf_id is None:
+    #         rf_name_map = self.rf_name_to_rf_id
+    #         out: Dict[int, Tuple[int, float]] = {}
+    #         for p in self.risk_factor_proxies_dict.values():
+    #             rf_id = int(rf_name_map[p.risk_factor_name])
+    #             proxy_rf_id = int(rf_name_map[p.proxy_risk_factor_name])
+    #             scale = float(p.proxy_risk_factor_vol_scaling_factor or 1.0)
+    #             out[rf_id] = (proxy_rf_id, scale)
+    #         object.__setattr__(self, "_rf_id_to_proxy_rf_id", out)
+    #     return self._rf_id_to_proxy_rf_id
+
+    @property
+    def rf_id_to_risk_factor(self) -> Dict[int, RiskFactor]:
+        """Cached mapping: risk_factor_name_id (int) -> RiskFactor"""
+        if self._rf_id_to_risk_factor is None:
+            out: Dict[int, RiskFactor] = {}
+            for rf in self.risk_factors_dict.values():
+                rf_id = int(rf.risk_factor_name_id)
+                if rf_id in out:
+                    raise ValueError(
+                        f"Duplicate risk_factor_name_id detected: {rf_id}"
+                    )
+                out[rf_id] = rf
+            object.__setattr__(self, "_rf_id_to_risk_factor", out)
+        return self._rf_id_to_risk_factor
+
+    @property
+    def rf_id_to_shift_type_id(self) -> Dict[int, int]:
+        """Cached mapping: risk_factor_name_id (int) -> shift_type_id (int)"""
+        if self._rf_id_to_shift_type_id is None:
+            out: Dict[int, int] = {}
+            for rf in self.risk_factors_dict.values():
+                rf_id = int(rf.risk_factor_name_id)
+                cm = self.container_meta_dict.get(rf.container_name)
+                if cm is None:
+                    raise KeyError(
+                        f"curve_name={rf.container_name!r} not found in container_meta_dict."
+                    )
+
+                st_obj = self.shift_types_dict.get(cm.shift_type_name)
+                if st_obj is None:
+                    raise KeyError(
+                        f"shift_type_name={cm.shift_type_name!r} not found in shift_types_dict."
+                    )
+
+                out[rf_id] = int(st_obj.shift_type_id)
+            object.__setattr__(self, "_rf_id_to_shift_type_id", out)
+        return self._rf_id_to_shift_type_id
+
+    @property
+    def curve_tenor_index(
+        self,
+    ) -> Dict[str, Tuple[np.ndarray, np.ndarray, Dict[str, int]]]:
+        """Cached per-curve tenor lookup used by curve-level proxy resolution."""
+        if self._curve_tenor_index is not None:
+            return self._curve_tenor_index
+
+        offsets: Dict[str, list[int]] = {}
+        offset_ids: Dict[str, list[int]] = {}
+        labels: Dict[str, Dict[str, int]] = {}
+
+        for rf_id, rf in self.rf_id_to_risk_factor.items():
+            rf_curve_name = rf.container_name
+            rf_tenor_token = rf.tenor_token
+
+            if rf_tenor_token is None:
+                labels.setdefault(rf_curve_name, {})[""] = int(rf_id)
+                continue
+
+            rf_unit, rf_offset = parse_bracket_token(rf_tenor_token)
+
+            if rf_offset is None:
+                labels.setdefault(rf_curve_name, {})[rf_unit] = int(rf_id)
+            else:
+                offsets.setdefault(rf_curve_name, []).append(int(rf_offset))
+                offset_ids.setdefault(rf_curve_name, []).append(int(rf_id))
+
+        out: Dict[str, Tuple[np.ndarray, np.ndarray, Dict[str, int]]] = {}
+
+        for rf_curve_name, rf_offset_list in offsets.items():
+            rf_ids_list = offset_ids[rf_curve_name]
+            rf_offsets_arr = np.asarray(rf_offset_list, dtype=np.int32)
+            rf_ids_arr = np.asarray(rf_ids_list, dtype=np.int32)
+
+            rf_offset_idx = np.argsort(rf_offsets_arr, kind="mergesort")
+
+            out[rf_curve_name] = (
+                rf_offsets_arr[rf_offset_idx],
+                rf_ids_arr[rf_offset_idx],
+                labels.get(rf_curve_name, {}),
+            )
+
+        for rf_curve_name, rf_curve_label_to_rf_id in labels.items():
+            if rf_curve_name not in out:
+                out[rf_curve_name] = (
+                    np.empty(0, dtype=np.int32),
+                    np.empty(0, dtype=np.int32),
+                    rf_curve_label_to_rf_id,
+                )
+
+        object.__setattr__(self, "_curve_tenor_index", out)
+        return out
+
+    @property
+    def rf_id_to_ccy(self) -> Dict[int, str]:
+        """A build-once cache mapping both risk factor IDs to their quote currency."""
+        if self._rf_id_to_ccy is None:
+            out: Dict[int, str] = {}
+
+            # Map all Risk Factor Names to their parent container's quote_ccy
+            for _, rf in self.risk_factors_dict.items():
+                parent_container_meta = self.container_meta_dict[
+                    rf.container_name
+                ]
+                out[rf.risk_factor_name_id] = parent_container_meta.quote_ccy
+
+            object.__setattr__(self, "_rf_id_to_ccy", out)
+
+        return self._rf_id_to_ccy
+
+    @property
+    def container_id_to_ccy(self) -> Dict[int, str]:
+        """A build-once cache mapping both container IDs to their quote currency."""
+        if self._container_id_to_ccy is None:
+            out: Dict[int, str] = {}
+
+            # Map all Container Names directly to their quote_ccy
+            for _, c_meta in self.container_meta_dict.items():
+                out[c_meta.container_name_id] = c_meta.quote_ccy
+
+            object.__setattr__(self, "_container_id_to_ccy", out)
+
+        return self._container_id_to_ccy
 
 ```
 
-### FILE: config\validate.py ###
+### FILE: config\static_config\validate.py ###
 ```python
 # src/riskquant/config/validate.py
 """
@@ -1934,15 +2360,189 @@ Design goals:
   - Utilize NumPy/Pandas C-level vectorization for constraints (Unique, FK).
 """
 
-from typing import Dict, Final
+from typing import Dict
 
 import numpy as np
 import pandas as pd
 
-from riskquant.config.loader import load_risk_static_data_config_xlsx_into_dict
-from riskquant.utils.printer import (
-    print_success_message,
-)
+from riskquant.market_data.curves.extrap_methods import EXTRAP_METHOD_NAMES
+from riskquant.market_data.curves.interp_methods import INTERP_METHOD_NAMES
+
+
+def _validate_risk_factor_tokens(dict_of_dfs: dict[str, pd.DataFrame]) -> None:
+    """
+    Validates that every tenor_token in the risk_factors sheet strictly conforms
+    to the token_regex defined for its specific tenor_type_name in the schema.
+    """
+    rf_df = dict_of_dfs.get("risk_factors")
+    cm_df = dict_of_dfs.get("container_meta")
+    ts_df = dict_of_dfs.get("tenor_schema")
+
+    if any(df is None or df.empty for df in (rf_df, cm_df, ts_df)):
+        return
+
+    # 1. Filter out scalars/FX spot (which legitimately have no tenor_token)
+    tokens_df = rf_df[rf_df["tenor_token"].notna()].copy()
+    if tokens_df.empty:
+        return
+
+    # 2. Join the hierarchy to figure out which regex each token SHOULD use
+    # container_name -> tenor_type_name
+    cm_mapping = cm_df.set_index("container_name")["tenor_type_name"]
+    tokens_df["tenor_type_name"] = tokens_df["container_name"].map(cm_mapping)
+
+    # tenor_type_name -> token_regex
+    ts_mapping = ts_df.set_index("tenor_type_name")["token_regex"]
+    tokens_df["expected_regex"] = tokens_df["tenor_type_name"].map(ts_mapping)
+
+    # print(tokens_df.to_string())
+
+    # 3. Vectorized validation using groupby
+    # We group by the regex pattern so we can use Pandas' fast vectorized C-level string matching
+    valid_mask = pd.Series(False, index=tokens_df.index)
+
+    for regex_pattern, group in tokens_df.groupby(
+        "expected_regex", dropna=False
+    ):
+        if pd.isna(regex_pattern):
+            # If a container maps to a tenor_type_name that has no regex, mark as invalid
+            continue
+
+        # Apply the regex to the entire group at once
+        valid_mask.loc[group.index] = (
+            group["tenor_token"].astype(str).str.match(str(regex_pattern))
+        )
+
+    # 4. Catch violators and fail fast
+    if not valid_mask.all():
+        violators_df = tokens_df[~valid_mask]
+
+        # # Format a clean error message showing exactly what failed
+        # sample = (
+        #     violators_df[
+        #         [
+        #             "risk_factor_name",
+        #             "tenor_token",
+        #             "tenor_type_name",
+        #             "expected_regex",
+        #         ]
+        #     ]
+        #     .to_dict("records")
+        # )
+
+        raise ValueError(
+            f"Config Validation Failed: Found risk factors with invalid tenor_tokens.\n"
+            f"Tokens must strictly match the token_regex defined in the tenor_schema.\n"
+            f"Sample violators:\n"
+            f"{violators_df.to_string(index=False)}"
+        )
+
+
+def _validate_container_meta(dict_of_dfs):
+    # Extract the curve schema dataframe
+    container_meta_df = dict_of_dfs.get("container_meta")
+
+    # If empty.
+    if container_meta_df is None or container_meta_df.empty:
+        return
+
+    # ---> INTERP METHODS <--- #
+
+    required_cols = ["interp_method_name_x", "interp_method_name_y"]
+    missing_cols = [
+        c for c in required_cols if c not in container_meta_df.columns
+    ]
+    if missing_cols:
+        raise ValueError(
+            f"container_meta missing required columns: {missing_cols}"
+        )
+
+    # Normalise
+    interp_df = (
+        container_meta_df[required_cols]
+        .astype(str)
+        .apply(lambda col: col.str.strip().str.lower())
+    )
+
+    # Flatten unique values across both axes
+    unique_methods = set(interp_df.values.ravel())
+
+    # Remove blanks / null-like artifacts
+    unique_methods = {
+        m
+        for m in unique_methods
+        if m
+        not in {
+            "",
+            "none",
+            "nan",
+            "na",
+            "n/a",
+            "<na>",
+            "null",
+        }
+    }
+
+    # Define allowed methods (ideally centralised elsewhere)
+    VALID_INTERP_METHODS = set(INTERP_METHOD_NAMES)
+
+    # Validate
+    invalid_methods = unique_methods - VALID_INTERP_METHODS
+    if invalid_methods:
+        raise ValueError(
+            f"Invalid interpolation methods found: {sorted(invalid_methods)}. "
+            f"Allowed methods: {sorted(VALID_INTERP_METHODS)}"
+        )
+
+    # ---> EXTRAP METHODS <--- #
+
+    required_cols = ["extrap_method_name_x", "extrap_method_name_y"]
+    missing_cols = [
+        c for c in required_cols if c not in container_meta_df.columns
+    ]
+    if missing_cols:
+        raise ValueError(
+            f"container_meta missing required columns: {missing_cols}"
+        )
+
+    # Normalise
+    extrap_df = (
+        container_meta_df[required_cols]
+        .astype(str)
+        .apply(lambda col: col.str.strip().str.lower())
+    )
+
+    # Flatten unique values across both axes
+    unique_methods = set(extrap_df.values.ravel())
+
+    # Remove blanks / null-like artifacts
+    unique_methods = {
+        m
+        for m in unique_methods
+        if m
+        not in {
+            "",
+            "none",
+            "nan",
+            "na",
+            "n/a",
+            "<na>",
+            "null",
+        }
+    }
+
+    # Define allowed methods (ideally centralised elsewhere)
+    VALID_EXTRAP_METHODS = set(EXTRAP_METHOD_NAMES)
+
+    # Validate
+    invalid_methods = unique_methods - VALID_EXTRAP_METHODS
+    if invalid_methods:
+        raise ValueError(
+            f"Invalid extrapolation methods found: {sorted(invalid_methods)}. "
+            f"Allowed methods: {sorted(VALID_EXTRAP_METHODS)}"
+        )
+
+    return
 
 
 def validate_static_config_dfs(dict_of_dfs: Dict[str, pd.DataFrame]) -> None:
@@ -1970,8 +2570,8 @@ def validate_static_config_dfs(dict_of_dfs: Dict[str, pd.DataFrame]) -> None:
         "unit_scales": ("unit_scale_name", "unit_scale_name_id"),
         "ccy": ("ccy", "ccy_id"),
         "shift_types": ("shift_type", "shift_type_id"),
-        "container_proxies": ("container_name",),
-        "risk_factor_proxies": ("risk_factor_name",),
+        # "container_proxies": ("container_name",),
+        # "risk_factor_proxies": ("risk_factor_name",),
     }
 
     for sheet_name, cols in unique_constraints.items():
@@ -2030,28 +2630,23 @@ def validate_static_config_dfs(dict_of_dfs: Dict[str, pd.DataFrame]) -> None:
                 f"'{p_sheet}.{p_col}'. Missing: {missing_fks.tolist()}"
             )
 
+    # --------------------------------------------------------- #
+    # 3. DOMAIN CONSTRAINTS (Syntax & Business Logic)
+    # --------------------------------------------------------- #
+    # Now that we know containers and schemas exist and map correctly,
+    # we enforce the strict data-driven regex rules on the inputs.
 
-if __name__ == "__main__":
+    _validate_risk_factor_tokens(dict_of_dfs)
 
-    DEV_DATA_DIR: Final[str] = (
-        "C:/Users/mharvey/Documents/code/riskquant/data/dev"
-    )
+    # ----------------------------------------- #
+    # 4. VALIDATE THE INTERPOLATION/EXTRAPOLATION METHODS IN THE CURVE SCHEMA
+    # ----------------------------------------- #
 
-    DEV_DATA_FILE_NAME_STATIC_CONFIG: Final[str] = (
-        "dev_risk_static_data_config_v01.xlsx"
-    )
+    # Validate.
+    _validate_container_meta(dict_of_dfs)
 
-    # Path to the .xlsx workbook containing the static config sheets.
-    xlsx_path = DEV_DATA_DIR + "/" + DEV_DATA_FILE_NAME_STATIC_CONFIG
-
-    # Load the config sheets into a dictionary of DataFrames.
-    dict_of_dfs = load_risk_static_data_config_xlsx_into_dict(path=xlsx_path)
-
-    # Run the vectorized validations on the loaded dataframes.
-    validate_static_config_dfs(dict_of_dfs)
-
-    # If we reach this point without exceptions, all validations have passed.
-    print_success_message()
+    # You can add future domain checks here
+    # (e.g., validate_shift_types, validate_currency_codes)
 
 ```
 
@@ -2091,12 +2686,13 @@ NO_DISCOUNT_CURVE_ID = np.int32(-5)
 NO_FX_RF_REQUIRED = np.int32(-6)
 
 # Sentinels for missing dates in the date fields (settlement, delivery, expiry).
-NO_DELIVERY_DATE_ORDINAL32 = np.int32(-7)
-NO_SETTLEMENT_DATE_ORDINAL32 = np.int32(-8)
-NO_EXPIRY_DATE_ORDINAL32 = np.int32(-9)
+NO_DATE_UIX = np.int32(-7)
+NO_DELIVERY_DATE_ORDINAL32 = np.int32(-8)
+NO_SETTLEMENT_DATE_ORDINAL32 = np.int32(-9)
+NO_EXPIRY_DATE_ORDINAL32 = np.int32(-10)
 
 # Sentinel for "not an option" in the is_call field.
-NOT_OPTION = np.int8(-10)
+NOT_OPTION = np.int8(-11)
 
 
 # ==============================================================================
@@ -2123,22 +2719,13 @@ POSITION_DUST_TOLERANCE = 1e-8
 # Prefix expected by the engine to map an underlying asset to its volatility surface/node
 VOL_RISK_FACTOR_PREFIX: str = "vol_"
 
-```
 
-### FILE: exceptions.py ###
-```python
-# riskquant/exceptions.py
+# ============================================
+# --- MOCK / FALLBACK VALUES
+# ============================================
 
-
-class PrettyKeyError(KeyError):
-    """
-    KeyError variant that prints the message using str(...) instead of repr(...),
-    allowing multi-line, human-readable diagnostics while preserving KeyError
-    semantics.
-    """
-
-    def __str__(self) -> str:
-        return str(self.args[0])
+# Used as a fallback in the vanilla_european_option_curve pricer before vol surfaces are built out.
+MOCK_VOLATILITY: float = 0.50
 
 ```
 
@@ -2147,20 +2734,634 @@ class PrettyKeyError(KeyError):
 # src\riskquant\market_data\__init__.py
 ```
 
+### FILE: market_data\builder.py ###
+```python
+# src/riskquant/market_data/builder.py
+from datetime import date
+import numpy as np
+
+from riskquant.market_data.curves.interp_defs import (
+    interp_log_linear_flat_extrap_3d,
+)
+from riskquant.market_data.state import MarketDataMatrix
+from riskquant.market_data.surfaces.y_axes_types import (
+    SURFACE_Y_AXIS_TYPE_DELTA_CALL,
+)
+from riskquant.portfolio.compiled import CompiledPortfolio
+from riskquant.market_data.curves.interp_dispatch import CURVE_MATH_REGISTRY
+from riskquant.utils.dates import date_to_ordinal32
+
+
+def _build_curve_grid(
+    raw_tenors: np.ndarray,  # Shape: (C, M)
+    raw_values: np.ndarray,  # Shape: (C, M, S)
+    target_dates: np.ndarray,  # Shape: (D,)
+    interp_methods: np.ndarray,  # Shape: (C,) int8
+    extrap_methods: np.ndarray,  # Shape: (C,) int8
+) -> np.ndarray:
+    C, M, S = raw_values.shape
+    D = len(target_dates)
+    out_grid = np.empty((C, D, S), dtype=np.float64)
+    if D == 0:
+        return out_grid
+
+    for (interp_id, extrap_id), math_kernel in CURVE_MATH_REGISTRY.items():
+        mask = (interp_methods == interp_id) & (extrap_methods == extrap_id)
+        if np.any(mask):
+            out_grid[mask] = math_kernel(
+                raw_tenors[mask], raw_values[mask], target_dates
+            )
+    return out_grid
+
+
+def build_market_data_matrix(
+    *,
+    as_of_date: date,
+    portfolio: CompiledPortfolio,
+    num_scenarios: int,
+    # Scalars
+    raw_fx_spots: np.ndarray,
+    raw_prices: np.ndarray,
+    raw_forward_nodes: np.ndarray,
+    raw_vol_nodes: np.ndarray,
+    # 1D Configs
+    curve_interp_methods: np.ndarray,
+    curve_extrap_methods: np.ndarray,
+    raw_discount_tenors: np.ndarray,
+    raw_discount_ln_dfs: np.ndarray,
+    raw_price_curve_tenors: np.ndarray,
+    raw_price_curve_values: np.ndarray,
+    # 2D Configs & Surfaces
+    surface_interp_x_methods: np.ndarray,  # Time interpolation config
+    surface_extrap_x_methods: np.ndarray,  # Time extrapolation config
+    surface_y_axis_type_ids: np.ndarray,  # Y-Axis Config
+    raw_vol_surface_tenors: np.ndarray,  # (C_surf, M_tenors)
+    raw_vol_surface_strikes: np.ndarray,  # (C_surf, K_strikes)
+    raw_vol_surface_values: np.ndarray,  # (C_surf, M_tenors, K_strikes, S_scenarios)
+) -> MarketDataMatrix:
+
+    D = len(portfolio.unique_dates_ordinal32)
+
+    # 1. DISCOUNT GRID
+    if D == 0:
+        discount_grid = np.empty(
+            (raw_discount_ln_dfs.shape[0], 0, num_scenarios), dtype=np.float64
+        )
+    else:
+        discount_grid = interp_log_linear_flat_extrap_3d(
+            tenors=raw_discount_tenors,
+            values=raw_discount_ln_dfs,
+            targets=portfolio.unique_dates_ordinal32,
+        )
+
+    # 2. PRICE GRID
+    price_curve_grid = _build_curve_grid(
+        raw_tenors=raw_price_curve_tenors,
+        raw_values=raw_price_curve_values,
+        target_dates=portfolio.unique_dates_ordinal32,
+        interp_methods=curve_interp_methods,
+        extrap_methods=curve_extrap_methods,
+    )
+
+    # 3. TTE GRID
+    as_of_ord = date_to_ordinal32(as_of_date)
+    tte_grid = np.maximum(
+        (portfolio.unique_dates_ordinal32 - as_of_ord) / 365.25, 1e-9
+    )
+
+    # 4. VOLATILITY SURFACES (Phase 1 Time-Slicing via Reshape Trick)
+    if np.any(surface_y_axis_type_ids == SURFACE_Y_AXIS_TYPE_DELTA_CALL):
+        raise ValueError(
+            "FATAL: Delta-quoted Volatility Surfaces detected in runtime builder. "
+            "DELTA_CALL surfaces must be pre-processed and converted to STRIKE or MONEYNESS "
+            "by the Calibration module before being passed to the MarketDataMatrix."
+        )
+
+    if D == 0 or raw_vol_surface_values.size == 0:
+        C_surf = (
+            raw_vol_surface_tenors.shape[0]
+            if raw_vol_surface_tenors.ndim > 0
+            else 0
+        )
+        K_strikes = (
+            raw_vol_surface_strikes.shape[1]
+            if raw_vol_surface_strikes.ndim > 1
+            else 0
+        )
+        vol_surfaces = np.empty(
+            (C_surf, 0, K_strikes, num_scenarios),
+            dtype=np.float64,
+        )
+    else:
+        C_surf, M_tenors, K_strikes, S_scen = raw_vol_surface_values.shape
+
+        # Flatten Strike & Scenarios
+        flat_surfaces = raw_vol_surface_values.reshape(
+            C_surf,
+            M_tenors,
+            K_strikes * S_scen,
+        )
+
+        time_sliced_smiles_flat = _build_curve_grid(
+            raw_tenors=raw_vol_surface_tenors,
+            raw_values=flat_surfaces,
+            target_dates=portfolio.unique_dates_ordinal32,
+            interp_methods=surface_interp_x_methods,
+            extrap_methods=surface_extrap_x_methods,
+        )
+
+        # Reshape back to 4D
+        vol_surfaces = time_sliced_smiles_flat.reshape(
+            C_surf,
+            D,
+            K_strikes,
+            S_scen,
+        )
+
+    return MarketDataMatrix(
+        num_scenarios=num_scenarios,
+        fx_spots=raw_fx_spots,
+        prices=raw_prices,
+        forward_nodes=raw_forward_nodes,
+        vol_nodes=raw_vol_nodes,
+        discount_factor_grid=discount_grid,
+        price_curve_grid=price_curve_grid,
+        tte_grid=tte_grid,
+        vol_surface_strikes=raw_vol_surface_strikes,
+        vol_surfaces=vol_surfaces,
+    )
+
+```
+
 ### FILE: market_data\curves\__init__.py ###
 ```python
 # src/riskquant/market_data/curves/__init__.py
 
 ```
 
-### FILE: market_data\curves\extrapolation_methods.py ###
+### FILE: market_data\curves\extrap_methods.py ###
 ```python
+# src\riskquant\market_data\curves\extrap_methods.py
+
+from __future__ import annotations
+
+from enum import IntEnum
+
+import numpy as np
+
+
+class ExtrapMethod(IntEnum):
+    FLAT = 1
+    LINEAR = 2
+
+
+# compiler-friendly int8 constants
+EXTRAP_FLAT: np.int8 = np.int8(ExtrapMethod.FLAT)
+EXTRAP_LINEAR: np.int8 = np.int8(ExtrapMethod.LINEAR)
+
+
+# Extrap methods
+EXTRAP_METHOD_NAMES: tuple[str, ...] = tuple(
+    method.name.upper() for method in ExtrapMethod
+)
+
+# Central registry
+EXTRAP_METHOD_REGISTRY: dict[str, ExtrapMethod] = {
+    "LINEAR": ExtrapMethod.LINEAR,
+    "FLAT": ExtrapMethod.FLAT,
+}
+
+
+def validate_extrapolation_methods_dict(
+    extrapolation_methods_dict: dict[str, int],
+) -> None:
+    expected = {
+        name: int(member) for name, member in ExtrapMethod.__members__.items()
+    }
+    got = {str(k): int(v) for k, v in extrapolation_methods_dict.items()}
+
+    if got == expected:
+        return
+
+    missing = {k: expected[k] for k in expected.keys() - got.keys()}
+    extra = {k: got[k] for k in got.keys() - expected.keys()}
+    different = {
+        k: {"expected": expected[k], "got": got[k]}
+        for k in (expected.keys() & got.keys())
+        if expected[k] != got[k]
+    }
+
+    raise ValueError(
+        "extrapolation_methods sheet does not match riskquant ExtrapMethod enum.\n"
+        f"missing={missing}\n"
+        f"extra={extra}\n"
+        f"different={different}\n"
+        "Fix the Excel extrapolation_methods table or update riskquant.market_data.curves.extrap_methods.ExtrapMethod."
+    )
 
 ```
 
-### FILE: market_data\curves\interpolation_methods.py ###
+### FILE: market_data\curves\interp_defs.py ###
 ```python
-# src\riskquant\market_data\curves\interpolation_methods.py
+# src/riskquant/market_data/curves/interp_defs.py
+from __future__ import annotations
+
+import numpy as np
+
+# --- LINEAR INTERPOLATION WITH FLAT EXTRAPOLATION ---
+
+
+def interp_linear_flat_extrap_3d(
+    tenors: np.ndarray,
+    values: np.ndarray,
+    targets: np.ndarray,
+) -> np.ndarray:
+    """
+    Vectorized 3D Linear Interpolation with Flat Extrapolation.
+    Shapes: tenors (c_curves, m_pillars), values (c_curves, m_pillars, s_scenarios), targets (d_targets,)
+    Returns: (c_curves, d_targets, s_scenarios)
+    """
+    c_curves, m_pillars = tenors.shape
+    idx1 = np.clip(
+        np.sum(tenors[:, None, :] <= targets[None, :, None], axis=2),
+        1,
+        m_pillars - 1,
+    )
+    idx0 = idx1 - 1
+
+    c_idx = np.arange(c_curves)[:, None]
+    t0, t1 = tenors[c_idx, idx0], tenors[c_idx, idx1]
+    y0, y1 = values[c_idx, idx0, :], values[c_idx, idx1, :]
+
+    dt = np.where((t1 - t0) == 0, 1.0, t1 - t0)
+    w = (targets[None, :] - t0) / dt
+
+    # FLAT EXTRAPOLATION: Clamp weights to [0.0, 1.0]
+    w = np.clip(w, 0.0, 1.0)
+
+    return y0 + w[:, :, None] * (y1 - y0)
+
+
+# --- LINEAR INTERPOLATION WITH LINEAR EXTRAPOLATION ---
+
+
+def interp_linear_linear_extrap_3d(
+    tenors: np.ndarray,
+    values: np.ndarray,
+    targets: np.ndarray,
+) -> np.ndarray:
+    """
+    Vectorized 3D Linear Interpolation with Linear Extrapolation.
+    Shapes: tenors (c_curves, m_pillars), values (c_curves, m_pillars, s_scenarios), targets (d_targets,)
+    Returns: (c_curves, d_targets, s_scenarios)
+    """
+    c_curves, m_pillars = tenors.shape
+    idx1 = np.clip(
+        np.sum(tenors[:, None, :] <= targets[None, :, None], axis=2),
+        1,
+        m_pillars - 1,
+    )
+    idx0 = idx1 - 1
+
+    c_idx = np.arange(c_curves)[:, None]
+    t0, t1 = tenors[c_idx, idx0], tenors[c_idx, idx1]
+    y0, y1 = values[c_idx, idx0, :], values[c_idx, idx1, :]
+
+    dt = np.where((t1 - t0) == 0, 1.0, t1 - t0)
+    w = (targets[None, :] - t0) / dt
+
+    # LINEAR EXTRAPOLATION: Do not clamp weights
+    return y0 + w[:, :, None] * (y1 - y0)
+
+
+# --- LOG-LINEAR INTERPOLATION WITH FLAT EXTRAPOLATION (ALWAYS USED FOR DISCOUNT FACTORS) ---
+
+# RQ always interps on discount factor curves using log-linear interpolation with flat extrapolation.
+
+
+def interp_log_linear_flat_extrap_3d(
+    tenors: np.ndarray,
+    values: np.ndarray,
+    targets: np.ndarray,
+) -> np.ndarray:
+    """
+    Vectorized 3D Log-Linear Interpolation with Constant Forward Extrapolation.
+
+    Mathematically equivalent to linear interpolation on Zero Rates.
+    To note: values are expected to be in natural log space.
+    By allowing the interpolation weight `w` to exceed 1.0 for targets past the
+    final tenor, we linearly extrapolate the log discount factor, which perfectly
+    preserves the forward rate of the final pillar segment.
+
+    Shapes:
+        tenors:     (C_curves, M_pillars)
+        values:     (C_curves, M_pillars, S_scenarios)
+        targets:    (D_unique_dates,)
+
+    Returns:
+        np.ndarray: Exponentiated Discount Factors. Shape (c_curves, d_targets, s_scenarios)
+    """
+    c_curves, m_pillars = tenors.shape
+    d_targets = len(targets)
+
+    # 1. VECTORIZED BOUNDARY SEARCH
+    # Expand dims to broadcast: (c_curves, 1, m_pillars) <= (1, d_targets, 1) -> (c_curves, d_targets, m_pillars)
+    # Summing across the pillars (axis=2) gives the index of the first tenor > the target.
+    mask = tenors[:, None, :] <= targets[None, :, None]
+    idx1 = np.sum(mask, axis=2)
+
+    # Clip to safely anchor both interpolation and extrapolation to the known bounds.
+    idx1 = np.clip(idx1, 1, m_pillars - 1)
+    idx0 = idx1 - 1
+
+    # 2. ADVANCED INTEGER INDEXING
+    # Extract bounding tenors and values instantly using a broadcasted column vector
+    c_idx = np.arange(c_curves)[:, None]
+
+    t0 = tenors[c_idx, idx0]  # Shape: (c_curves, d_targets)
+    t1 = tenors[c_idx, idx1]  # Shape: (c_curves, d_targets)
+
+    y0 = values[c_idx, idx0, :]  # Shape: (c_curves, d_targets, s_scenarios)
+    y1 = values[c_idx, idx1, :]  # Shape: (c_curves, d_targets, s_scenarios)
+
+    # 3. CALCULATE WEIGHTS
+    dt = t1 - t0
+    dt = np.where(dt == 0, 1.0, dt)  # Prevent division-by-zero on sentinels
+
+    # Shape: (c_curves, d_targets)
+    w = (targets[None, :] - t0) / dt
+
+    # Note: Deliberately NO np.clip(w, 0.0, 1.0) here.
+    # Allowing w > 1.0 natively creates Constant Forward Extrapolation.
+
+    # 4. LOG-LINEAR MATH & EXPONENTIATION
+    # Expand weights to (c_curves, d_targets, 1) to broadcast against the Scenarios dimension (s_scenarios)
+    ln_interp = y0 + w[:, :, None] * (y1 - y0)
+
+    return np.exp(ln_interp)
+
+
+# --- LOG-LINEAR INTERPOLATION WITH LINEAR EXTRAPOLATION ---
+
+
+def interp_log_linear_linear_extrap_3d(
+    tenors: np.ndarray,
+    values: np.ndarray,
+    targets: np.ndarray,
+) -> np.ndarray:
+    """
+    Vectorized 3D Log-Linear Interpolation with Linear Extrapolation.
+    To note: values are expected to be in natural log space.
+    Extrapolates using linear forward rate.
+    Shapes: tenors (c_curves, m_pillars), values (c_curves, m_pillars, s_scenarios), targets (d_targets,)
+    Returns: (c_curves, d_targets, s_scenarios) - Exponentiated back to raw values
+    """
+    c_curves, m_pillars = tenors.shape
+    idx1 = np.clip(
+        np.sum(tenors[:, None, :] <= targets[None, :, None], axis=2),
+        1,
+        m_pillars - 1,
+    )
+    idx0 = idx1 - 1
+
+    c_idx = np.arange(c_curves)[:, None]
+    t0, t1 = tenors[c_idx, idx0], tenors[c_idx, idx1]
+    y0, y1 = values[c_idx, idx0, :], values[c_idx, idx1, :]
+
+    dt = np.where((t1 - t0) == 0, 1.0, t1 - t0)
+    w = (targets[None, :] - t0) / dt
+
+    # LINEAR EXTRAPOLATION: Do not clamp weights
+    ln_interp = y0 + w[:, :, None] * (y1 - y0)
+    return np.exp(ln_interp)
+
+
+# --- STEP LEFT (LOCF) INTERPOLATION WITH FLAT EXTRAPOLATION ---
+
+
+def interp_step_left_flat_extrap_3d(
+    tenors: np.ndarray,
+    values: np.ndarray,
+    targets: np.ndarray,
+) -> np.ndarray:
+    """
+    Vectorized 3D Step Left (LOCF) Interpolation.
+    Shapes: tenors (c_curves, m_pillars), values (c_curves, m_pillars, s_scenarios), targets (d_targets,)
+    Returns: (c_curves, d_targets, s_scenarios)
+    """
+    c_curves, m_pillars = tenors.shape
+    idx = np.clip(
+        np.sum(tenors[:, None, :] <= targets[None, :, None], axis=2) - 1,
+        0,
+        m_pillars - 1,
+    )
+    c_idx = np.arange(c_curves)[:, None]
+
+    return values[c_idx, idx, :]
+
+
+# --- STEP LEFT (LOCF) INTERPOLATION WITH LINEAR EXTRAPOLATION ---
+
+
+def interp_step_left_linear_extrap_3d(
+    tenors: np.ndarray,
+    values: np.ndarray,
+    targets: np.ndarray,
+) -> np.ndarray:
+    """
+    Vectorized 3D Step Left (LOCF) Interpolation with Linear Extrapolation.
+    Shapes: tenors (c_curves, m_pillars), values (c_curves, m_pillars, s_scenarios), targets (d_targets,)
+    Returns: (c_curves, d_targets, s_scenarios)
+    """
+    c_curves, m_pillars = tenors.shape
+    idx = np.clip(
+        np.sum(tenors[:, None, :] <= targets[None, :, None], axis=2) - 1,
+        0,
+        m_pillars - 1,
+    )
+    c_idx = np.arange(c_curves)[:, None]
+
+    # For linear extrapolation, we can simply use the last two points to define a slope for extrapolation.
+    # However, since this is a step function, the "slope" is zero. Thus, step left with linear extrapolation is effectively the same as step left with flat extrapolation.
+
+    return values[c_idx, idx, :]
+
+
+# --- STEP RIGHT (NOCB) INTERPOLATION WITH FLAT EXTRAPOLATION ---
+
+
+def interp_step_right_flat_extrap_3d(
+    tenors: np.ndarray,
+    values: np.ndarray,
+    targets: np.ndarray,
+) -> np.ndarray:
+    """
+    Vectorized 3D Step Right (NOCB) Interpolation.
+    Shapes: tenors (c_curves, m_pillars), values (c_curves, m_pillars, s_scenarios), targets (d_targets,)
+    Returns: (c_curves, d_targets, s_scenarios)
+    """
+    c_curves, m_pillars = tenors.shape
+    idx = np.clip(
+        np.sum(tenors[:, None, :] < targets[None, :, None], axis=2),
+        0,
+        m_pillars - 1,
+    )
+    c_idx = np.arange(c_curves)[:, None]
+
+    return values[c_idx, idx, :]
+
+
+# --- STEP RIGHT (NOCB) INTERPOLATION WITH LINEAR EXTRAPOLATION ---
+
+
+def interp_step_right_linear_extrap_3d(
+    tenors: np.ndarray,
+    values: np.ndarray,
+    targets: np.ndarray,
+) -> np.ndarray:
+    """
+    Vectorized 3D Step Right (NOCB) Interpolation with Linear Extrapolation.
+    Shapes: tenors (c_curves, m_pillars), values (c_curves, m_pillars, s_scenarios), targets (d_targets,)
+    Returns: (c_curves, d_targets, s_scenarios)
+    """
+    c_curves, m_pillars = tenors.shape
+    idx = np.clip(
+        np.sum(tenors[:, None, :] < targets[None, :, None], axis=2),
+        0,
+        m_pillars - 1,
+    )
+    c_idx = np.arange(c_curves)[:, None]
+
+    # For linear extrapolation, we can simply use the last two points to define a slope for extrapolation.
+    # However, since this is a step function, the "slope" is zero. Thus, step right with linear extrapolation is effectively the same as step right with flat extrapolation.
+
+    return values[c_idx, idx, :]
+
+
+# --- 2D SURFACE STRIKE INTERPOLATOR ---
+
+
+def interp_strike_linear_flat_extrap(
+    pillars: np.ndarray,  # Shape: (N_trades, K_strikes)
+    values: np.ndarray,  # Shape: (N_trades, K_strikes, S_scenarios)
+    targets: np.ndarray,  # Shape: (N_trades, S_scenarios)
+) -> np.ndarray:
+    """
+    Vectorized 1D linear interpolation along the strike/Y-axis with flat extrapolation.
+    Used dynamically inside Option Pricers to resolve exact strike vol across scenarios.
+    """
+    N, K_dim = pillars.shape
+    S = targets.shape[1]
+
+    # Broadcast pillars to (N, S, K) to compare against targets (N, S, 1)
+    mask = pillars[:, None, :] <= targets[:, :, None]
+    idx1 = np.sum(mask, axis=2)
+    idx1 = np.clip(idx1, 1, K_dim - 1)
+    idx0 = idx1 - 1
+
+    n_idx = np.arange(N)[:, None]
+    s_idx = np.arange(S)[None, :]
+
+    # Extract bounding pillars
+    x0 = pillars[n_idx, idx0]  # (N, S)
+    x1 = pillars[n_idx, idx1]  # (N, S)
+
+    # Extract bounding values
+    y0 = values[n_idx, idx0, s_idx]  # (N, S)
+    y1 = values[n_idx, idx1, s_idx]  # (N, S)
+
+    dx = np.where((x1 - x0) == 0, 1.0, x1 - x0)
+    w = (targets - x0) / dx
+
+    # Flat Extrapolation
+    w = np.clip(w, 0.0, 1.0)
+
+    return y0 + w * (y1 - y0)
+
+```
+
+### FILE: market_data\curves\interp_dispatch.py ###
+```python
+# src/riskquant/market_data/curves/interp_dispatch.py
+from __future__ import annotations
+
+import numpy as np
+from typing import Callable
+
+# Import your enum constants
+from riskquant.market_data.curves.interp_methods import (
+    INTERP_LINEAR,
+    INTERP_LOG_LINEAR,
+    INTERP_STEP_LEFT,
+    INTERP_STEP_RIGHT,
+)
+from riskquant.market_data.curves.extrap_methods import (
+    EXTRAP_FLAT,
+    EXTRAP_LINEAR,
+)
+
+from riskquant.market_data.curves.interp_defs import (
+    interp_linear_flat_extrap_3d,
+    interp_linear_linear_extrap_3d,
+    interp_log_linear_flat_extrap_3d,
+    interp_log_linear_linear_extrap_3d,
+    interp_step_left_flat_extrap_3d,
+    interp_step_left_linear_extrap_3d,
+    interp_step_right_flat_extrap_3d,
+    interp_step_right_linear_extrap_3d,
+)
+
+# ... [All your pure math functions here] ...
+
+# ============================================================
+# INTERPOLATION DISPATCH REGISTRY
+# ============================================================
+
+# Define the strict signature every curve kernel must follow
+InterpKernelFn = Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray]
+
+# Map (Interp Method ID, Extrap Method ID) -> Math Kernel
+# We cast the np.int8 enums to pure Python ints for safe, fast dictionary hashing.
+CURVE_MATH_REGISTRY: dict[tuple[int, int], InterpKernelFn] = {
+    (
+        int(INTERP_LINEAR),
+        int(EXTRAP_FLAT),
+    ): interp_linear_flat_extrap_3d,
+    (
+        int(INTERP_LINEAR),
+        int(EXTRAP_LINEAR),
+    ): interp_linear_linear_extrap_3d,
+    (
+        int(INTERP_LOG_LINEAR),
+        int(EXTRAP_FLAT),
+    ): interp_log_linear_flat_extrap_3d,
+    (
+        int(INTERP_LOG_LINEAR),
+        int(EXTRAP_LINEAR),
+    ): interp_log_linear_linear_extrap_3d,
+    (
+        int(INTERP_STEP_LEFT),
+        int(EXTRAP_FLAT),
+    ): interp_step_left_flat_extrap_3d,
+    (
+        int(INTERP_STEP_LEFT),
+        int(EXTRAP_LINEAR),
+    ): interp_step_left_linear_extrap_3d,
+    (
+        int(INTERP_STEP_RIGHT),
+        int(EXTRAP_FLAT),
+    ): interp_step_right_flat_extrap_3d,
+    (
+        int(INTERP_STEP_RIGHT),
+        int(EXTRAP_LINEAR),
+    ): interp_step_right_linear_extrap_3d,
+}
+
+```
+
+### FILE: market_data\curves\interp_methods.py ###
+```python
+# src\riskquant\market_data\curves\interp_methods.py
 
 from __future__ import annotations
 
@@ -2170,7 +3371,7 @@ from typing import Mapping
 import numpy as np
 
 
-class InterpolationMethod(IntEnum):
+class InterpMethod(IntEnum):
     LINEAR = 1
     LOG_LINEAR = 2
     STEP_LEFT = 3
@@ -2179,19 +3380,32 @@ class InterpolationMethod(IntEnum):
 
 
 # compiler-friendly int8 constants
-INTERP_LINEAR: np.int8 = np.int8(InterpolationMethod.LINEAR)
-INTERP_LOG_LINEAR: np.int8 = np.int8(InterpolationMethod.LOG_LINEAR)
-INTERP_STEP_LEFT: np.int8 = np.int8(InterpolationMethod.STEP_LEFT)
-INTERP_STEP_RIGHT: np.int8 = np.int8(InterpolationMethod.STEP_RIGHT)
-INTERP_CUBIC_SPLINE: np.int8 = np.int8(InterpolationMethod.CUBIC_SPLINE)
+INTERP_LINEAR: np.int8 = np.int8(InterpMethod.LINEAR)
+INTERP_LOG_LINEAR: np.int8 = np.int8(InterpMethod.LOG_LINEAR)
+INTERP_STEP_LEFT: np.int8 = np.int8(InterpMethod.STEP_LEFT)
+INTERP_STEP_RIGHT: np.int8 = np.int8(InterpMethod.STEP_RIGHT)
+INTERP_CUBIC_SPLINE: np.int8 = np.int8(InterpMethod.CUBIC_SPLINE)
+
+# Interp methods
+INTERP_METHOD_NAMES: tuple[str, ...] = tuple(
+    method.name.upper() for method in InterpMethod
+)
+
+# Central registry
+INTERP_METHOD_REGISTRY: dict[str, InterpMethod] = {
+    "LINEAR": InterpMethod.LINEAR,
+    "LOG_LINEAR": InterpMethod.LOG_LINEAR,
+    "STEP_LEFT": InterpMethod.STEP_LEFT,
+    "STEP_RIGHT": InterpMethod.STEP_RIGHT,
+    "CUBIC_SPLINE": InterpMethod.CUBIC_SPLINE,
+}
 
 
 def validate_interpolation_methods_dict(
     interpolation_methods_dict: Mapping[str, int],
 ) -> None:
     expected = {
-        name: int(member)
-        for name, member in InterpolationMethod.__members__.items()
+        name: int(member) for name, member in InterpMethod.__members__.items()
     }
     got = {str(k): int(v) for k, v in interpolation_methods_dict.items()}
 
@@ -2211,7 +3425,7 @@ def validate_interpolation_methods_dict(
         f"missing={missing}\n"
         f"extra={extra}\n"
         f"different={different}\n"
-        "Fix the Excel interpolation_methods table or update riskquant.market_data.risk_factors.interpolation_methods.InterpolationMethod."
+        "Fix the Excel interpolation_methods table or update riskquant.market_data.curves.interp_methods.InterpMethod."
     )
 
 ```
@@ -2300,6 +3514,17 @@ def build_risk_factor_matrix_from_df(
         raise ValueError("DataFrame index (dates) must be unique!")
     if not df.index.is_monotonic_increasing:
         raise ValueError("DataFrame index (dates) must be sorted ascending!")
+
+    # Check for duplicated column labels (factor names); this would cause silent data corruption
+    if df.columns.has_duplicates:
+        duplicated = df.columns[df.columns.duplicated(keep=False)]
+        unique_dupes = duplicated.unique()
+        sample = unique_dupes[:10]
+        raise ValueError(
+            f"DataFrame columns (factor names) must be unique.\n"
+            f"Found {len(unique_dupes)} duplicated column(s).\n"
+            f"Sample duplicates: {list(sample)}"
+        )
 
     # Dates: obtain a datetime64[D] view and optionally convert to int32 ordinal
     dts_64D = df.index.to_numpy(dtype="datetime64[D]", copy=False)
@@ -2513,6 +3738,15 @@ def build_risk_factor_level_snapshot_from_df(
 
     # Drop any rows where the level is NaN
     df_clean = df.dropna(subset=[level_col])
+
+    # There must not be duplicate factor names after dropping NaNs, as this would lead to ambiguity in the snapshot.
+    if df_clean[factor_col].duplicated().any():
+        duplicated_factors = df_clean[factor_col][
+            df_clean[factor_col].duplicated()
+        ].unique()
+        raise ValueError(
+            f"Duplicate factor names found in column '{factor_col}' after dropping NaNs: {duplicated_factors}"
+        )
 
     # Extract as a dictionary to reuse the highly-optimized dictionary builder
     # zip is faster than df.set_index().to_dict() or df.itertuples()
@@ -3015,21 +4249,38 @@ class RiskFactorMatrix:
 from __future__ import annotations
 
 from enum import IntEnum
+from re import S
 from typing import Mapping
 
 import numpy as np
 
 
 class ShiftType(IntEnum):
+    NO_SHIFT = -1
     LOG_RETURN = 1
     SIMPLE_RETURN = 2
     DIFFERENCE = 3
 
 
 # Kernel-friendly int8 constants (avoid repeated casts in hot code)
+SHIFT_NO_SHIFT: np.int8 = np.int8(ShiftType.NO_SHIFT)
 SHIFT_LOG_RETURN: np.int8 = np.int8(ShiftType.LOG_RETURN)
 SHIFT_SIMPLE_RETURN: np.int8 = np.int8(ShiftType.SIMPLE_RETURN)
 SHIFT_DIFFERENCE: np.int8 = np.int8(ShiftType.DIFFERENCE)
+
+
+# Names tuple
+SHIFT_TYPE_NAMES: tuple[str, ...] = tuple(
+    method.name.upper() for method in ShiftType
+)
+
+# Registry
+SHIFT_TYPE_REGISTRY: dict[str, np.int8] = {
+    "NO_SHIFT": SHIFT_NO_SHIFT,
+    "LOG_RETURN": SHIFT_LOG_RETURN,
+    "SIMPLE_RETURN": SHIFT_SIMPLE_RETURN,
+    "DIFFERENCE": SHIFT_DIFFERENCE,
+}
 
 
 def validate_shift_types_dict(shift_types_dict: Mapping[str, int]) -> None:
@@ -3234,6 +4485,133 @@ class RiskFactorLevelSnapshot:
 
 ```
 
+### FILE: market_data\state.py ###
+```python
+# src/riskquant/market_data/state.py
+
+# src/riskquant/market_data/state.py
+
+from dataclasses import dataclass
+import numpy as np
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MarketDataMatrix:
+    """
+    Vectorized market data container.
+    Dimension 0 always corresponds to the CompiledPortfolio UIX spaces.
+    Dimension -1 always corresponds to the Scenario Index (num_scenarios).
+    """
+
+    num_scenarios: int
+
+    # ========== 1. SCALARS / NODES ==========
+
+    # FX Spot Rates. Shape: (num_fx_factors, num_scenarios)
+    # Accessed via: block.fx_under_to_settle_uix and block.fx_strike_to_settle_uix
+    fx_spots: np.ndarray
+
+    # Underlying Spot Prices. Shape: (num_price_factors, num_scenarios)
+    # Accessed via: block.price_uix (for SpotBlock)
+    prices: np.ndarray
+
+    # Forward Prices (Discrete Nodes). Shape: (num_fwd_nodes, num_scenarios)
+    # Accessed via: block.price_uix (for ForwardNodeBlock)
+    forward_nodes: np.ndarray
+
+    # Volatility (Discrete Nodes). Shape: (num_vol_nodes, num_scenarios)
+    # Accessed via: block.vol_uix (for VanillaEuropeanOptionNodeBlock)
+    vol_nodes: np.ndarray
+
+    # ========== 2. THE MASTER DISCOUNT GRID ==========
+    # Pre-computed Discount Factors for every curve at every unique portfolio date.
+    # Shape: (num_discount_curves, num_unique_dates, num_scenarios)
+    # Accessed via: market_state.discount_factor_grid[curve_uix, date_uix, :]
+    discount_factor_grid: np.ndarray
+
+    # ========== 3. CURVE-BASED DATA (CURVE BLOCKS) ==========
+
+    # Pre-computed Forward Prices for every curve at every unique portfolio date.
+    # Shape: (num_price_curves, num_unique_dates, num_scenarios)
+    # Accessed via: market_state.price_curve_grid[curve_uix, date_uix, :]
+    price_curve_grid: np.ndarray
+
+    # ========== 4. TIME GRIDS ==========
+    # Pre-computed Time to Expiry (in years) for every unique portfolio date.
+    # Shape: (num_unique_dates,)
+    # Accessed via: market_state.tte_grid[block.expiry_date_uix]
+    tte_grid: np.ndarray
+
+    # ========== 5. SURFACES ==========
+    # The strike/moneyness coordinates for each surface's smile.
+    # Shape: (num_vol_surfaces, max_vol_strikes)
+    vol_surface_strikes: np.ndarray
+
+    # Pre-computed Time-Sliced Volatility Smiles for every unique portfolio date.
+    # Shape: (num_vol_surfaces, num_unique_dates, max_vol_strikes, num_scenarios)
+    # Accessed via: market_state.vol_surfaces[block.vol_surface_uix, block.expiry_date_uix, :, :]
+    vol_surfaces: np.ndarray
+
+```
+
+### FILE: market_data\surfaces\y_axes_types.py ###
+```python
+from enum import IntEnum
+
+import numpy as np
+
+
+class SurfaceYAxisType(IntEnum):
+    STRIKE = np.int8(1)
+    LOG_STRIKE = np.int8(2)
+    MONEYNESS_SPOT = np.int8(3)
+    MONEYNESS_FWD = np.int8(4)
+    LOG_MONEYNESS_SPOT = np.int8(5)
+    LOG_MONEYNESS_FWD = np.int8(6)
+    DELTA_CALL = np.int8(7)
+
+
+# compiler-friendly int8 constants
+SURFACE_Y_AXIS_TYPE_STRIKE: np.int8 = np.int8(
+    SurfaceYAxisType.STRIKE,
+)
+SURFACE_Y_AXIS_TYPE_LOG_STRIKE: np.int8 = np.int8(
+    SurfaceYAxisType.LOG_STRIKE,
+)
+SURFACE_Y_AXIS_TYPE_MONEYNESS_SPOT: np.int8 = np.int8(
+    SurfaceYAxisType.MONEYNESS_SPOT,
+)
+SURFACE_Y_AXIS_TYPE_MONEYNESS_FWD: np.int8 = np.int8(
+    SurfaceYAxisType.MONEYNESS_FWD,
+)
+SURFACE_Y_AXIS_TYPE_LOG_MONEYNESS_SPOT: np.int8 = np.int8(
+    SurfaceYAxisType.LOG_MONEYNESS_SPOT,
+)
+SURFACE_Y_AXIS_TYPE_LOG_MONEYNESS_FWD: np.int8 = np.int8(
+    SurfaceYAxisType.LOG_MONEYNESS_FWD,
+)
+SURFACE_Y_AXIS_TYPE_DELTA_CALL: np.int8 = np.int8(
+    SurfaceYAxisType.DELTA_CALL,
+)
+
+# Names tuple
+SURFACE_Y_AXIS_TYPE_NAMES: tuple[str, ...] = tuple(
+    method.name.upper() for method in SurfaceYAxisType
+)
+
+# Central registry
+SURFACE_Y_AXIS_TYPE_REGISTRY: dict[str, SurfaceYAxisType] = {
+    "STRIKE": SurfaceYAxisType.STRIKE,
+    "LOG_STRIKE": SurfaceYAxisType.LOG_STRIKE,
+    "MONEYNESS_SPOT": SurfaceYAxisType.MONEYNESS_SPOT,
+    "MONEYNESS_FWD": SurfaceYAxisType.MONEYNESS_FWD,
+    "LOG_MONEYNESS_SPOT": SurfaceYAxisType.LOG_MONEYNESS_SPOT,
+    "LOG_MONEYNESS_FWD": SurfaceYAxisType.LOG_MONEYNESS_FWD,
+    "DELTA_CALL": SurfaceYAxisType.DELTA_CALL,
+}
+
+```
+
 ### FILE: portfolio\__init__.py ###
 ```python
 # src\riskquant\portfolio\__init__.py
@@ -3242,6 +4620,33 @@ class RiskFactorLevelSnapshot:
 ### FILE: portfolio\blocks\__init__.py ###
 ```python
 # src\riskquant\portfolio\blocks\__init__.py
+```
+
+### FILE: portfolio\blocks\base_block.py ###
+```python
+# src/riskquant/portfolio/blocks/base_block.py
+
+
+from dataclasses import dataclass
+from dataclasses import fields
+import numpy as np
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Block:
+    def print_block(self, max_items: int = 10) -> None:
+        cls = type(self).__name__
+        print(f"{cls}:")
+
+        for f in fields(self):
+            v = getattr(self, f.name)
+            if isinstance(v, np.ndarray):
+                print(
+                    f"  {f.name:<30} | shape: {v.shape!s:>10} | dtype: {v.dtype!s:>10} | values: {v[:max_items]}"
+                )
+            else:
+                print(f"  {f.name:<30} {v}")
+
 ```
 
 ### FILE: portfolio\blocks\forward_block.py ###
@@ -3259,9 +4664,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from riskquant.portfolio.blocks.base_block import Block
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class _ForwardBaseBlock:
+class _ForwardBaseBlock(Block):
     """
     Common struct-of-arrays fields shared by all forward blocks.
     """
@@ -3274,17 +4681,18 @@ class _ForwardBaseBlock:
     strike: np.ndarray
 
     # ========== SETTLEMENT DATE ==========
-    settlement_date_ordinal32: np.ndarray
+    # (N,) int32 index into unique_dates_ordinal32
+    settlement_date_uix: np.ndarray
 
     # ========== FX MARKET LINKAGES ==========
-    
+
     # Index into the compiled FX factor universe, or sentinel when no FX needed. dtype: int32 (np.int32)
     fx_under_to_settle_uix: np.ndarray
     fx_strike_to_settle_uix: np.ndarray
 
     # Flag to indicate if the math needs to invert the FX rate (1/X)
     fx_under_to_settle_invert: np.ndarray  # bool or int8
-    fx_strike_to_settle_invert: np.ndarray # bool or int8
+    fx_strike_to_settle_invert: np.ndarray  # bool or int8
 
     # ========== DISCOUNT LINKAGES ==========
     under_discount_curve_uix: np.ndarray
@@ -3311,8 +4719,8 @@ class ForwardCurveBlock(_ForwardBaseBlock):
     """
 
     # ========== DELIVERY DATE ==========
-    # Physical delivery date encoded as int32 ordinal.
-    delivery_date_ordinal32: np.ndarray
+    # (N,) int32 index into unique_dates_ordinal32
+    delivery_date_uix: np.ndarray
 
     # ========== UNDERLYING MARKET LINKAGE ==========
     # Index into compiled price curve universe.
@@ -3322,6 +4730,7 @@ class ForwardCurveBlock(_ForwardBaseBlock):
 
 ### FILE: portfolio\blocks\spot_block.py ###
 ```python
+# src/riskquant/portfolio/blocks/spot_block.py
 """
 Compiled, memory-efficient container for spot positions used by the compiled
 portfolio runtime.
@@ -3333,32 +4742,33 @@ processes in high-throughput valuation workflows.
 
 Design notes:
   - Row i of every array corresponds to the trade with UID `trade_uids[i]`.
-  - Index fields (e.g. `price_uix`, `fx_uix`) are integer indices into the
-    `CompiledPortfolio` factor universes. These are not risk-factor IDs but
-    zero-based indices used for fast array-based lookup.
-  - FX linkage uses a sentinel index (e.g. `-1`) to indicate "no FX conversion",
-    keeping the representation numeric and avoiding object arrays.
+  - Index fields (e.g., `price_uix`, `fx_uix`) are literal static config Risk Factor IDs
+    acting as direct integer indices into the centralized `MarketDataMatrix` arrays.
+  - FX linkage uses a sentinel index (e.g., -1) to indicate "no FX conversion",
+    keeping the representation numeric and avoiding Python object overhead.
 """
 
 from dataclasses import dataclass
-
 import numpy as np
+
+from riskquant.portfolio.blocks.base_block import Block
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class SpotBlock:
+class SpotBlock(Block):
     """
     Struct-of-arrays for compiled spot trades.
 
-    Each attribute is a NumPy array with matching length `m_spot` (number of spot trades). The block is frozen and uses slots for memory and performance benefits.
+    Each attribute is a NumPy array with matching length `m_spot` (number of spot trades).
+    The block is frozen and uses slots for memory and performance benefits.
 
     Row ordering:
       - row i corresponds to trade with UID `trade_uids[i]`.
 
     Index semantics:
-      - `price_uix` is an int32 index into `CompiledPortfolio.price_factor_ids`.
-      - `fx_uix` is an int32 index into `CompiledPortfolio.fx_factor_ids` or
-        the sentinel value (e.g. -1) indicating no FX conversion is required.
+      - `price_uix` is an int32 index into `MarketDataMatrix.prices`.
+      - `fx_uix` is an int32 index into `MarketDataMatrix.fx_spots` or
+        the sentinel value (e.g., -1) indicating no FX conversion is required.
     """
 
     # ========= TRADE IDENTITY ==========
@@ -3379,8 +4789,8 @@ class SpotBlock:
     # Index into the compiled FX factor universe, or sentinel when no FX needed. dtype: int32 (np.int32)
     fx_uix: np.ndarray
 
-    # Flag to indicate if the math needs to invert the FX rate (1/X)
-    fx_invert: np.ndarray  # bool or int8
+    # Flag to indicate if the math needs to invert the FX rate (1/X). dtype: bool (np.bool_)
+    fx_invert: np.ndarray
 
 ```
 
@@ -3409,9 +4819,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from riskquant.portfolio.blocks.base_block import Block
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class _VanillaEuropeanOptionBaseBlock:
+class _VanillaEuropeanOptionBaseBlock(Block):
     """
     Common struct-of-arrays fields shared by all vanilla European option blocks.
     """
@@ -3434,13 +4846,11 @@ class _VanillaEuropeanOptionBaseBlock:
 
     # ========== DATES ==========
 
-    # Expiry date encoded as int32 ordinal (days since DATE_EPOCH).
-    # Determines the time-to-expiry for pricing and interpolating the vol surface.
-    expiry_date_ordinal32: np.ndarray
+    # (N,) int32 index into unique_dates_ordinal32
+    expiry_date_uix: np.ndarray
 
-    # Settlement/payment date encoded as int32 ordinal (days since DATE_EPOCH).
-    # Used for discounting the option payoff.
-    payoff_settlement_date_ordinal32: np.ndarray
+    # (N,) int32 index into unique_dates_ordinal32
+    settlement_date_uix: np.ndarray
 
     # ========== FX LINKAGES ==========
 
@@ -3483,9 +4893,8 @@ class VanillaEuropeanOptionCurveBlock(_VanillaEuropeanOptionBaseBlock):
 
     # ========== DATES ==========
 
-    # Physical delivery date encoded as int32 ordinal (days since DATE_EPOCH).
-    # Used to interpolate the underlying price curve to find the forward price.
-    delivery_date_ordinal32: np.ndarray
+    # (N,) int32 index into unique_dates_ordinal32
+    delivery_date_uix: np.ndarray
 
     # ========== MARKET LINKAGES (UNIVERSE INDICES) ==========
 
@@ -3495,28 +4904,20 @@ class VanillaEuropeanOptionCurveBlock(_VanillaEuropeanOptionBaseBlock):
     # Index into compiled volatility surface universe. dtype: int32
     vol_surface_uix: np.ndarray
 
+    # Y-Axis type identifier for the vol surface (e.g., strike, log-moneyness). dtype: int8
+    vol_surface_y_axis_type_id: np.ndarray
+
 ```
 
 ### FILE: portfolio\compiled.py ###
 ```python
 # src/riskquant/portfolio/compiled.py
-"""
-Compiles IngestBatch SoA containers into runtime-oriented Struct-of-Arrays blocks.
-
-Design goals
-------------
-- Pure C-level NumPy slicing from ingestion to runtime.
-- Zero Python loops over individual trade rows.
-- Immutable compiled runtime container for pricing/risk kernels.
-"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
-from typing import Callable, Optional, TypeAlias
-
-from riskquant.portfolio.compilers.registry import COMPILER_REGISTRY
-from riskquant.portfolio.ingest.batch import IngestBatch
+from dataclasses import dataclass, field
+from typing import Optional, TypeAlias
+import numpy as np
 
 from riskquant.portfolio.blocks.spot_block import SpotBlock
 from riskquant.portfolio.blocks.forward_block import (
@@ -3540,18 +4941,33 @@ BlockType: TypeAlias = (
     | VanillaEuropeanOptionCurveBlock
 )
 
-# Compilers now take the full batch and return a Block if any trades match.
-CompilerFn: TypeAlias = Callable[[IngestBatch], Optional[BlockType]]
+# ============================================================
+# Field order (CRITICAL for performance)
+# ============================================================
+
+_FIELD_NAMES = (
+    "spot",
+    "forward_node",
+    "forward_curve",
+    "vanilla_european_option_node",
+    "vanilla_european_option_curve",
+)
 
 # ============================================================
 # Runtime container
 # ============================================================
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True)
 class CompiledPortfolio:
     """
     Immutable runtime container of instrument-homogeneous SoA blocks.
+
+    Design:
+    - Zero reflection (no dataclasses.fields usage)
+    - Predictable field order
+    - Fast iteration
+    - Minimal Python overhead
     """
 
     spot: Optional[SpotBlock] = None
@@ -3564,44 +4980,61 @@ class CompiledPortfolio:
         None
     )
 
+    # Temporal coordinates required by the MarketDataMatrix builder
+    unique_dates_ordinal32: np.ndarray = field(
+        default_factory=lambda: np.empty(0, dtype=np.int32)
+    )
+
+    # ------------------------------------------------------------
+    # Fast iteration (no reflection)
+    # ------------------------------------------------------------
     def iter_blocks(self) -> tuple[BlockType, ...]:
         """
-        Return all non-None blocks in a stable field order.
+        Return all non-None blocks in stable order.
         """
-        blocks: list[BlockType] = []
-        for f in fields(self):
-            block = getattr(self, f.name)
-            if block is not None:
-                blocks.append(block)
-        return tuple(blocks)
+        return tuple(
+            block
+            for name in _FIELD_NAMES
+            if (block := getattr(self, name)) is not None
+        )
 
+    # ------------------------------------------------------------
+    # Fast aggregate metrics
+    # ------------------------------------------------------------
     @property
     def total_trades(self) -> int:
         """
         Total number of trades across all compiled blocks.
         """
         total = 0
-        for block in self.iter_blocks():
-            total += len(block.trade_uids)
+        for name in _FIELD_NAMES:
+            block = getattr(self, name)
+            if block is not None:
+                total += len(block.trade_uids)
         return total
 
+    # ------------------------------------------------------------
+    # Constructor helper (avoids kwargs overhead)
+    # ------------------------------------------------------------
     @classmethod
-    def from_ingest_batch(
-        cls,
-        batch: IngestBatch,
+    def from_compiled_fields(
+        cls, compiled_fields: dict[str, BlockType], unique_dates: np.ndarray
     ) -> "CompiledPortfolio":
         """
-        Consume a validated SoA IngestBatch and compile it directly into SoA blocks
-        using vectorized NumPy masking. Zero scalar instantiation.
+        Fast construction from dict without dynamic kwargs overhead.
         """
-        compiled_fields: dict[str, Optional[BlockType]] = {}
-
-        # Dispatch the full batch to every compiler in the registry.
-        # The compiler will apply its own boolean mask and slice the arrays.
-        for instrument_id, spec in COMPILER_REGISTRY.items():
-            compiled_fields[spec.field_name] = spec.compiler(batch)
-
-        return cls(**compiled_fields)
+        return cls(
+            spot=compiled_fields.get("spot"),
+            forward_node=compiled_fields.get("forward_node"),
+            forward_curve=compiled_fields.get("forward_curve"),
+            vanilla_european_option_node=compiled_fields.get(
+                "vanilla_european_option_node"
+            ),
+            vanilla_european_option_curve=compiled_fields.get(
+                "vanilla_european_option_curve"
+            ),
+            unique_dates_ordinal32=unique_dates,
+        )
 
 ```
 
@@ -3618,13 +5051,10 @@ class CompiledPortfolio:
 
 ### FILE: portfolio\compilers\instruments\forward.py ###
 ```python
-# src/riskquant/portfolio/compilers/forward.py
+# src/riskquant/portfolio/compilers/instruments/forward.py
 from __future__ import annotations
-
-import numpy as np
 from typing import Optional
 
-from riskquant.portfolio.instruments import FORWARD_NODE_ID, FORWARD_CURVE_ID
 from riskquant.portfolio.ingest.batch import IngestBatch
 from riskquant.portfolio.blocks.forward_block import (
     ForwardNodeBlock,
@@ -3632,99 +5062,100 @@ from riskquant.portfolio.blocks.forward_block import (
 )
 
 
-def compile_forward_node(batch: IngestBatch) -> Optional[ForwardNodeBlock]:
-    # 1. Create the boolean mask for this instrument
-    mask = batch.instrument_ids == FORWARD_NODE_ID
-
-    # 2. Early exit if no trades found
-    if not np.any(mask):
+def compile_forward_node(
+    batch: IngestBatch,
+    start: int,
+    end: int,
+) -> Optional[ForwardNodeBlock]:
+    if start == end:
         return None
 
-    # 3. Vectorized slice directly into the SoA block
     return ForwardNodeBlock(
-        trade_uids=batch.uids[mask],
-        qty=batch.qty[mask],
-        strike=batch.strike_price[mask],
-        settlement_date_ordinal32=batch.settle_ord[mask],
-        fx_under_to_settle_uix=batch.fx_under_to_settle_ids[mask],
-        fx_strike_to_settle_uix=batch.fx_strike_to_settle_ids[mask],
-        fx_under_to_settle_invert=batch.fx_under_to_settle_invert[mask].astype(
-            bool
-        ),
+        trade_uids=batch.uids[start:end],
+        qty=batch.qty[start:end],
+        strike=batch.strike_price[start:end],
+        settlement_date_uix=batch.settle_date_uix[start:end],
+        fx_under_to_settle_uix=batch.fx_under_to_settle_ids[start:end],
+        fx_strike_to_settle_uix=batch.fx_strike_to_settle_ids[start:end],
+        fx_under_to_settle_invert=batch.fx_under_to_settle_invert[
+            start:end
+        ].astype(bool, copy=False),
         fx_strike_to_settle_invert=batch.fx_strike_to_settle_invert[
-            mask
-        ].astype(bool),
-        under_discount_curve_uix=batch.under_discount_curve_ids[mask],
-        strike_discount_curve_uix=batch.strike_discount_curve_ids[mask],
-        price_uix=batch.price_rf_ids[mask],
+            start:end
+        ].astype(bool, copy=False),
+        under_discount_curve_uix=batch.under_discount_curve_ids[start:end],
+        strike_discount_curve_uix=batch.strike_discount_curve_ids[start:end],
+        price_uix=batch.price_rf_ids[start:end],
     )
 
 
-def compile_forward_curve(batch: IngestBatch) -> Optional[ForwardCurveBlock]:
-    mask = batch.instrument_ids == FORWARD_CURVE_ID
-    if not np.any(mask):
+def compile_forward_curve(
+    batch: IngestBatch,
+    start: int,
+    end: int,
+) -> Optional[ForwardCurveBlock]:
+    if start == end:
         return None
 
     return ForwardCurveBlock(
-        trade_uids=batch.uids[mask],
-        qty=batch.qty[mask],
-        strike=batch.strike_price[mask],
-        settlement_date_ordinal32=batch.settle_ord[mask],
-        fx_under_to_settle_uix=batch.fx_under_to_settle_ids[mask],
-        fx_strike_to_settle_uix=batch.fx_strike_to_settle_ids[mask],
-        fx_under_to_settle_invert=batch.fx_under_to_settle_invert[mask].astype(
-            bool
-        ),
+        trade_uids=batch.uids[start:end],
+        qty=batch.qty[start:end],
+        strike=batch.strike_price[start:end],
+        settlement_date_uix=batch.settle_date_uix[start:end],
+        fx_under_to_settle_uix=batch.fx_under_to_settle_ids[start:end],
+        fx_strike_to_settle_uix=batch.fx_strike_to_settle_ids[start:end],
+        fx_under_to_settle_invert=batch.fx_under_to_settle_invert[
+            start:end
+        ].astype(bool, copy=False),
         fx_strike_to_settle_invert=batch.fx_strike_to_settle_invert[
-            mask
-        ].astype(bool),
-        under_discount_curve_uix=batch.under_discount_curve_ids[mask],
-        strike_discount_curve_uix=batch.strike_discount_curve_ids[mask],
-        price_curve_uix=batch.price_curve_ids[mask],
-        delivery_date_ordinal32=batch.delivery_ord[mask],
+            start:end
+        ].astype(bool, copy=False),
+        under_discount_curve_uix=batch.under_discount_curve_ids[start:end],
+        strike_discount_curve_uix=batch.strike_discount_curve_ids[start:end],
+        price_curve_uix=batch.price_curve_ids[start:end],
+        delivery_date_uix=batch.delivery_date_uix[start:end],
     )
 
 ```
 
 ### FILE: portfolio\compilers\instruments\spot.py ###
 ```python
-# src/riskquant/portfolio/compilers/spot.py
+# src/riskquant/portfolio/compilers/instruments/spot.py
 from __future__ import annotations
 from typing import Optional
-import numpy as np
 
-from riskquant.portfolio.instruments import SPOT_ID
 from riskquant.portfolio.ingest.batch import IngestBatch
 from riskquant.portfolio.blocks.spot_block import SpotBlock
 
 
-def compile_spot(batch: IngestBatch) -> Optional[SpotBlock]:
-    mask = batch.instrument_ids == SPOT_ID
-
-    if not np.any(mask):
+def compile_spot(
+    batch: IngestBatch,
+    start: int,
+    end: int,
+) -> Optional[SpotBlock]:
+    if start == end:
         return None
 
+    # Slicing a contiguous numpy array [start:end] returns a view.
+    # Zero memory copy. O(1) CPU time.
     return SpotBlock(
-        trade_uids=batch.uids[mask],
-        qty=batch.qty[mask],
-        price_uix=batch.price_rf_ids[mask],
-        fx_uix=batch.fx_under_to_settle_ids[mask],
-        fx_invert=batch.fx_under_to_settle_invert[mask].astype(bool),
+        trade_uids=batch.uids[start:end],
+        qty=batch.qty[start:end],
+        price_uix=batch.price_rf_ids[start:end],
+        fx_uix=batch.fx_under_to_settle_ids[start:end],
+        fx_invert=batch.fx_under_to_settle_invert[start:end].astype(
+            bool, copy=False
+        ),
     )
 
 ```
 
 ### FILE: portfolio\compilers\instruments\vanilla_european_option.py ###
 ```python
-# src/riskquant/portfolio/compilers/vanilla_european_option.py
+# src/riskquant/portfolio/compilers/instruments/vanilla_european_option.py
 from __future__ import annotations
 from typing import Optional
-import numpy as np
 
-from riskquant.portfolio.instruments import (
-    VANILLA_EUROPEAN_OPTION_NODE_ID,
-    VANILLA_EUROPEAN_OPTION_CURVE_ID,
-)
 from riskquant.portfolio.ingest.batch import IngestBatch
 from riskquant.portfolio.blocks.vanilla_european_option_block import (
     VanillaEuropeanOptionNodeBlock,
@@ -3734,76 +5165,76 @@ from riskquant.portfolio.blocks.vanilla_european_option_block import (
 
 def compile_vanilla_euro_option_node(
     batch: IngestBatch,
+    start: int,
+    end: int,
 ) -> Optional[VanillaEuropeanOptionNodeBlock]:
-    mask = batch.instrument_ids == VANILLA_EUROPEAN_OPTION_NODE_ID
-    if not np.any(mask):
+    if start == end:
         return None
 
     return VanillaEuropeanOptionNodeBlock(
-        trade_uids=batch.uids[mask],
-        qty=batch.qty[mask],
-        strike=batch.strike_price[mask],
-        is_call=batch.is_call[mask],
-        expiry_date_ordinal32=batch.expiry_ord[mask],
-        payoff_settlement_date_ordinal32=batch.settle_ord[mask],
-        fx_under_to_settle_uix=batch.fx_under_to_settle_ids[mask],
-        fx_strike_to_settle_uix=batch.fx_strike_to_settle_ids[mask],
-        fx_under_to_settle_invert=batch.fx_under_to_settle_invert[mask].astype(
-            bool
-        ),
+        trade_uids=batch.uids[start:end],
+        qty=batch.qty[start:end],
+        strike=batch.strike_price[start:end],
+        is_call=batch.is_call[start:end],
+        expiry_date_uix=batch.expiry_date_uix[start:end],
+        settlement_date_uix=batch.settle_date_uix[start:end],
+        fx_under_to_settle_uix=batch.fx_under_to_settle_ids[start:end],
+        fx_strike_to_settle_uix=batch.fx_strike_to_settle_ids[start:end],
+        fx_under_to_settle_invert=batch.fx_under_to_settle_invert[
+            start:end
+        ].astype(bool, copy=False),
         fx_strike_to_settle_invert=batch.fx_strike_to_settle_invert[
-            mask
-        ].astype(bool),
-        under_discount_curve_uix=batch.under_discount_curve_ids[mask],
-        strike_discount_curve_uix=batch.strike_discount_curve_ids[mask],
-        underlying_price_uix=batch.price_rf_ids[mask],
-        vol_uix=batch.vol_rf_ids[mask],
+            start:end
+        ].astype(bool, copy=False),
+        under_discount_curve_uix=batch.under_discount_curve_ids[start:end],
+        strike_discount_curve_uix=batch.strike_discount_curve_ids[start:end],
+        underlying_price_uix=batch.price_rf_ids[start:end],
+        vol_uix=batch.vol_rf_ids[start:end],
     )
 
 
 def compile_vanilla_euro_option_curve(
     batch: IngestBatch,
+    start: int,
+    end: int,
 ) -> Optional[VanillaEuropeanOptionCurveBlock]:
-    mask = batch.instrument_ids == VANILLA_EUROPEAN_OPTION_CURVE_ID
-    if not np.any(mask):
+    if start == end:
         return None
 
     return VanillaEuropeanOptionCurveBlock(
-        trade_uids=batch.uids[mask],
-        qty=batch.qty[mask],
-        strike=batch.strike_price[mask],
-        is_call=batch.is_call[mask],
-        expiry_date_ordinal32=batch.expiry_ord[mask],
-        payoff_settlement_date_ordinal32=batch.settle_ord[mask],
-        fx_under_to_settle_uix=batch.fx_under_to_settle_ids[mask],
-        fx_strike_to_settle_uix=batch.fx_strike_to_settle_ids[mask],
-        fx_under_to_settle_invert=batch.fx_under_to_settle_invert[mask].astype(
-            bool
-        ),
+        trade_uids=batch.uids[start:end],
+        qty=batch.qty[start:end],
+        strike=batch.strike_price[start:end],
+        is_call=batch.is_call[start:end],
+        expiry_date_uix=batch.expiry_date_uix[start:end],
+        settlement_date_uix=batch.settle_date_uix[start:end],
+        fx_under_to_settle_uix=batch.fx_under_to_settle_ids[start:end],
+        fx_strike_to_settle_uix=batch.fx_strike_to_settle_ids[start:end],
+        fx_under_to_settle_invert=batch.fx_under_to_settle_invert[
+            start:end
+        ].astype(bool, copy=False),
         fx_strike_to_settle_invert=batch.fx_strike_to_settle_invert[
-            mask
-        ].astype(bool),
-        under_discount_curve_uix=batch.under_discount_curve_ids[mask],
-        strike_discount_curve_uix=batch.strike_discount_curve_ids[mask],
-        underlying_price_curve_uix=batch.price_curve_ids[mask],
-        delivery_date_ordinal32=batch.delivery_ord[mask],
-        vol_surface_uix=batch.vol_surface_rf_ids[mask],
+            start:end
+        ].astype(bool, copy=False),
+        under_discount_curve_uix=batch.under_discount_curve_ids[start:end],
+        strike_discount_curve_uix=batch.strike_discount_curve_ids[start:end],
+        underlying_price_curve_uix=batch.price_curve_ids[start:end],
+        delivery_date_uix=batch.delivery_date_uix[start:end],
+        vol_surface_uix=batch.vol_surface_rf_ids[start:end],
+        vol_surface_y_axis_type_id=batch.vol_surface_y_axis_type_ids[start:end],
     )
 
 ```
 
 ### FILE: portfolio\compilers\registry.py ###
 ```python
-# src/riskquant/portfolio/compilers/registry.py
-
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Callable, Final, Optional, TypeAlias
 
-from riskquant.portfolio.compilers.instruments.spot import (
-    compile_spot,
-)
+from riskquant.portfolio.ingest.batch import IngestBatch
+
+from riskquant.portfolio.compilers.instruments.spot import compile_spot
 from riskquant.portfolio.compilers.instruments.forward import (
     compile_forward_curve,
     compile_forward_node,
@@ -3812,8 +5243,9 @@ from riskquant.portfolio.compilers.instruments.vanilla_european_option import (
     compile_vanilla_euro_option_curve,
     compile_vanilla_euro_option_node,
 )
-from riskquant.portfolio.ingest.batch import IngestBatch
+
 from riskquant.portfolio.instruments import (
+    NUM_INSTRUMENTS,
     SPOT_ID,
     FORWARD_NODE_ID,
     FORWARD_CURVE_ID,
@@ -3821,9 +5253,7 @@ from riskquant.portfolio.instruments import (
     VANILLA_EUROPEAN_OPTION_CURVE_ID,
 )
 
-from riskquant.portfolio.blocks.spot_block import (
-    SpotBlock,
-)
+from riskquant.portfolio.blocks.spot_block import SpotBlock
 from riskquant.portfolio.blocks.forward_block import (
     ForwardNodeBlock,
     ForwardCurveBlock,
@@ -3832,7 +5262,6 @@ from riskquant.portfolio.blocks.vanilla_european_option_block import (
     VanillaEuropeanOptionNodeBlock,
     VanillaEuropeanOptionCurveBlock,
 )
-
 
 # ============================================================
 # Type aliases
@@ -3846,46 +5275,136 @@ BlockType: TypeAlias = (
     | VanillaEuropeanOptionCurveBlock
 )
 
-# Updated to take the entire batch natively
-CompilerFn: TypeAlias = Callable[[IngestBatch], Optional[BlockType]]
+CompilerFn: TypeAlias = Callable[
+    [IngestBatch, int, int],
+    Optional[BlockType],
+]
+
+# ============================================================
+# Dispatch tables (GOD-TIER)
+# ============================================================
+
+# If instrument IDs are small integers → this is fastest possible dispatch
+
+_MAX_INSTRUMENT_ID: Final = NUM_INSTRUMENTS
+
+COMPILERS: Final[list[Optional[CompilerFn]]] = [None] * _MAX_INSTRUMENT_ID
+FIELD_NAMES: Final[list[Optional[str]]] = [None] * _MAX_INSTRUMENT_ID
+
+
+def _register(instrument_id: int, field_name: str, fn: CompilerFn) -> None:
+    COMPILERS[instrument_id] = fn
+    FIELD_NAMES[instrument_id] = field_name
 
 
 # ============================================================
-# Registry
+# Registration (executed once at import)
 # ============================================================
 
+# ---> SPOT
+_register(
+    int(SPOT_ID),
+    "spot",
+    compile_spot,
+)
 
-@dataclass(frozen=True, slots=True)
-class _CompilerSpec:
-    field_name: str
-    compiler: CompilerFn
+# ---> FORWARDS
+_register(
+    int(FORWARD_NODE_ID),
+    "forward_node",
+    compile_forward_node,
+)
+_register(
+    int(FORWARD_CURVE_ID),
+    "forward_curve",
+    compile_forward_curve,
+)
+
+# ---> VANILLA EUROPEAN OPTIONS
+_register(
+    int(VANILLA_EUROPEAN_OPTION_NODE_ID),
+    "vanilla_european_option_node",
+    compile_vanilla_euro_option_node,
+)
+_register(
+    int(VANILLA_EUROPEAN_OPTION_CURVE_ID),
+    "vanilla_european_option_curve",
+    compile_vanilla_euro_option_curve,
+)
+
+# ---> REGISTER MORE INSTRUMENTS HERE... (if instrument_id < _MAX_INSTRUMENT_ID)
+
+```
+
+### FILE: portfolio\engine.py ###
+```python
+# src/riskquant/portfolio/engine.py
+
+from __future__ import annotations
+
+import numpy as np
+
+from riskquant.portfolio.compilers.registry import COMPILERS, FIELD_NAMES
+from riskquant.portfolio.ingest.batch import IngestBatch
+from riskquant.portfolio.compiled import CompiledPortfolio
 
 
-# Removed the lambda wrappers to pass the function reference directly,
-# avoiding unnecessary call overhead in the dispatch loop.
-COMPILER_REGISTRY: Final[dict[int, _CompilerSpec]] = {
-    int(SPOT_ID): _CompilerSpec(
-        field_name="spot",
-        compiler=compile_spot,
-    ),
-    int(FORWARD_NODE_ID): _CompilerSpec(
-        field_name="forward_node",
-        compiler=compile_forward_node,
-    ),
-    int(FORWARD_CURVE_ID): _CompilerSpec(
-        field_name="forward_curve",
-        compiler=compile_forward_curve,
-    ),
-    int(VANILLA_EUROPEAN_OPTION_NODE_ID): _CompilerSpec(
-        field_name="vanilla_european_option_node",
-        compiler=compile_vanilla_euro_option_node,
-    ),
-    int(VANILLA_EUROPEAN_OPTION_CURVE_ID): _CompilerSpec(
-        field_name="vanilla_european_option_curve",
-        compiler=compile_vanilla_euro_option_curve,
-    ),
-    # Add others as required
-}
+def compile_portfolio_from_batch(batch: IngestBatch) -> CompiledPortfolio:
+    instrument_ids = batch.instrument_ids
+    n = instrument_ids.size
+
+    if n == 0:
+        return CompiledPortfolio()
+
+    # ------------------------------------------------------------
+    # 1. Sort once
+    # ------------------------------------------------------------
+    order = np.argsort(instrument_ids, kind="stable")
+    batch = batch.reorder(order)
+
+    sorted_ids = batch.instrument_ids
+
+    # ------------------------------------------------------------
+    # 2. Find boundaries
+    # ------------------------------------------------------------
+    change_idx = np.flatnonzero(sorted_ids[1:] != sorted_ids[:-1]) + 1
+    boundaries = np.concatenate(([0], change_idx, [n]))
+
+    # ------------------------------------------------------------
+    # 3. Compile blocks
+    # ------------------------------------------------------------
+    compiled_fields = {}
+
+    # Local binding for faster access inside loop
+    compilers = COMPILERS
+    field_names = FIELD_NAMES
+
+    n_groups = len(boundaries) - 1
+
+    for i in range(n_groups):
+        start = boundaries[i]
+        end = boundaries[i + 1]
+
+        instrument_id = sorted_ids[start]
+
+        compiler = compilers[instrument_id]
+        if compiler is None:
+            continue
+
+        field_name = field_names[instrument_id]
+
+        block = compiler(batch, start, end)
+
+        if block is not None:
+            compiled_fields[field_name] = block
+
+    # Pass the unique dates reference directly into the container mapping
+    compiled_fields["unique_dates_ordinal32"] = batch.unique_dates_ordinal32
+
+    # ------------------------------------------------------------
+    # 4. Construct result
+    # ------------------------------------------------------------
+    return CompiledPortfolio(**compiled_fields)
 
 ```
 
@@ -3984,6 +5503,16 @@ class IngestBatch:
     delivery_ord: np.ndarray
     expiry_ord: np.ndarray
 
+    # Unique set of all relevant dates across the batch, mapped to a compact UIX space for curve lookups.
+    unique_dates_ordinal32: np.ndarray
+
+    # ========= DATES UIX =========
+
+    # UIX arrays for the settlement, delivery, and expiry dates of each trade. These map into the unique_dates_ordinal32 array.
+    settle_date_uix: np.ndarray
+    delivery_date_uix: np.ndarray
+    expiry_date_uix: np.ndarray
+
     # ========== MARKET & FX LINKAGES (UNIVERSE INDICES) ==========
     fx_under_to_settle_ids: np.ndarray
     fx_under_to_settle_invert: np.ndarray
@@ -3995,6 +5524,7 @@ class IngestBatch:
     vol_surface_rf_ids: np.ndarray
     under_discount_curve_ids: np.ndarray
     strike_discount_curve_ids: np.ndarray
+    vol_surface_y_axis_type_ids: np.ndarray
 
     def to_df(self) -> DataFrame:
         """
@@ -4032,19 +5562,6 @@ class IngestBatch:
                 "qty": self.qty,
                 "strike_price": Series(self.strike_price).replace(0.0, np.nan),
                 "is_call": Series(self.is_call).replace(NOT_OPTION, np.nan),
-                # DATES
-                "expiry_date": decode_dates(
-                    self.expiry_ord,
-                    NO_EXPIRY_DATE_ORDINAL32,
-                ),
-                "delivery_date": decode_dates(
-                    self.delivery_ord,
-                    NO_DELIVERY_DATE_ORDINAL32,
-                ),
-                "settle_date": decode_dates(
-                    self.settle_ord,
-                    NO_SETTLEMENT_DATE_ORDINAL32,
-                ),
                 # LINKAGES
                 "price_rf_id": self.price_rf_ids,
                 "price_curve_id": self.price_curve_ids,
@@ -4062,6 +5579,25 @@ class IngestBatch:
                 "strike_discount_curve_id": mask_curve(
                     self.strike_discount_curve_ids
                 ),
+                # DATES
+                "expiry_date": decode_dates(
+                    self.expiry_ord,
+                    NO_EXPIRY_DATE_ORDINAL32,
+                ),
+                "delivery_date": decode_dates(
+                    self.delivery_ord,
+                    NO_DELIVERY_DATE_ORDINAL32,
+                ),
+                "settle_date": decode_dates(
+                    self.settle_ord,
+                    NO_SETTLEMENT_DATE_ORDINAL32,
+                ),
+                # DATE GRID FIELDS
+                "settle_date_uix": self.settle_date_uix,
+                "delivery_date_uix": self.delivery_date_uix,
+                "expiry_date_uix": self.expiry_date_uix,
+                # Volatility Surface Y-Axis Type
+                "vol_surface_y_axis_type_id": self.vol_surface_y_axis_type_ids,
             }
         )
 
@@ -4072,37 +5608,69 @@ class IngestBatch:
         """
         return self.to_df()
 
+    def reorder(
+        self,
+        order: np.ndarray,
+    ) -> "IngestBatch":
+        """
+        Returns a new IngestBatch with all arrays reordered according to the provided index array.
+        This is useful for sorting or grouping trades while maintaining the SoA structure.
+        """
+        return IngestBatch(
+            size=self.size,
+            instrument_ids=self.instrument_ids[order],
+            uids=self.uids[order],
+            qty=self.qty[order],
+            strike_price=self.strike_price[order],
+            is_call=self.is_call[order],
+            settle_ord=self.settle_ord[order],
+            delivery_ord=self.delivery_ord[order],
+            expiry_ord=self.expiry_ord[order],
+            unique_dates_ordinal32=self.unique_dates_ordinal32,  # Unchanged
+            settle_date_uix=self.settle_date_uix[order],
+            delivery_date_uix=self.delivery_date_uix[order],
+            expiry_date_uix=self.expiry_date_uix[order],
+            fx_under_to_settle_ids=self.fx_under_to_settle_ids[order],
+            fx_under_to_settle_invert=self.fx_under_to_settle_invert[order],
+            fx_strike_to_settle_ids=self.fx_strike_to_settle_ids[order],
+            fx_strike_to_settle_invert=self.fx_strike_to_settle_invert[order],
+            price_rf_ids=self.price_rf_ids[order],
+            price_curve_ids=self.price_curve_ids[order],
+            vol_rf_ids=self.vol_rf_ids[order],
+            vol_surface_rf_ids=self.vol_surface_rf_ids[order],
+            under_discount_curve_ids=self.under_discount_curve_ids[order],
+            strike_discount_curve_ids=self.strike_discount_curve_ids[order],
+            vol_surface_y_axis_type_ids=(
+                self.vol_surface_y_axis_type_ids[order]
+            ),
+        )
+
 ```
 
 ### FILE: portfolio\ingest\batch_builder.py ###
 ```python
 # src/riskquant/portfolio/ingest/batch_builder.py
-"""
-Builds the pristine SoA IngestBatch from raw Pandas DataFrames.
-Acts as the extraction and translation layer before trade generation,
-ensuring all "Shift Left" validations pass before allocating memory.
-"""
-
 import numpy as np
 import pandas as pd
 
-from riskquant.portfolio.instruments import Instrument
+from riskquant.portfolio.instruments import (
+    Instrument,
+    FORWARD_CURVE_ID,
+    VANILLA_EUROPEAN_OPTION_CURVE_ID,
+    VANILLA_EUROPEAN_OPTION_NODE_ID,
+    SPOT_ID,
+)
 from riskquant.constants import (
-    # ID sentinels
+    NO_DATE_UIX,
     NO_PRICE_ID,
     NO_PRICE_CURVE_ID,
     NO_VOL_ID,
-    # No discount curve sentinel
     NO_DISCOUNT_CURVE_ID,
-    # No FX required sentinel
     NO_FX_RF_REQUIRED,
-    # Date sentinels
     NO_DELIVERY_DATE_ORDINAL32,
     NO_SETTLEMENT_DATE_ORDINAL32,
     NO_EXPIRY_DATE_ORDINAL32,
-    # Not option sentinel
     NOT_OPTION,
-    # Volatility risk factor prefix
     VOL_RISK_FACTOR_PREFIX,
 )
 from riskquant.portfolio.ingest.batch import IngestBatch
@@ -4121,6 +5689,9 @@ from riskquant.portfolio.ingest.parser import (
     parse_optional_date_series_to_ordinal32,
 )
 from riskquant.portfolio.ingest.fx_resolver import resolve_fx_rf_ids_inplace
+from riskquant.market_data.surfaces.y_axes_types import (
+    SURFACE_Y_AXIS_TYPE_REGISTRY,
+)
 
 
 def build_ingest_batch(
@@ -4130,11 +5701,8 @@ def build_ingest_batch(
     container_name_to_container_id: dict[str, int],
     rf_id_to_ccy: dict[int, str],
     container_id_to_ccy: dict[int, str],
+    container_name_to_y_axis_name: dict[str, str],
 ) -> IngestBatch:
-    """
-    Consume a raw positions DataFrame, validate it, translate strings to
-    system integer IDs, and output a highly optimized IngestBatch.
-    """
     n = len(df)
     if n == 0:
         raise ValueError("Cannot build IngestBatch from an empty DataFrame.")
@@ -4142,21 +5710,15 @@ def build_ingest_batch(
     # ==========================================
     # 1. BULK VALIDATION ("SHIFT LEFT")
     # ==========================================
-
-    # Check base schema and NaNs
     require_cols_in_df(df, REQUIRED_BASE_COLS, ctx="Positions Ingest")
     for col in REQUIRED_BASE_COLS:
         require_non_nan_in_series(df[col], ctx=f"Column '{col}'")
 
-    # Domain logic validations
     validate_instruments(df["instrument"], ctx="Instrument Validation")
     validate_conditional_option_fields(df, ctx="Option Fields Validation")
-
-    # Core Identity and Economic Validations
     validate_uids_unique(df["uid"], ctx="UID Validation")
     require_non_zero_values(df["quantity"], ctx="Quantity Validation")
 
-    # Optional but if present, must be valid
     if "is_call" in df.columns:
         validate_is_call_flags(df["is_call"], ctx="is_call Validation")
     if "strike_price" in df.columns:
@@ -4167,17 +5729,9 @@ def build_ingest_batch(
     # ==========================================
     # 2. TRANSLATE INSTRUMENTS & UIDs
     # ==========================================
-
-    # Validate UIDs are unique before we convert to numpy arrays, since Pandas has nice tools for this.
-    validate_uids_unique(df["uid"], ctx="UID Uniqueness Validation")
-
-    # UIDs and quantities are core to all trades, so we require them and convert to arrays early.
     uids = df["uid"].to_numpy(dtype=np.int64)
-
-    # Quntity can be positive or negative, but not zero or NaN/Inf, so we validate and convert to float64 for safety.
     qty = df["quantity"].to_numpy(dtype=np.float64)
 
-    # We already validated the strings exist in the Enum, so this list comprehension is safe and fast
     instrument_ids = np.array(
         [Instrument[inst].value for inst in df["instrument"]],
         dtype=np.int32,
@@ -4186,39 +5740,38 @@ def build_ingest_batch(
     # ==========================================
     # 3. TRANSLATE RISK FACTOR MAPPINGS
     # ==========================================
-
-    # Fast boolean masks
-    is_container_mask = (
-        df["instrument"].str.endswith("CURVE").to_numpy(dtype=bool)
+    # OPTIMIZATION: Integer logic instead of string matching
+    is_container_mask = (instrument_ids == FORWARD_CURVE_ID) | (
+        instrument_ids == VANILLA_EUROPEAN_OPTION_CURVE_ID
     )
-    is_option_mask = (
-        df["instrument"].str.contains("OPTION").to_numpy(dtype=bool)
+    is_option_mask = (instrument_ids == VANILLA_EUROPEAN_OPTION_NODE_ID) | (
+        instrument_ids == VANILLA_EUROPEAN_OPTION_CURVE_ID
     )
 
     # --- PRICE MAPPINGS ---
-    # Map Nodes (SPOT, FORWARD_NODE, VANILLA_EUROPEAN_OPTION_NODE)
     node_underlyings = df.loc[~is_container_mask, "underlying"]
     mapped_nodes = node_underlyings.map(rf_name_to_rf_id)
     require_non_nan_in_series(mapped_nodes, ctx="Mapped Node Underlying IDs")
 
-    # Map Containers (FORWARD_CURVE, VANILLA_EUROPEAN_OPTION_CURVE)
     container_underlyings = df.loc[is_container_mask, "underlying"]
     mapped_containers = container_underlyings.map(
         container_name_to_container_id
     )
     require_non_nan_in_series(mapped_containers, ctx="Mapped Container IDs")
 
-    # Pre-allocate arrays filled with the defualt no ID sentinels.
     price_rf_ids = np.full(n, NO_PRICE_ID, dtype=np.int32)
     price_curve_ids = np.full(n, NO_PRICE_CURVE_ID, dtype=np.int32)
     vol_rf_ids = np.full(n, NO_VOL_ID, dtype=np.int32)
     vol_surface_rf_ids = np.full(n, NO_VOL_ID, dtype=np.int32)
 
-    # Slot the translated PRICE integer IDs
     price_rf_ids[~is_container_mask] = mapped_nodes.to_numpy(dtype=np.int32)
     price_curve_ids[is_container_mask] = mapped_containers.to_numpy(
         dtype=np.int32
     )
+
+    # DEFAULT Fallback mapping config
+    default_y_axis = SURFACE_Y_AXIS_TYPE_REGISTRY["strike"].value
+    vol_surface_y_axis_type_ids = np.full(n, default_y_axis, dtype=np.int8)
 
     # --- VOLATILITY MAPPINGS (Options Only) ---
     if is_option_mask.any():
@@ -4226,47 +5779,51 @@ def build_ingest_batch(
         option_curves_mask = is_option_mask & is_container_mask
 
         if option_nodes_mask.any():
-            # Vectorized string prepend
             vol_nodes = (
                 VOL_RISK_FACTOR_PREFIX + df.loc[option_nodes_mask, "underlying"]
             )
             mapped_vol_nodes = vol_nodes.map(rf_name_to_rf_id)
             require_non_nan_in_series(
-                mapped_vol_nodes,
-                ctx="Mapped Vol Node IDs",
+                mapped_vol_nodes, ctx="Mapped Vol Node IDs"
             )
             vol_rf_ids[option_nodes_mask] = mapped_vol_nodes.to_numpy(
                 dtype=np.int32
             )
 
         if option_curves_mask.any():
-            # Vectorized string prepend
             vol_curves = (
                 VOL_RISK_FACTOR_PREFIX
                 + df.loc[option_curves_mask, "underlying"]
             )
             mapped_vol_curves = vol_curves.map(container_name_to_container_id)
             require_non_nan_in_series(
-                mapped_vol_curves,
-                ctx="Mapped Vol Surface IDs",
+                mapped_vol_curves, ctx="Mapped Vol Surface IDs"
             )
             vol_surface_rf_ids[option_curves_mask] = mapped_vol_curves.to_numpy(
                 dtype=np.int32
             )
 
+            mapped_y_axis_strs = vol_curves.map(container_name_to_y_axis_name)
+            mapped_y_axis_ids = mapped_y_axis_strs.map(
+                lambda x: (
+                    SURFACE_Y_AXIS_TYPE_REGISTRY[x.lower()].value
+                    if pd.notna(x)
+                    else default_y_axis
+                )
+            )
+            vol_surface_y_axis_type_ids[option_curves_mask] = (
+                mapped_y_axis_ids.to_numpy(dtype=np.int8)
+            )
+
     # ==========================================
     # 4. HANDLE OPTIONAL COLUMNS (Economics)
     # ==========================================
-
-    # Strike price
     if "strike_price" in df.columns:
         strike_price = df["strike_price"].fillna(0.0).to_numpy(dtype=np.float64)
     else:
         strike_price = np.zeros(n, dtype=np.float64)
 
-    # is_call flag (only relevant for options, but we allow it on all rows for simplicity)
     if "is_call" in df.columns:
-        # Fill missing with NOT_OPTION sentinel
         is_call = df["is_call"].fillna(NOT_OPTION).to_numpy(dtype=np.int8)
     else:
         is_call = np.full(n, NOT_OPTION, dtype=np.int8)
@@ -4274,7 +5831,6 @@ def build_ingest_batch(
     # ==========================================
     # 5. PARSE DATES TO ORDINAL32
     # ==========================================
-    # The parser function handles Sentinels automatically if the column is missing or blank
     delivery_ord = parse_optional_date_series_to_ordinal32(
         df.get("delivery_date", pd.Series(index=df.index, dtype=object)),
         col_name="delivery_date",
@@ -4294,7 +5850,6 @@ def build_ingest_batch(
     # ==========================================
     # 6. RESOLVE FX LINKAGES IN BULK
     # ==========================================
-    # Derive underlying currency from the resolved Risk Factor and Container IDs
     underlying_ccy_series = pd.Series(index=df.index, dtype=object)
     underlying_ccy_series.loc[~is_container_mask] = mapped_nodes.map(
         rf_id_to_ccy
@@ -4310,8 +5865,6 @@ def build_ingest_batch(
     underlying_ccy = underlying_ccy_series.to_numpy(dtype=object)
     settlement_ccy = df["settlement_ccy"].to_numpy(dtype=object)
 
-    # If strike_ccy is provided, fill the blank/NaN rows with the underlying_ccy.
-    # If the column is entirely missing, default to underlying_ccy.
     if "strike_ccy" in df.columns:
         strike_ccy = (
             df["strike_ccy"]
@@ -4344,19 +5897,13 @@ def build_ingest_batch(
     # ==========================================
     # 6.1 CLEAN UP NON-STRIKE INSTRUMENTS
     # ==========================================
-
-    # SPOT trades do not have strikes. Mask out their strike FX linkages.
-    is_spot_mask = (df["instrument"] == "SPOT").to_numpy(dtype=bool)
+    is_spot_mask = instrument_ids == SPOT_ID
     fx_strike_to_settle_ids[is_spot_mask] = NO_FX_RF_REQUIRED
     fx_strike_to_settle_invert[is_spot_mask] = 0
 
     # ==========================================
     # 6.5 RESOLVE DISCOUNT CURVES (TRADE LEVEL)
     # ==========================================
-
-    # If the trade file doesn't provide the curves, then there is no discounting and we can fill with NO_DISCOUNT_CURVE_ID sentinel. If the columns are present, we map the names to IDs and validate they exist in the system.
-
-    # Discounting for underlying
     if "under_discount_curve" in df.columns:
         mapped_under_dc = df["under_discount_curve"].map(
             container_name_to_container_id
@@ -4366,12 +5913,9 @@ def build_ingest_batch(
         ).to_numpy(dtype=np.int32)
     else:
         under_discount_curve_ids = np.full(
-            n,
-            NO_DISCOUNT_CURVE_ID,
-            dtype=np.int32,
+            n, NO_DISCOUNT_CURVE_ID, dtype=np.int32
         )
 
-    # Dicounting for strike.
     if "strike_discount_curve" in df.columns:
         mapped_strike_dc = df["strike_discount_curve"].map(
             container_name_to_container_id
@@ -4381,54 +5925,80 @@ def build_ingest_batch(
         ).to_numpy(dtype=np.int32)
     else:
         strike_discount_curve_ids = np.full(
-            n,
-            NO_DISCOUNT_CURVE_ID,
-            dtype=np.int32,
+            n, NO_DISCOUNT_CURVE_ID, dtype=np.int32
         )
 
     # ==========================================
-    # 7. PACK THE DUMB BATCH
+    # 7. EXTRACT UNIQUE DATES & MAP TO UIX GRID
+    # ==========================================
+    all_dates = np.concatenate([settle_ord, delivery_ord, expiry_ord])
+
+    valid_mask = (
+        (all_dates != NO_SETTLEMENT_DATE_ORDINAL32)
+        & (all_dates != NO_DELIVERY_DATE_ORDINAL32)
+        & (all_dates != NO_EXPIRY_DATE_ORDINAL32)
+    )
+
+    unique_dates_ordinal32 = np.unique(all_dates[valid_mask])
+
+    settle_date_uix = np.where(
+        settle_ord == NO_SETTLEMENT_DATE_ORDINAL32,
+        NO_DATE_UIX,
+        np.searchsorted(unique_dates_ordinal32, settle_ord),
+    ).astype(np.int32)
+
+    delivery_date_uix = np.where(
+        delivery_ord == NO_DELIVERY_DATE_ORDINAL32,
+        NO_DATE_UIX,
+        np.searchsorted(unique_dates_ordinal32, delivery_ord),
+    ).astype(np.int32)
+
+    expiry_date_uix = np.where(
+        expiry_ord == NO_EXPIRY_DATE_ORDINAL32,
+        NO_DATE_UIX,
+        np.searchsorted(unique_dates_ordinal32, expiry_ord),
+    ).astype(np.int32)
+
+    # ==========================================
+    # 8. PACK THE DUMB BATCH
     # ==========================================
     return IngestBatch(
         size=n,
-        # --- IDS ---
         instrument_ids=instrument_ids,
         uids=uids,
-        # --- ECONOMICS ---
         qty=qty,
         strike_price=strike_price,
         is_call=is_call,
-        # --- DATES ---
         settle_ord=settle_ord,
         delivery_ord=delivery_ord,
         expiry_ord=expiry_ord,
-        # --- FX LINKAGES ---
         fx_under_to_settle_ids=fx_under_to_settle_ids,
         fx_strike_to_settle_ids=fx_strike_to_settle_ids,
-        # --- FX INVERT FLAGS ---
         fx_under_to_settle_invert=fx_under_to_settle_invert,
         fx_strike_to_settle_invert=fx_strike_to_settle_invert,
-        # --- UNDERLYING LINKAGES
         price_rf_ids=price_rf_ids,
         price_curve_ids=price_curve_ids,
-        # --- VOL LINKAGES
         vol_rf_ids=vol_rf_ids,
         vol_surface_rf_ids=vol_surface_rf_ids,
-        # --- DISCOUNT CURVE LINKAGES ---
         under_discount_curve_ids=under_discount_curve_ids,
         strike_discount_curve_ids=strike_discount_curve_ids,
+        unique_dates_ordinal32=unique_dates_ordinal32,
+        settle_date_uix=settle_date_uix,
+        delivery_date_uix=delivery_date_uix,
+        expiry_date_uix=expiry_date_uix,
+        vol_surface_y_axis_type_ids=vol_surface_y_axis_type_ids,
     )
 
 ```
 
 ### FILE: portfolio\ingest\fx_resolver.py ###
 ```python
-# src\riskquant\portfolio\ingest\fx_resolver.py
+# src/riskquant/portfolio/ingest/fx_resolver.py
 import numpy as np
+import pandas as pd
 
 from riskquant.exceptions import PrettyKeyError
 from riskquant.constants import NO_FX_RF_REQUIRED
-from riskquant.portfolio.fx import get_fx_pair_for_under_to_settle_conversion
 
 
 def resolve_fx_rf_ids_inplace(
@@ -4440,10 +6010,8 @@ def resolve_fx_rf_ids_inplace(
     rf_name_to_rf_id: dict[str, int],
 ) -> None:
     """
-    Resolve FX RF IDs for rows where base_ccy != settlement_ccy.
-
-    out_fx_rf_ids is filled with NO_FX_RF_REQUIRED then overwritten for quanto rows.
-    out_fx_invert is filled with 0, and set to 1 if the inverted FX pair is used.
+    Vectorized resolution of FX RF IDs for rows where base_ccy != settlement_ccy.
+    Completely eliminates Python for-loops and regex string matching.
     """
     # Initialize default states (No FX required, not inverted)
     out_fx_rf_ids.fill(np.int32(NO_FX_RF_REQUIRED))
@@ -4456,51 +6024,42 @@ def resolve_fx_rf_ids_inplace(
     if not np.any(mask):
         return
 
-    # Get the indices of the rows that require FX conversion.
-    qidx = np.nonzero(mask)[0]
+    # Extract strings for mismatched rows
+    b_str = base_ccy[mask].astype(str)
+    s_str = settlement_ccy[mask].astype(str)
 
-    # Local bindings for efficiency in the loop
-    fx_pair_fn = get_fx_pair_for_under_to_settle_conversion
-    rf_name_to_rf_id_map = rf_name_to_rf_id
+    # Fast vectorized string concatenation for currency pairs
+    std_pairs = np.char.add(b_str, s_str)
+    inv_pairs = np.char.add(s_str, b_str)
 
-    # Loop over the rows that require FX conversion and resolve the FX RF ID
-    for i in qidx:
-        b_ccy_str = str(base_ccy[i])
-        s_ccy_str = str(settlement_ccy[i])
+    # Map directly via Pandas (C-level hash lookup)
+    std_mapped = pd.Series(std_pairs).map(rf_name_to_rf_id).to_numpy()
+    inv_mapped = pd.Series(inv_pairs).map(rf_name_to_rf_id).to_numpy()
 
-        # Get the FX pair for this row
-        fx_pair_std = fx_pair_fn(
-            underlying_ccy=b_ccy_str,
-            settlement_ccy=s_ccy_str,
-        )
+    # Identify which mapping succeeded
+    std_valid = ~np.isnan(std_mapped)
+    inv_valid = ~np.isnan(inv_mapped)
 
-        # If the FX pair is an empty string, it means no FX conversion is needed.
-        if fx_pair_std == "":
-            continue
-
-        # 1. Try the standard FX pair first
-        if fx_pair_std in rf_name_to_rf_id_map:
-            out_fx_rf_ids[i] = np.int32(rf_name_to_rf_id_map[fx_pair_std])
-            continue
-
-        # 2. Try the inverted FX pair
-        # Assuming your standard nomenclature is BaseQuote (e.g., EURUSD)
-        fx_pair_inv = f"{s_ccy_str}{b_ccy_str}"
-        if fx_pair_inv in rf_name_to_rf_id_map:
-            out_fx_rf_ids[i] = np.int32(rf_name_to_rf_id_map[fx_pair_inv])
-            out_fx_invert[i] = (
-                1  # Flag this row for mathematical inversion later
-            )
-            continue
-
-        # 3. Neither pair exists in the static config
+    # Find failures
+    missing_mask = ~(std_valid | inv_valid)
+    if np.any(missing_mask):
+        bad_b = b_str[missing_mask][0]
+        bad_s = s_str[missing_mask][0]
         raise PrettyKeyError(
             "Missing FX spot risk factor for currency conversion:\n"
-            f"- Searched for standard: {fx_pair_std!r}\n"
-            f"- Searched for inverted: {fx_pair_inv!r}\n"
-            f"- base_ccy={b_ccy_str!r}\n"
-            f"- settlement_ccy={s_ccy_str!r}\n"
+            f"- Searched for standard: '{bad_b}{bad_s}'\n"
+            f"- Searched for inverted: '{bad_s}{bad_b}'\n"
+            f"- base_ccy='{bad_b}'\n"
+            f"- settlement_ccy='{bad_s}'\n"
         )
+
+    # Use standard where valid, else fallback to inverted
+    final_ids = np.where(std_valid, std_mapped, inv_mapped).astype(np.int32)
+    final_inverts = np.where(std_valid, 0, 1).astype(np.int32)
+
+    # Slot back into output arrays
+    out_fx_rf_ids[mask] = final_ids
+    out_fx_invert[mask] = final_inverts
 
 ```
 
@@ -4882,19 +6441,19 @@ def require_non_zero_values(
 # src/riskquant/portfolio/instruments.py
 from __future__ import annotations
 
-from enum import Enum
+from enum import IntEnum
 
 import numpy as np
 
 
-class Instrument(Enum):
+class Instrument(IntEnum):
     """Enum for financial instruments in the risk quant portfolio."""
 
-    SPOT = np.int32(1)
-    FORWARD_NODE = np.int32(2)
-    FORWARD_CURVE = np.int32(3)
-    VANILLA_EUROPEAN_OPTION_NODE = np.int32(4)
-    VANILLA_EUROPEAN_OPTION_CURVE = np.int32(5)
+    SPOT = np.int32(0)
+    FORWARD_NODE = np.int32(1)
+    FORWARD_CURVE = np.int32(2)
+    VANILLA_EUROPEAN_OPTION_NODE = np.int32(3)
+    VANILLA_EUROPEAN_OPTION_CURVE = np.int32(4)
 
     @classmethod
     def all_instrument_ids(cls) -> set[np.int32]:
@@ -4905,6 +6464,11 @@ class Instrument(Enum):
     def from_id(cls, id_: np.int32) -> "Instrument":
         """Get the Instrument enum member corresponding to the given ID."""
         return cls(id_)
+
+    @classmethod
+    def num_instruments(cls) -> int:
+        """Get the total number of instruments defined."""
+        return len(cls)
 
 
 # Get integer values for instruments for easy reference when building trade records in builders/ modules
@@ -4921,6 +6485,10 @@ VANILLA_EUROPEAN_OPTION_CURVE_ID: np.int32 = (
 
 # All valid instrument IDs for quick validation in trade record creation
 ALL_INSTRUMENT_IDS: set[np.int32] = Instrument.all_instrument_ids()
+
+
+# Total number of instruments defined (for dispatch table sizing)
+NUM_INSTRUMENTS: int = Instrument.num_instruments()
 
 ```
 
@@ -4951,78 +6519,6 @@ class PnlResult:
 
     trade_uids: np.ndarray  # int64, shape (M,)
     pnl: np.ndarray  # float32/64, shape (M, S), contiguous
-
-```
-
-### FILE: rq_logging.py ###
-```python
-# riskquant/rq_logging.py
-from __future__ import annotations
-
-import logging
-from dataclasses import dataclass
-from typing import Any, Dict, Optional
-
-_DEFAULT_FORMAT = "%(asctime)s %(levelname)s %(name)s - %(message)s"
-
-
-def configure_logging(
-    *,
-    level: str | int = "INFO",
-    fmt: str = _DEFAULT_FORMAT,
-) -> None:
-    """
-    Configure root logging (intended for scripts / CLIs / notebooks).
-
-    Library code should NOT call this automatically.
-    """
-    logging.basicConfig(level=level, format=fmt)
-
-
-def get_logger(name: str) -> logging.Logger:
-    return logging.getLogger(name)
-
-
-@dataclass(frozen=True, slots=True)
-class LogContext:
-    """
-    Structured context you want consistently attached to log records.
-
-    Keep this small; it flows into every record for an object.
-    """
-
-    component: str
-    object_name: Optional[str] = None
-    object_id: Optional[str] = None
-
-    def to_extra(self) -> Dict[str, Any]:
-        # Put under a single key to avoid clobbering LogRecord attrs.
-        return {
-            "rq": {
-                "component": self.component,
-                "object_name": self.object_name,
-                "object_id": self.object_id,
-            }
-        }
-
-
-class ContextLoggerAdapter(logging.LoggerAdapter):
-    """
-    Keeps contextual fields attached to log records.
-    """
-
-    def process(self, msg, kwargs):
-        extra = kwargs.get("extra")
-        base = dict(self.extra)  # adapter's extra
-        if extra:
-            # merge; nested dicts are simplest (rq namespace)
-            base.update(extra)
-        kwargs["extra"] = base
-        return msg, kwargs
-
-
-def with_context(logger: logging.Logger, ctx: LogContext) -> logging.LoggerAdapter:
-    return ContextLoggerAdapter(logger, ctx.to_extra())
 
 ```
 
@@ -5303,7 +6799,7 @@ if __name__ == "__main__":
 
 ### FILE: utils\printer.py ###
 ```python
-# riskquant/utils/printer.py
+# src/riskquant/utils/printer.py
 from datetime import date, datetime
 import math
 import time
@@ -5385,9 +6881,9 @@ def print_success_message() -> None:
         f"{s}: SUCCESS! CODE RAN SUCCESSFULLY!",
         width=60,
         padding=2,
-        corner_char="*",
-        top_border="=",
-        bottom_border="=",
+        # corner_char="*",
+        # top_border="=",
+        # bottom_border="=",
     )
 
 
@@ -5507,6 +7003,41 @@ def print_df(
     if add_space_after:
         print()
 
+
+def print_calling_file(
+    *,
+    width: int = 70,
+    padding: int = 1,
+    add_space_before: bool = True,
+    add_space_after: bool = True,
+) -> None:
+    """
+    Print the name of the Python file that called this function inside a wrapped text box.
+    """
+    import inspect
+    import os
+
+    frame = inspect.currentframe()
+    try:
+        caller_frame = frame.f_back if frame else None
+        filename = (
+            caller_frame.f_code.co_filename if caller_frame else "<unknown>"
+        )
+        filename = os.path.basename(filename)
+    finally:
+        # Explicitly delete frame references to avoid reference cycles
+        del frame
+
+    dt_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    print_wrapped_text_box(
+        f"{dt_str}: RUNNING FILE: {filename}",
+        width=width,
+        padding=padding,
+        add_space_before=add_space_before,
+        add_space_after=add_space_after,
+    )
+
 ```
 
 ### FILE: utils\tenors.py ###
@@ -5603,6 +7134,717 @@ def fmt_date_as_str_yyyymm(d: date) -> str:
 
 def fmt_date_as_str_yyyymmdd(d: date) -> str:
     return f"{d.year:04d}{d.month:02d}{d.day:02d}"
+
+```
+
+### FILE: valuation\__init__.py ###
+```python
+# src/riskquant/valuation/__init__.py
+
+```
+
+### FILE: valuation\engine.py ###
+```python
+# src/riskquant/valuation/engine.py
+import numpy as np
+from typing import Dict, Callable
+
+from riskquant.portfolio.compiled import CompiledPortfolio
+from riskquant.market_data.state import MarketDataMatrix
+from riskquant.valuation.pricers.spot import price_spot_block
+from riskquant.valuation.pricers.forward_node import price_forward_node_block
+from riskquant.valuation.pricers.forward_curve import price_forward_curve_block
+from riskquant.valuation.pricers.vanilla_european_option_node import (
+    price_vanilla_european_option_node_block,
+)
+from riskquant.valuation.pricers.vanilla_european_option_curve import (
+    price_vanilla_european_option_curve_block,
+)
+
+BLOCK_PRICER_MAP: Dict[str, Callable] = {
+    "SpotBlock": price_spot_block,
+    "ForwardNodeBlock": price_forward_node_block,
+    "ForwardCurveBlock": price_forward_curve_block,
+    "VanillaEuropeanOptionNodeBlock": price_vanilla_european_option_node_block,
+    "VanillaEuropeanOptionCurveBlock": price_vanilla_european_option_curve_block,
+}
+
+
+def run_valuation(
+    *,
+    portfolio: CompiledPortfolio,
+    market_data_mtx: MarketDataMatrix,
+) -> np.ndarray:
+    n_trades = portfolio.total_trades
+    n_scenarios = market_data_mtx.num_scenarios
+
+    total_pvs = np.zeros((n_trades, n_scenarios), dtype=np.float64)
+    cursor = 0
+
+    for block in portfolio.iter_blocks():
+        block_name = block.__class__.__name__
+        num_block_trades = len(block.trade_uids)
+
+        if block_name in BLOCK_PRICER_MAP:
+            pvs = BLOCK_PRICER_MAP[block_name](
+                block=block,
+                market_data_mtx=market_data_mtx,
+            )
+            total_pvs[cursor : cursor + num_block_trades, :] = pvs
+
+        cursor += num_block_trades
+
+    return total_pvs
+
+```
+
+### FILE: valuation\models\black_scholes.py ###
+```python
+# src/riskquant/valuation/models/black_scholes.py
+import numpy as np
+from scipy.stats import norm
+
+
+def fv_black_scholes_vanilla_3d(
+    *,
+    fwd: np.ndarray,  # Shape: (N, S)
+    strike: np.ndarray,  # Shape: (N, 1)
+    vol: np.ndarray,  # Shape: (N, S)
+    tte: np.ndarray,  # Shape: (N, 1)
+    is_call: np.ndarray,  # Shape: (N, 1)
+) -> np.ndarray:
+    """
+    Future Value (Undiscounted) of N options across S scenarios.
+    Uses the Black (1976) forward formula. Represents the expected payoff at settlement.
+    """
+    safe_tte = np.maximum(tte, 1e-9)
+    std_dev = vol * np.sqrt(safe_tte)
+
+    d1 = (np.log(fwd / strike) + 0.5 * (vol**2) * safe_tte) / std_dev
+    d2 = d1 - std_dev
+
+    cp = np.where(is_call == 1, 1.0, -1.0)
+
+    phi_d1 = norm.cdf(cp * d1)
+    phi_d2 = norm.cdf(cp * d2)
+
+    return cp * (fwd * phi_d1 - strike * phi_d2)
+
+
+def pv_black_scholes_vanilla_3d(
+    *,
+    fwd: np.ndarray,  # Shape: (N, S)
+    strike: np.ndarray,  # Shape: (N, 1)
+    vol: np.ndarray,  # Shape: (N, S)
+    tte: np.ndarray,  # Shape: (N, 1)
+    is_call: np.ndarray,  # Shape: (N, 1)
+    df_settle: np.ndarray,  # Shape: (N, S)
+) -> np.ndarray:
+    """
+    Present Value of N options across S scenarios.
+    """
+    fv = fv_black_scholes_vanilla_3d(
+        fwd=fwd,
+        strike=strike,
+        vol=vol,
+        tte=tte,
+        is_call=is_call,
+    )
+
+    return fv * df_settle
+
+```
+
+### FILE: valuation\pricers\__init__.py ###
+```python
+
+```
+
+### FILE: valuation\pricers\forward_curve.py ###
+```python
+# src/riskquant/valuation/pricers/forward_curve.py
+import numpy as np
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from riskquant.portfolio.blocks.forward_block import ForwardCurveBlock
+    from riskquant.market_data.state import MarketDataMatrix
+
+
+def price_forward_curve_block(
+    *,
+    block: "ForwardCurveBlock",
+    market_data_mtx: "MarketDataMatrix",
+) -> np.ndarray:
+    """
+    God-Tier Vectorized Forward Curve Pricer.
+    Calculates PV = Qty * (Fwd * FX_u2s * DF_under - Strike * FX_k2s * DF_strike)
+    Uses in-place mutations and sentinel-skipping to minimize RAM and maximize CPU efficiency.
+    """
+    # ==========================================
+    # 1. UNDERLYING LEG (Allocates Master Array)
+    # ==========================================
+    # Fancy indexing returns a copy. We own this memory and will use it
+    # as our running PV accumulator to save RAM.
+    # Shape: (N, S)
+    pvs = market_data_mtx.price_curve_grid[
+        block.price_curve_uix,
+        block.delivery_date_uix,
+        :,
+    ]
+
+    # --- Apply FX (Underlying to Settlement) ---
+    mask_fx_u = block.fx_under_to_settle_uix >= 0
+    if np.any(mask_fx_u):
+        valid_fx_u = block.fx_under_to_settle_uix[mask_fx_u]
+        fx_u = market_data_mtx.fx_spots[valid_fx_u, :]
+
+        # In-place mathematical inversion
+        inv_u = block.fx_under_to_settle_invert[mask_fx_u].astype(
+            bool, copy=False
+        )
+        if np.any(inv_u):
+            fx_u[inv_u, :] = 1.0 / fx_u[inv_u, :]
+
+        # In-place multiplication into the master accumulator
+        pvs[mask_fx_u, :] *= fx_u
+
+    # --- Apply Discounting (Underlying) ---
+    mask_df_u = block.under_discount_curve_uix >= 0
+    if np.any(mask_df_u):
+        valid_df_u = block.under_discount_curve_uix[mask_df_u]
+        valid_settle_u = block.settlement_date_uix[mask_df_u]
+        df_u = market_data_mtx.discount_factor_grid[
+            valid_df_u, valid_settle_u, :
+        ]
+
+        pvs[mask_df_u, :] *= df_u
+
+    # ==========================================
+    # 2. STRIKE LEG (Allocates Secondary Array)
+    # ==========================================
+    # We allocate exactly one temporary array for the strike leg.
+    # Shape: (N, S)
+    leg_strike = np.empty_like(pvs, dtype=np.float64)
+
+    # Broadcast the 1D strike array across the S scenarios
+    leg_strike[:] = block.strike[:, None]
+
+    # --- Apply FX (Strike to Settlement) ---
+    mask_fx_k = block.fx_strike_to_settle_uix >= 0
+    if np.any(mask_fx_k):
+        valid_fx_k = block.fx_strike_to_settle_uix[mask_fx_k]
+        fx_k = market_data_mtx.fx_spots[valid_fx_k, :]
+
+        inv_k = block.fx_strike_to_settle_invert[mask_fx_k].astype(
+            bool, copy=False
+        )
+        if np.any(inv_k):
+            fx_k[inv_k, :] = 1.0 / fx_k[inv_k, :]
+
+        leg_strike[mask_fx_k, :] *= fx_k
+
+    # --- Apply Discounting (Strike) ---
+    mask_df_k = block.strike_discount_curve_uix >= 0
+    if np.any(mask_df_k):
+        valid_df_k = block.strike_discount_curve_uix[mask_df_k]
+        valid_settle_k = block.settlement_date_uix[mask_df_k]
+        df_k = market_data_mtx.discount_factor_grid[
+            valid_df_k, valid_settle_k, :
+        ]
+
+        leg_strike[mask_df_k, :] *= df_k
+
+    # ==========================================
+    # 3. FINAL PV ASSEMBLY
+    # ==========================================
+    # PV = (leg_under - leg_strike) * qty
+    # All operations done in-place to avoid final allocations
+    pvs -= leg_strike
+    pvs *= block.qty[:, None]
+
+    return pvs
+
+```
+
+### FILE: valuation\pricers\forward_node.py ###
+```python
+# src/riskquant/valuation/pricers/forward_node.py
+import numpy as np
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from riskquant.portfolio.blocks.forward_block import ForwardNodeBlock
+    from riskquant.market_data.state import MarketDataMatrix
+
+
+def price_forward_node_block(
+    *,
+    block: "ForwardNodeBlock",
+    market_data_mtx: "MarketDataMatrix",
+) -> np.ndarray:
+    """
+    God-Tier Vectorized Forward Node Pricer.
+    Calculates PV = Qty * (Fwd * FX_u2s * DF_under - Strike * FX_k2s * DF_strike)
+    Uses in-place mutations and sentinel-skipping to minimize RAM and maximize CPU efficiency.
+    """
+    # ==========================================
+    # 1. UNDERLYING LEG (Allocates Master Array)
+    # ==========================================
+    # Fancy indexing returns a copy, so we own this memory.
+    # We will use this as our running PV accumulator to save RAM.
+    # Shape: (N, S)
+    pvs = market_data_mtx.forward_nodes[block.price_uix, :]
+
+    # --- Apply FX (Underlying to Settlement) ---
+    mask_fx_u = block.fx_under_to_settle_uix >= 0
+    if np.any(mask_fx_u):
+        valid_fx_u = block.fx_under_to_settle_uix[mask_fx_u]
+        fx_u = market_data_mtx.fx_spots[valid_fx_u, :]
+
+        # In-place mathematical inversion
+        inv_u = block.fx_under_to_settle_invert[mask_fx_u].astype(
+            bool, copy=False
+        )
+        if np.any(inv_u):
+            fx_u[inv_u, :] = 1.0 / fx_u[inv_u, :]
+
+        # In-place multiplication into the master accumulator
+        pvs[mask_fx_u, :] *= fx_u
+
+    # --- Apply Discounting (Underlying) ---
+    mask_df_u = block.under_discount_curve_uix >= 0
+    if np.any(mask_df_u):
+        valid_df_u = block.under_discount_curve_uix[mask_df_u]
+        valid_settle_u = block.settlement_date_uix[mask_df_u]
+        df_u = market_data_mtx.discount_factor_grid[
+            valid_df_u, valid_settle_u, :
+        ]
+
+        pvs[mask_df_u, :] *= df_u
+
+    # ==========================================
+    # 2. STRIKE LEG (Allocates Secondary Array)
+    # ==========================================
+    # We allocate exactly one temporary array for the strike leg.
+    # Shape: (N, S)
+    leg_strike = np.empty_like(pvs, dtype=np.float64)
+
+    # Broadcast the 1D strike array across the S scenarios
+    leg_strike[:] = block.strike[:, None]
+
+    # --- Apply FX (Strike to Settlement) ---
+    mask_fx_k = block.fx_strike_to_settle_uix >= 0
+    if np.any(mask_fx_k):
+        valid_fx_k = block.fx_strike_to_settle_uix[mask_fx_k]
+        fx_k = market_data_mtx.fx_spots[valid_fx_k, :]
+
+        inv_k = block.fx_strike_to_settle_invert[mask_fx_k].astype(
+            bool, copy=False
+        )
+        if np.any(inv_k):
+            fx_k[inv_k, :] = 1.0 / fx_k[inv_k, :]
+
+        leg_strike[mask_fx_k, :] *= fx_k
+
+    # --- Apply Discounting (Strike) ---
+    mask_df_k = block.strike_discount_curve_uix >= 0
+    if np.any(mask_df_k):
+        valid_df_k = block.strike_discount_curve_uix[mask_df_k]
+        valid_settle_k = block.settlement_date_uix[mask_df_k]
+        df_k = market_data_mtx.discount_factor_grid[
+            valid_df_k, valid_settle_k, :
+        ]
+
+        leg_strike[mask_df_k, :] *= df_k
+
+    # ==========================================
+    # 3. FINAL PV ASSEMBLY
+    # ==========================================
+    # PV = (leg_under - leg_strike) * qty
+    # All operations done in-place to avoid final allocations
+    pvs -= leg_strike
+    pvs *= block.qty[:, None]
+
+    return pvs
+
+```
+
+### FILE: valuation\pricers\spot.py ###
+```python
+# src/riskquant/valuation/pricers/spot.py
+"""Vectorized pricer for spot positions (SpotBlock) in the CompiledPortfolio framework."""
+import numpy as np
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from riskquant.portfolio.blocks.spot_block import SpotBlock
+    from riskquant.market_data.state import MarketDataMatrix
+
+
+def price_spot_block(
+    *,
+    block: "SpotBlock",
+    market_data_mtx: "MarketDataMatrix",
+) -> np.ndarray:
+    """
+    God-Tier Vectorized Spot Pricer.
+    Calculates PV = Qty * Price * FX in-place to minimize RAM usage and GC overhead.
+    """
+    # ==========================================
+    # 1. BASE PV (Allocates the Master Output Array)
+    # ==========================================
+    # Fancy indexing allocates the (M, S) array. We own this memory,
+    # so we will mutate it directly to save RAM.
+    pvs = market_data_mtx.prices[block.price_uix, :]
+
+    # Scale by Quantity in-place
+    pvs *= block.qty[:, None]
+
+    # ==========================================
+    # 2. FX TRANSLATION (Sentinel-Safe & In-Place)
+    # ==========================================
+    # Identify only the trades that require an FX conversion (uix >= 0)
+    # This prevents the NO_FX_RF_REQUIRED sentinel (-6) from wrapping around the array
+    fx_mask = block.fx_uix >= 0
+
+    if np.any(fx_mask):
+        valid_fx_uix = block.fx_uix[fx_mask]
+
+        # Fetch only the FX rates we actually need
+        fx_rates = market_data_mtx.fx_spots[valid_fx_uix, :]
+
+        # Identify which of these specific valid FX rates need mathematical inversion
+        inv_mask = block.fx_invert[fx_mask].astype(bool, copy=False)
+
+        if np.any(inv_mask):
+            # In-place mathematical inversion
+            fx_rates[inv_mask, :] = 1.0 / fx_rates[inv_mask, :]
+
+        # Multiply into the master PV array in-place
+        pvs[fx_mask, :] *= fx_rates
+
+    # ==========================================
+    # 3. RETURN
+    # ==========================================
+    return pvs
+
+```
+
+### FILE: valuation\pricers\vanilla_european_option_curve.py ###
+```python
+# src/riskquant/valuation/pricers/vanilla_european_option_curve.py
+import numpy as np
+from typing import TYPE_CHECKING
+
+from riskquant.constants import MOCK_VOLATILITY
+
+# FIXED: We use the Future Value (FV) kernel to maintain ownership of the memory
+# and avoid passing massive df_settle arrays.
+from riskquant.valuation.models.black_scholes import fv_black_scholes_vanilla_3d
+from riskquant.market_data.curves.interp_defs import (
+    interp_strike_linear_flat_extrap,
+)
+from riskquant.market_data.surfaces.y_axes_types import (
+    SURFACE_Y_AXIS_TYPE_STRIKE,
+    SURFACE_Y_AXIS_TYPE_LOG_STRIKE,
+    SURFACE_Y_AXIS_TYPE_MONEYNESS_SPOT,
+    SURFACE_Y_AXIS_TYPE_MONEYNESS_FWD,
+    SURFACE_Y_AXIS_TYPE_LOG_MONEYNESS_SPOT,
+    SURFACE_Y_AXIS_TYPE_LOG_MONEYNESS_FWD,
+)
+
+if TYPE_CHECKING:
+    from riskquant.portfolio.blocks.vanilla_european_option_block import (
+        VanillaEuropeanOptionCurveBlock,
+    )
+    from riskquant.market_data.state import MarketDataMatrix
+
+
+def price_vanilla_european_option_curve_block(
+    *,
+    block: "VanillaEuropeanOptionCurveBlock",
+    market_data_mtx: "MarketDataMatrix",
+) -> np.ndarray:
+    """
+    God-Tier Vectorized Vanilla European Option Curve Pricer.
+    Optimized for minimal allocations, in-place transformations, and zero redundant arrays.
+    """
+
+    # ==========================================
+    # 1. FETCH FORWARD PRICES (The Master Accumulator)
+    # ==========================================
+    # Fancy indexing returns a copy. We own this memory.
+    # Shape: (N, S)
+    fwd_in_strike_ccy = market_data_mtx.price_curve_grid[
+        block.underlying_price_curve_uix,
+        block.delivery_date_uix,
+        :,
+    ]
+
+    # Time to Expiry is standard across the block
+    tte = market_data_mtx.tte_grid[block.expiry_date_uix][:, None]
+
+    # ==========================================
+    # 2. UNDERLYING FX & DISCOUNTING (In-Place)
+    # ==========================================
+    # Covered Interest Parity: Fwd = Fwd * Spot_FX * DF_under
+
+    mask_fx_u = block.fx_under_to_settle_uix >= 0
+    if np.any(mask_fx_u):
+        valid_fx_u = block.fx_under_to_settle_uix[mask_fx_u]
+        fx_u = market_data_mtx.fx_spots[valid_fx_u, :]
+
+        inv_u = block.fx_under_to_settle_invert[mask_fx_u].astype(
+            bool, copy=False
+        )
+        if np.any(inv_u):
+            fx_u[inv_u, :] = 1.0 / fx_u[inv_u, :]
+
+        fwd_in_strike_ccy[mask_fx_u, :] *= fx_u
+
+    mask_df_u = block.under_discount_curve_uix >= 0
+    if np.any(mask_df_u):
+        valid_df_u = block.under_discount_curve_uix[mask_df_u]
+        valid_exp_u = block.expiry_date_uix[mask_df_u]
+        df_u = market_data_mtx.discount_factor_grid[valid_df_u, valid_exp_u, :]
+
+        fwd_in_strike_ccy[mask_df_u, :] *= df_u
+
+    # ==========================================
+    # 3. STRIKE FX & DISCOUNTING (In-Place)
+    # ==========================================
+    # Covered Interest Parity: Fwd = Fwd / (Spot_FX * DF_strike)
+
+    mask_fx_k = block.fx_strike_to_settle_uix >= 0
+    fx_k_cache = None
+    if np.any(mask_fx_k):
+        valid_fx_k = block.fx_strike_to_settle_uix[mask_fx_k]
+        fx_k_cache = market_data_mtx.fx_spots[valid_fx_k, :]
+
+        inv_k = block.fx_strike_to_settle_invert[mask_fx_k].astype(
+            bool, copy=False
+        )
+        if np.any(inv_k):
+            fx_k_cache[inv_k, :] = 1.0 / fx_k_cache[inv_k, :]
+
+        fwd_in_strike_ccy[mask_fx_k, :] /= fx_k_cache
+
+    mask_df_k = block.strike_discount_curve_uix >= 0
+    if np.any(mask_df_k):
+        valid_df_k = block.strike_discount_curve_uix[mask_df_k]
+        valid_exp_k = block.expiry_date_uix[mask_df_k]
+        df_k_exp = market_data_mtx.discount_factor_grid[
+            valid_df_k, valid_exp_k, :
+        ]
+
+        fwd_in_strike_ccy[mask_df_k, :] /= df_k_exp
+
+    # ==========================================
+    # 4. Y-COORDINATE TRANSFORMER
+    # ==========================================
+    K = block.strike[:, None]
+    F = fwd_in_strike_ccy
+
+    # Pre-allocate target array. Unused slots will be overwritten.
+    y_target = np.empty_like(F, dtype=np.float64)
+    y_types = block.vol_surface_y_axis_type_id
+
+    # --- STRIKE ---
+    m_strike = y_types == SURFACE_Y_AXIS_TYPE_STRIKE
+    if np.any(m_strike):
+        y_target[m_strike] = K[m_strike]
+
+    # --- LOG STRIKE ---
+    m_log_strike = y_types == SURFACE_Y_AXIS_TYPE_LOG_STRIKE
+    if np.any(m_log_strike):
+        y_target[m_log_strike] = np.log(K[m_log_strike])
+
+    # --- MONEYNESS (Fwd & Spot Combined) ---
+    m_fwd_mon = (y_types == SURFACE_Y_AXIS_TYPE_MONEYNESS_FWD) | (
+        y_types == SURFACE_Y_AXIS_TYPE_MONEYNESS_SPOT
+    )
+    if np.any(m_fwd_mon):
+        y_target[m_fwd_mon] = K[m_fwd_mon] / F[m_fwd_mon]
+
+    # --- LOG MONEYNESS (Fwd & Spot Combined) ---
+    m_log_fwd_mon = (y_types == SURFACE_Y_AXIS_TYPE_LOG_MONEYNESS_FWD) | (
+        y_types == SURFACE_Y_AXIS_TYPE_LOG_MONEYNESS_SPOT
+    )
+    if np.any(m_log_fwd_mon):
+        y_target[m_log_fwd_mon] = np.log(K[m_log_fwd_mon] / F[m_log_fwd_mon])
+
+    # ==========================================
+    # 5. DYNAMIC STRIKE INTERPOLATION (PHASE 2)
+    # ==========================================
+    if market_data_mtx.vol_surfaces.size == 0:
+        vols = np.full_like(F, MOCK_VOLATILITY, dtype=np.float64)
+    else:
+        vols = interp_strike_linear_flat_extrap(
+            pillars=market_data_mtx.vol_surface_strikes[block.vol_surface_uix],
+            values=market_data_mtx.vol_surfaces[
+                block.vol_surface_uix, block.expiry_date_uix
+            ],
+            targets=y_target,
+        )
+
+    # ==========================================
+    # 6. EXECUTE BLACK-SCHOLES (FV)
+    # ==========================================
+    # This allocates our final PV array as Future Value.
+    pvs = fv_black_scholes_vanilla_3d(
+        fwd=fwd_in_strike_ccy,
+        strike=K,
+        vol=vols,
+        tte=tte,
+        is_call=block.is_call[:, None],
+    )
+
+    # ==========================================
+    # 7. FINAL PV ASSEMBLY (In-Place)
+    # ==========================================
+    # Discount the Future Value back to today
+    if np.any(mask_df_k):
+        valid_df_k = block.strike_discount_curve_uix[mask_df_k]
+        valid_stl_k = block.settlement_date_uix[mask_df_k]
+        df_settle = market_data_mtx.discount_factor_grid[
+            valid_df_k, valid_stl_k, :
+        ]
+
+        pvs[mask_df_k, :] *= df_settle
+
+    # Translate PV from Strike Currency to Settlement Currency
+    if fx_k_cache is not None:
+        pvs[mask_fx_k, :] *= fx_k_cache
+
+    # Scale by quantity
+    pvs *= block.qty[:, None]
+
+    return pvs
+
+```
+
+### FILE: valuation\pricers\vanilla_european_option_node.py ###
+```python
+# src/riskquant/valuation/pricers/vanilla_european_option_node.py
+import numpy as np
+from typing import TYPE_CHECKING
+
+# Note: We import the Future Value (FV) kernel to maintain ownership of the memory
+# so we can apply final discounting and FX conversions in-place.
+from riskquant.valuation.models.black_scholes import fv_black_scholes_vanilla_3d
+
+if TYPE_CHECKING:
+    from riskquant.portfolio.blocks.vanilla_european_option_block import (
+        VanillaEuropeanOptionNodeBlock,
+    )
+    from riskquant.market_data.state import MarketDataMatrix
+
+
+def price_vanilla_european_option_node_block(
+    *,
+    block: "VanillaEuropeanOptionNodeBlock",
+    market_data_mtx: "MarketDataMatrix",
+) -> np.ndarray:
+    """
+    God-Tier Vectorized Vanilla European Option Node Pricer.
+    Uses in-place mutations, sentinel-skipping, and caching to minimize RAM.
+    """
+    # ==========================================
+    # 1. FETCH UNDERLYING (Allocates Master Array)
+    # ==========================================
+    # Fancy indexing returns a copy. We own this memory and will use it
+    # to synthesize the Forward Price in the Strike Currency in-place.
+    fwd_in_strike_ccy = market_data_mtx.forward_nodes[
+        block.underlying_price_uix, :
+    ]
+
+    # ==========================================
+    # 2. SYNTHESIZE FORWARD FX (In-Place)
+    # ==========================================
+
+    # --- Underlying FX ---
+    mask_fx_u = block.fx_under_to_settle_uix >= 0
+    if np.any(mask_fx_u):
+        valid_fx_u = block.fx_under_to_settle_uix[mask_fx_u]
+        fx_u = market_data_mtx.fx_spots[valid_fx_u, :]
+
+        inv_u = block.fx_under_to_settle_invert[mask_fx_u].astype(
+            bool, copy=False
+        )
+        if np.any(inv_u):
+            fx_u[inv_u, :] = 1.0 / fx_u[inv_u, :]
+
+        fwd_in_strike_ccy[mask_fx_u, :] *= fx_u
+
+    # --- Underlying Discount (Expiry) ---
+    mask_df_u = block.under_discount_curve_uix >= 0
+    if np.any(mask_df_u):
+        valid_df_u = block.under_discount_curve_uix[mask_df_u]
+        valid_exp_u = block.expiry_date_uix[mask_df_u]
+        df_u = market_data_mtx.discount_factor_grid[valid_df_u, valid_exp_u, :]
+
+        fwd_in_strike_ccy[mask_df_u, :] *= df_u
+
+    # --- Strike FX (Cached for later use) ---
+    mask_fx_k = block.fx_strike_to_settle_uix >= 0
+    fx_k_cache = None
+    if np.any(mask_fx_k):
+        valid_fx_k = block.fx_strike_to_settle_uix[mask_fx_k]
+        fx_k_cache = market_data_mtx.fx_spots[valid_fx_k, :]
+
+        inv_k = block.fx_strike_to_settle_invert[mask_fx_k].astype(
+            bool, copy=False
+        )
+        if np.any(inv_k):
+            fx_k_cache[inv_k, :] = 1.0 / fx_k_cache[inv_k, :]
+
+        fwd_in_strike_ccy[mask_fx_k, :] /= fx_k_cache
+
+    # --- Strike Discount (Expiry) ---
+    mask_df_k = block.strike_discount_curve_uix >= 0
+    if np.any(mask_df_k):
+        valid_df_k = block.strike_discount_curve_uix[mask_df_k]
+        valid_exp_k = block.expiry_date_uix[mask_df_k]
+        df_k = market_data_mtx.discount_factor_grid[valid_df_k, valid_exp_k, :]
+
+        fwd_in_strike_ccy[mask_df_k, :] /= df_k
+
+    # ==========================================
+    # 3. EXECUTE BLACK-SCHOLES (FV)
+    # ==========================================
+    # This allocates our final PV array. We fetch TTE and Vols natively here.
+    pvs = fv_black_scholes_vanilla_3d(
+        fwd=fwd_in_strike_ccy,
+        strike=block.strike[:, None],
+        vol=market_data_mtx.vol_nodes[block.vol_uix, :],
+        tte=market_data_mtx.tte_grid[block.expiry_date_uix][:, None],
+        is_call=block.is_call[:, None],
+    )
+
+    # ==========================================
+    # 4. FINAL PV ASSEMBLY (In-Place)
+    # ==========================================
+    # Discount the Future Value back to today
+    if np.any(mask_df_k):
+        # Note: We reuse the mask_df_k since the settlement discount curve
+        # is the same curve used for the strike leg
+        valid_df_k = block.strike_discount_curve_uix[mask_df_k]
+        valid_stl_k = block.settlement_date_uix[mask_df_k]
+        df_settle = market_data_mtx.discount_factor_grid[
+            valid_df_k, valid_stl_k, :
+        ]
+
+        pvs[mask_df_k, :] *= df_settle
+
+    # Translate PV from Strike Currency to Settlement Currency
+    if fx_k_cache is not None:
+        pvs[mask_fx_k, :] *= fx_k_cache
+
+    # Scale by quantity
+    pvs *= block.qty[:, None]
+
+    return pvs
 
 ```
 

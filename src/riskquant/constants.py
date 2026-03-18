@@ -32,12 +32,13 @@ NO_DISCOUNT_CURVE_ID = np.int32(-5)
 NO_FX_RF_REQUIRED = np.int32(-6)
 
 # Sentinels for missing dates in the date fields (settlement, delivery, expiry).
-NO_DELIVERY_DATE_ORDINAL32 = np.int32(-7)
-NO_SETTLEMENT_DATE_ORDINAL32 = np.int32(-8)
-NO_EXPIRY_DATE_ORDINAL32 = np.int32(-9)
+NO_DATE_UIX = np.int32(-7)
+NO_DELIVERY_DATE_ORDINAL32 = np.int32(-8)
+NO_SETTLEMENT_DATE_ORDINAL32 = np.int32(-9)
+NO_EXPIRY_DATE_ORDINAL32 = np.int32(-10)
 
 # Sentinel for "not an option" in the is_call field.
-NOT_OPTION = np.int8(-10)
+NOT_OPTION = np.int8(-11)
 
 
 # ==============================================================================
@@ -63,3 +64,11 @@ POSITION_DUST_TOLERANCE = 1e-8
 
 # Prefix expected by the engine to map an underlying asset to its volatility surface/node
 VOL_RISK_FACTOR_PREFIX: str = "vol_"
+
+
+# ============================================
+# --- MOCK / FALLBACK VALUES
+# ============================================
+
+# Used as a fallback in the vanilla_european_option_curve pricer before vol surfaces are built out.
+MOCK_VOLATILITY: float = 0.50

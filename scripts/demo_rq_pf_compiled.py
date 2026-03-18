@@ -4,9 +4,13 @@ from typing import Final
 from riskquant.portfolio.compiled import CompiledPortfolio
 from riskquant.utils.printer import print_df, print_success_message
 from riskquant.utils.dates import get_previous_business_date_as_date
-from riskquant.config.compile import compile_risk_static_config_from_xlsx
+from riskquant.config.static_config.compile import (
+    compile_risk_static_config_from_xlsx,
+)
 from riskquant.portfolio.ingest.batch_builder import build_ingest_batch
-from riskquant.config.resolution import RiskFactorAbsToRelNameIdMap
+from riskquant.config.static_config.resolution import (
+    RiskFactorAbsToRelNameIdMap,
+)
 
 
 def run_compiled_demo():

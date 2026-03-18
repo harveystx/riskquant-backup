@@ -14,7 +14,7 @@ from riskquant.config.deprecated_configs import RiskStaticConfig
 from riskquant.exceptions import PrettyKeyError
 from riskquant.rq_logging import LogContext, get_logger, with_context
 from riskquant.simlab.resolve.proxy import (
-    RES_CURVE_PROXY,
+    RES_CONTAINER_PROXY,
     RES_DIRECT,
     RES_ID_PROXY,
     RES_NOT_SIMULATED,
@@ -32,7 +32,7 @@ _SOURCE_CODE_TO_LABEL: Dict[int, str] = {
     int(RES_DIRECT): "DIRECT",
     int(RES_TENOR_FALLBACK): "TENOR_FALLBACK",
     int(RES_ID_PROXY): "ID_PROXY",
-    int(RES_CURVE_PROXY): "CURVE_PROXY",
+    int(RES_CONTAINER_PROXY): "CURVE_PROXY",
 }
 
 
@@ -110,7 +110,7 @@ def _build_audit_df(
         if c == int(RES_ID_PROXY):
             # ID proxy resolves directly to the proxy rf (sid), so source_name is the target rf name.
             id_proxy_target[i] = source_name[i]
-        elif c == int(RES_CURVE_PROXY):
+        elif c == int(RES_CONTAINER_PROXY):
             # Curve proxy: show the proxy curve name if present.
             cp = cfg.curve_proxies_dict.get(required_curve[i])
             curve_proxy_target[i] = "" if cp is None else cp.proxy_curve_name

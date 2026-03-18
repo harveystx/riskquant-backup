@@ -81,6 +81,15 @@ def build_risk_factor_level_snapshot_from_df(
     # Drop any rows where the level is NaN
     df_clean = df.dropna(subset=[level_col])
 
+    # There must not be duplicate factor names after dropping NaNs, as this would lead to ambiguity in the snapshot.
+    if df_clean[factor_col].duplicated().any():
+        duplicated_factors = df_clean[factor_col][
+            df_clean[factor_col].duplicated()
+        ].unique()
+        raise ValueError(
+            f"Duplicate factor names found in column '{factor_col}' after dropping NaNs: {duplicated_factors}"
+        )
+
     # Extract as a dictionary to reuse the highly-optimized dictionary builder
     # zip is faster than df.set_index().to_dict() or df.itertuples()
     levels_dict = dict(

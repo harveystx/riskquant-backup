@@ -1,4 +1,4 @@
-# src/riskquant/config/configs.py
+# src/riskquant/config/configs/static_config.py
 """
 Runtime configuration containers.
 Strictly native Python structures (no Pandas/DataFrames) for maximum efficiency.
@@ -11,7 +11,7 @@ from typing import Dict, Optional, Tuple
 
 import numpy as np
 
-from riskquant.config.schema_objects import (
+from riskquant.config.static_config.schema_objects import (
     AliasSchema,
     AssetClass,
     AssetSubclass,
@@ -19,13 +19,11 @@ from riskquant.config.schema_objects import (
     Ccy,
     CompoundingConvention,
     ContainerMeta,
-    ContainerProxyMap,
     DayCountConvention,
     ExtrapolationMethod,
     HolidayCalendar,
     InterpolationMethod,
     RiskFactor,
-    RiskFactorProxyMap,
     ShiftType,
     SpotRollRule,
     SurfaceYAxisType,
@@ -86,19 +84,24 @@ class RiskStaticConfig:
         repr=False,
     )
     day_count_conventions_dict: Dict[str, DayCountConvention] = field(
-        init=True, repr=False
+        init=True,
+        repr=False,
     )
     business_day_conventions_dict: Dict[str, BusinessDayConvention] = field(
-        init=True, repr=False
+        init=True,
+        repr=False,
     )
     compounding_conventions_dict: Dict[str, CompoundingConvention] = field(
-        init=True, repr=False
+        init=True,
+        repr=False,
     )
     interpolation_methods_dict: Dict[str, InterpolationMethod] = field(
-        init=True, repr=False
+        init=True,
+        repr=False,
     )
     extrapolation_methods_dict: Dict[str, ExtrapolationMethod] = field(
-        init=True, repr=False
+        init=True,
+        repr=False,
     )
     ccy_dict: Dict[str, Ccy] = field(
         init=True,
@@ -109,15 +112,7 @@ class RiskStaticConfig:
         repr=False,
     )
 
-    # Proxies & Calendars
-    curve_proxies_dict: Dict[str, ContainerProxyMap] = field(
-        init=True,
-        repr=False,
-    )
-    risk_factor_proxies_dict: Dict[str, RiskFactorProxyMap] = field(
-        init=True,
-        repr=False,
-    )
+    # Calendars
     holiday_calendars_dict: Dict[str, HolidayCalendar] = field(
         init=True,
         repr=False,
@@ -131,11 +126,6 @@ class RiskStaticConfig:
         init=False,
     )
     _rf_name_to_rf_id: Optional[Dict[str, int]] = field(
-        default=None,
-        repr=False,
-        init=False,
-    )
-    _rf_id_to_proxy_rf_id: Optional[Dict[int, Tuple[int, float]]] = field(
         default=None,
         repr=False,
         init=False,
@@ -167,6 +157,26 @@ class RiskStaticConfig:
         repr=False,
         init=False,
     )
+    _container_name_to_y_axis_type_name: Optional[Dict[str, str]] = field(
+        default=None,
+        repr=False,
+        init=False,
+    )
+
+    @property
+    def num_risk_factors(self) -> int:
+        return len(self.risk_factors_dict)
+
+    @property
+    def num_containers(self) -> int:
+        return len(self.container_meta_dict)
+
+    @property
+    def max_risk_factor_id(self) -> int:
+        """The maximum risk_factor_name_id across all risk factors. Useful for sizing arrays."""
+        return max(
+            rf.risk_factor_name_id for rf in self.risk_factors_dict.values()
+        )
 
     def __post_init__(self) -> None:
         if not self.container_meta_dict:
@@ -186,8 +196,6 @@ class RiskStaticConfig:
             f"Asset Classes: {len(self.asset_classes_dict)}",
             f"Currencies: {len(self.ccy_dict)}",
             f"Shift Types: {len(self.shift_types_dict)}",
-            f"Container Proxies: {len(self.curve_proxies_dict)}",
-            f"Risk Factor Proxies: {len(self.risk_factor_proxies_dict)}",
             "==================================",
         ]
         return "\n".join(lines)
@@ -223,19 +231,19 @@ class RiskStaticConfig:
             )
         return self._rf_name_to_rf_id
 
-    @property
-    def rf_id_to_proxy_rf_id(self) -> Dict[int, Tuple[int, float]]:
-        """A build-once cache of RF ID-level proxy overrides: required_rf_id -> (proxy_rf_id, vol_scale)"""
-        if self._rf_id_to_proxy_rf_id is None:
-            rf_name_map = self.rf_name_to_rf_id
-            out: Dict[int, Tuple[int, float]] = {}
-            for p in self.risk_factor_proxies_dict.values():
-                rf_id = int(rf_name_map[p.risk_factor_name])
-                proxy_rf_id = int(rf_name_map[p.proxy_risk_factor_name])
-                scale = float(p.proxy_risk_factor_vol_scaling_factor or 1.0)
-                out[rf_id] = (proxy_rf_id, scale)
-            object.__setattr__(self, "_rf_id_to_proxy_rf_id", out)
-        return self._rf_id_to_proxy_rf_id
+    # @property
+    # def rf_id_to_proxy_rf_id(self) -> Dict[int, Tuple[int, float]]:
+    #     """A build-once cache of RF ID-level proxy overrides: required_rf_id -> (proxy_rf_id, vol_scale)"""
+    #     if self._rf_id_to_proxy_rf_id is None:
+    #         rf_name_map = self.rf_name_to_rf_id
+    #         out: Dict[int, Tuple[int, float]] = {}
+    #         for p in self.risk_factor_proxies_dict.values():
+    #             rf_id = int(rf_name_map[p.risk_factor_name])
+    #             proxy_rf_id = int(rf_name_map[p.proxy_risk_factor_name])
+    #             scale = float(p.proxy_risk_factor_vol_scaling_factor or 1.0)
+    #             out[rf_id] = (proxy_rf_id, scale)
+    #         object.__setattr__(self, "_rf_id_to_proxy_rf_id", out)
+    #     return self._rf_id_to_proxy_rf_id
 
     @property
     def rf_id_to_risk_factor(self) -> Dict[int, RiskFactor]:
@@ -359,3 +367,17 @@ class RiskStaticConfig:
             object.__setattr__(self, "_container_id_to_ccy", out)
 
         return self._container_id_to_ccy
+
+    @property
+    def container_name_to_y_axis_type_name(self) -> Dict[str, str]:
+        """A build-once cache mapping container names to their Y-Axis type names."""
+        if self._container_name_to_y_axis_type_name is None:
+            out: Dict[str, str] = {}
+            for curve_name, c_meta in self.container_meta_dict.items():
+                if c_meta.surface_y_axis_type_name is not None:
+                    out[curve_name] = c_meta.surface_y_axis_type_name
+
+            # Bypass immutability for the lazy cache
+            object.__setattr__(self, "_container_name_to_y_axis_type_name", out)
+
+        return self._container_name_to_y_axis_type_name

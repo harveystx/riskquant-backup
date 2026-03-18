@@ -21,9 +21,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from riskquant.portfolio.blocks.base_block import Block
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class _VanillaEuropeanOptionBaseBlock:
+class _VanillaEuropeanOptionBaseBlock(Block):
     """
     Common struct-of-arrays fields shared by all vanilla European option blocks.
     """
@@ -46,13 +48,11 @@ class _VanillaEuropeanOptionBaseBlock:
 
     # ========== DATES ==========
 
-    # Expiry date encoded as int32 ordinal (days since DATE_EPOCH).
-    # Determines the time-to-expiry for pricing and interpolating the vol surface.
-    expiry_date_ordinal32: np.ndarray
+    # (N,) int32 index into unique_dates_ordinal32
+    expiry_date_uix: np.ndarray
 
-    # Settlement/payment date encoded as int32 ordinal (days since DATE_EPOCH).
-    # Used for discounting the option payoff.
-    payoff_settlement_date_ordinal32: np.ndarray
+    # (N,) int32 index into unique_dates_ordinal32
+    settlement_date_uix: np.ndarray
 
     # ========== FX LINKAGES ==========
 
@@ -95,9 +95,8 @@ class VanillaEuropeanOptionCurveBlock(_VanillaEuropeanOptionBaseBlock):
 
     # ========== DATES ==========
 
-    # Physical delivery date encoded as int32 ordinal (days since DATE_EPOCH).
-    # Used to interpolate the underlying price curve to find the forward price.
-    delivery_date_ordinal32: np.ndarray
+    # (N,) int32 index into unique_dates_ordinal32
+    delivery_date_uix: np.ndarray
 
     # ========== MARKET LINKAGES (UNIVERSE INDICES) ==========
 
@@ -106,3 +105,6 @@ class VanillaEuropeanOptionCurveBlock(_VanillaEuropeanOptionBaseBlock):
 
     # Index into compiled volatility surface universe. dtype: int32
     vol_surface_uix: np.ndarray
+
+    # Y-Axis type identifier for the vol surface (e.g., strike, log-moneyness). dtype: int8
+    vol_surface_y_axis_type_id: np.ndarray

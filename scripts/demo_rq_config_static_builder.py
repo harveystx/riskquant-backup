@@ -1,8 +1,10 @@
 from typing import Final
 
-from riskquant.config.builder import RiskStaticConfigFrames
-from riskquant.config.loader import load_risk_static_data_config_xlsx_into_dict
-from riskquant.config.validate import validate_static_config_dfs
+from riskquant.config.static_config.builder import RiskStaticConfigFrames
+from riskquant.config.static_config.loader import (
+    load_risk_static_data_config_xlsx_into_dict,
+)
+from riskquant.config.static_config.validate import validate_static_config_dfs
 from riskquant.utils.printer import print_success_message
 
 

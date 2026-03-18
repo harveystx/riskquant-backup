@@ -1,8 +1,12 @@
 from datetime import date
 from typing import Final
 
-from riskquant.config.compile import compile_risk_static_config_from_xlsx
-from riskquant.config.resolution import RiskFactorAbsToRelNameIdMap
+from riskquant.config.static_config.compile import (
+    compile_risk_static_config_from_xlsx,
+)
+from riskquant.config.static_config.resolution import (
+    RiskFactorAbsToRelNameIdMap,
+)
 from riskquant.market_data.risk_factors.builder_snapshot import (
     build_risk_factor_level_snapshot_from_xlsx,
 )
@@ -85,7 +89,7 @@ if __name__ == "__main__":
     # ---------------------------------------------------------
 
     # Print title.
-    print("\n--- Loading in historical risk factor levels ---")
+    print("\n--- Loading in risk factor levels snapshot ---")
 
     # Load from XLSX.
     rfs = build_risk_factor_level_snapshot_from_xlsx(

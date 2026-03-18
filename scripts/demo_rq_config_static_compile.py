@@ -1,17 +1,27 @@
 import datetime as dt
 from pathlib import Path
 
+from numpy.random import f
+
 # Config imports
-from riskquant.config.compile import compile_risk_static_config_from_xlsx
-from riskquant.config.loader import load_risk_static_data_config_xlsx_into_dict
-from riskquant.config.validate import validate_static_config_dfs
-from riskquant.config.builder import RiskStaticConfigFrames
-from riskquant.config.resolution import RiskFactorAbsToRelNameIdMap
+from riskquant.config.static_config.compile import (
+    compile_risk_static_config_from_xlsx,
+)
+from riskquant.config.static_config.loader import (
+    load_risk_static_data_config_xlsx_into_dict,
+)
+from riskquant.config.static_config.validate import validate_static_config_dfs
+from riskquant.config.static_config.builder import RiskStaticConfigFrames
+from riskquant.config.static_config.resolution import (
+    RiskFactorAbsToRelNameIdMap,
+)
 
 
 # Utils imports
 from riskquant.utils.dates import get_previous_business_date_as_date
 from riskquant.utils.printer import (
+    print_calling_file,
+    print_df,
     print_dict,
     print_success_message,
     print_wrapped_text_box,
@@ -19,6 +29,11 @@ from riskquant.utils.printer import (
 
 
 def run_config_demo():
+    # --- HEADING ---
+
+    # Print the name of the calling file for clarity in the console output.
+    print_calling_file()
+
     # ---------------------------------------------------------
     # 0. Setup Paths (Update these to match your local environment)
     # ---------------------------------------------------------
@@ -103,6 +118,10 @@ def run_config_demo():
     # Container ID to CCY example
     print(f"\nContainer ID to Currency mapping:")
     print_dict(config.container_id_to_ccy, limit=100)
+
+    # Tenor schema example
+    print(f"\nTenor Schema:")
+    print_dict(config.tenor_schema_dict, limit=100)
 
     # =========================================================
     # DEMO 2: Risk Factor Resolution (resolution.py)

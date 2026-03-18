@@ -76,6 +76,17 @@ def build_risk_factor_matrix_from_df(
     if not df.index.is_monotonic_increasing:
         raise ValueError("DataFrame index (dates) must be sorted ascending!")
 
+    # Check for duplicated column labels (factor names); this would cause silent data corruption
+    if df.columns.has_duplicates:
+        duplicated = df.columns[df.columns.duplicated(keep=False)]
+        unique_dupes = duplicated.unique()
+        sample = unique_dupes[:10]
+        raise ValueError(
+            f"DataFrame columns (factor names) must be unique.\n"
+            f"Found {len(unique_dupes)} duplicated column(s).\n"
+            f"Sample duplicates: {list(sample)}"
+        )
+
     # Dates: obtain a datetime64[D] view and optionally convert to int32 ordinal
     dts_64D = df.index.to_numpy(dtype="datetime64[D]", copy=False)
     dates = datetime64D_to_ordinal32(dts_64D) if use_int32_dates else dts_64D
