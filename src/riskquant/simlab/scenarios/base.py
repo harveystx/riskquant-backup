@@ -2,9 +2,50 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterator, Optional, Protocol
+from typing import Iterator, Optional, Protocol, Tuple, Dict
 
 import numpy as np
+
+
+def build_factor_id_to_col_index(factor_ids: np.ndarray) -> Dict[int, int]:
+    return {int(fid): i for i, fid in enumerate(factor_ids)}
+
+
+def build_shock_key_plan(
+    *,
+    required_shift_type_id: np.ndarray,
+    source_factor_ids: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    n = int(source_factor_ids.shape[0])
+    keys = (source_factor_ids.astype(np.int64) << 8) | (
+        required_shift_type_id.astype(np.int64) & 0xFF
+    )
+
+    key_to_uix: Dict[int, int] = {}
+    unique_src: list[np.int32] = []
+    unique_st: list[np.int8] = []
+    req_to_uix = np.empty(n, dtype=np.int32)
+
+    get = key_to_uix.get
+    set_ = key_to_uix.__setitem__
+    us_append = unique_src.append
+    ut_append = unique_st.append
+
+    for i in range(n):
+        k = int(keys[i])
+        uix = get(k)
+        if uix is None:
+            uix = len(unique_src)
+            set_(k, uix)
+            us_append(source_factor_ids[i])
+            ut_append(required_shift_type_id[i])
+        req_to_uix[i] = np.int32(uix)
+
+    return (
+        np.asarray(unique_src, dtype=np.int32),
+        np.asarray(unique_st, dtype=np.int8),
+        req_to_uix,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,60 +90,8 @@ class ScenarioGenerator(Protocol):
     def iter_batches(
         self,
         *,
-        required_factor_ids: np.ndarray,  # (Nreq,) int32
         required_shift_type_id: np.ndarray,  # (Nreq,) int8
         source_factor_ids: np.ndarray,  # (Nreq,) int32 (from ProxyResolution)
         shock_scale: np.ndarray,  # (Nreq,) float32 (from ProxyResolution)
         batch_size: int,
-    ) -> Iterator[ScenarioSetBatch]:
-        ...
-
-
-def generate_all(
-    gen: ScenarioGenerator,
-    *,
-    required_factor_ids: np.ndarray,
-    required_shift_type_id: np.ndarray,
-    source_factor_ids: np.ndarray,
-    shock_scale: np.ndarray,
-    batch_size: int,
-    max_total_scenarios: int = 50_000,
-) -> ScenarioSetBatch:
-    """
-    Convenience materializer (for notebooks/tests).
-    Raises if scenario count exceeds max_total_scenarios.
-    """
-    batches = list(
-        gen.iter_batches(
-            required_factor_ids=required_factor_ids,
-            required_shift_type_id=required_shift_type_id,
-            source_factor_ids=source_factor_ids,
-            shock_scale=shock_scale,
-            batch_size=batch_size,
-        )
-    )
-    if not batches:
-        raise ValueError("ScenarioGenerator produced no batches.")
-
-    total = 0
-    K = batches[0].shocks.shape[1]
-    for b in batches:
-        if b.shocks.shape[1] != K:
-            raise ValueError("Inconsistent K across scenario batches.")
-        total += b.shocks.shape[0]
-
-    if total > max_total_scenarios:
-        raise ValueError(
-            f"Refusing to materialize {total} scenarios in memory; "
-            f"max_total_scenarios={max_total_scenarios}."
-        )
-
-    shocks = np.ascontiguousarray(np.vstack([b.shocks for b in batches]))
-    return ScenarioSetBatch(
-        shocks=shocks,
-        required_to_shock_uix=batches[0].required_to_shock_uix,
-        shock_scale=batches[0].shock_scale,
-        required_shift_type_id=batches[0].required_shift_type_id,
-        scenario_offset=0,
-        scenario_count_total=total,
-    )
+    ) -> Iterator[ScenarioSetBatch]: ...

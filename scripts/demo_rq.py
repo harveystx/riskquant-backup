@@ -346,7 +346,9 @@ def run_demo():
         (max_rf, num_scenarios), 1_000.0, dtype=np.float64
     )
     raw_vol_nodes = np.full(
-        (max_rf, num_scenarios), MOCK_VOLATILITY, dtype=np.float64
+        (max_rf, num_scenarios),
+        MOCK_VOLATILITY,
+        dtype=np.float64,
     )
 
     # 2. Curves (Discount Factors = 1.0 -> ln(DF) = 0.0)
@@ -414,7 +416,7 @@ def run_demo():
     print(f"    - Calculated PVs array shape: {pvs.shape}")
 
     print("\nSample PVs (First 100 trades):")
-    print("\n".join([f"- {x:+12_.2f}" for x in pvs[:100].ravel()]))
+    print("\n".join([f"- {x:+18_.2f}" for x in pvs[:100].ravel()]))
 
     # ------------------------------------------------------
     # --- FINISH ---

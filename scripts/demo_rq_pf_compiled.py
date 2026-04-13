@@ -2,6 +2,7 @@ from matplotlib import container
 import pandas as pd
 from typing import Final
 from riskquant.portfolio.compiled import CompiledPortfolio
+from riskquant.portfolio.engine import compile_portfolio_from_batch
 from riskquant.utils.printer import print_df, print_success_message
 from riskquant.utils.dates import get_previous_business_date_as_date
 from riskquant.config.static_config.compile import (
@@ -79,6 +80,7 @@ def run_compiled_demo():
         container_name_to_container_id=config.container_name_to_container_id,
         rf_id_to_ccy=config.rf_id_to_ccy,
         container_id_to_ccy=config.container_id_to_ccy,
+        container_name_to_y_axis_type_name=config.container_name_to_y_axis_type_name,
     )
 
     # --- AUDIT THE OUTPUT BATCH ---
@@ -92,7 +94,7 @@ def run_compiled_demo():
     # --- COMPILE PORTFOLIO ---
 
     print("\n--- Compiling the Batch into CompiledPortfolio ---")
-    portfolio = CompiledPortfolio.from_ingest_batch(batch)
+    portfolio = compile_portfolio_from_batch(batch)
 
     print(
         f"Total trades packed into CompiledPortfolio: "
@@ -127,7 +129,7 @@ def run_compiled_demo():
         p(f"Trade UIDs:                 {bl.trade_uids}")
         p(f"Quantities:                 {bl.qty}")
         p(f"Strikes:                    {bl.strike}")
-        p(f"Settlement Ordinals:        {bl.settlement_date_ordinal32}")
+        p(f"Settlement Ordinals:        {bl.settlement_date_uix}")
         p(f"FX U2S UIX:                 {bl.fx_under_to_settle_uix}")
         p(f"FX K2S UIX:                 {bl.fx_strike_to_settle_uix}")
         p(f"Under Discount Curve UIX:   {bl.under_discount_curve_uix}")

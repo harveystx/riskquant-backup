@@ -69,7 +69,8 @@ class CompiledPortfolio:
 
     # Temporal coordinates required by the MarketDataMatrix builder
     unique_dates_ordinal32: np.ndarray = field(
-        default_factory=lambda: np.empty(0, dtype=np.int32)
+        init=True,
+        default_factory=lambda: np.empty(0, dtype=np.int32),
     )
 
     # ------------------------------------------------------------
@@ -97,28 +98,28 @@ class CompiledPortfolio:
         for name in _FIELD_NAMES:
             block = getattr(self, name)
             if block is not None:
-                total += len(block.trade_uids)
+                total += block.num_trades
         return total
 
-    # ------------------------------------------------------------
-    # Constructor helper (avoids kwargs overhead)
-    # ------------------------------------------------------------
-    @classmethod
-    def from_compiled_fields(
-        cls, compiled_fields: dict[str, BlockType], unique_dates: np.ndarray
-    ) -> "CompiledPortfolio":
-        """
-        Fast construction from dict without dynamic kwargs overhead.
-        """
-        return cls(
-            spot=compiled_fields.get("spot"),
-            forward_node=compiled_fields.get("forward_node"),
-            forward_curve=compiled_fields.get("forward_curve"),
-            vanilla_european_option_node=compiled_fields.get(
-                "vanilla_european_option_node"
-            ),
-            vanilla_european_option_curve=compiled_fields.get(
-                "vanilla_european_option_curve"
-            ),
-            unique_dates_ordinal32=unique_dates,
-        )
+    # # ------------------------------------------------------------
+    # # Constructor helper (avoids kwargs overhead)
+    # # ------------------------------------------------------------
+    # @classmethod
+    # def from_compiled_fields(
+    #     cls, compiled_fields: dict[str, BlockType], unique_dates: np.ndarray
+    # ) -> "CompiledPortfolio":
+    #     """
+    #     Fast construction from dict without dynamic kwargs overhead.
+    #     """
+    #     return cls(
+    #         spot=compiled_fields.get("spot"),
+    #         forward_node=compiled_fields.get("forward_node"),
+    #         forward_curve=compiled_fields.get("forward_curve"),
+    #         vanilla_european_option_node=compiled_fields.get(
+    #             "vanilla_european_option_node"
+    #         ),
+    #         vanilla_european_option_curve=compiled_fields.get(
+    #             "vanilla_european_option_curve"
+    #         ),
+    #         unique_dates_ordinal32=unique_dates,
+    #     )

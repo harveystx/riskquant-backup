@@ -72,3 +72,17 @@ VOL_RISK_FACTOR_PREFIX: str = "vol_"
 
 # Used as a fallback in the vanilla_european_option_curve pricer before vol surfaces are built out.
 MOCK_VOLATILITY: float = 0.50
+
+
+# ==============================================================================
+# --- EWMA Volatility Calculation Constants
+# ==============================================================================
+
+# EWMA volatility decay factor (lambda) used in the FHS volatility updating, following RiskMetrics standard.
+EWMA_DECAY_FACTOR: float = 0.94
+
+# Maximum allowed volatility ratio to prevent extreme scaling in the FHS Z-score calculation.
+MAX_EWMA_VOL_RATIO: float = 10.0
+
+# The minimum allowed variance to prevent division by zero or extremely large Z-scores in the FHS calculation.
+MIN_EWMA_VARIANCE: float = 1e-12

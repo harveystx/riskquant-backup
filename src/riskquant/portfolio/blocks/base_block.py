@@ -8,6 +8,14 @@ import numpy as np
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Block:
+    trade_uids: np.ndarray
+
+    # Num trades prop
+    @property
+    def num_trades(self) -> int:
+        return self.trade_uids.shape[0]
+
+    # Print block util
     def print_block(self, max_items: int = 5) -> None:
         cls = type(self).__name__
         print(f"{cls}:")

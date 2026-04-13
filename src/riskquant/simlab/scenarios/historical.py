@@ -1,195 +1,153 @@
-# riskquant/simlab/scenarios/historical.py
+# src/riskquant/simlab/scenarios/historical.py
 from __future__ import annotations
-
 from dataclasses import dataclass
-from typing import Dict, Iterator, Tuple
-
+from typing import Iterator
 import numpy as np
+import numba as nb
 
-from riskquant.exceptions import PrettyKeyError
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
+from riskquant.simlab.scenarios.base import (
+    ScenarioGenerator,
+    ScenarioSetBatch,
+    build_factor_id_to_col_index,
+)
+from riskquant.simlab.resolve.shock_universe import build_shock_universe
+
 from riskquant.market_data.risk_factors.shift_types import (
     SHIFT_DIFFERENCE,
     SHIFT_LOG_RETURN,
     SHIFT_SIMPLE_RETURN,
 )
-from riskquant.simlab.scenarios.base import (
-    ScenarioGenerator,
-    ScenarioSetBatch,
-)
+
+# =========================================================================
+# ZERO-ALLOCATION PATH-AGGREGATION KERNEL - HISTORICAL SCENARIO GENERATOR
+# =========================================================================
 
 
-def _build_factor_id_to_col_index(factor_ids: np.ndarray) -> Dict[int, int]:
-    return {int(fid): i for i, fid in enumerate(factor_ids)}
-
-
-def _build_shock_key_plan(
+@nb.njit(parallel=True, fastmath=True, cache=True)
+def _kernel_fused_h_day_shock(
     *,
-    required_shift_type_id: np.ndarray,  # (Nreq,) int8
-    source_factor_ids: np.ndarray,  # (Nreq,) int32
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    values: np.ndarray,  # Fortran-contiguous (T x K)
+    cols: np.ndarray,  # K, column indices into values
+    shift_types: np.ndarray,  # K
+    inv_perm: np.ndarray,  # K, output column positions
+    t_start: int,
+    h: int,  # Effective horizon in days
+    B: int,  # Number of scenarios in the batch
+    out: np.ndarray,  # Fortran-contiguous (B x K)
+):
     """
-    Build unique keys in first-seen order:
-      key = (source_id << 8) | (shift_type_id & 0xFF)
-
-    Returns:
-      shock_source_ids: (K,) int32
-      shock_shift_type_ids: (K,) int8
-      required_to_shock_uix: (Nreq,) int32
+    Computes h-day shock from 1-day returns by directly indexing into the values array at the start and end of the h-day period.
+    Parallelized across factors (columns) for optimal Fortran cache-line usage.
     """
-    n = int(source_factor_ids.shape[0])
-    keys = (source_factor_ids.astype(np.int64) << 8) | (
-        required_shift_type_id.astype(np.int64) & 0xFF
-    )
+    K = cols.shape[0]
 
-    key_to_uix: Dict[int, int] = {}
-    unique_src: list[np.int32] = []
-    unique_st: list[np.int8] = []
+    # Parallel over factors (columns)
+    for k in nb.prange(K):
+        col = cols[k]
+        st = shift_types[k]
+        out_col = inv_perm[k]
 
-    req_to_uix = np.empty(n, dtype=np.int32)
+        # Precompute base indices for the h-day period to avoid redundant arithmetic in the B-loop
+        base_t0 = t_start - h
 
-    get = key_to_uix.get
-    set_ = key_to_uix.__setitem__
-    us_append = unique_src.append
-    ut_append = unique_st.append
+        # Bind column for cache efficiency
+        col_vals = values[:, col]
+        out_col_vals = out[:, out_col]
 
-    for i in range(n):
-        k = int(keys[i])
-        uix = get(k)
-        if uix is None:
-            uix = len(unique_src)
-            set_(k, uix)
-            us_append(source_factor_ids[i])
-            ut_append(required_shift_type_id[i])
-        req_to_uix[i] = np.int32(uix)
+        # Bind t1 and t0
+        t1 = t_start
+        t0 = base_t0
 
-    return (
-        np.asarray(unique_src, dtype=np.int32),
-        np.asarray(unique_st, dtype=np.int8),
-        req_to_uix,
-    )
-
-
-def _compute_shocks_batch(
-    *,
-    values: np.ndarray,  # (T,N) contiguous
-    id_to_col: Dict[int, int],
-    shock_source_ids: np.ndarray,  # (K,) int32
-    shock_shift_type_ids: np.ndarray,  # (K,) int8
-    t_start: int,  # inclusive end-index in history for this batch (in [horizon, T))
-    t_end: int,  # exclusive
-    horizon: int,
-    out_dtype: np.dtype,
-) -> np.ndarray:
-    """
-    Compute shocks for rows t in [t_start, t_end) where shock compares t vs (t-horizon).
-    Output shape: (B, K) where B = t_end - t_start.
-    """
-    h = int(horizon)
-    B = int(t_end - t_start)
-    K = int(shock_source_ids.shape[0])
-
-    out = np.empty((B, K), dtype=out_dtype, order="C")
-
-    for k in range(K):
-        sid = int(shock_source_ids[k])
-        st = np.int8(shock_shift_type_ids[k])
-
-        j = id_to_col.get(sid)
-        if j is None:
-            raise PrettyKeyError(
-                f"shock source factor_id not found in matrix.factor_ids: {sid}"
-            )
-
-        x1 = values[t_start:t_end, j]  # (B,)
-        x0 = values[t_start - h : t_end - h, j]  # (B,)
-
+        # Hoist branch out of B-loop
         if st == SHIFT_LOG_RETURN:
-            out[:, k] = np.log(x1 / x0, dtype=out_dtype)
+            for b in range(B):
+                v1 = col_vals[t1]
+                v0 = col_vals[t0]
+                out_col_vals[b] = np.log(v1 / v0)
+                t1 += 1
+                t0 += 1
+
         elif st == SHIFT_SIMPLE_RETURN:
-            out[:, k] = (x1 / x0) - 1.0
+            for b in range(B):
+                v1 = col_vals[t1]
+                v0 = col_vals[t0]
+                out_col_vals[b] = v1 / v0 - 1.0
+                t1 += 1
+                t0 += 1
+
         elif st == SHIFT_DIFFERENCE:
-            out[:, k] = x1 - x0
-        else:
-            raise ValueError(f"Unknown shift_type_id={int(st)} for shock key k={k}")
+            for b in range(B):
+                v1 = col_vals[t1]
+                v0 = col_vals[t0]
+                out_col_vals[b] = v1 - v0
+                t1 += 1
+                t0 += 1
 
-    return out
+
+# =========================================================================
+# HISTORICAL SCENARIO GENERATOR
+# =========================================================================
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class HistoricalScenarioGenerator(ScenarioGenerator):
-    """
-    Historical simulation scenario generator.
-
-    Interpretation:
-      - Each scenario corresponds to a historical shock over `horizon` days.
-      - Total scenarios = T - horizon (where T = number of history dates).
-      - Scenarios are indexed by end-date position t in [horizon, T).
-    """
-
-    matrix: RiskFactorMatrix
+    matrix: RiskFactorMatrix  # MUST be Fortran-contiguous
     horizon: int = 1
-    shock_dtype: np.dtype = np.float32
+    shock_dtype: type[np.float32] | type[np.float64] = np.float32
 
     def iter_batches(
         self,
         *,
-        required_factor_ids: np.ndarray,
         required_shift_type_id: np.ndarray,
         source_factor_ids: np.ndarray,
         shock_scale: np.ndarray,
         batch_size: int,
     ) -> Iterator[ScenarioSetBatch]:
-        # Basic dtype checks (fail fast)
-        if required_factor_ids.dtype != np.int32:
-            raise TypeError("required_factor_ids must be int32")
-        if required_shift_type_id.dtype != np.int8:
-            raise TypeError("required_shift_type_id must be int8")
-        if source_factor_ids.dtype != np.int32:
-            raise TypeError("source_factor_ids must be int32")
-        if shock_scale.dtype != np.float32:
-            raise TypeError("shock_scale must be float32")
-        if int(batch_size) <= 0:
-            raise ValueError("batch_size must be > 0")
 
-        T, N = self.matrix.values.shape
+        T = self.matrix.values.shape[0]
         h = int(self.horizon)
         S_total = T - h
         if S_total <= 0:
             raise ValueError(f"Not enough history: T={T}, horizon={h}")
 
-        # One-time mappings / plans
-        id_to_col = _build_factor_id_to_col_index(self.matrix.factor_ids)
-        (
-            shock_source_ids,
-            shock_shift_type_ids,
-            required_to_shock_uix,
-        ) = _build_shock_key_plan(
+        # Build factor id -> column map
+        id_to_col = build_factor_id_to_col_index(self.matrix.factor_ids)
+
+        # Build shock universe and compute plan in one step to avoid redundant key construction
+        shock_universe = build_shock_universe(
             required_shift_type_id=required_shift_type_id,
             source_factor_ids=source_factor_ids,
+            id_to_col=id_to_col,
         )
 
-        # Stream scenario batches: end-index t ranges [h, T)
-        # Scenario index s = t - h
+        # Stream scenario batches
         scenario_offset = 0
-        t = h
-        while t < T:
-            t_end = min(T, t + int(batch_size))
-            shocks = _compute_shocks_batch(
-                values=self.matrix.values,
-                id_to_col=id_to_col,
-                shock_source_ids=shock_source_ids,
-                shock_shift_type_ids=shock_shift_type_ids,
-                t_start=t,
-                t_end=t_end,
-                horizon=h,
-                out_dtype=self.shock_dtype,
+        t_start = h
+        K = shock_universe.compute_plan.cols_sorted.shape[0]
+
+        while t_start < T:
+            t_end = min(T, t_start + int(batch_size))
+            B = t_end - t_start
+
+            # Allocate shocks in Fortran order for cache-friendly column writes
+            shocks = np.empty((B, K), dtype=self.shock_dtype, order="F")
+
+            # Generate shocks for the batch using the fused kernel
+            _kernel_fused_h_day_shock(
+                values=self.matrix.values,  # Fortran-contiguous
+                cols=shock_universe.compute_plan.cols_sorted,
+                shift_types=shock_universe.compute_plan.shift_types_sorted,
+                inv_perm=shock_universe.compute_plan.inverse_permutation,
+                t_start=t_start,
+                h=h,
+                B=B,
+                out=shocks,
             )
-            B = int(shocks.shape[0])
 
             yield ScenarioSetBatch(
                 shocks=shocks,
-                required_to_shock_uix=required_to_shock_uix,
+                required_to_shock_uix=shock_universe.required_to_shock_uix,
                 shock_scale=shock_scale,
                 required_shift_type_id=required_shift_type_id,
                 scenario_offset=scenario_offset,
@@ -197,4 +155,4 @@ class HistoricalScenarioGenerator(ScenarioGenerator):
             )
 
             scenario_offset += B
-            t = t_end
+            t_start = t_end

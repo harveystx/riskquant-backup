@@ -1,8 +1,12 @@
 from datetime import date
 from typing import Final
 
-from riskquant.config.compile import compile_risk_static_config_from_xlsx
-from riskquant.config.resolution import RiskFactorAbsToRelNameIdMap
+from riskquant.config.static_config.compile import (
+    compile_risk_static_config_from_xlsx,
+)
+from riskquant.config.static_config.resolution import (
+    RiskFactorAbsToRelNameIdMap,
+)
 from riskquant.market_data.risk_factors.builder_matrix import (
     build_risk_factor_matrix_from_xlsx,
 )

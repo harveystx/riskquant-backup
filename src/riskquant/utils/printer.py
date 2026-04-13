@@ -2,7 +2,7 @@
 from datetime import date, datetime
 import math
 import time
-from typing import Any, Iterable, Mapping
+from typing import Any, Dict, Iterable, Mapping
 
 import pandas as pd
 
@@ -87,7 +87,7 @@ def print_success_message() -> None:
 
 
 def print_dict(
-    d: Mapping[str, Any],
+    d: Dict | Mapping[str, Any],
     *,
     indent: int = 0,
     indent_step: int = 4,
