@@ -3,6 +3,7 @@
 ###########################################################
 
 # Data & large artifacts (never commit)
+_contexts/
 _data/
 _parquet_data/
 _risk_factor_audit_reports/
