@@ -2,13 +2,12 @@
 import numpy as np
 import pytest
 
-from riskquant.simlab.scenarios.core_math.ar1_filter import kernel_ar1_residuals
 from riskquant.market_data.risk_factors.shift_types import (
-    SHIFT_DIFFERENCE,
-    SHIFT_LOG_RETURN,
-    SHIFT_SIMPLE_RETURN,
+    SHIFT_DIFFERENCE_ID,
+    SHIFT_LOG_RETURN_ID,
+    SHIFT_SIMPLE_RETURN_ID,
 )
-
+from riskquant.simlab.scenarios.core_math.ar1_filter import kernel_ar1_residuals
 
 # ---------------------------------------------------------
 # Helpers
@@ -29,11 +28,11 @@ def _compute_returns(values, shift_type):
     r = np.zeros(T)
 
     for t in range(1, T):
-        if shift_type == SHIFT_LOG_RETURN:
+        if shift_type == SHIFT_LOG_RETURN_ID:
             r[t] = np.log(values[t] / values[t - 1])
-        elif shift_type == SHIFT_SIMPLE_RETURN:
+        elif shift_type == SHIFT_SIMPLE_RETURN_ID:
             r[t] = values[t] / values[t - 1] - 1.0
-        elif shift_type == SHIFT_DIFFERENCE:
+        elif shift_type == SHIFT_DIFFERENCE_ID:
             r[t] = values[t] - values[t - 1]
     return r
 
@@ -46,9 +45,9 @@ def _compute_returns(values, shift_type):
 @pytest.mark.parametrize(
     "shift_type",
     [
-        SHIFT_LOG_RETURN,
-        SHIFT_SIMPLE_RETURN,
-        SHIFT_DIFFERENCE,
+        SHIFT_LOG_RETURN_ID,
+        SHIFT_SIMPLE_RETURN_ID,
+        SHIFT_DIFFERENCE_ID,
     ],
 )
 def test_ar1_residuals_mean_zero(shift_type):
@@ -91,14 +90,14 @@ def test_ar1_residuals_remove_autocorrelation():
     values = np.exp(np.cumsum(r)).reshape(-1, 1)
     values = np.asfortranarray(values)
 
-    out = _run_kernel(values, np.array([0]), np.array([SHIFT_LOG_RETURN]))
+    out = _run_kernel(values, np.array([0]), np.array([SHIFT_LOG_RETURN_ID]))
     residuals = out[:, 0]
 
     # autocorrelation at lag 1
     def autocorr(x):
         return np.corrcoef(x[1:], x[:-1])[0, 1]
 
-    raw_returns = _compute_returns(values[:, 0], SHIFT_LOG_RETURN)
+    raw_returns = _compute_returns(values[:, 0], SHIFT_LOG_RETURN_ID)
 
     acf_raw = autocorr(raw_returns[2:])
     acf_res = autocorr(residuals[2:])
@@ -115,9 +114,9 @@ def test_ar1_residuals_remove_autocorrelation():
 @pytest.mark.parametrize(
     "shift_type",
     [
-        SHIFT_LOG_RETURN,
-        SHIFT_SIMPLE_RETURN,
-        SHIFT_DIFFERENCE,
+        SHIFT_LOG_RETURN_ID,
+        SHIFT_SIMPLE_RETURN_ID,
+        SHIFT_DIFFERENCE_ID,
     ],
 )
 def test_constant_series(shift_type):
@@ -143,7 +142,7 @@ def test_small_T_cases():
     """
     for T in [1, 2]:
         values = np.ones((T, 1), order="F")
-        out = _run_kernel(values, np.array([0]), np.array([SHIFT_DIFFERENCE]))
+        out = _run_kernel(values, np.array([0]), np.array([SHIFT_DIFFERENCE_ID]))
 
         assert out.shape == (T, 1)
 
@@ -168,9 +167,9 @@ def test_multiple_columns_independence():
     cols = np.array([0, 1, 2])
     shift_types = np.array(
         [
-            SHIFT_LOG_RETURN,
-            SHIFT_SIMPLE_RETURN,
-            SHIFT_DIFFERENCE,
+            SHIFT_LOG_RETURN_ID,
+            SHIFT_SIMPLE_RETURN_ID,
+            SHIFT_DIFFERENCE_ID,
         ]
     )
 
@@ -196,7 +195,7 @@ def test_near_zero_variance():
     values = np.linspace(1.0, 1.000001, T).reshape(-1, 1)
     values = np.asfortranarray(values)
 
-    out = _run_kernel(values, np.array([0]), np.array([SHIFT_LOG_RETURN]))
+    out = _run_kernel(values, np.array([0]), np.array([SHIFT_LOG_RETURN_ID]))
 
     assert np.all(np.isfinite(out))
 
@@ -216,8 +215,8 @@ def test_deterministic_output():
     values = np.cumprod(1 + 0.01 * np.random.randn(T)).reshape(-1, 1)
     values = np.asfortranarray(values)
 
-    out1 = _run_kernel(values, np.array([0]), np.array([SHIFT_LOG_RETURN]))
-    out2 = _run_kernel(values, np.array([0]), np.array([SHIFT_LOG_RETURN]))
+    out1 = _run_kernel(values, np.array([0]), np.array([SHIFT_LOG_RETURN_ID]))
+    out2 = _run_kernel(values, np.array([0]), np.array([SHIFT_LOG_RETURN_ID]))
 
     assert np.allclose(out1, out2)
 
@@ -234,7 +233,7 @@ def test_fortran_layout_preserved():
     T = 100
     values = np.ones((T, 1), order="F")
 
-    out = _run_kernel(values, np.array([0]), np.array([SHIFT_DIFFERENCE]))
+    out = _run_kernel(values, np.array([0]), np.array([SHIFT_DIFFERENCE_ID]))
 
     assert out.flags["F_CONTIGUOUS"]
 
@@ -254,6 +253,55 @@ def test_no_nan_output():
     values = np.cumprod(1 + 0.01 * np.random.randn(T)).reshape(-1, 1)
     values = np.asfortranarray(values)
 
-    out = _run_kernel(values, np.array([0]), np.array([SHIFT_LOG_RETURN]))
+    out = _run_kernel(values, np.array([0]), np.array([SHIFT_LOG_RETURN_ID]))
 
     assert not np.isnan(out).any()
+
+
+# ---------------------------------------------------------
+# 10. De-meaning only (Efficient Market / White Noise)
+# ---------------------------------------------------------
+
+
+def test_ar1_filter_demean_only_for_white_noise():
+    """
+    When returns are pure white noise (no autocorrelation), the t-statistic
+    for beta should fail the significance test (< 1.96). The kernel should
+    set beta=0 and only de-mean the series.
+    """
+    np.random.seed(42)
+    T = 1000
+    mu_true = 0.005  # Intentional drift
+    sigma_true = 0.015
+
+    # 1. Simulate white noise returns (log returns)
+    raw_returns = np.random.normal(loc=mu_true, scale=sigma_true, size=T)
+    prices = np.exp(np.cumsum(raw_returns))
+    values = np.asfortranarray(prices.reshape(-1, 1))
+
+    # 2. Run kernel
+    out = _run_kernel(values, np.array([0]), np.array([SHIFT_LOG_RETURN_ID]))
+    residuals = out[:, 0]
+
+    # 3. Compute raw returns exactly as the kernel sees them
+    computed_returns = _compute_returns(values[:, 0], SHIFT_LOG_RETURN_ID)
+
+    # 4. Diagnostics
+    # The kernel calculates the mean from t=2 to T-1 (n_obs = T - 2)
+    mean_raw = np.mean(computed_returns[2:])
+    mean_res = np.mean(residuals[2:])
+
+    # The residuals must be perfectly mean-centered
+    assert abs(mean_res) < 1e-12
+
+    # Because beta was deemed statistically insignificant, the kernel
+    # should have ONLY subtracted the mean (alpha = mean_y, beta = 0).
+    # Therefore, residual[t] == raw_return[t] - mean_raw
+    expected_residuals = computed_returns[2:] - mean_raw
+
+    np.testing.assert_allclose(
+        residuals[2:],
+        expected_residuals,
+        atol=1e-10,
+        err_msg="Kernel applied beta scaling instead of strictly de-meaning.",
+    )

@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 
@@ -17,7 +16,7 @@ def generate_template_tree(directory, prefix="", align_col=50):
         ".ipynb_checkpoints",
         ".venv",
         "env",
-        ".env" ".idea",
+        ".env.idea",
         ".vscode",
         "pyproject.toml",
         "README.md",
@@ -39,9 +38,7 @@ def generate_template_tree(directory, prefix="", align_col=50):
     tree_str = ""
     paths = sorted(path.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
     paths = [
-        p
-        for p in paths
-        if p.name not in (ignore_dirs if p.is_dir() else ignore_files)
+        p for p in paths if p.name not in (ignore_dirs if p.is_dir() else ignore_files)
     ]
 
     for i, p in enumerate(paths):
@@ -72,6 +69,7 @@ def generate_template_tree(directory, prefix="", align_col=50):
 def save_tree_to_file(directory, output_filename="project_structure.txt"):
     # Added .resolve() to get the true folder name even if directory is '.'
     target_path = Path(directory).resolve()
+    print(f"Generating project structure for: {target_path}\n")
 
     # Updated Header format
     header = f"Directory Structure for: {target_path.name}\n"
@@ -82,15 +80,25 @@ def save_tree_to_file(directory, output_filename="project_structure.txt"):
     tree_output = generate_template_tree(target_path, align_col=50)
     full_output = header + tree_output
 
-    with open(output_filename, "w", encoding="utf-8") as f:
+    output = target_path / "_contexts" / output_filename
+
+    # Ensure the _contexts directory exists
+    assert output.parent.exists(), (
+        f"Error: The directory '{output.parent}' does not exist. Please create it first."
+    )
+
+    with open(output, "w", encoding="utf-8") as f:
         f.write(full_output)
 
-    print("\n===============================================================")
-    print(f"Success! Project structure saved to '{output_filename}'")
-    print("===============================================================\n")
+    heading_str = f"Success! Project structure saved to '{output}'"
+
+    header_line = "=" * len(heading_str)
+    print("\n" + header_line)
+    print(heading_str)
+    print(header_line + "\n")
 
 
 if __name__ == "__main__":
     # Point this to your target directory ('.' means the current folder)
-    target_folder = "."
+    target_folder = "."  # Change this to your desired folder
     save_tree_to_file(target_folder)

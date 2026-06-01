@@ -1,0 +1,3190 @@
+<purpose>
+This document contains the source code for the RiskQuant 'SIMLAB_REDUCED' profile.
+Use this structural map and source code as the ground-truth context for answering subsequent queries.
+This is god-tier quantitative code, not typical Python scripts. Pay close attention to the structure and patterns used.
+RiskQuant prioritizes Data-Oriented Design (DOD), Structures-of-Arrays (SoA), bare-metal memory sympathy, and absolute maximum throughput. The core philosophy of this codebase is: Human-readable at the edge, C-contiguous at the core. Strings must die early. Bare-metal performance is the north star.
+</purpose>
+
+<directory_structure>
+riskquant\src\riskquant\constants.py
+riskquant\src\riskquant\simlab\__init__.py
+riskquant\src\riskquant\simlab\builder\shock_universe.py
+riskquant\src\riskquant\simlab\runner.py
+riskquant\src\riskquant\simlab\scenarios\__init__.py
+riskquant\src\riskquant\simlab\scenarios\base.py
+riskquant\src\riskquant\simlab\scenarios\bootstrap_fhs.py
+riskquant\src\riskquant\simlab\scenarios\bootstrap_sbb.py
+riskquant\src\riskquant\simlab\scenarios\core_math\__init__.py
+riskquant\src\riskquant\simlab\scenarios\core_math\ar1_filter.py
+riskquant\src\riskquant\simlab\scenarios\core_math\ewma_volatility.py
+riskquant\src\riskquant\simlab\scenarios\core_math\sbb_block_generator.py
+riskquant\src\riskquant\simlab\scenarios\historical.py
+riskquant\src\riskquant\simlab\scenarios\historical_fhs.py
+riskquant\src\riskquant\simlab\scenarios\parametric.py
+riskquant\src\riskquant\simlab\shock_plan\__init__.py
+riskquant\src\riskquant\simlab\shock_plan\plan.py
+riskquant\src\riskquant\simlab\shocks\__init__.py
+riskquant\src\riskquant\simlab\shocks\apply.py
+riskquant\src\riskquant\simlab\shocks\shock_kernel.py
+</directory_structure>
+
+<files>
+<file path="riskquant\src\riskquant\constants.py">
+```python
+# src/riskquant/constants.py
+
+"""
+Common constants used across the riskquant codebase.
+
+This module separates:
+- typed sentinel values used in numeric payloads / arrays
+- general configuration constants used by the portfolio engine
+"""
+
+from __future__ import annotations
+
+from datetime import date
+
+import numpy as np
+
+# ==============================================================================
+# Typed sentinel values for payload fields
+# ==============================================================================
+
+# Universal sentinel for "no valid ID".
+# Used across instrument_ids, underlying_ids, volatility_ids, and discount_curve_ids.
+NO_ID = np.int32(-999_999)
+
+# Universal sentinel for missing dates (settlement, delivery, expiry).
+# Using -1 allows for clean `date_ord >= 0` masking.
+NO_DATE_ORD32 = np.int32(-99_999)
+
+# Specific sentinel for FX: No conversion required (Underlying CCY == Settlement CCY)
+NO_FX_RF_REQUIRED = np.int32(-1)
+
+# Invalid UIX sentinel for any universe index (*_uix fields).
+# Used exclusively in the Execution Engine (blocks/compilers), never in Ingest.
+INVALID_UIX = np.int32(-999)
+
+# NOT IMPLEMENTED sentinels for fields expected to be populated but aren't yet.
+NOT_IMPLEMENTED_SENTINEL: np.int8 = np.int8(-99)
+
+# ==============================================================================
+# Option encoding
+# ==============================================================================
+
+# 1 for call options, -1 for put options, 0 for not-an-option.
+# Allows for branchless payoff calculation: payoff * cp_mult
+CALL_OPTION_MULT = np.int8(1)
+PUT_OPTION_MULT = np.int8(-1)
+NOT_OPTION_MULT = np.int8(0)
+
+# ==============================================================================
+# Date encoding
+# ==============================================================================
+
+DATE_EPOCH: date = date(1970, 1, 1)
+
+# ==============================================================================
+# Numeric configuration
+# ==============================================================================
+
+ROUND_DECIMALS_LEVEL = 8
+ROUND_DECIMALS_QUANTITY = 8
+ROUND_DECIMALS_STRIKE_PRICE = 8
+
+POSITION_DUST_TOLERANCE = 1e-8
+PD_DUST_TOLERANCE = 1e-10
+
+# ============================================
+# --- DEVELOPMENT-ONLY FALLBACK VALUES
+# ============================================
+
+FALLBACK_MOCK_VOLATILITY_DO_NOT_SHIP: float = 0.50
+
+# ==============================================================================
+# --- EWMA Volatility Calculation Constants
+# ==============================================================================
+
+EWMA_DECAY_FACTOR: float = 0.94
+MAX_EWMA_VOL_RATIO: float = 10.0
+MIN_EWMA_VARIANCE: float = 1e-12
+
+# ==============================================================================
+# --- Credit Risk Constants
+# ==============================================================================
+
+NO_PARENT_OBLIGOR: np.int64 = np.int64(-1)
+NO_RATING_ID: np.int8 = np.int8(0)
+NO_SECTOR_ID: np.int32 = np.int32(-1)
+NO_COUNTRY_ID: np.int32 = np.int32(-1)
+
+# ==============================================================================
+# RANDOM SEED FOR TESTING
+# ==============================================================================
+
+RNG_SEED: int = 42
+```
+</file>
+
+<file path="riskquant\src\riskquant\simlab\__init__.py">
+```python
+
+```
+</file>
+
+<file path="riskquant\src\riskquant\simlab\builder\shock_universe.py">
+```python
+# src/riskquant/simlab/builder/shock_universe.py
+"""
+Canonical shock-universe builder.
+
+Deduplicates `(source_factor_id, shift_type_id)` pairs into K unique
+shocks. Each unique shock can be computed once and broadcast to every
+required exposure that maps onto it.
+
+Hot-path discipline
+-------------------
+- No Python loop over per-required ids — dedup is one `np.unique` pass.
+- First-seen ordering preserved across reruns of identical inputs so
+  downstream hashes are deterministic.
+- Bit-packed int64 keys: high 56 bits = `source_factor_id` (int32,
+  sign-extended into int64), low 8 bits = `shift_type_id` (uint8 cast
+  from int8). The pack/unpack invariant requires
+  `0 <= shift_type_id < 128`; enforced at input.
+- `available_factor_ids` arrives as a sorted-ascending int32 array
+  (the `RiskFactorMatrix` invariant), so the downstream compute-plan
+  resolution is one `np.searchsorted`.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+import numpy.typing as npt
+
+from riskquant.simlab.shock_plan.plan import (
+    ShockComputePlan,
+    build_shock_compute_plan,
+)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ShockUniverse:
+    """
+    Canonical definition of the shock space.
+
+    Deterministic and reusable; zero-allocation at runtime once built.
+    """
+
+    # --- UNIQUE SHOCK KEYS (length K) ---
+    shock_source_ids: npt.NDArray[np.int32]
+    shock_shift_type_ids: npt.NDArray[np.int8]
+
+    # --- REQUIRED -> SHOCK MAPPING (length Nreq) ---
+    required_to_shock_uix: npt.NDArray[np.int32]
+
+    # --- COMPUTE PLAN ---
+    compute_plan: ShockComputePlan
+
+    # --- RAW PACKED KEYS (debug / hashing; length K) ---
+    shock_keys: npt.NDArray[np.int64]
+
+
+# ============================================================
+# Key packing
+# ============================================================
+
+
+_SHIFT_TYPE_BITS: int = 8
+_SHIFT_TYPE_MASK: int = (1 << _SHIFT_TYPE_BITS) - 1  # 0xFF
+
+
+def _pack_keys(
+    source_factor_ids: npt.NDArray[np.int32],
+    shift_type_ids: npt.NDArray[np.int8],
+) -> npt.NDArray[np.int64]:
+    """
+    Pack `(source_id, shift_type_id)` into int64.
+
+    `source_id` fits in 32 bits but we promote to int64 so the left-shift
+    doesn't lose the high bit. `shift_type_id` is masked to its low 8
+    bits so a future sign-bit ambiguity can't poison the key.
+    """
+    src64 = source_factor_ids.astype(np.int64, copy=False)
+    st64 = shift_type_ids.astype(np.int64, copy=False) & np.int64(_SHIFT_TYPE_MASK)
+    return (src64 << _SHIFT_TYPE_BITS) | st64
+
+
+# ============================================================
+# First-seen dedup
+# ============================================================
+
+
+def _unique_first_seen_int64(
+    arr: npt.NDArray[np.int64],
+) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int32]]:
+    """
+    Vectorised first-seen dedup.
+
+    Returns
+    -------
+    unique_first_seen
+        (K,) int64 — unique values in first-seen order.
+    inverse_first_seen
+        (N,) int32 — for each input position, the index in
+        `unique_first_seen`.
+    """
+    if arr.size == 0:
+        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int32)
+
+    _, first_idx, inverse_sorted = np.unique(
+        arr, return_index=True, return_inverse=True
+    )
+    order = np.argsort(first_idx, kind="mergesort")
+    unique_first_seen = arr[first_idx[order]]
+    sorted_to_first_seen = np.empty(order.size, dtype=np.int32)
+    sorted_to_first_seen[order] = np.arange(order.size, dtype=np.int32)
+    inverse_first_seen = sorted_to_first_seen[inverse_sorted].astype(
+        np.int32, copy=False
+    )
+    return unique_first_seen, inverse_first_seen
+
+
+# ============================================================
+# Public API
+# ============================================================
+
+
+def build_shock_universe(
+    *,
+    required_shift_type_id: npt.NDArray[np.int8],
+    source_factor_ids: npt.NDArray[np.int32],
+    available_factor_ids: npt.NDArray[np.int32],
+) -> ShockUniverse:
+    """
+    Build a canonical `ShockUniverse` from proxy-resolution outputs.
+
+    Parameters
+    ----------
+    required_shift_type_id
+        (Nreq,) int8 — shift type id per required exposure.
+    source_factor_ids
+        (Nreq,) int32 — resolved source rf per required (from
+        `ProxyResolution.source_factor_ids`).
+    available_factor_ids
+        (Ntotal,) int32 — sorted-ascending unique factor ids exposed
+        by the generator's risk-factor matrix.
+    """
+    _smoke_test_inputs(required_shift_type_id, source_factor_ids)
+
+    # --- BIT-PACK KEYS ---
+    keys = _pack_keys(source_factor_ids, required_shift_type_id)
+
+    # --- DEDUPLICATE (first-seen) ---
+    unique_keys, req_to_uix = _unique_first_seen_int64(keys)
+
+    # Unpack unique keys back to int32 / int8 components.
+    shock_source_ids = (unique_keys >> _SHIFT_TYPE_BITS).astype(np.int32, copy=False)
+    shift_low = (unique_keys & np.int64(_SHIFT_TYPE_MASK)).astype(np.uint8, copy=False)
+    shock_shift_type_ids = shift_low.astype(np.int8, copy=False)
+
+    # --- BUILD COMPUTE PLAN ---
+    compute_plan = build_shock_compute_plan(
+        shock_source_ids=shock_source_ids,
+        shock_shift_type_ids=shock_shift_type_ids,
+        factor_ids=available_factor_ids,
+    )
+
+    return ShockUniverse(
+        shock_source_ids=shock_source_ids,
+        shock_shift_type_ids=shock_shift_type_ids,
+        required_to_shock_uix=req_to_uix,
+        compute_plan=compute_plan,
+        shock_keys=unique_keys,
+    )
+
+
+# ============================================================
+# Input validation
+# ============================================================
+
+
+def _smoke_test_inputs(
+    required_shift_type_id: npt.NDArray[np.int8],
+    source_factor_ids: npt.NDArray[np.int32],
+) -> None:
+    if required_shift_type_id.ndim != 1:
+        raise TypeError("required_shift_type_id must be 1D.")
+    if source_factor_ids.ndim != 1:
+        raise TypeError("source_factor_ids must be 1D.")
+    if required_shift_type_id.dtype != np.int8:
+        raise TypeError(
+            f"required_shift_type_id must be int8; got {required_shift_type_id.dtype}"
+        )
+    if source_factor_ids.dtype != np.int32:
+        raise TypeError(
+            f"source_factor_ids must be int32; got {source_factor_ids.dtype}"
+        )
+    if required_shift_type_id.shape != source_factor_ids.shape:
+        raise ValueError(
+            "required_shift_type_id and source_factor_ids must have the same shape; "
+            f"got {required_shift_type_id.shape} and {source_factor_ids.shape}"
+        )
+    if required_shift_type_id.size == 0:
+        return
+    # The bit-pack uses the low 8 bits and assumes the shift_type_id is
+    # non-negative. int8 can represent up to 127.
+    if required_shift_type_id.min() < 0:
+        raise ValueError(
+            "required_shift_type_id must be >= 0 for the bit-packed dedup key."
+        )
+```
+</file>
+
+<file path="riskquant\src\riskquant\simlab\runner.py">
+```python
+# src/riskquant/simlab/runner.py
+"""
+SIMLAB orchestrator.
+
+Streaming VaR engine: holds the compiled portfolio, the UIX universe,
+the universe-to-flat-buffer mapping, and a scenario generator. Each
+`run(snapshot)` call:
+
+  1. Extracts the t0 base-levels vector from the injected snapshot.
+  2. Prices the base portfolio once (single-scenario MD matrix).
+  3. Streams scenario batches from the generator, applies shocks to
+     base levels into a pre-allocated `(N_req, batch_size)` buffer,
+     hydrates a `MarketDataMatrix` view over that buffer, prices the
+     batch, and writes the PVs into the master scenario-PV grid.
+  4. Subtracts base PVs in place and returns a float32 PnL matrix.
+
+DOD properties
+--------------
+- All hot-path buffers pre-allocated in `run()` exactly once.
+- Apply-shocks buffer validation runs ONCE at first batch, not per
+  batch.
+- `scenario_pvs` is laid out as `(n_trades, n_scenarios)` C-contiguous
+  so the per-batch PV writes are unit-stride along the inner axis.
+- The terminal `np.float32` cast writes into a pre-allocated buffer
+  to avoid the peak-memory spike of `.astype(np.float32)`.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date
+
+import numpy as np
+import numpy.typing as npt
+
+# Config & Resolution
+from riskquant.config.proxy_config.proxy_topology import ProxyTopology
+from riskquant.config.static_config.static_config import RiskStaticConfig
+
+# State & Valuation
+from riskquant.market_data.builder import build_market_data_matrix
+from riskquant.market_data.risk_factors.snapshot import RiskFactorLevelSnapshot
+from riskquant.market_data.state import MarketDataMatrix
+from riskquant.pnl.results import PnlMatrix
+from riskquant.portfolio.compiled import CompiledPortfolio
+from riskquant.portfolio.engine import UixMapper
+from riskquant.proxy_resolver.proxy import (
+    ProxyResolution,
+    resolve_required_factor_ids_to_market_data_factor_ids,
+)
+from riskquant.simlab.scenarios.base import ScenarioGenerator
+from riskquant.simlab.shocks.apply import (
+    apply_shocks_to_base_levels,
+    validate_apply_shocks_buffers,
+)
+from riskquant.valuation.engine import run_valuation
+
+# =========================================================================
+# UNIVERSE MAPPING
+# =========================================================================
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UniverseMapping:
+    """
+    Slicing plan to extract the structured market-data arrays from one
+    flat `(N_req, B)` levels matrix.
+
+    The `idx_*` slices index the leading factor axis; reshape information
+    for curves and surfaces lives in the `shape_*` triples.
+
+    All `np.ndarray` fields hold per-config metadata pinned to the run's
+    universe. Validation lives at build time; the runner trusts the
+    contract.
+    """
+
+    required_factor_ids: npt.NDArray[np.int32]
+    required_shift_type_ids: npt.NDArray[np.int8]
+
+    # Scalars
+    idx_fx_spots: slice
+    idx_prices: slice
+    idx_fwd_nodes: slice
+    idx_vol_nodes: slice
+
+    # Curves / surfaces
+    idx_discount_curves: slice
+    shape_discount_curves: tuple[int, int]  # (C_curves, M_tenors)
+
+    idx_price_curves: slice
+    shape_price_curves: tuple[int, int]
+
+    idx_vol_surfaces: slice
+    shape_vol_surfaces: tuple[int, int, int]  # (C_surfaces, M_tenors, K_strikes)
+
+    # 1-D curve configs
+    curve_interp_methods: npt.NDArray[np.int8]
+    curve_extrap_methods: npt.NDArray[np.int8]
+    raw_discount_tenors: npt.NDArray[np.float64]
+    raw_price_curve_tenors: npt.NDArray[np.float64]
+
+    # 2-D surface configs
+    surface_interp_x_methods: npt.NDArray[np.int8]
+    surface_extrap_x_methods: npt.NDArray[np.int8]
+    surface_y_axis_type_ids: npt.NDArray[np.int8]
+    raw_vol_surface_tenors: npt.NDArray[np.float64]
+    raw_vol_surface_strikes: npt.NDArray[np.float64]
+
+
+# =========================================================================
+# ORCHESTRATOR
+# =========================================================================
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SimlabRunner:
+    """
+    Immutable orchestrator for the SIMLAB risk engine.
+
+    Acts as a compiled compute topology: once constructed, every call
+    to `run(snapshot)` reuses the same proxy-resolution, universe map,
+    UIX mapper, and pre-allocated hot-path buffers (allocated inside
+    `run` and reused for the duration of that call).
+    """
+
+    config: RiskStaticConfig
+    proxy_topology: ProxyTopology
+    portfolio: CompiledPortfolio
+    uix_mapper: UixMapper
+    universe_map: UniverseMapping
+    generator: ScenarioGenerator
+    as_of_date: date
+    batch_size: int = 500
+
+    # Cache topology mapping, NOT state.
+    _proxy_resolution: ProxyResolution = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+
+        # Single proxy resolution per runner lifetime.
+        proxy_res = resolve_required_factor_ids_to_market_data_factor_ids(
+            static_config=self.config,
+            proxy_topology=self.proxy_topology,
+            required_factor_ids=self.universe_map.required_factor_ids,
+            market_data_factor_ids=self.generator.available_factor_ids,
+        )
+        object.__setattr__(self, "_proxy_resolution", proxy_res)
+
+    # ------------------------------------------------------------------
+    # Hot path
+    # ------------------------------------------------------------------
+
+    def run(self, snapshot: RiskFactorLevelSnapshot) -> PnlMatrix:
+        """
+        Run the streaming VaR loop against an injected market snapshot.
+
+        Returns a `PnlMatrix` whose `pnl` field is float32
+        `(n_trades, n_scenarios)`.
+        """
+        n_trades = self.portfolio.total_trades
+        n_scenarios = self.generator.total_scenarios
+
+        # ---- 1. t0 base levels ----
+        base_levels = self._extract_base_levels(
+            required_ids=self.universe_map.required_factor_ids,
+            snapshot=snapshot,
+        )
+        n_req_factors = base_levels.shape[0]
+
+        # ---- 2. Pre-allocate hot-path buffers ----
+        # `scenario_pvs` is C-contig: per-batch writes hit unit-stride
+        # along the inner scenario axis.
+        scenario_pvs = np.empty(
+            (n_trades, n_scenarios),
+            dtype=np.float64,
+            order="C",
+        )
+        shocked_levels_buf = np.empty(
+            (n_req_factors, self.batch_size),
+            dtype=np.float64,
+            order="C",
+        )
+
+        # ---- 3. Base valuation (t0) ----
+        base_state = self._hydrate_state(
+            flat_levels=base_levels[:, None],
+            num_scenarios=1,
+        )
+        base_result = run_valuation(
+            portfolio=self.portfolio,
+            market_data_mtx=base_state,
+        )
+        base_pvs = base_result.values  # (n_trades, 1)
+
+        # ---- 4. Streaming hot loop ----
+        first_batch = True
+        for batch in self.generator.iter_batches(
+            required_shift_type_id=self.universe_map.required_shift_type_ids,
+            source_factor_ids=self._proxy_resolution.source_factor_ids,
+            shock_scale=self._proxy_resolution.shock_scale,
+            batch_size=self.batch_size,
+        ):
+            start = batch.scenario_offset
+            current_b = batch.shocks.shape[0]
+            end = start + current_b
+
+            out_view = shocked_levels_buf[:, :current_b]
+
+            # One-shot layout/dtype validation at first batch. Hot
+            # path trusts the contract afterwards.
+            if first_batch:
+                validate_apply_shocks_buffers(
+                    base_levels=base_levels,
+                    shocks=batch.shocks,
+                    out=out_view,
+                )
+                first_batch = False
+
+            # Step A — apply shocks (zero allocation).
+            apply_shocks_to_base_levels(
+                base_levels=base_levels,
+                batch=batch,
+                out=out_view,
+            )
+
+            # Step B — hydrate market state (zero-copy slicing).
+            market_state = self._hydrate_state(
+                flat_levels=out_view,
+                num_scenarios=current_b,
+            )
+
+            # Step C — price the batch.
+            batch_result = run_valuation(
+                portfolio=self.portfolio,
+                market_data_mtx=market_state,
+            )
+
+            # Step D — write PVs into the master grid.
+            scenario_pvs[:, start:end] = batch_result.values
+
+        # ---- 5. PnL = scenario PV - base PV, in place ----
+        # Broadcast subtraction against the (n_trades, 1) base PVs.
+        scenario_pvs -= base_pvs
+
+        # ---- 6. Narrow-cast into a fresh float32 buffer ----
+        # Allocating the result up front and using np.copyto with the
+        # cast is equivalent to .astype() but lets us drop scenario_pvs
+        # immediately after — peak-memory wise we still own both
+        # buffers across the copy; the caller's GC reclaims scenario_pvs
+        # at function exit.
+        scenario_pnl_32 = np.empty(scenario_pvs.shape, dtype=np.float32)
+        np.copyto(scenario_pnl_32, scenario_pvs, casting="same_kind")
+
+        return PnlMatrix(
+            trade_uids=self.portfolio.trade_uids,
+            pnl=scenario_pnl_32,
+        )
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _extract_base_levels(
+        self,
+        *,
+        required_ids: npt.NDArray[np.int32],
+        snapshot: RiskFactorLevelSnapshot,
+    ) -> npt.NDArray[np.float64]:
+        """
+        Vectorised O(N log K) gather of base levels by required-id.
+
+        `snapshot.factor_ids` is sorted ascending (the Snapshot class
+        invariant), enabling one-shot `searchsorted` membership check
+        and gather.
+        """
+        idx = np.searchsorted(snapshot.factor_ids, required_ids)
+        idx = np.clip(idx, 0, snapshot.factor_ids.shape[0] - 1)
+        if np.any(snapshot.factor_ids[idx] != required_ids):
+            missing = required_ids[snapshot.factor_ids[idx] != required_ids]
+            raise ValueError(
+                f"Compiled portfolio requires risk factors missing from the "
+                f"snapshot: {np.unique(missing).tolist()}"
+            )
+        return np.ascontiguousarray(snapshot.factor_levels[idx]).astype(
+            np.float64, copy=False
+        )
+
+    def _hydrate_state(
+        self,
+        *,
+        flat_levels: npt.NDArray[np.float64],
+        num_scenarios: int,
+    ) -> MarketDataMatrix:
+        """
+        Slice the flat `(N_req, B)` levels matrix into the dimensional
+        grids expected by the valuation engine, and call the builder.
+
+        Slicing produces views, not copies. The builder owns its own
+        per-build allocations (FX-effective gather, curve grids).
+        """
+        u = self.universe_map
+
+        # ---- Scalars ----
+        raw_fx_spots = flat_levels[u.idx_fx_spots, :]
+        raw_prices = flat_levels[u.idx_prices, :]
+        raw_forward_nodes = flat_levels[u.idx_fwd_nodes, :]
+        raw_vol_nodes = flat_levels[u.idx_vol_nodes, :]
+
+        # ---- Curves ----
+        raw_discount_ln_dfs = flat_levels[u.idx_discount_curves, :].reshape(
+            u.shape_discount_curves[0],
+            u.shape_discount_curves[1],
+            num_scenarios,
+        )
+        raw_price_curve_values = flat_levels[u.idx_price_curves, :].reshape(
+            u.shape_price_curves[0],
+            u.shape_price_curves[1],
+            num_scenarios,
+        )
+
+        # ---- Surfaces ----
+        raw_vol_surface_values = flat_levels[u.idx_vol_surfaces, :].reshape(
+            u.shape_vol_surfaces[0],
+            u.shape_vol_surfaces[1],
+            u.shape_vol_surfaces[2],
+            num_scenarios,
+        )
+
+        return build_market_data_matrix(
+            as_of_date=self.as_of_date,
+            uix_mapper=self.uix_mapper,
+            num_scenarios=num_scenarios,
+            raw_fx_spots=raw_fx_spots,
+            raw_prices=raw_prices,
+            raw_forward_nodes=raw_forward_nodes,
+            raw_vol_nodes=raw_vol_nodes,
+            raw_discount_tenors=u.raw_discount_tenors,
+            raw_discount_ln_dfs=raw_discount_ln_dfs,
+            raw_price_curve_tenors=u.raw_price_curve_tenors,
+            raw_price_curve_values=raw_price_curve_values,
+            curve_interp_methods=u.curve_interp_methods,
+            curve_extrap_methods=u.curve_extrap_methods,
+            raw_vol_surface_tenors=u.raw_vol_surface_tenors,
+            raw_vol_surface_strikes=u.raw_vol_surface_strikes,
+            raw_vol_surface_values=raw_vol_surface_values,
+            surface_interp_x_methods=u.surface_interp_x_methods,
+            surface_extrap_x_methods=u.surface_extrap_x_methods,
+            surface_y_axis_type_ids=u.surface_y_axis_type_ids,
+        )
+```
+</file>
+
+<file path="riskquant\src\riskquant\simlab\scenarios\__init__.py">
+```python
+
+```
+</file>
+
+<file path="riskquant\src\riskquant\simlab\scenarios\base.py">
+```python
+# src/riskquant/simlab/scenarios/base.py
+"""
+Scenario-generator protocol, batch container, and the one canonical entry
+point for resolving a required-factor universe into a ShockUniverse +
+ShockComputePlan.
+
+Design
+------
+`ScenarioGenerator` is a streaming protocol: generators yield
+`ScenarioSetBatch` chunks of fixed `batch_size` instead of materialising
+the full (T, K) shock matrix. The runner holds one pre-allocated
+shocked-levels buffer and consumes each batch in place.
+
+`resolve_shock_universe` replaces the old dict-based
+`build_factor_id_to_col_index` + `build_shock_key_plan` helpers. It
+takes `RiskFactorMatrix.factor_ids` (sorted ascending int32) directly
+and uses `np.searchsorted` for O(K log N) vectorised resolution.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from dataclasses import dataclass
+from typing import Protocol
+
+import numpy as np
+import numpy.typing as npt
+
+from riskquant.simlab.builder.shock_universe import (
+    ShockUniverse,
+    build_shock_universe,
+)
+
+# ============================================================
+# Streaming-batch payload
+# ============================================================
+
+
+@dataclass(frozen=True, slots=True)
+class ScenarioSetBatch:
+    """
+    One streaming chunk of scenarios in shock-space.
+
+    `shocks` is F-contiguous `(B, K_req)` so the apply-shocks kernel
+    reads down the scenario axis with unit stride. `required_to_shock_uix`
+    maps required-exposure rows back to columns of `shocks`.
+    """
+
+    shocks: np.ndarray
+    required_to_shock_uix: np.ndarray
+    shock_scale: np.ndarray
+    required_shift_type_id: np.ndarray
+    scenario_offset: int
+    scenario_count_total: int | None = None
+
+
+# ============================================================
+# Generator protocol
+# ============================================================
+
+
+class ScenarioGenerator(Protocol):
+    """Streaming-first scenario generation."""
+
+    total_scenarios: int
+    available_factor_ids: np.ndarray
+
+    def iter_batches(
+        self,
+        *,
+        required_shift_type_id: np.ndarray,  # (Nreq,) int8
+        source_factor_ids: np.ndarray,  # (Nreq,) int32
+        shock_scale: np.ndarray,  # (Nreq,) float32
+        batch_size: int,
+    ) -> Iterator[ScenarioSetBatch]: ...
+
+
+# ============================================================
+# Vectorised universe resolution
+# ============================================================
+
+
+def resolve_shock_universe(
+    *,
+    required_shift_type_id: npt.NDArray[np.int8],
+    source_factor_ids: npt.NDArray[np.int32],
+    available_factor_ids: npt.NDArray[np.int32],
+) -> ShockUniverse:
+    """
+    Build a `ShockUniverse` from the run's resolved-source universe and
+    the generator's available-factor index.
+
+    `available_factor_ids` MUST be sorted ascending and unique (the
+    `RiskFactorMatrix` invariant). This lets us replace the dict-based
+    lookup with one vectorised `np.searchsorted` inside
+    `build_shock_universe`.
+
+    The previous two-stage helper pair (`build_factor_id_to_col_index`
+    + `build_shock_key_plan`) is gone — both were Python-loop with
+    dict-lookup anti-patterns. This is the single entry point all
+    generators use.
+    """
+    return build_shock_universe(
+        required_shift_type_id=required_shift_type_id,
+        source_factor_ids=source_factor_ids,
+        available_factor_ids=available_factor_ids,
+    )
+```
+</file>
+
+<file path="riskquant\src\riskquant\simlab\scenarios\bootstrap_fhs.py">
+```python
+# src/riskquant/simlab/scenarios/bootstrap_fhs.py
+"""
+Bootstrapped Filtered Historical Simulation generator.
+
+Methodology
+-----------
+1. AR(1) residualisation of historical returns.
+2. EWMA volatility ratios Z_t = sigma_today / sigma_t.
+3. Pure i.i.d. bootstrap of single days drawn uniformly from
+   [1, T-1] to construct h-day paths.
+
+Why no block bootstrap: the upstream AR(1) + EWMA pipeline has already
+whitened the series, so block-stitching reintroduces artificial seam
+artefacts. Per-day i.i.d. is the cleaner aggregator on filtered data.
+
+Implementation
+--------------
+- AR(1) + EWMA scratch buffers cached lazily on the generator instance
+  (same scheme as `FilteredHistoricalGenerator`).
+- All MC path indices drawn upfront from one `rng.integers` call.
+- Streaming `shocks` buffer pre-allocated once at `batch_size`.
+- Kernel pinned, branch-hoisted, called positionally.
+- Shocks are always float32.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+
+import numba as nb  # type: ignore[import-untyped]
+import numpy as np
+
+from riskquant._njit import parallel_njit
+from riskquant.constants import EWMA_DECAY_FACTOR, MAX_EWMA_VOL_RATIO
+from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
+from riskquant.market_data.risk_factors.shift_types import (
+    SHIFT_DIFFERENCE_ID,
+    SHIFT_LOG_RETURN_ID,
+    SHIFT_SIMPLE_RETURN_ID,
+)
+from riskquant.simlab.scenarios.base import (
+    ScenarioGenerator,
+    ScenarioSetBatch,
+    resolve_shock_universe,
+)
+from riskquant.simlab.scenarios.core_math.ar1_filter import kernel_ar1_residuals
+from riskquant.simlab.scenarios.core_math.ewma_volatility import (
+    kernel_ewma_vol_ratios_from_residuals,
+)
+
+_F64_2D_F = nb.float64[::1, :]
+_F32_2D_F = nb.float32[::1, :]
+_I32_1D = nb.int32[::1]
+_I32_2D_C = nb.int32[:, ::1]
+_I8_1D = nb.int8[::1]
+
+
+# =========================================================================
+# ZERO-ALLOCATION KERNEL
+# =========================================================================
+
+
+@parallel_njit(
+    nb.void(
+        _F64_2D_F,  # residuals          (T, K_req) F-contig
+        _F64_2D_F,  # vol_ratios         (T, K_req) F-contig
+        _I32_1D,  # cols               (K_req,)  — debug parity
+        _I8_1D,  # shift_types        (K_req,)
+        _I32_1D,  # inv_perm           (K_req,)
+        _I32_2D_C,  # random_t_indices   (B, h) C-contig
+        nb.int64,  # h
+        nb.int64,  # B
+        _F32_2D_F,  # out                (B, K_req) F-contig
+    ),
+)
+def _kernel_fused_filtered_bootstrap_h_day_shock(
+    residuals,
+    vol_ratios,
+    cols,
+    shift_types,
+    inv_perm,
+    random_t_indices,
+    h,
+    batch_len,
+    out,
+) -> None:
+    """
+    Aggregate vol-scaled residuals over a synthetic i.i.d. path.
+    """
+    k_cols = cols.shape[0]
+    for k in nb.prange(k_cols):
+        st = shift_types[k]
+        out_col = inv_perm[k]
+
+        col_res = residuals[:, k]
+        col_vols = vol_ratios[:, k]
+        out_col_vals = out[:, out_col]
+
+        if st == SHIFT_LOG_RETURN_ID:
+            for b in range(batch_len):
+                cum_shock = 0.0
+                for step in range(h):
+                    t1 = random_t_indices[b, step]
+                    cum_shock += col_res[t1] * col_vols[t1]
+                out_col_vals[b] = np.float32(cum_shock)
+
+        elif st == SHIFT_SIMPLE_RETURN_ID:
+            for b in range(batch_len):
+                cum_ret = 1.0
+                for step in range(h):
+                    t1 = random_t_indices[b, step]
+                    cum_ret *= 1.0 + col_res[t1] * col_vols[t1]
+                out_col_vals[b] = np.float32(cum_ret - 1.0)
+
+        elif st == SHIFT_DIFFERENCE_ID:
+            for b in range(batch_len):
+                cum_diff = 0.0
+                for step in range(h):
+                    t1 = random_t_indices[b, step]
+                    cum_diff += col_res[t1] * col_vols[t1]
+                out_col_vals[b] = np.float32(cum_diff)
+
+
+# =========================================================================
+# GENERATOR
+# =========================================================================
+
+
+@dataclass(slots=True, kw_only=True)
+class FilteredBootstrapGenerator(ScenarioGenerator):
+    """
+    Bootstrapped FHS generator. Shocks are always float32.
+
+    Not `frozen=True` because `ar1_residuals` and `vol_ratios` are
+    populated lazily on first `iter_batches()` call.
+    """
+
+    matrix: RiskFactorMatrix
+    total_scenarios: int
+    horizon: int = field(default=1)
+    decay_factor: float = field(default=EWMA_DECAY_FACTOR)
+    max_vol_ratio: float = field(default=MAX_EWMA_VOL_RATIO)
+    seed: int | None = field(default=None)
+
+    # Derived in __post_init__.
+    available_factor_ids: np.ndarray = field(init=False, repr=False)
+
+    # Lazy caches.
+    _ar1_residuals: np.ndarray | None = field(default=None, init=False, repr=False)
+    _vol_ratios: np.ndarray | None = field(default=None, init=False, repr=False)
+    _cache_signature: tuple | None = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.matrix.values.shape[0] < 3:
+            raise ValueError("History too short for EWMA calculation.")
+        if self.total_scenarios <= 0:
+            raise ValueError("total_scenarios must be positive")
+        if self.horizon < 1:
+            raise ValueError("horizon must be >= 1")
+        self.available_factor_ids = self.matrix.factor_ids
+
+    def reset_caches(self) -> None:
+        """Drop the AR(1) + EWMA scratch caches."""
+        self._ar1_residuals = None
+        self._vol_ratios = None
+        self._cache_signature = None
+
+    def _ensure_filter_caches(
+        self, plan_cols: np.ndarray, plan_shifts: np.ndarray
+    ) -> None:
+        sig = (
+            plan_cols.tobytes(),
+            plan_shifts.tobytes(),
+            float(self.decay_factor),
+            float(self.max_vol_ratio),
+        )
+        if self._cache_signature == sig:
+            return
+
+        t_max = self.matrix.values.shape[0]
+        k_req = plan_cols.shape[0]
+
+        ar1 = np.empty((t_max, k_req), dtype=np.float64, order="F")
+        kernel_ar1_residuals(
+            self.matrix.values,
+            plan_cols,
+            plan_shifts,
+            ar1,
+        )
+
+        vols = np.empty((t_max, k_req), dtype=np.float64, order="F")
+        kernel_ewma_vol_ratios_from_residuals(
+            ar1,
+            float(self.decay_factor),
+            float(self.max_vol_ratio),
+            vols,
+        )
+
+        self._ar1_residuals = ar1
+        self._vol_ratios = vols
+        self._cache_signature = sig
+
+    def iter_batches(
+        self,
+        *,
+        required_shift_type_id: np.ndarray,
+        source_factor_ids: np.ndarray,
+        shock_scale: np.ndarray,
+        batch_size: int,
+    ) -> Iterator[ScenarioSetBatch]:
+        t_max = self.matrix.values.shape[0]
+        h = int(self.horizon)
+
+        shock_universe = resolve_shock_universe(
+            required_shift_type_id=required_shift_type_id,
+            source_factor_ids=source_factor_ids,
+            available_factor_ids=self.matrix.factor_ids,
+        )
+        plan = shock_universe.compute_plan
+        k_req = plan.cols_sorted.shape[0]
+
+        self._ensure_filter_caches(plan.cols_sorted, plan.shift_types_sorted)
+        assert self._ar1_residuals is not None
+        assert self._vol_ratios is not None
+
+        # Single MC draw for all paths upfront. Valid residual indices
+        # are [1, T-1] (t=0 has no return).
+        rng = np.random.default_rng(self.seed)
+        master_t_indices = rng.integers(
+            low=1,
+            high=t_max,
+            size=(self.total_scenarios, h),
+            dtype=np.int32,
+        )
+
+        shocks_buf = np.empty((batch_size, k_req), dtype=np.float32, order="F")
+
+        scenario_offset = 0
+        while scenario_offset < self.total_scenarios:
+            batch_len = min(batch_size, self.total_scenarios - scenario_offset)
+            shocks_view = shocks_buf[:batch_len, :]
+            batch_t_indices = master_t_indices[
+                scenario_offset : scenario_offset + batch_len
+            ]
+
+            _kernel_fused_filtered_bootstrap_h_day_shock(
+                self._ar1_residuals,
+                self._vol_ratios,
+                plan.cols_sorted,
+                plan.shift_types_sorted,
+                plan.inverse_permutation,
+                np.ascontiguousarray(batch_t_indices),
+                np.int64(h),
+                np.int64(batch_len),
+                shocks_view,
+            )
+
+            yield ScenarioSetBatch(
+                shocks=shocks_view,
+                required_to_shock_uix=shock_universe.required_to_shock_uix,
+                shock_scale=shock_scale,
+                required_shift_type_id=required_shift_type_id,
+                scenario_offset=scenario_offset,
+                scenario_count_total=self.total_scenarios,
+            )
+
+            scenario_offset += batch_len
+```
+</file>
+
+<file path="riskquant\src\riskquant\simlab\scenarios\bootstrap_sbb.py">
+```python
+# src/riskquant/simlab/scenarios/bootstrap_sbb.py
+"""
+Stationary Block Bootstrap (SBB) scenario generator.
+
+Constructs synthetic h-day paths by stitching contiguous historical
+blocks whose lengths are drawn from a Geometric distribution
+(parametrised by `expected_block_size`). Per-column aggregation is
+log-product, simple-compound, or sum-of-differences according to the
+column's shift type.
+
+Implementation
+--------------
+- All RNG-driven path indices are generated upfront via
+  `generate_sbb_path_indices` (RNG draws in NumPy, stitch in a njit
+  kernel — see core_math/sbb_block_generator.py).
+- Streaming `shocks` buffer is pre-allocated once at `batch_size`.
+- Kernel uses a pinned signature with positional args; branch ladder
+  hoisted around the B-loop.
+
+References
+----------
+Politis & Romano (1994); Politis (2003).
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+
+import numba as nb  # type: ignore[import-untyped]
+import numpy as np
+
+from riskquant._njit import parallel_njit
+from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
+from riskquant.market_data.risk_factors.shift_types import (
+    SHIFT_DIFFERENCE_ID,
+    SHIFT_LOG_RETURN_ID,
+    SHIFT_SIMPLE_RETURN_ID,
+)
+from riskquant.simlab.scenarios.base import (
+    ScenarioGenerator,
+    ScenarioSetBatch,
+    resolve_shock_universe,
+)
+from riskquant.simlab.scenarios.core_math.sbb_block_generator import (
+    generate_sbb_path_indices,
+)
+
+_F64_2D_F = nb.float64[::1, :]
+_F32_2D_F = nb.float32[::1, :]
+_I32_1D = nb.int32[::1]
+_I32_2D_C = nb.int32[:, ::1]
+_I8_1D = nb.int8[::1]
+
+
+@parallel_njit(
+    nb.void(
+        _F64_2D_F,  # values            (T, K_total) F-contig
+        _I32_1D,  # cols              (K_req,)
+        _I8_1D,  # shift_types       (K_req,)
+        _I32_1D,  # inv_perm          (K_req,)
+        _I32_2D_C,  # random_t_indices  (B, h) C-contig
+        nb.int64,  # h
+        nb.int64,  # B
+        _F32_2D_F,  # out               (B, K_req) F-contig
+    ),
+)
+def _kernel_fused_sbb_h_day_shock(
+    values,
+    cols,
+    shift_types,
+    inv_perm,
+    random_t_indices,
+    h,
+    batch_len,
+    out,
+) -> None:
+    """
+    h-day aggregation of 1-day returns along the SBB-synthetic path.
+    Parallelised across columns for F-contig cache-line usage.
+    """
+    k_cols = cols.shape[0]
+    for k in nb.prange(k_cols):
+        col = cols[k]
+        st = shift_types[k]
+        out_col = inv_perm[k]
+
+        col_vals = values[:, col]
+        out_col_vals = out[:, out_col]
+
+        if st == SHIFT_LOG_RETURN_ID:
+            for b in range(batch_len):
+                cum_ratio = 1.0
+                for step in range(h):
+                    t1 = random_t_indices[b, step]
+                    cum_ratio *= col_vals[t1] / col_vals[t1 - 1]
+                out_col_vals[b] = np.float32(math.log(cum_ratio))
+
+        elif st == SHIFT_SIMPLE_RETURN_ID:
+            for b in range(batch_len):
+                cum_ret = 1.0
+                for step in range(h):
+                    t1 = random_t_indices[b, step]
+                    cum_ret *= col_vals[t1] / col_vals[t1 - 1]
+                out_col_vals[b] = np.float32(cum_ret - 1.0)
+
+        elif st == SHIFT_DIFFERENCE_ID:
+            for b in range(batch_len):
+                cum_diff = 0.0
+                for step in range(h):
+                    t1 = random_t_indices[b, step]
+                    cum_diff += col_vals[t1] - col_vals[t1 - 1]
+                out_col_vals[b] = np.float32(cum_diff)
+
+
+# =========================================================================
+# GENERATOR
+# =========================================================================
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StationaryBlockBootstrapGenerator(ScenarioGenerator):
+    """SBB generator. Shocks are always float32."""
+
+    matrix: RiskFactorMatrix
+    total_scenarios: int
+    expected_block_size: float = field(default=1.0)
+    horizon: int = field(default=1)
+    seed: int | None = field(default=None)
+
+    # Derived in __post_init__.
+    available_factor_ids: np.ndarray = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.total_scenarios <= 0:
+            raise ValueError("total_scenarios must be positive")
+        if self.expected_block_size < 1.0:
+            raise ValueError("expected_block_size must be >= 1.0")
+        if self.horizon < 1:
+            raise ValueError("horizon must be >= 1")
+        if self.matrix.values.shape[0] < 2:
+            raise ValueError(
+                f"Matrix history (T={self.matrix.values.shape[0]}) too short "
+                "to compute 1-day returns."
+            )
+        object.__setattr__(self, "available_factor_ids", self.matrix.factor_ids)
+
+    def iter_batches(
+        self,
+        *,
+        required_shift_type_id: np.ndarray,
+        source_factor_ids: np.ndarray,
+        shock_scale: np.ndarray,
+        batch_size: int,
+    ) -> Iterator[ScenarioSetBatch]:
+        t_max = self.matrix.values.shape[0]
+        h = int(self.horizon)
+
+        shock_universe = resolve_shock_universe(
+            required_shift_type_id=required_shift_type_id,
+            source_factor_ids=source_factor_ids,
+            available_factor_ids=self.matrix.factor_ids,
+        )
+        plan = shock_universe.compute_plan
+        k_req = plan.cols_sorted.shape[0]
+
+        # All paths upfront in one njit + RNG burst.
+        rng = np.random.default_rng(self.seed)
+        master_t_indices = generate_sbb_path_indices(
+            t_max=t_max,
+            h=h,
+            total_scenarios=self.total_scenarios,
+            expected_block_size=self.expected_block_size,
+            rng=rng,
+        )
+
+        shocks_buf = np.empty((batch_size, k_req), dtype=np.float32, order="F")
+
+        scenario_offset = 0
+        while scenario_offset < self.total_scenarios:
+            batch_len = min(batch_size, self.total_scenarios - scenario_offset)
+            shocks_view = shocks_buf[:batch_len, :]
+            batch_t_indices = master_t_indices[
+                scenario_offset : scenario_offset + batch_len
+            ]
+
+            _kernel_fused_sbb_h_day_shock(
+                self.matrix.values,
+                plan.cols_sorted,
+                plan.shift_types_sorted,
+                plan.inverse_permutation,
+                np.ascontiguousarray(batch_t_indices),
+                np.int64(h),
+                np.int64(batch_len),
+                shocks_view,
+            )
+
+            yield ScenarioSetBatch(
+                shocks=shocks_view,
+                required_to_shock_uix=shock_universe.required_to_shock_uix,
+                shock_scale=shock_scale,
+                required_shift_type_id=required_shift_type_id,
+                scenario_offset=scenario_offset,
+                scenario_count_total=self.total_scenarios,
+            )
+
+            scenario_offset += batch_len
+```
+</file>
+
+<file path="riskquant\src\riskquant\simlab\scenarios\core_math\__init__.py">
+```python
+
+```
+</file>
+
+<file path="riskquant\src\riskquant\simlab\scenarios\core_math\ar1_filter.py">
+```python
+# src/riskquant/simlab/scenarios/core_math/ar1_filter.py
+"""
+AR(1) residual kernel.
+
+Pipeline (per column)
+---------------------
+1. First pass — compute returns according to the column's shift type
+   and accumulate OLS raw moments.
+2. Solve AR(1) coefficients (alpha, beta) with a t-test on beta; drop
+   to de-mean only if beta is not significant at 95%.
+3. Second pass — overwrite returns with residuals.
+
+DOD properties
+--------------
+- Zero allocations inside the kernel.
+- The first-pass return-formula `if/elif` is split into three
+  shift-type variants so the t-loop never sees a branch.
+- `math.log` (libm) instead of `np.log` (ufunc) — direct call, faster
+  inside the tight loop.
+- Parallel across columns; AR(1) state is per-column independent.
+"""
+
+from __future__ import annotations
+
+import math
+
+import numba as nb  # type: ignore[import-untyped]
+
+from riskquant._njit import inline_njit, parallel_njit  # type: ignore[import]
+from riskquant.market_data.risk_factors.shift_types import (
+    SHIFT_DIFFERENCE_ID,
+    SHIFT_LOG_RETURN_ID,
+    SHIFT_SIMPLE_RETURN_ID,
+)
+
+_F64_2D_F = nb.float64[::1, :]
+_I32_1D = nb.int32[::1]
+_I8_1D = nb.int8[::1]
+
+_T_STAT_CRITICAL_95: float = 1.96
+_VAR_X_FLOOR: float = 1e-12
+
+
+# ============================================================
+# Inlined per-shift-type return helpers
+# ============================================================
+
+
+@inline_njit
+def _ret_log(curr: float, prev: float) -> float:
+    return math.log(curr / prev)
+
+
+@inline_njit
+def _ret_simple(curr: float, prev: float) -> float:
+    return (curr / prev) - 1.0
+
+
+@inline_njit
+def _ret_diff(curr: float, prev: float) -> float:
+    return curr - prev
+
+
+# ============================================================
+# Per-column kernel (one shift-type variant)
+# ============================================================
+
+
+@inline_njit
+def _ar1_one_col(col_vals, col_res, st: int) -> None:
+    """
+    AR(1)-filter a single column in place.
+
+    `col_res[0]` is set to 0.0 (no return for t=0). Pass-1 fills `col_res[t]`
+    with the t-th return and accumulates OLS raw moments. Pass-2 subtracts
+    `(alpha + beta * r_{t-1})` to leave residuals in `col_res`.
+
+    The shift-type branch is HOISTED above the two t-loops to keep each
+    inner loop straight-line SIMD-friendly.
+    """
+    t_max = col_vals.shape[0]
+    if t_max < 2:
+        if t_max == 1:
+            col_res[0] = 0.0
+        return
+
+    col_res[0] = 0.0
+
+    # ---- Pass 1 — three branch-hoisted variants ----
+    prev_val = col_vals[0]
+    curr_val = col_vals[1]
+
+    if st == SHIFT_LOG_RETURN_ID:
+        r = _ret_log(curr_val, prev_val)
+    elif st == SHIFT_SIMPLE_RETURN_ID:
+        r = _ret_simple(curr_val, prev_val)
+    elif st == SHIFT_DIFFERENCE_ID:
+        r = _ret_diff(curr_val, prev_val)
+    else:
+        # Unknown shift-type: upstream `build_shock_universe` filters
+        # NO_SHIFT, so reaching this branch indicates a contract break.
+        return
+
+    col_res[1] = r
+    prev_r = r
+    prev_val = curr_val
+
+    sum_x = 0.0
+    sum_y = 0.0
+    sum_xx = 0.0
+    sum_xy = 0.0
+    sum_yy = 0.0
+
+    if st == SHIFT_LOG_RETURN_ID:
+        for t in range(2, t_max):
+            curr_val = col_vals[t]
+            r = _ret_log(curr_val, prev_val)
+            col_res[t] = r
+            sum_x += prev_r
+            sum_y += r
+            sum_xx += prev_r * prev_r
+            sum_xy += prev_r * r
+            sum_yy += r * r
+            prev_r = r
+            prev_val = curr_val
+    elif st == SHIFT_SIMPLE_RETURN_ID:
+        for t in range(2, t_max):
+            curr_val = col_vals[t]
+            r = _ret_simple(curr_val, prev_val)
+            col_res[t] = r
+            sum_x += prev_r
+            sum_y += r
+            sum_xx += prev_r * prev_r
+            sum_xy += prev_r * r
+            sum_yy += r * r
+            prev_r = r
+            prev_val = curr_val
+    else:  # SHIFT_DIFFERENCE_ID
+        for t in range(2, t_max):
+            curr_val = col_vals[t]
+            r = _ret_diff(curr_val, prev_val)
+            col_res[t] = r
+            sum_x += prev_r
+            sum_y += r
+            sum_xx += prev_r * prev_r
+            sum_xy += prev_r * r
+            sum_yy += r * r
+            prev_r = r
+            prev_val = curr_val
+
+    # ---- OLS solve ----
+    n_obs = t_max - 2
+    if n_obs <= 0:
+        return
+
+    mean_x = sum_x / n_obs
+    mean_y = sum_y / n_obs
+
+    var_x = sum_xx - n_obs * mean_x * mean_x
+    cov_xy = sum_xy - n_obs * mean_x * mean_y
+
+    beta = 0.0 if var_x < _VAR_X_FLOOR else cov_xy / var_x
+
+    alpha = mean_y - beta * mean_x
+
+    # ---- t-test on beta ----
+    var_y = sum_yy - n_obs * mean_y * mean_y
+    rss = var_y - beta * cov_xy
+    df = n_obs - 2
+    if df < 1:
+        df = 1
+    sigma2 = rss / df
+
+    if var_x > _VAR_X_FLOOR:
+        se_beta = math.sqrt(sigma2 / var_x)
+        t_stat = abs(beta / se_beta)
+    else:
+        t_stat = 0.0
+
+    if t_stat < _T_STAT_CRITICAL_95:
+        beta = 0.0
+        alpha = mean_y  # de-mean only
+
+    # ---- Pass 2 — overwrite returns with residuals ----
+    prev_r = col_res[1]
+    col_res[1] = prev_r - alpha
+    for t in range(2, t_max):
+        curr_r = col_res[t]
+        col_res[t] = curr_r - (alpha + beta * prev_r)
+        prev_r = curr_r
+
+
+# ============================================================
+# Parallel multi-column entry point
+# ============================================================
+
+
+@parallel_njit(
+    nb.void(
+        _F64_2D_F,  # values            (T, K_total) F-contig
+        _I32_1D,  # cols              (K_req,)
+        _I8_1D,  # shift_types       (K_req,)
+        _F64_2D_F,  # out_residuals     (T, K_req)   F-contig
+    ),
+)
+def kernel_ar1_residuals(
+    values,
+    cols,
+    shift_types,
+    out_residuals,
+) -> None:
+    """
+    AR(1) residuals for K_req columns of a (T, K_total) value matrix,
+    written into an aligned (T, K_req) residuals matrix.
+    """
+    k_cols = cols.shape[0]
+    for k in nb.prange(k_cols):
+        col = cols[k]
+        st = shift_types[k]
+        col_vals = values[:, col]
+        col_res = out_residuals[:, k]
+        _ar1_one_col(col_vals, col_res, st)
+
+
+# Re-export for typed callers.
+__all__ = ["kernel_ar1_residuals"]
+```
+</file>
+
+<file path="riskquant\src\riskquant\simlab\scenarios\core_math\ewma_volatility.py">
+```python
+# src/riskquant/simlab/scenarios/core_math/ewma_volatility.py
+"""
+EWMA volatility-ratio kernels.
+
+Computes the FHS Z-score series  Z_t = sigma_today / sigma_t  along
+the historical T axis, per column. Two entry points:
+
+* `kernel_ewma_vol_ratios`
+      Takes raw values and a shift-type per column; computes returns
+      inline.
+
+* `kernel_ewma_vol_ratios_from_residuals`
+      Takes pre-computed residuals (e.g. AR(1)-filtered) directly.
+
+DOD properties
+--------------
+- **Zero allocations inside the kernel.** The previous implementation
+  did `variances = np.empty(T, dtype=np.float64)` *inside* `nb.prange`
+  — one heap burst per column per call. We replace it with a two-pass
+  algorithm that re-derives the EWMA variance series on the fly:
+  pass 1 carries `var_t` only and ends with `var_today`; pass 2 re-runs
+  the EWMA recursion to recover each `var_t` and writes the ratio
+  immediately. Trade O(T) extra FMAs for O(T) heap; the FMAs are
+  cheap on every modern CPU.
+- `math.log` / `math.sqrt` for direct libm dispatch.
+- Branch hoisting around the t-loops (one shift-type test per column).
+"""
+
+from __future__ import annotations
+
+import math
+
+import numba as nb  # type: ignore[import-untyped]
+
+from riskquant._njit import inline_njit, parallel_njit
+from riskquant.constants import MIN_EWMA_VARIANCE
+from riskquant.market_data.risk_factors.shift_types import (
+    SHIFT_DIFFERENCE_ID,
+    SHIFT_LOG_RETURN_ID,
+    SHIFT_SIMPLE_RETURN_ID,
+)
+
+_F64_2D_F = nb.float64[::1, :]
+_I32_1D = nb.int32[::1]
+_I8_1D = nb.int8[::1]
+
+
+# ============================================================
+# Shared one-column ratio pass given a return-emitter
+# ============================================================
+#
+# We parameterise the per-column work by the shift-type id at the
+# outer level (in `kernel_ewma_vol_ratios`) and inline three
+# per-shift-type passes; for the residuals variant the return IS the
+# residual so we have one pass.
+
+
+@inline_njit
+def _ewma_var_today_residuals(col_res, decay: float) -> float:
+    """
+    Single forward sweep computing var_today only, residuals variant.
+
+    Seeds with var_1 = r_1^2 and runs the EWMA recursion through t=T-1.
+    """
+    t_max = col_res.shape[0]
+    if t_max < 2:
+        return 0.0
+
+    r1 = col_res[1]
+    var_t = r1 * r1
+    one_minus_lam = 1.0 - decay
+
+    for t in range(2, t_max):
+        rt = col_res[t]
+        var_t = one_minus_lam * (rt * rt) + decay * var_t
+    return var_t
+
+
+@inline_njit
+def _emit_ratios_residuals(
+    col_res,
+    col_out,
+    var_today: float,
+    decay: float,
+    max_vol_ratio: float,
+) -> None:
+    """
+    Second sweep: re-derive var_t per t and emit clamped ratios.
+    """
+    t_max = col_res.shape[0]
+    if t_max == 0:
+        return
+
+    if t_max == 1:
+        col_out[0] = 1.0
+        return
+
+    r1 = col_res[1]
+    var_t = r1 * r1
+    one_minus_lam = 1.0 - decay
+
+    # Indices t=0 and t=1 share the seed variance, per the original
+    # algorithm.
+    if var_t < MIN_EWMA_VARIANCE:
+        col_out[0] = 1.0
+        col_out[1] = 1.0
+    else:
+        ratio = math.sqrt(var_today / var_t)
+        if ratio > max_vol_ratio:
+            ratio = max_vol_ratio
+        col_out[0] = ratio
+        col_out[1] = ratio
+
+    for t in range(2, t_max):
+        rt = col_res[t]
+        var_t = one_minus_lam * (rt * rt) + decay * var_t
+        if var_t < MIN_EWMA_VARIANCE:
+            col_out[t] = 1.0
+        else:
+            ratio = math.sqrt(var_today / var_t)
+            if ratio > max_vol_ratio:
+                ratio = max_vol_ratio
+            col_out[t] = ratio
+
+
+# ============================================================
+# Public — residuals variant
+# ============================================================
+
+
+@parallel_njit(
+    nb.void(
+        _F64_2D_F,  # residuals    (T, K_req) F-contig
+        nb.float64,  # decay_factor
+        nb.float64,  # max_vol_ratio
+        _F64_2D_F,  # out_ratios   (T, K_req) F-contig
+    ),
+)
+def kernel_ewma_vol_ratios_from_residuals(
+    residuals,
+    decay_factor,
+    max_vol_ratio,
+    out_ratios,
+) -> None:
+    """
+    Z-score series from a pre-computed residuals matrix.
+
+    Two-pass per column, zero heap allocation inside `prange`.
+    """
+    k_cols = residuals.shape[1]
+    for k in nb.prange(k_cols):
+        col_res = residuals[:, k]
+        col_out = out_ratios[:, k]
+        var_today = _ewma_var_today_residuals(col_res, decay_factor)
+        _emit_ratios_residuals(col_res, col_out, var_today, decay_factor, max_vol_ratio)
+
+
+# ============================================================
+# Public — raw-values variant (computes returns inline)
+# ============================================================
+
+
+@inline_njit
+def _ewma_var_today_raw(col_vals, decay: float, st: int) -> float:
+    """
+    Forward sweep computing var_today from raw values, branch-hoisted
+    by shift type.
+    """
+    t_max = col_vals.shape[0]
+    if t_max < 2:
+        return 0.0
+
+    one_minus_lam = 1.0 - decay
+
+    if st == SHIFT_LOG_RETURN_ID:
+        r1 = math.log(col_vals[1] / col_vals[0])
+        var_t = r1 * r1
+        for t in range(2, t_max):
+            rt = math.log(col_vals[t] / col_vals[t - 1])
+            var_t = one_minus_lam * (rt * rt) + decay * var_t
+        return var_t
+
+    if st == SHIFT_SIMPLE_RETURN_ID:
+        r1 = (col_vals[1] / col_vals[0]) - 1.0
+        var_t = r1 * r1
+        for t in range(2, t_max):
+            rt = (col_vals[t] / col_vals[t - 1]) - 1.0
+            var_t = one_minus_lam * (rt * rt) + decay * var_t
+        return var_t
+
+    if st == SHIFT_DIFFERENCE_ID:
+        r1 = col_vals[1] - col_vals[0]
+        var_t = r1 * r1
+        for t in range(2, t_max):
+            rt = col_vals[t] - col_vals[t - 1]
+            var_t = one_minus_lam * (rt * rt) + decay * var_t
+        return var_t
+
+    return 0.0
+
+
+@inline_njit
+def _emit_ratios_raw(
+    col_vals,
+    col_out,
+    var_today: float,
+    decay: float,
+    max_vol_ratio: float,
+    st: int,
+) -> None:
+    """
+    Second sweep over raw values, branch-hoisted by shift type.
+    """
+    t_max = col_vals.shape[0]
+    if t_max == 0:
+        return
+    if t_max == 1:
+        col_out[0] = 1.0
+        return
+
+    one_minus_lam = 1.0 - decay
+
+    if st == SHIFT_LOG_RETURN_ID:
+        r1 = math.log(col_vals[1] / col_vals[0])
+        var_t = r1 * r1
+        if var_t < MIN_EWMA_VARIANCE:
+            col_out[0] = 1.0
+            col_out[1] = 1.0
+        else:
+            ratio = math.sqrt(var_today / var_t)
+            if ratio > max_vol_ratio:
+                ratio = max_vol_ratio
+            col_out[0] = ratio
+            col_out[1] = ratio
+        for t in range(2, t_max):
+            rt = math.log(col_vals[t] / col_vals[t - 1])
+            var_t = one_minus_lam * (rt * rt) + decay * var_t
+            if var_t < MIN_EWMA_VARIANCE:
+                col_out[t] = 1.0
+            else:
+                ratio = math.sqrt(var_today / var_t)
+                if ratio > max_vol_ratio:
+                    ratio = max_vol_ratio
+                col_out[t] = ratio
+        return
+
+    if st == SHIFT_SIMPLE_RETURN_ID:
+        r1 = (col_vals[1] / col_vals[0]) - 1.0
+        var_t = r1 * r1
+        if var_t < MIN_EWMA_VARIANCE:
+            col_out[0] = 1.0
+            col_out[1] = 1.0
+        else:
+            ratio = math.sqrt(var_today / var_t)
+            if ratio > max_vol_ratio:
+                ratio = max_vol_ratio
+            col_out[0] = ratio
+            col_out[1] = ratio
+        for t in range(2, t_max):
+            rt = (col_vals[t] / col_vals[t - 1]) - 1.0
+            var_t = one_minus_lam * (rt * rt) + decay * var_t
+            if var_t < MIN_EWMA_VARIANCE:
+                col_out[t] = 1.0
+            else:
+                ratio = math.sqrt(var_today / var_t)
+                if ratio > max_vol_ratio:
+                    ratio = max_vol_ratio
+                col_out[t] = ratio
+        return
+
+    if st == SHIFT_DIFFERENCE_ID:
+        r1 = col_vals[1] - col_vals[0]
+        var_t = r1 * r1
+        if var_t < MIN_EWMA_VARIANCE:
+            col_out[0] = 1.0
+            col_out[1] = 1.0
+        else:
+            ratio = math.sqrt(var_today / var_t)
+            if ratio > max_vol_ratio:
+                ratio = max_vol_ratio
+            col_out[0] = ratio
+            col_out[1] = ratio
+        for t in range(2, t_max):
+            rt = col_vals[t] - col_vals[t - 1]
+            var_t = one_minus_lam * (rt * rt) + decay * var_t
+            if var_t < MIN_EWMA_VARIANCE:
+                col_out[t] = 1.0
+            else:
+                ratio = math.sqrt(var_today / var_t)
+                if ratio > max_vol_ratio:
+                    ratio = max_vol_ratio
+                col_out[t] = ratio
+        return
+
+
+@parallel_njit(
+    nb.void(
+        _F64_2D_F,  # values        (T, K_total) F-contig
+        _I32_1D,  # cols          (K_req,)
+        _I8_1D,  # shift_types   (K_req,)
+        nb.float64,  # decay_factor
+        _F64_2D_F,  # out_ratios    (T, K_req) F-contig
+        nb.float64,  # max_vol_ratio
+    ),
+)
+def kernel_ewma_vol_ratios(
+    values,
+    cols,
+    shift_types,
+    decay_factor,
+    out_ratios,
+    max_vol_ratio,
+) -> None:
+    """
+    Z-score series Z_t = sigma_today / sigma_t per column, computed
+    directly from raw values with the per-column shift type. Two-pass,
+    zero-allocation.
+    """
+    k_cols = cols.shape[0]
+    for k in nb.prange(k_cols):
+        col = cols[k]
+        st = shift_types[k]
+        col_vals = values[:, col]
+        col_out = out_ratios[:, k]
+        var_today = _ewma_var_today_raw(col_vals, decay_factor, st)
+        _emit_ratios_raw(col_vals, col_out, var_today, decay_factor, max_vol_ratio, st)
+
+
+__all__ = [
+    "kernel_ewma_vol_ratios",
+    "kernel_ewma_vol_ratios_from_residuals",
+]
+```
+</file>
+
+<file path="riskquant\src\riskquant\simlab\scenarios\core_math\sbb_block_generator.py">
+```python
+# src/riskquant/simlab/scenarios/core_math/sbb_block_generator.py
+"""
+Stationary Block Bootstrap (SBB) path-index generator.
+
+Produces a `(B, h)` int32 matrix of historical timestep indices, each
+row a synthetic h-day path stitched from variable-length blocks of
+contiguous days. Block lengths are drawn from a Geometric distribution
+parameterised by `expected_block_size`.
+
+The previous implementation did the path stitching in pure Python
+(loop over B scenarios with a nested while-step loop, allocating a
+small `np.arange` per block). For B*h on the order of 1e5 that was
+~100k Python iterations per batch. The refactor njits the stitching
+kernel and feeds it the pre-drawn block lengths + starting indices;
+the kernel is fully zero-allocation past its `out` parameter.
+
+The RNG draws still happen in NumPy (single-call rng.geometric and
+rng.integers) — Numba doesn't share NumPy's modern bit-generator state,
+so doing it in Python keeps determinism per-seed and avoids a second
+RNG state to manage.
+"""
+
+from __future__ import annotations
+
+import numba as nb  # type: ignore[import-untyped]
+import numpy as np
+
+from riskquant._njit import parallel_njit
+
+_I32_1D = nb.int32[::1]
+_I32_2D_C = nb.int32[:, ::1]
+
+
+@parallel_njit(
+    nb.void(
+        _I32_1D,  # block_lengths        (max_blocks,)
+        _I32_1D,  # start_indices        (max_blocks,)
+        _I32_2D_C,  # out                  (B, h)  C-contig
+        nb.int32,  # max_valid_length     T - 1
+    ),
+)
+def _kernel_stitch_sbb_paths(
+    block_lengths,
+    start_indices,
+    out,
+    max_valid_length,
+) -> None:
+    """
+    Stitch B independent h-day paths in place into `out`.
+
+    Each scenario b consumes a prefix of `block_lengths` / `start_indices`
+    until it has filled h timesteps. The consumption is path-local so
+    different scenarios can advance through the draw pool at different
+    rates — we cannot prange over b without partitioning the draw pool
+    upfront. We pre-compute the per-scenario starting offset into the
+    draw pool with a serial cumulative count, then parallelise the
+    stitching.
+    """
+    b_blocks = out.shape[0]
+    h = out.shape[1]
+
+    # ---- Serial pre-scan: per-scenario draw-pool offset. ----
+    # `block_offset[b]` is the index of the first draw belonging to
+    # scenario b. We use the same geometric draws every time, so this
+    # is deterministic.
+    block_offset = np.empty(b_blocks, dtype=np.int32)
+    cursor = 0
+    for b in range(b_blocks):
+        block_offset[b] = cursor
+        step = 0
+        while step < h:
+            b_len = block_lengths[cursor]
+            if b_len > h - step:
+                b_len = h - step
+            step += b_len
+            cursor += 1
+
+    # ---- Parallel stitch using per-scenario draw-pool offset. ----
+    for b in nb.prange(b_blocks):
+        cursor_b = block_offset[b]
+        step = 0
+        while step < h:
+            b_len = block_lengths[cursor_b]
+            if b_len > h - step:
+                b_len = h - step
+            start_t = start_indices[cursor_b]
+
+            for i in range(b_len):
+                # Circular wrap into the valid index range [1, T-1].
+                raw = start_t + i
+                wrapped = 1 + ((raw - 1) % max_valid_length)
+                out[b, step + i] = wrapped
+
+            step += b_len
+            cursor_b += 1
+
+
+def generate_sbb_path_indices(
+    *,
+    t_max: int,
+    h: int,
+    total_scenarios: int,
+    expected_block_size: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """
+    Generate `(B, h)` int32 SBB path indices into [1, T-1].
+
+    RNG draws happen here in NumPy; the path stitching runs in a
+    parallel Numba kernel with zero hot-path allocations.
+    """
+    if t_max < 2:
+        raise ValueError(f"T must be >= 2 for 1-day returns; got T={t_max}")
+    if h < 1:
+        raise ValueError(f"h must be >= 1; got h={h}")
+    if total_scenarios < 1:
+        raise ValueError(f"B must be >= 1; got B={total_scenarios}")
+    if expected_block_size < 1.0:
+        raise ValueError(
+            f"expected_block_size must be >= 1.0; got {expected_block_size}"
+        )
+
+    max_valid_length = t_max - 1
+    p = 1.0 / float(expected_block_size)
+
+    # Worst case: every block contributes one timestep -> B*h blocks.
+    max_possible_blocks = total_scenarios * h
+
+    if p >= 1.0:
+        block_lengths = np.ones(max_possible_blocks, dtype=np.int32)
+    else:
+        block_lengths = rng.geometric(p, size=max_possible_blocks).astype(
+            np.int32, copy=False
+        )
+
+    start_indices = rng.integers(
+        low=1, high=t_max, size=max_possible_blocks, dtype=np.int32
+    )
+
+    out = np.empty((total_scenarios, h), dtype=np.int32)
+
+    _kernel_stitch_sbb_paths(
+        np.ascontiguousarray(block_lengths),
+        np.ascontiguousarray(start_indices),
+        out,
+        np.int32(max_valid_length),
+    )
+
+    return out
+
+
+__all__ = ["generate_sbb_path_indices"]
+```
+</file>
+
+<file path="riskquant\src\riskquant\simlab\scenarios\historical.py">
+```python
+# src/riskquant/simlab/scenarios/historical.py
+"""
+Standard Historical Simulation (HS) scenario generator.
+
+Computes exact h-day historical changes for each rolling window in the
+matrix. No filtering, no volatility scaling — pure empirical.
+
+Implementation
+--------------
+- One sweep over the (T, K) matrix per batch; per-column branch on
+  shift type hoisted around the B-loop.
+- Single `shocks` buffer pre-allocated at `batch_size`; each yield
+  exposes a view sized to the current batch.
+- F-contiguous shocks layout — the apply-shocks kernel reads down
+  columns with unit stride.
+- Pinned `nb.void(...)` signature, positional kernel call.
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+
+import numba as nb  # type: ignore[import-untyped]
+import numpy as np
+
+from riskquant._njit import parallel_njit
+from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
+from riskquant.market_data.risk_factors.shift_types import (
+    SHIFT_DIFFERENCE_ID,
+    SHIFT_LOG_RETURN_ID,
+    SHIFT_SIMPLE_RETURN_ID,
+)
+from riskquant.simlab.scenarios.base import (
+    ScenarioGenerator,
+    ScenarioSetBatch,
+    resolve_shock_universe,
+)
+
+_F64_2D_F = nb.float64[::1, :]
+_F32_2D_F = nb.float32[::1, :]
+_I32_1D = nb.int32[::1]
+_I8_1D = nb.int8[::1]
+
+
+# =========================================================================
+# ZERO-ALLOCATION KERNEL
+# =========================================================================
+
+
+@parallel_njit(
+    nb.void(
+        _F64_2D_F,  # values     (T, K_total) F-contig
+        _I32_1D,  # cols       (K_req,)
+        _I8_1D,  # shift_types(K_req,)
+        _I32_1D,  # inv_perm   (K_req,)
+        nb.int64,  # t_start
+        nb.int64,  # h
+        nb.int64,  # B
+        _F32_2D_F,  # out        (B, K_req) F-contig
+    ),
+)
+def _kernel_fused_h_day_shock(
+    values,
+    cols,
+    shift_types,
+    inv_perm,
+    t_start,
+    h,
+    batch_len,
+    out,
+) -> None:
+    """
+    Direct h-day historical changes per column; parallel over factors.
+    """
+    k_cols = cols.shape[0]
+    for k in nb.prange(k_cols):
+        col = cols[k]
+        st = shift_types[k]
+        out_col = inv_perm[k]
+
+        col_vals = values[:, col]
+        out_col_vals = out[:, out_col]
+
+        t1 = t_start
+        t0 = t_start - h
+
+        if st == SHIFT_LOG_RETURN_ID:
+            for b in range(batch_len):
+                v1 = col_vals[t1]
+                v0 = col_vals[t0]
+                out_col_vals[b] = np.float32(math.log(v1 / v0))
+                t1 += 1
+                t0 += 1
+        elif st == SHIFT_SIMPLE_RETURN_ID:
+            for b in range(batch_len):
+                v1 = col_vals[t1]
+                v0 = col_vals[t0]
+                out_col_vals[b] = np.float32(v1 / v0 - 1.0)
+                t1 += 1
+                t0 += 1
+        elif st == SHIFT_DIFFERENCE_ID:
+            for b in range(batch_len):
+                v1 = col_vals[t1]
+                v0 = col_vals[t0]
+                out_col_vals[b] = np.float32(v1 - v0)
+                t1 += 1
+                t0 += 1
+
+
+# =========================================================================
+# GENERATOR
+# =========================================================================
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class HistoricalGenerator(ScenarioGenerator):
+    """Historical-simulation generator. Shocks are always float32."""
+
+    matrix: RiskFactorMatrix  # MUST be F-contiguous
+    horizon: int = field(default=1)
+
+    # Derived in __post_init__.
+    total_scenarios: int = field(init=False, repr=False)
+    available_factor_ids: np.ndarray = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        s_total = self.matrix.values.shape[0] - self.horizon
+        if s_total <= 0:
+            raise ValueError(
+                f"Not enough history: T={self.matrix.values.shape[0]}, "
+                f"horizon={self.horizon}"
+            )
+        object.__setattr__(self, "total_scenarios", s_total)
+        object.__setattr__(self, "available_factor_ids", self.matrix.factor_ids)
+
+    def iter_batches(
+        self,
+        *,
+        required_shift_type_id: np.ndarray,
+        source_factor_ids: np.ndarray,
+        shock_scale: np.ndarray,
+        batch_size: int,
+    ) -> Iterator[ScenarioSetBatch]:
+        t_max = self.matrix.values.shape[0]
+        h = int(self.horizon)
+        s_total = t_max - h
+
+        shock_universe = resolve_shock_universe(
+            required_shift_type_id=required_shift_type_id,
+            source_factor_ids=source_factor_ids,
+            available_factor_ids=self.matrix.factor_ids,
+        )
+        plan = shock_universe.compute_plan
+        k_req = plan.cols_sorted.shape[0]
+
+        # Single pre-allocation for the streaming buffer. Tail batch
+        # uses a view of the same memory.
+        shocks_buf = np.empty((batch_size, k_req), dtype=np.float32, order="F")
+
+        scenario_offset = 0
+        t_start = h
+        while t_start < t_max:
+            t_end = min(t_max, t_start + batch_size)
+            batch_len = t_end - t_start
+            shocks_view = shocks_buf[:batch_len, :]
+
+            _kernel_fused_h_day_shock(
+                self.matrix.values,
+                plan.cols_sorted,
+                plan.shift_types_sorted,
+                plan.inverse_permutation,
+                np.int64(t_start),
+                np.int64(h),
+                np.int64(batch_len),
+                shocks_view,
+            )
+
+            yield ScenarioSetBatch(
+                shocks=shocks_view,
+                required_to_shock_uix=shock_universe.required_to_shock_uix,
+                shock_scale=shock_scale,
+                required_shift_type_id=required_shift_type_id,
+                scenario_offset=scenario_offset,
+                scenario_count_total=s_total,
+            )
+
+            scenario_offset += batch_len
+            t_start = t_end
+```
+</file>
+
+<file path="riskquant\src\riskquant\simlab\scenarios\historical_fhs.py">
+```python
+# src/riskquant/simlab/scenarios/historical_fhs.py
+"""
+Filtered Historical Simulation (FHS) scenario generator.
+
+Methodology
+-----------
+1. AR(1) residualisation of historical returns.
+2. EWMA volatility ratios Z_t = sigma_today / sigma_t.
+3. Aggregate the scaled residuals over the h-day horizon for each
+   rolling window. The same window-step assumption used in standard
+   HS applies here: scenario s uses days `[t_start - h + 1 + s, ...,
+   t_start + s]`.
+
+Implementation
+--------------
+- AR(1) + EWMA scratch buffers (`ar1_residuals`, `vol_ratios`) are
+  computed lazily on first `iter_batches()` call and cached on the
+  generator instance. Subsequent runs against the same matrix reuse
+  them. Reset via `reset_caches()`.
+- The streaming `shocks` buffer is pre-allocated once at `batch_size`.
+- Kernel is pinned, branch-hoisted, and called positionally.
+- Shocks are always float32 per the architecture rules.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+
+import numba as nb  # type: ignore[import-untyped]
+import numpy as np
+
+from riskquant._njit import parallel_njit
+from riskquant.constants import EWMA_DECAY_FACTOR, MAX_EWMA_VOL_RATIO
+from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
+from riskquant.market_data.risk_factors.shift_types import (
+    SHIFT_DIFFERENCE_ID,
+    SHIFT_LOG_RETURN_ID,
+    SHIFT_SIMPLE_RETURN_ID,
+)
+from riskquant.simlab.scenarios.base import (
+    ScenarioGenerator,
+    ScenarioSetBatch,
+    resolve_shock_universe,
+)
+from riskquant.simlab.scenarios.core_math.ar1_filter import kernel_ar1_residuals
+from riskquant.simlab.scenarios.core_math.ewma_volatility import (
+    kernel_ewma_vol_ratios_from_residuals,
+)
+
+_F64_2D_F = nb.float64[::1, :]
+_F32_2D_F = nb.float32[::1, :]
+_I32_1D = nb.int32[::1]
+_I8_1D = nb.int8[::1]
+
+
+# =========================================================================
+# ZERO-ALLOCATION KERNEL
+# =========================================================================
+
+
+@parallel_njit(
+    nb.void(
+        _F64_2D_F,  # residuals       (T, K_req) F-contig
+        _F64_2D_F,  # vol_ratios      (T, K_req) F-contig
+        _I32_1D,  # cols            (K_req,) — kept for shape parity / debug
+        _I8_1D,  # shift_types     (K_req,)
+        _I32_1D,  # inv_perm        (K_req,)
+        nb.int64,  # t_start
+        nb.int64,  # h
+        nb.int64,  # B
+        _F32_2D_F,  # out             (B, K_req) F-contig
+    ),
+)
+def _kernel_fused_filtered_h_day_shock(
+    residuals,
+    vol_ratios,
+    cols,
+    shift_types,
+    inv_perm,
+    t_start,
+    h,
+    batch_len,
+    out,
+) -> None:
+    """
+    Aggregate scaled residuals over rolling h-day windows.
+    """
+    k_cols = cols.shape[0]
+    for k in nb.prange(k_cols):
+        st = shift_types[k]
+        out_col = inv_perm[k]
+
+        col_res = residuals[:, k]
+        col_vols = vol_ratios[:, k]
+        out_col_vals = out[:, out_col]
+
+        base_t = t_start - h + 1
+
+        if st == SHIFT_LOG_RETURN_ID:
+            for b in range(batch_len):
+                cum_shock = 0.0
+                path_start = base_t + b
+                for step in range(h):
+                    t1 = path_start + step
+                    cum_shock += col_res[t1] * col_vols[t1]
+                out_col_vals[b] = np.float32(cum_shock)
+
+        elif st == SHIFT_SIMPLE_RETURN_ID:
+            for b in range(batch_len):
+                cum_ret = 1.0
+                path_start = base_t + b
+                for step in range(h):
+                    t1 = path_start + step
+                    cum_ret *= 1.0 + col_res[t1] * col_vols[t1]
+                out_col_vals[b] = np.float32(cum_ret - 1.0)
+
+        elif st == SHIFT_DIFFERENCE_ID:
+            for b in range(batch_len):
+                cum_diff = 0.0
+                path_start = base_t + b
+                for step in range(h):
+                    t1 = path_start + step
+                    cum_diff += col_res[t1] * col_vols[t1]
+                out_col_vals[b] = np.float32(cum_diff)
+
+
+# =========================================================================
+# GENERATOR
+# =========================================================================
+
+
+@dataclass(slots=True, kw_only=True)
+class FilteredHistoricalGenerator(ScenarioGenerator):
+    """
+    FHS generator. Shocks are always float32.
+
+    Not `frozen=True` because `ar1_residuals`, `vol_ratios` and the
+    cached shock-universe key are populated lazily on first
+    `iter_batches()` call.
+    """
+
+    matrix: RiskFactorMatrix
+    horizon: int = field(default=1)
+    decay_factor: float = field(default=EWMA_DECAY_FACTOR)
+    max_vol_ratio: float = field(default=MAX_EWMA_VOL_RATIO)
+
+    # Derived in __post_init__.
+    total_scenarios: int = field(init=False, repr=False)
+    available_factor_ids: np.ndarray = field(init=False, repr=False)
+
+    # Lazy caches (set on first iter_batches).
+    _ar1_residuals: np.ndarray | None = field(default=None, init=False, repr=False)
+    _vol_ratios: np.ndarray | None = field(default=None, init=False, repr=False)
+    _cache_signature: tuple | None = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.matrix.values.shape[0] < 3:
+            raise ValueError("History too short for EWMA calculation.")
+        s_total = self.matrix.values.shape[0] - self.horizon
+        if s_total <= 0:
+            raise ValueError(
+                f"Not enough history: T={self.matrix.values.shape[0]}, "
+                f"horizon={self.horizon}"
+            )
+        self.total_scenarios = s_total
+        self.available_factor_ids = self.matrix.factor_ids
+
+    def reset_caches(self) -> None:
+        """Drop the lazy AR(1) + EWMA caches. Next `iter_batches` recomputes."""
+        self._ar1_residuals = None
+        self._vol_ratios = None
+        self._cache_signature = None
+
+    def _ensure_filter_caches(
+        self, plan_cols: np.ndarray, plan_shifts: np.ndarray
+    ) -> None:
+        """Materialise (T, K_req) residuals/vol-ratios if not already present."""
+        sig = (
+            plan_cols.tobytes(),
+            plan_shifts.tobytes(),
+            float(self.decay_factor),
+            float(self.max_vol_ratio),
+        )
+        if self._cache_signature == sig:
+            return
+
+        t_max = self.matrix.values.shape[0]
+        k_req = plan_cols.shape[0]
+
+        ar1 = np.empty((t_max, k_req), dtype=np.float64, order="F")
+        kernel_ar1_residuals(
+            self.matrix.values,
+            plan_cols,
+            plan_shifts,
+            ar1,
+        )
+
+        vols = np.empty((t_max, k_req), dtype=np.float64, order="F")
+        kernel_ewma_vol_ratios_from_residuals(
+            ar1,
+            float(self.decay_factor),
+            float(self.max_vol_ratio),
+            vols,
+        )
+
+        self._ar1_residuals = ar1
+        self._vol_ratios = vols
+        self._cache_signature = sig
+
+    def iter_batches(
+        self,
+        *,
+        required_shift_type_id: np.ndarray,
+        source_factor_ids: np.ndarray,
+        shock_scale: np.ndarray,
+        batch_size: int,
+    ) -> Iterator[ScenarioSetBatch]:
+        t_max = self.matrix.values.shape[0]
+        h = int(self.horizon)
+        s_total = t_max - h
+
+        shock_universe = resolve_shock_universe(
+            required_shift_type_id=required_shift_type_id,
+            source_factor_ids=source_factor_ids,
+            available_factor_ids=self.matrix.factor_ids,
+        )
+        plan = shock_universe.compute_plan
+        k_req = plan.cols_sorted.shape[0]
+
+        self._ensure_filter_caches(plan.cols_sorted, plan.shift_types_sorted)
+        assert self._ar1_residuals is not None
+        assert self._vol_ratios is not None
+
+        shocks_buf = np.empty((batch_size, k_req), dtype=np.float32, order="F")
+
+        scenario_offset = 0
+        t_start = h
+        while t_start < t_max:
+            t_end = min(t_max, t_start + batch_size)
+            batch_len = t_end - t_start
+            shocks_view = shocks_buf[:batch_len, :]
+
+            _kernel_fused_filtered_h_day_shock(
+                self._ar1_residuals,
+                self._vol_ratios,
+                plan.cols_sorted,
+                plan.shift_types_sorted,
+                plan.inverse_permutation,
+                np.int64(t_start),
+                np.int64(h),
+                np.int64(batch_len),
+                shocks_view,
+            )
+
+            yield ScenarioSetBatch(
+                shocks=shocks_view,
+                required_to_shock_uix=shock_universe.required_to_shock_uix,
+                shock_scale=shock_scale,
+                required_shift_type_id=required_shift_type_id,
+                scenario_offset=scenario_offset,
+                scenario_count_total=s_total,
+            )
+
+            scenario_offset += batch_len
+            t_start = t_end
+```
+</file>
+
+<file path="riskquant\src\riskquant\simlab\scenarios\parametric.py">
+```python
+# src/riskquant/simlab/scenarios/parametric.py
+"""
+Parametric Monte Carlo scenario generator.
+
+Supports Gaussian-Scale-Mixture (GSM) distributions: standard normal,
+Student-t, Laplace, variance gamma, and a regime-switching Gaussian
+mixture (crisis-vol multipliers).
+
+Pipeline per batch
+------------------
+1. Draw raw (B, K_total) i.i.d. normals into a pre-allocated work
+   buffer; `rng.standard_normal(out=...)` writes in place.
+2. Apply the (K_total x K_req) Cholesky-transpose slice via
+   `np.matmul(work, L_T, out=correlated)` to induce cross-asset
+   correlation. K_total appears on the contracted axis so the full
+   correlation structure is preserved even though only K_req shocks
+   are emitted.
+3. Distribution-specific row scaling for the GSM mixing variable.
+4. Multiply by per-factor base vols.
+5. Down-cast into the pre-allocated F-contig float32 shocks buffer.
+
+Implementation
+--------------
+- `resolve_shock_universe` replaces the previous dict-loop path; gathers
+  Cholesky columns / vols / GMM multipliers via vectorised `searchsorted`.
+- `work`, `correlated`, and `shocks_buf` are pre-allocated once at
+  `batch_size`; the streaming loop only re-slices.
+- Shocks always emitted as float32.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from typing import Literal
+
+import numpy as np
+
+from riskquant.simlab.scenarios.base import (
+    ScenarioGenerator,
+    ScenarioSetBatch,
+    resolve_shock_universe,
+)
+
+DistributionKind = Literal[
+    "standard_normal",
+    "student_t",
+    "laplace",
+    "variance_gamma",
+    "regime_switching_gmm",
+]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ParametricGenerator(ScenarioGenerator):
+    """
+    Parametric shock-space generator over Gaussian-Scale-Mixtures.
+    Shocks are always emitted as float32.
+    """
+
+    available_factor_ids: np.ndarray
+    cholesky_matrix: np.ndarray
+    volatilities: np.ndarray
+    total_scenarios: int
+    distribution_kind: DistributionKind
+    seed: int | None = field(default=None)
+    student_t_df: float | None = field(default=None)
+    vg_nu: float | None = field(default=None)
+    prob_crisis: float | None = field(default=None)
+    crisis_vol_multipliers: float | np.ndarray | None = field(default=None)
+
+    # Derived in __post_init__.
+    _cholesky_transpose: np.ndarray = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        available_factor_ids = np.asarray(self.available_factor_ids, dtype=np.int32)
+        if available_factor_ids.ndim != 1:
+            raise ValueError("available_factor_ids must be 1D")
+
+        cholesky_matrix = np.asarray(self.cholesky_matrix, dtype=np.float64)
+        if cholesky_matrix.ndim != 2:
+            raise ValueError("cholesky_matrix must be 2D")
+        if cholesky_matrix.shape[0] != cholesky_matrix.shape[1]:
+            raise ValueError("cholesky_matrix must be square")
+        if available_factor_ids.shape[0] != cholesky_matrix.shape[0]:
+            raise ValueError(
+                "available_factor_ids length must match cholesky_matrix dimension"
+            )
+        if not np.isfinite(cholesky_matrix).all():
+            raise ValueError("cholesky_matrix must contain only finite values")
+
+        volatilities = np.asarray(self.volatilities, dtype=np.float64)
+        if volatilities.ndim != 1:
+            raise ValueError("volatilities must be 1D")
+        if volatilities.shape[0] != cholesky_matrix.shape[0]:
+            raise ValueError("volatilities length must match cholesky_matrix dimension")
+        if not np.isfinite(volatilities).all():
+            raise ValueError("volatilities must contain only finite values")
+        if np.any(volatilities <= 0.0):
+            raise ValueError("volatilities must be strictly positive")
+
+        total_scenarios = int(self.total_scenarios)
+        if total_scenarios <= 0:
+            raise ValueError("total_scenarios must be positive")
+
+        if self.seed is not None and not isinstance(self.seed, (int, np.integer)):
+            raise TypeError("seed must be an integer or None")
+
+        if self.distribution_kind == "student_t":
+            if self.student_t_df is None:
+                raise ValueError("student_t_df is required for student_t")
+            if not np.isfinite(self.student_t_df) or self.student_t_df <= 2.0:
+                raise ValueError("student_t_df must be finite and greater than 2")
+
+        if self.distribution_kind == "variance_gamma":
+            if self.vg_nu is None:
+                raise ValueError("vg_nu is required for variance_gamma")
+            if not np.isfinite(self.vg_nu) or self.vg_nu <= 0.0:
+                raise ValueError("vg_nu must be finite and positive")
+
+        if self.distribution_kind == "regime_switching_gmm":
+            if self.prob_crisis is None:
+                raise ValueError("prob_crisis is required for regime_switching_gmm")
+            if not (np.isfinite(self.prob_crisis) and 0.0 <= self.prob_crisis <= 1.0):
+                raise ValueError("prob_crisis must be in [0, 1]")
+            if self.crisis_vol_multipliers is None:
+                raise ValueError(
+                    "crisis_vol_multipliers is required for regime_switching_gmm"
+                )
+            if isinstance(
+                self.crisis_vol_multipliers,
+                (int, float, np.integer, np.floating),
+            ):
+                crisis_mult: float | np.ndarray = float(self.crisis_vol_multipliers)
+                if not np.isfinite(crisis_mult) or crisis_mult <= 0.0:
+                    raise ValueError(
+                        "crisis_vol_multipliers must be finite and positive"
+                    )
+            else:
+                crisis_mult = np.asarray(self.crisis_vol_multipliers, dtype=np.float64)
+                if crisis_mult.ndim != 1:
+                    raise ValueError("crisis_vol_multipliers must be scalar or 1D")
+                if crisis_mult.shape[0] != cholesky_matrix.shape[0]:
+                    raise ValueError(
+                        "crisis_vol_multipliers length must match cholesky_matrix dimension"
+                    )
+                if not np.isfinite(crisis_mult).all() or np.any(crisis_mult <= 0.0):
+                    raise ValueError(
+                        "crisis_vol_multipliers must contain only positive finite values"
+                    )
+            object.__setattr__(self, "crisis_vol_multipliers", crisis_mult)
+
+        object.__setattr__(self, "available_factor_ids", available_factor_ids)
+        object.__setattr__(
+            self, "cholesky_matrix", np.ascontiguousarray(cholesky_matrix)
+        )
+        object.__setattr__(self, "volatilities", volatilities)
+        object.__setattr__(self, "total_scenarios", total_scenarios)
+        object.__setattr__(
+            self, "_cholesky_transpose", np.ascontiguousarray(cholesky_matrix.T)
+        )
+
+    # ---- Factory helpers (classmethods unchanged in spirit; thinned) ----
+
+    @classmethod
+    def standard_normal(
+        cls,
+        available_factor_ids: np.ndarray,
+        cholesky_matrix: np.ndarray,
+        volatilities: np.ndarray,
+        total_scenarios: int,
+        seed: int | None = None,
+    ) -> ParametricGenerator:
+        return cls(
+            available_factor_ids=available_factor_ids,
+            cholesky_matrix=cholesky_matrix,
+            volatilities=volatilities,
+            total_scenarios=total_scenarios,
+            distribution_kind="standard_normal",
+            seed=seed,
+        )
+
+    @classmethod
+    def student_t(
+        cls,
+        student_t_df: float,
+        available_factor_ids: np.ndarray,
+        cholesky_matrix: np.ndarray,
+        volatilities: np.ndarray,
+        total_scenarios: int,
+        seed: int | None = None,
+    ) -> ParametricGenerator:
+        return cls(
+            available_factor_ids=available_factor_ids,
+            cholesky_matrix=cholesky_matrix,
+            volatilities=volatilities,
+            total_scenarios=total_scenarios,
+            distribution_kind="student_t",
+            student_t_df=float(student_t_df),
+            seed=seed,
+        )
+
+    @classmethod
+    def laplace(
+        cls,
+        available_factor_ids: np.ndarray,
+        cholesky_matrix: np.ndarray,
+        volatilities: np.ndarray,
+        total_scenarios: int,
+        seed: int | None = None,
+    ) -> ParametricGenerator:
+        return cls(
+            available_factor_ids=available_factor_ids,
+            cholesky_matrix=cholesky_matrix,
+            volatilities=volatilities,
+            total_scenarios=total_scenarios,
+            distribution_kind="laplace",
+            seed=seed,
+        )
+
+    @classmethod
+    def variance_gamma(
+        cls,
+        vg_nu: float,
+        available_factor_ids: np.ndarray,
+        cholesky_matrix: np.ndarray,
+        volatilities: np.ndarray,
+        total_scenarios: int,
+        seed: int | None = None,
+    ) -> ParametricGenerator:
+        return cls(
+            available_factor_ids=available_factor_ids,
+            cholesky_matrix=cholesky_matrix,
+            volatilities=volatilities,
+            total_scenarios=total_scenarios,
+            distribution_kind="variance_gamma",
+            seed=seed,
+            vg_nu=float(vg_nu),
+        )
+
+    @classmethod
+    def regime_switching_gmm(
+        cls,
+        prob_crisis: float,
+        crisis_vol_multipliers: float | np.ndarray,
+        available_factor_ids: np.ndarray,
+        cholesky_matrix: np.ndarray,
+        volatilities: np.ndarray,
+        total_scenarios: int,
+        seed: int | None = None,
+    ) -> ParametricGenerator:
+        return cls(
+            available_factor_ids=available_factor_ids,
+            cholesky_matrix=cholesky_matrix,
+            volatilities=volatilities,
+            total_scenarios=total_scenarios,
+            distribution_kind="regime_switching_gmm",
+            seed=seed,
+            prob_crisis=float(prob_crisis),
+            crisis_vol_multipliers=crisis_vol_multipliers,
+        )
+
+    # ---- Distribution scaling ----
+
+    def _apply_distribution_scaling(
+        self,
+        *,
+        rng: np.random.Generator,
+        shocks: np.ndarray,
+        gmm_sliced_multipliers: float | np.ndarray | None,
+    ) -> None:
+        kind = self.distribution_kind
+        if kind == "standard_normal":
+            return
+
+        if kind == "student_t":
+            assert self.student_t_df is not None
+            chi_square = rng.chisquare(df=self.student_t_df, size=shocks.shape[0])
+            row_scale = np.sqrt((self.student_t_df - 2.0) / chi_square)
+            np.multiply(shocks, row_scale[:, None], out=shocks)
+            return
+
+        if kind == "laplace":
+            exponential_mix = rng.exponential(scale=1.0, size=shocks.shape[0])
+            row_scale = np.sqrt(exponential_mix)
+            np.multiply(shocks, row_scale[:, None], out=shocks)
+            return
+
+        if kind == "variance_gamma":
+            assert self.vg_nu is not None
+            gamma_mix = rng.gamma(
+                shape=1.0 / self.vg_nu, scale=self.vg_nu, size=shocks.shape[0]
+            )
+            row_scale = np.sqrt(gamma_mix)
+            np.multiply(shocks, row_scale[:, None], out=shocks)
+            return
+
+        if kind == "regime_switching_gmm":
+            assert self.prob_crisis is not None
+            assert gmm_sliced_multipliers is not None
+            crisis_mask = rng.random(shocks.shape[0]) < self.prob_crisis
+            if crisis_mask.any():
+                shocks[crisis_mask, :] *= gmm_sliced_multipliers
+
+    # ---- Streaming entry ----
+
+    def iter_batches(
+        self,
+        *,
+        required_shift_type_id: np.ndarray,
+        source_factor_ids: np.ndarray,
+        shock_scale: np.ndarray,
+        batch_size: int,
+    ) -> Iterator[ScenarioSetBatch]:
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+
+        shock_universe = resolve_shock_universe(
+            required_shift_type_id=required_shift_type_id,
+            source_factor_ids=source_factor_ids,
+            available_factor_ids=self.available_factor_ids,
+        )
+        plan = shock_universe.compute_plan
+        k_req = plan.cols_sorted.shape[0]
+        k_total = self.cholesky_matrix.shape[0]
+
+        # Cholesky-transpose column slice is C-contig per column for
+        # the trailing matmul. Vols and GMM multipliers gather likewise.
+        col_indices = plan.cols_sorted
+        l_t_sliced = np.ascontiguousarray(self._cholesky_transpose[:, col_indices])
+        vols_sliced = np.ascontiguousarray(self.volatilities[col_indices])
+
+        gmm_mults_sliced: float | np.ndarray | None = None
+        if self.distribution_kind == "regime_switching_gmm":
+            cvm = self.crisis_vol_multipliers
+            if isinstance(cvm, np.ndarray):
+                gmm_mults_sliced = np.ascontiguousarray(cvm[col_indices])
+            else:
+                gmm_mults_sliced = float(cvm) if cvm is not None else None
+
+        rng = np.random.default_rng(self.seed)
+
+        # ---- Pre-allocate hot-path buffers ONCE ----
+        work = np.empty((batch_size, k_total), dtype=np.float64, order="C")
+        correlated = np.empty((batch_size, k_req), dtype=np.float64, order="C")
+        shocks_buf = np.empty((batch_size, k_req), dtype=np.float32, order="F")
+
+        scenario_offset = 0
+        while scenario_offset < self.total_scenarios:
+            scenario_count = min(batch_size, self.total_scenarios - scenario_offset)
+
+            work_view = work[:scenario_count, :]
+            correlated_view = correlated[:scenario_count, :]
+            shocks_view = shocks_buf[:scenario_count, :]
+
+            # 1. Raw normals → work
+            rng.standard_normal(size=work_view.shape, out=work_view)
+
+            # 2. Correlation induction (B, K_total) @ (K_total, K_req)
+            np.matmul(work_view, l_t_sliced, out=correlated_view)
+
+            # 3. GSM row scaling (in place)
+            self._apply_distribution_scaling(
+                rng=rng,
+                shocks=correlated_view,
+                gmm_sliced_multipliers=gmm_mults_sliced,
+            )
+
+            # 4. Per-factor base vols (broadcast across rows)
+            np.multiply(correlated_view, vols_sliced, out=correlated_view)
+
+            # 5. Cast into the F-contig float32 streaming buffer.
+            # `np.copyto` honours the buffer's F-layout writeback path.
+            np.copyto(shocks_view, correlated_view, casting="same_kind")
+
+            yield ScenarioSetBatch(
+                shocks=shocks_view,
+                required_to_shock_uix=shock_universe.required_to_shock_uix,
+                shock_scale=shock_scale,
+                required_shift_type_id=required_shift_type_id,
+                scenario_offset=scenario_offset,
+                scenario_count_total=self.total_scenarios,
+            )
+
+            scenario_offset += scenario_count
+```
+</file>
+
+<file path="riskquant\src\riskquant\simlab\shock_plan\__init__.py">
+```python
+
+```
+</file>
+
+<file path="riskquant\src\riskquant\simlab\shock_plan\plan.py">
+```python
+# src/riskquant/simlab/shock_plan/plan.py
+"""
+Compiled shock-compute plan.
+
+Resolves the K_req unique `(source_factor_id, shift_type_id)` pairs into
+a kernel-friendly layout:
+
+  - `cols_sorted`           : (K_req,) int32 — column indices into the
+                              risk-factor matrix, sorted ascending so
+                              Numba's per-thread gather is monotone and
+                              cache-friendly.
+  - `shift_types_sorted`    : (K_req,) int8  — shift-type id per shock,
+                              aligned with cols_sorted.
+  - `inverse_permutation`   : (K_req,) int32 — for each shock-universe
+                              uix `k`, the position of its column in the
+                              kernel output (i.e. the inverse of the
+                              sort order).
+
+`build_shock_compute_plan` takes `factor_ids: np.ndarray` (the matrix's
+sorted-ascending int32 column-id index) instead of a `dict[int, int]`,
+which collapses the previous Python-comprehension + dict-lookup gather
+into one `np.searchsorted` plus an integrity check.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+import numpy.typing as npt
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ShockComputePlan:
+    """Frozen kernel-facing column-resolution plan."""
+
+    cols_sorted: npt.NDArray[np.int32]
+    shift_types_sorted: npt.NDArray[np.int8]
+    inverse_permutation: npt.NDArray[np.int32]
+
+
+def build_shock_compute_plan(
+    *,
+    shock_source_ids: npt.NDArray[np.int32],
+    shock_shift_type_ids: npt.NDArray[np.int8],
+    factor_ids: npt.NDArray[np.int32],
+) -> ShockComputePlan:
+    """
+    Resolve `shock_source_ids` into matrix-column indices and produce a
+    sorted compute plan.
+
+    `factor_ids` MUST be sorted ascending and unique — that is the
+    `RiskFactorMatrix` invariant. Membership is verified via the
+    standard `searchsorted` + equality pattern; missing ids raise.
+    """
+    if factor_ids.dtype != np.int32:
+        raise TypeError(f"factor_ids must be int32; got {factor_ids.dtype}")
+    if shock_source_ids.dtype != np.int32:
+        raise TypeError(f"shock_source_ids must be int32; got {shock_source_ids.dtype}")
+
+    # One-shot vectorised gather: matrix column for each shock source id.
+    cols = np.searchsorted(factor_ids, shock_source_ids).astype(np.int32, copy=False)
+
+    if cols.size:
+        # Bound-check + identity check; one branch, no Python loop.
+        in_bounds = cols < factor_ids.shape[0]
+        matches = np.zeros(cols.shape[0], dtype=bool)
+        matches[in_bounds] = factor_ids[cols[in_bounds]] == shock_source_ids[in_bounds]
+        if not matches.all():
+            missing = np.unique(shock_source_ids[~matches])
+            raise KeyError(
+                f"Shock source factor ids missing from generator's "
+                f"available_factor_ids: {missing.tolist()}"
+            )
+
+    shift_types = shock_shift_type_ids.astype(np.int8, copy=False)
+
+    # Sort by column index — monotone gathers are cache-friendly inside
+    # the per-thread `for k in prange(K)` shock kernel.
+    order = np.argsort(cols, kind="stable")
+    cols_sorted = np.ascontiguousarray(cols[order])
+    shift_sorted = np.ascontiguousarray(shift_types[order])
+
+    inv = np.empty(order.shape[0], dtype=np.int32)
+    inv[order] = np.arange(order.shape[0], dtype=np.int32)
+
+    return ShockComputePlan(
+        cols_sorted=cols_sorted,
+        shift_types_sorted=shift_sorted,
+        inverse_permutation=inv,
+    )
+```
+</file>
+
+<file path="riskquant\src\riskquant\simlab\shocks\__init__.py">
+```python
+
+```
+</file>
+
+<file path="riskquant\src\riskquant\simlab\shocks\apply.py">
+```python
+# src/riskquant/simlab/shocks/apply.py
+"""
+Apply shocks to base levels.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import numpy.typing as npt
+
+from riskquant.simlab.scenarios.base import ScenarioSetBatch
+from riskquant.simlab.shocks.shock_kernel import _kernel_apply_shocks
+
+# ============================================================
+# Python dispatch wrapper
+# ============================================================
+
+
+def apply_shocks_to_base_levels(
+    *,
+    base_levels: npt.NDArray[np.float64],
+    batch: ScenarioSetBatch,
+    out: npt.NDArray[np.float64],
+) -> None:
+    """
+    Hot-path entry. Validates nothing: contract enforcement lives in
+    `validate_apply_shocks_buffers` (run once at runner build time).
+
+    `out` MUST be pre-allocated by the caller — `(N, B)` float64,
+    C-contiguous — and is mutated in place.
+    """
+    _kernel_apply_shocks(
+        base_levels,
+        batch.shocks,
+        batch.required_to_shock_uix,
+        batch.shock_scale,
+        batch.required_shift_type_id,
+        out,
+    )
+
+
+def validate_apply_shocks_buffers(
+    *,
+    base_levels: npt.NDArray[np.float64],
+    shocks: npt.NDArray[np.float32],
+    out: npt.NDArray[np.float64],
+) -> None:
+    """
+    One-shot layout/dtype validation. Run at runner construction time
+    so the per-batch hot path can trust the contract.
+
+    Raises
+    ------
+    ValueError
+        On any layout or dtype mismatch with the kernel signature.
+    """
+    if base_levels.dtype != np.float64 or base_levels.ndim != 1:
+        raise ValueError("base_levels must be 1-D float64.")
+    if not base_levels.flags.c_contiguous:
+        raise ValueError("base_levels must be C-contiguous.")
+
+    if shocks.dtype != np.float32 or shocks.ndim != 2:
+        raise ValueError("shocks must be 2-D float32.")
+    if not shocks.flags.f_contiguous:
+        raise ValueError(
+            "shocks must be F-contiguous. The generator is responsible "
+            "for emitting `order='F'` so the apply kernel reads down "
+            "the scenario axis with unit stride."
+        )
+
+    if out.dtype != np.float64 or out.ndim != 2:
+        raise ValueError("out must be 2-D float64.")
+    if not out.flags.c_contiguous:
+        raise ValueError("out must be C-contiguous.")
+    if out.shape != (base_levels.shape[0], shocks.shape[0]):
+        raise ValueError(
+            f"out shape {out.shape} does not match "
+            f"(N={base_levels.shape[0]}, B={shocks.shape[0]})."
+        )
+```
+</file>
+
+<file path="riskquant\src\riskquant\simlab\shocks\shock_kernel.py">
+```python
+# src/riskquant/simlab/shocks/shock_kernel.py
+"""
+Zero-allocation apply-shocks kernel.
+
+Translates `(B, K_unique)` shock columns into `(N_req, B)` shocked
+levels via the per-required `(req_to_uix, shock_scale, shift_type)`
+mapping and three branch-hoisted formulas (LOG_RETURN, SIMPLE_RETURN,
+DIFFERENCE).
+
+Memory layout
+-------------
+- `shocks` is F-contiguous `(B, K_unique)` — pulling `shocks[:, k]` is
+  one contiguous run of B values per shock column.
+- `out` is C-contiguous `(N_req, B)` — writing `out[n, b]` per scenario
+  walks one cache line at a time.
+
+Hot path discipline
+-------------------
+- Layout-pinned `nb.void(...)` signature: every array dimension is
+  stride-tagged so Numba emits straight-line SIMD with no dynamic
+  stride checks at runtime.
+- Branch ladder hoisted out of the B-loop: one `if shift_type` decision
+  per required exposure, then a tight inner loop.
+- `math.exp` (libm) instead of `np.exp` (ufunc) — direct call, no
+  ufunc setup overhead.
+- All validation lives in the wrapper and runs ONCE at runner-build
+  time (see `validate_apply_shocks_buffers`). The hot-path wrapper
+  trusts the contract; debug builds get cheap `assert`s.
+"""
+
+from __future__ import annotations
+
+import math
+
+import numba as nb  # type: ignore[import-untyped]
+
+from riskquant._njit import parallel_njit
+from riskquant.market_data.risk_factors.shift_types import (
+    SHIFT_DIFFERENCE_ID,
+    SHIFT_LOG_RETURN_ID,
+    SHIFT_SIMPLE_RETURN_ID,
+)
+
+# Layout-pinned aliases.
+_F64_1D = nb.float64[::1]
+_F64_2D_C = nb.float64[:, ::1]
+_F64_2D_F = nb.float64[::1, :]
+_F32_2D_F = nb.float32[::1, :]
+_I32_1D = nb.int32[::1]
+_I8_1D = nb.int8[::1]
+
+
+@parallel_njit(
+    nb.void(
+        _F64_1D,  # base_levels        (N,)
+        _F32_2D_F,  # shocks             (B, K)  F-contig
+        _I32_1D,  # req_to_uix         (N,)
+        _F64_1D,  # shock_scale        (N,)
+        _I8_1D,  # shift_types        (N,)
+        _F64_2D_C,  # out                (N, B)  C-contig
+    ),
+)
+def _kernel_apply_shocks(
+    base_levels,
+    shocks,
+    req_to_uix,
+    shock_scale,
+    shift_types,
+    out,
+) -> None:
+    """
+    Inner JIT-compiled apply-shocks loop, parallelised over the N
+    required exposures.
+    """
+    n_req = base_levels.shape[0]
+    b_scn = shocks.shape[0]
+
+    for n in nb.prange(n_req):
+        base = base_levels[n]
+        k = req_to_uix[n]
+        scale = shock_scale[n]
+        st = shift_types[n]
+
+        # F-contig column view — unit-stride read down the scenario axis.
+        shock_col = shocks[:, k]
+
+        # C-contig row view — unit-stride write across the scenario axis.
+        out_row = out[n]
+
+        if st == SHIFT_LOG_RETURN_ID:
+            for b in range(b_scn):
+                out_row[b] = base * math.exp(shock_col[b] * scale)
+
+        elif st == SHIFT_SIMPLE_RETURN_ID:
+            for b in range(b_scn):
+                out_row[b] = base * (1.0 + shock_col[b] * scale)
+
+        elif st == SHIFT_DIFFERENCE_ID:
+            for b in range(b_scn):
+                out_row[b] = base + shock_col[b] * scale
+```
+</file>
+
+</files>

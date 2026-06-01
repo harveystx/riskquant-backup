@@ -1,110 +1,94 @@
+# src/riskquant/portfolio/blocks/vanilla_european_option_block.py
 """
-Compiled block for vanilla European option trades.
+Compiled blocks for vanilla European option trades.
 
-This module defines `VanillaEuropeanOptionNodeBlock` and `VanillaEuropeanOptionCurveBlock`,
-which are struct-of-arrays representations of option trades optimized for vectorized
-valuation and simulation. The blocks store only numeric identifiers and primitive
-arrays; pricers and resolvers map these compiled universe indices (uix) to full
-market data matrices during runtime.
-
-Key design:
-  - Row i across all arrays corresponds to trade UID `trade_uids[i]`.
-  - `_uix` fields (e.g., `vol_uix`, `underlying_price_uix`) index into the
-    compiled `RiskFactorMatrix` universe, replacing the slower `_rf_id` lookups.
-  - Expiry and settlement dates are encoded as int32 days-since-epoch for
-    fast array-based interpolation and discounting.
-  - `is_call` is packed as an `np.int8` array (1 for call, 0 for put) to minimize
-    memory bandwidth during the inner pricing loops.
+Architectural contract
+----------------------
+* Row `i` of every array corresponds to the trade with UID `trade_uids[i]`.
+* Every `_uix` field is a zero-based, contiguous execution index produced by
+  the portfolio engine's `UixMapper` — NOT a global static-config ID.
+* FX legs are carried as `fx_*_to_settle_effective_uix` indexing
+  `MarketDataMatrix.fx_spots_effective`. No invert flags survive into the
+  block layer.
+* `cp_mult` packs `is_call` into `+1` / `-1` for branchless Black-76 payoff.
+* `INVALID_UIX (< 0)` in any optional `_uix` field signals "no factor
+  required for this trade" and is the only branch the pricer kernel
+  performs (hoisted outside the scenario loop).
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 import numpy as np
+import numpy.typing as npt
 
 from riskquant.portfolio.blocks.base_block import Block
+from riskquant.portfolio.instruments import (
+    VANILLA_EUROPEAN_OPTION_CURVE_ID,
+    VANILLA_EUROPEAN_OPTION_NODE_ID,
+)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _VanillaEuropeanOptionBaseBlock(Block):
-    """
-    Common struct-of-arrays fields shared by all vanilla European option blocks.
-    """
+    """Common SoA fields shared by all vanilla European option blocks."""
 
     # ========== TRADE IDENTITY ==========
-
-    # Unique trade identifiers (one per row). dtype: int64 (np.int64)
-    trade_uids: np.ndarray
+    trade_uids: npt.NDArray[np.int64]
 
     # ========== ECONOMIC TERMS ==========
+    qty: npt.NDArray[np.float64]
+    strike: npt.NDArray[np.float64]
+    # +1 for call, -1 for put, precomputed for branchless payoff sign.
+    cp_mult: npt.NDArray[np.int8]
 
-    # Signed position sizes (contracts / notional). dtype: float64 (np.float64)
-    qty: np.ndarray
+    # ========== DATES (DATE UIX) ==========
+    # Indices into `unique_dates_ord32`.
+    expiry_date_uix: npt.NDArray[np.int32]
+    settlement_date_uix: npt.NDArray[np.int32]
 
-    # Strike prices K expressed in strike currency units. dtype: float64 (np.float64)
-    strike: np.ndarray
+    # ========== FX LINKAGES (EFFECTIVE UIX) ==========
+    # Indices into `MarketDataMatrix.fx_spots_effective`. INVALID_UIX (< 0)
+    # signals "no FX conversion required" for that leg.
+    fx_under_to_settle_effective_uix: npt.NDArray[np.int32]
+    fx_strike_to_settle_effective_uix: npt.NDArray[np.int32]
 
-    # Option type indicator: 1 => call, 0 => put. dtype: int8 (np.int8)
-    is_call: np.ndarray
-
-    # ========== DATES ==========
-
-    # (N,) int32 index into unique_dates_ordinal32
-    expiry_date_uix: np.ndarray
-
-    # (N,) int32 index into unique_dates_ordinal32
-    settlement_date_uix: np.ndarray
-
-    # ========== FX LINKAGES ==========
-
-    # Index into the compiled FX factor universe, or sentinel when no FX needed. dtype: int32 (np.int32)
-    fx_under_to_settle_uix: np.ndarray
-    fx_strike_to_settle_uix: np.ndarray
-
-    # Flag to indicate if the math needs to invert the FX rate (1/X)
-    fx_under_to_settle_invert: np.ndarray  # bool or int8
-    fx_strike_to_settle_invert: np.ndarray  # bool or int8
-
-    # ========== DISCOUNT LINKAGES ==========
-    under_discount_curve_uix: np.ndarray
-    strike_discount_curve_uix: np.ndarray
+    # ========== DISCOUNT LINKAGES (CURVE UIX) ==========
+    # Indices into `MarketDataMatrix.discount_factor_grid` axis 0.
+    # INVALID_UIX (< 0) when no discount applies on that leg.
+    under_discount_curve_uix: npt.NDArray[np.int32]
+    strike_discount_curve_uix: npt.NDArray[np.int32]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class VanillaEuropeanOptionNodeBlock(_VanillaEuropeanOptionBaseBlock):
-    """
-    Struct-of-arrays representation of compiled vanilla European options
-    where the underlying is sourced from a specific scalar node.
-    """
+    """European option whose underlying is sourced from a scalar node."""
 
-    # ========== MARKET LINKAGES (UNIVERSE INDICES) ==========
+    INSTRUMENT_ID: ClassVar[int] = int(VANILLA_EUROPEAN_OPTION_NODE_ID)
 
-    # Index into compiled price factor universe for the underlying asset. dtype: int32
-    underlying_price_uix: np.ndarray
-
-    # Index into compiled volatility factor universe (the vol node/series). dtype: int32
-    vol_uix: np.ndarray
+    # ========== MARKET LINKAGES ==========
+    # Index into `MarketDataMatrix.forward_nodes`.
+    underlying_price_uix: npt.NDArray[np.int32]
+    # Index into `MarketDataMatrix.vol_nodes`.
+    vol_uix: npt.NDArray[np.int32]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class VanillaEuropeanOptionCurveBlock(_VanillaEuropeanOptionBaseBlock):
-    """
-    Struct-of-arrays representation of compiled vanilla European options
-    where the underlying and volatility are sourced from curves/surfaces
-    that require date-based interpolation.
-    """
+    """European option whose underlying and vol come from curves/surfaces."""
 
-    # ========== DATES ==========
+    INSTRUMENT_ID: ClassVar[int] = int(VANILLA_EUROPEAN_OPTION_CURVE_ID)
 
-    # (N,) int32 index into unique_dates_ordinal32
-    delivery_date_uix: np.ndarray
+    # ========== DELIVERY DATE (DATE UIX) ==========
+    delivery_date_uix: npt.NDArray[np.int32]
 
-    # ========== MARKET LINKAGES (UNIVERSE INDICES) ==========
+    # ========== MARKET LINKAGES ==========
+    # Index into `MarketDataMatrix.price_curve_grid` axis 0.
+    underlying_price_curve_uix: npt.NDArray[np.int32]
+    # Index into `MarketDataMatrix.vol_surfaces` axis 0.
+    vol_surface_uix: npt.NDArray[np.int32]
 
-    # Index into compiled price curve universe for the underlying asset. dtype: int32
-    underlying_price_curve_uix: np.ndarray
-
-    # Index into compiled volatility surface universe. dtype: int32
-    vol_surface_uix: np.ndarray
-
-    # Y-Axis type identifier for the vol surface (e.g., strike, log-moneyness). dtype: int8
-    vol_surface_y_axis_type_id: np.ndarray
+    # Y-axis kind for the vol surface (e.g., strike, log-moneyness).
+    vol_surface_y_axis_type_id: npt.NDArray[np.int8]

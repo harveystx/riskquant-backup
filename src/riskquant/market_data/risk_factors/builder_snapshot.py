@@ -1,26 +1,25 @@
 # src/riskquant/market_data/risk_factors/builder_snapshot.py
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date
 from pathlib import Path
-from typing import Dict, Mapping, Optional, Union
 
 import numpy as np
 import pandas as pd
-
-from riskquant.market_data.risk_factors.snapshot import RiskFactorLevelSnapshot
 
 from riskquant.market_data.risk_factors.builder_utils import (
     _require_mapping_key,
     _validate_mapping_dict,
 )
+from riskquant.market_data.risk_factors.snapshot import RiskFactorLevelSnapshot
 
 
 def build_risk_factor_level_snapshot_from_dict(
     *,
     as_of_date: date,
     levels_dict: Mapping[str, float],
-    name_to_id_map: Optional[Mapping[str, int]] = None,
+    name_to_id_map: Mapping[str, int] | None = None,
     float_dtype: type[np.floating] = np.float32,
 ) -> RiskFactorLevelSnapshot:
     """
@@ -33,17 +32,12 @@ def build_risk_factor_level_snapshot_from_dict(
 
     if name_to_id_map is None:
         # Assume the keys in the dictionary are already integer IDs formatted as strings.
-        ids = np.fromiter(
-            (int(k) for k in levels_dict.keys()), dtype=np.int32, count=n
-        )
+        ids = np.fromiter((int(k) for k in levels_dict.keys()), dtype=np.int32, count=n)
     else:
         # Resolve names to IDs
         _validate_mapping_dict(name_to_id_map)
         ids = np.fromiter(
-            (
-                _require_mapping_key(name_to_id_map, str(k))
-                for k in levels_dict.keys()
-            ),
+            (_require_mapping_key(name_to_id_map, str(k)) for k in levels_dict.keys()),
             dtype=np.int32,
             count=n,
         )
@@ -64,7 +58,7 @@ def build_risk_factor_level_snapshot_from_df(
     df: pd.DataFrame,
     factor_col: str = "risk_factor_name",
     level_col: str = "level",
-    name_to_id_map: Optional[Mapping[str, int]] = None,
+    name_to_id_map: Mapping[str, int] | None = None,
     float_dtype: type[np.floating] = np.float32,
 ) -> RiskFactorLevelSnapshot:
     """
@@ -92,9 +86,7 @@ def build_risk_factor_level_snapshot_from_df(
 
     # Extract as a dictionary to reuse the highly-optimized dictionary builder
     # zip is faster than df.set_index().to_dict() or df.itertuples()
-    levels_dict = dict(
-        zip(df_clean[factor_col].astype(str), df_clean[level_col])
-    )
+    levels_dict = dict(zip(df_clean[factor_col].astype(str), df_clean[level_col]))
 
     return build_risk_factor_level_snapshot_from_dict(
         as_of_date=as_of_date,
@@ -107,11 +99,11 @@ def build_risk_factor_level_snapshot_from_df(
 def build_risk_factor_level_snapshot_from_xlsx(
     *,
     as_of_date: date,
-    path: Union[str, Path],
-    sheet_name: Union[str, int] = 0,
+    path: str | Path,
+    sheet_name: str | int = 0,
     factor_col: str = "risk_factor_name",
     level_col: str = "level",
-    name_to_id_map: Optional[Mapping[str, int]] = None,
+    name_to_id_map: Mapping[str, int] | None = None,
     float_dtype: type[np.floating] = np.float32,
 ) -> RiskFactorLevelSnapshot:
     """

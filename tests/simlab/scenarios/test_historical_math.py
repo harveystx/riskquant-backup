@@ -4,11 +4,11 @@ import pytest
 
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.market_data.risk_factors.shift_types import (
-    SHIFT_DIFFERENCE,
-    SHIFT_LOG_RETURN,
-    SHIFT_SIMPLE_RETURN,
+    SHIFT_DIFFERENCE_ID,
+    SHIFT_LOG_RETURN_ID,
+    SHIFT_SIMPLE_RETURN_ID,
 )
-from riskquant.simlab.scenarios.historical import HistoricalScenarioGenerator
+from riskquant.simlab.scenarios.historical import HistoricalGenerator
 from riskquant.utils.printer import print_df
 
 
@@ -19,12 +19,8 @@ def math_audit_data():
     from known 1-day returns, alongside the expected arrays.
     """
     # 1. Define the EXACT 1-day shocks we want to hide in the prices
-    expected_log_1d = np.array(
-        [0.01, -0.02, 0.03, -0.01, 0.05], dtype=np.float64
-    )
-    expected_sim_1d = np.array(
-        [0.01, -0.02, 0.03, -0.01, 0.05], dtype=np.float64
-    )
+    expected_log_1d = np.array([0.01, -0.02, 0.03, -0.01, 0.05], dtype=np.float64)
+    expected_sim_1d = np.array([0.01, -0.02, 0.03, -0.01, 0.05], dtype=np.float64)
     expected_diff_1d = np.array([1.0, -2.0, 3.0, -1.0, 5.0], dtype=np.float64)
 
     T = 6  # 6 days of prices = 5 days of 1-day returns
@@ -55,7 +51,8 @@ def math_audit_data():
     print_df(matrix.df)
 
     req_shifts = np.array(
-        [SHIFT_LOG_RETURN, SHIFT_SIMPLE_RETURN, SHIFT_DIFFERENCE], dtype=np.int8
+        [SHIFT_LOG_RETURN_ID, SHIFT_SIMPLE_RETURN_ID, SHIFT_DIFFERENCE_ID],
+        dtype=np.int8,
     )
     req_scales = np.ones(K, dtype=np.float32)
 
@@ -79,7 +76,7 @@ def test_historical_math_h1(math_audit_data):
         math_audit_data
     )
 
-    generator = HistoricalScenarioGenerator(
+    generator = HistoricalGenerator(
         matrix=matrix,
         horizon=1,
         shock_dtype=np.float64,  # Keep precision high for the assert
@@ -120,9 +117,7 @@ def test_historical_math_h2_path_aggregation(math_audit_data):
         exp_diff_1d,
     ) = math_audit_data
 
-    generator = HistoricalScenarioGenerator(
-        matrix=matrix, horizon=2, shock_dtype=np.float64
-    )
+    generator = HistoricalGenerator(matrix=matrix, horizon=2, shock_dtype=np.float64)
 
     batch = next(
         generator.iter_batches(
@@ -151,6 +146,4 @@ def test_historical_math_h2_path_aggregation(math_audit_data):
     # Assert 2-day recovery
     np.testing.assert_allclose(shocks[:, 0], exp_log_2d, rtol=1e-12, atol=1e-12)
     np.testing.assert_allclose(shocks[:, 1], exp_sim_2d, rtol=1e-12, atol=1e-12)
-    np.testing.assert_allclose(
-        shocks[:, 2], exp_diff_2d, rtol=1e-12, atol=1e-12
-    )
+    np.testing.assert_allclose(shocks[:, 2], exp_diff_2d, rtol=1e-12, atol=1e-12)

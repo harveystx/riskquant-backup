@@ -4,9 +4,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from riskquant.portfolio.blocks.forward_block import ForwardCurveBlock
+from riskquant.portfolio.blocks.vanilla_forward_block import (
+    VanillaForwardCurveBlock,
+)
 from riskquant.market_data.state import MarketDataMatrix
-from riskquant.valuation.pricers.forward_curve import price_forward_curve_block
+from riskquant.valuation.pricers.vanilla_forward_curve import (
+    price_forward_curve_block,
+)
 from riskquant.constants import (
     NO_FX_RF_REQUIRED,
     NO_DISCOUNT_CURVE_ID,
@@ -38,9 +42,9 @@ def _make_forward_curve_block(
     fx_strike_to_settle_invert: np.ndarray | None = None,
     under_discount_curve_uix: np.ndarray | None = None,
     strike_discount_curve_uix: np.ndarray | None = None,
-) -> ForwardCurveBlock:
+) -> VanillaForwardCurveBlock:
     sentinel_i32 = lambda v: np.full(n, v, dtype=np.int32)
-    return ForwardCurveBlock(
+    return VanillaForwardCurveBlock(
         trade_uids=np.arange(n, dtype=np.int64),
         qty=qty,
         strike=strike,

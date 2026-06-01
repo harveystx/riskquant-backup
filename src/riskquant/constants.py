@@ -9,44 +9,48 @@ This module separates:
 """
 
 from __future__ import annotations
+
 from datetime import date
 
 import numpy as np
 
-
 # ==============================================================================
 # Typed sentinel values for payload fields
 # ==============================================================================
-# These must stay numpy scalars where dtype compatibility matters.
 
-# Sentinel for "no valid ID" in any of the ID fields (instrument, universe index, risk factor, curve).
-NO_UIX = np.int32(-1)
-NO_PRICE_ID = np.int32(-2)
-NO_PRICE_CURVE_ID = np.int32(-3)
-NO_VOL_ID = np.int32(-4)
+# Universal sentinel for "no valid ID".
+# Used across instrument_ids, underlying_ids, volatility_ids, and discount_curve_ids.
+NO_ID = np.int32(-999_999)
 
-# Sentinel for "no discount curve" in the discount curve linkage fields.
-NO_DISCOUNT_CURVE_ID = np.int32(-5)
+# Universal sentinel for missing dates (settlement, delivery, expiry).
+# Using -1 allows for clean `date_ord >= 0` masking.
+NO_DATE_ORD32 = np.int32(-99_999)
 
-# No FX rate required (e.g. for SPOT trades where the underlying and settlement currencies are the same).
-NO_FX_RF_REQUIRED = np.int32(-6)
+# Specific sentinel for FX: No conversion required (Underlying CCY == Settlement CCY)
+NO_FX_RF_REQUIRED = np.int32(-1)
 
-# Sentinels for missing dates in the date fields (settlement, delivery, expiry).
-NO_DATE_UIX = np.int32(-7)
-NO_DELIVERY_DATE_ORDINAL32 = np.int32(-8)
-NO_SETTLEMENT_DATE_ORDINAL32 = np.int32(-9)
-NO_EXPIRY_DATE_ORDINAL32 = np.int32(-10)
+# Invalid UIX sentinel for any universe index (*_uix fields).
+# Used exclusively in the Execution Engine (blocks/compilers), never in Ingest.
+INVALID_UIX = np.int32(-999)
 
-# Sentinel for "not an option" in the is_call field.
-NOT_OPTION = np.int8(-11)
+# NOT IMPLEMENTED sentinels for fields expected to be populated but aren't yet.
+NOT_IMPLEMENTED_SENTINEL: np.int8 = np.int8(-99)
 
+# ==============================================================================
+# Option encoding
+# ==============================================================================
+
+# 1 for call options, -1 for put options, 0 for not-an-option.
+# Allows for branchless payoff calculation: payoff * cp_mult
+CALL_OPTION_MULT = np.int8(1)
+PUT_OPTION_MULT = np.int8(-1)
+NOT_OPTION_MULT = np.int8(0)
 
 # ==============================================================================
 # Date encoding
 # ==============================================================================
 
 DATE_EPOCH: date = date(1970, 1, 1)
-
 
 # ==============================================================================
 # Numeric configuration
@@ -57,32 +61,33 @@ ROUND_DECIMALS_QUANTITY = 8
 ROUND_DECIMALS_STRIKE_PRICE = 8
 
 POSITION_DUST_TOLERANCE = 1e-8
-
-# ==========================================
-# --- NAMING CONVENTIONS
-# ==========================================
-
-# Prefix expected by the engine to map an underlying asset to its volatility surface/node
-VOL_RISK_FACTOR_PREFIX: str = "vol_"
-
+PD_DUST_TOLERANCE = 1e-10
 
 # ============================================
-# --- MOCK / FALLBACK VALUES
+# --- DEVELOPMENT-ONLY FALLBACK VALUES
 # ============================================
 
-# Used as a fallback in the vanilla_european_option_curve pricer before vol surfaces are built out.
-MOCK_VOLATILITY: float = 0.50
-
+FALLBACK_MOCK_VOLATILITY_DO_NOT_SHIP: float = 0.50
 
 # ==============================================================================
 # --- EWMA Volatility Calculation Constants
 # ==============================================================================
 
-# EWMA volatility decay factor (lambda) used in the FHS volatility updating, following RiskMetrics standard.
 EWMA_DECAY_FACTOR: float = 0.94
-
-# Maximum allowed volatility ratio to prevent extreme scaling in the FHS Z-score calculation.
 MAX_EWMA_VOL_RATIO: float = 10.0
-
-# The minimum allowed variance to prevent division by zero or extremely large Z-scores in the FHS calculation.
 MIN_EWMA_VARIANCE: float = 1e-12
+
+# ==============================================================================
+# --- Credit Risk Constants
+# ==============================================================================
+
+NO_PARENT_OBLIGOR: np.int64 = np.int64(-1)
+NO_RATING_ID: np.int8 = np.int8(0)
+NO_SECTOR_ID: np.int32 = np.int32(-1)
+NO_COUNTRY_ID: np.int32 = np.int32(-1)
+
+# ==============================================================================
+# RANDOM SEED FOR TESTING
+# ==============================================================================
+
+RNG_SEED: int = 42

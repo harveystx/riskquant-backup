@@ -1,7 +1,8 @@
 # src\riskquant\market_data\risk_factors\builder_utils.py
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 import numpy as np
 

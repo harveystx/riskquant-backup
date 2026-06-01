@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import IntEnum
-from typing import Mapping
 
 import numpy as np
 
@@ -41,9 +41,7 @@ INTERP_METHOD_REGISTRY: dict[str, InterpMethod] = {
 def validate_interpolation_methods_dict(
     interpolation_methods_dict: Mapping[str, int],
 ) -> None:
-    expected = {
-        name: int(member) for name, member in InterpMethod.__members__.items()
-    }
+    expected = {name: int(member) for name, member in InterpMethod.__members__.items()}
     got = {str(k): int(v) for k, v in interpolation_methods_dict.items()}
 
     if got == expected:

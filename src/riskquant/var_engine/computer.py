@@ -1,12 +1,18 @@
 # src/riskquant/var_engine/computer.py
 from __future__ import annotations
 
-import numpy as np
 import numba as nb
-from typing import Tuple
+import numpy as np
 
 
-@nb.njit(parallel=True, fastmath=True, cache=True)
+@nb.njit(
+    parallel=True,
+    fastmath={"contract", "reassoc", "nsz"},
+    nogil=True,
+    boundscheck=False,
+    error_model="numpy",
+    cache=True,
+)
 def calculate_historical_var_and_es(pnl_matrix, confidence_level):
     G, B = pnl_matrix.shape
     tail_count = int(np.floor(B * (1.0 - confidence_level)))

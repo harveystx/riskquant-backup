@@ -8,8 +8,6 @@ from datetime import date
 import numpy as np
 import pandas as pd
 
-from riskquant.utils.dates import ordinal32_to_datetime64D
-
 
 @dataclass(frozen=True, slots=True)
 class RiskFactorLevelSnapshot:
@@ -76,9 +74,7 @@ class RiskFactorLevelSnapshot:
 
         # factor_levels must be floating point (single or double precision).
         if lv.dtype not in (np.float32, np.float64):
-            raise TypeError(
-                f"factor_levels must be float32 or float64; got {lv.dtype}"
-            )
+            raise TypeError(f"factor_levels must be float32 or float64; got {lv.dtype}")
 
         # ----- memory layout checks -----
         # Many numerical routines assume C-contiguous 1-D arrays; check early so
@@ -158,3 +154,17 @@ class RiskFactorLevelSnapshot:
     @property
     def num_factors(self) -> int:
         return len(self.factor_ids)
+
+    def summary(self) -> None:
+        """Print a console-friendly overview of the snapshot."""
+        lines = [
+            "=======================================",
+            "=== RiskFactorLevelSnapshot Summary ===",
+            "=======================================",
+            f"  As of date          : {self.as_of_date}",
+            f"  Number of factors   : {self.num_factors}",
+            f"  Factor ID range     : {self.factor_ids.min()} to {self.factor_ids.max()}",
+            f"  Factor level range  : {self.factor_levels.min()} to {self.factor_levels.max()}",
+            "=======================================",
+        ]
+        print("\n".join(lines))

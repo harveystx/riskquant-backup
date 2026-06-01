@@ -2,6 +2,7 @@
 
 
 from __future__ import annotations
+
 from datetime import date, datetime
 
 import numpy as np
@@ -12,12 +13,12 @@ from pandas.api.types import (
 
 from riskquant.portfolio.ingest.utils import is_na_helper
 from riskquant.utils.dates import (
-    datetime64D_to_ordinal32,
+    datetime64D_to_ord32,
     is_date_str_valid,
 )
 
 
-def parse_optional_date_series_to_ordinal32(
+def parse_optional_date_series_to_ord32(
     ser: pd.Series,
     *,
     col_name: str,
@@ -29,7 +30,7 @@ def parse_optional_date_series_to_ordinal32(
 
     Accepted inputs:
       - NaN / None / ""        -> sentinel
-      - datetime64 / Timestamp -> encoded via datetime64D_to_ordinal32
+      - datetime64 / Timestamp -> encoded via datetime64D_to_ord32
       - str "YYYY-MM-DD"       -> validated via is_date_str_valid then encoded
     """
     # Number of rows in the input series
@@ -73,7 +74,7 @@ def parse_optional_date_series_to_ordinal32(
     if is_datetime64_any_dtype(ser.dtype):
         # Convert the series to datetime64[D] without copying if possible.
         d64 = date_vals.astype("datetime64[D]", copy=False)
-        out[nn_mask] = datetime64D_to_ordinal32(d64[nn_mask])
+        out[nn_mask] = datetime64D_to_ord32(d64[nn_mask])
         return out
 
     # Get the indices of the non-NA values
@@ -121,7 +122,7 @@ def parse_optional_date_series_to_ordinal32(
         )
 
     # At this point, we have successfully parsed all the non-NA values into the d64 array as datetime64[D]. We can now convert them to ordinal32 and store them in the output array at the correct indices.
-    out[idx] = datetime64D_to_ordinal32(d64)
+    out[idx] = datetime64D_to_ord32(d64)
 
     # Return.
     return out

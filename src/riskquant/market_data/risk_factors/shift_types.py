@@ -1,9 +1,8 @@
 # riskquant/market_data/risk_factors/shift_types.py
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import IntEnum
-from re import S
-from typing import Mapping
 
 import numpy as np
 
@@ -16,23 +15,21 @@ class ShiftType(IntEnum):
 
 
 # Kernel-friendly int8 constants (avoid repeated casts in hot code)
-SHIFT_NO_SHIFT: np.int8 = np.int8(ShiftType.NO_SHIFT)
-SHIFT_LOG_RETURN: np.int8 = np.int8(ShiftType.LOG_RETURN)
-SHIFT_SIMPLE_RETURN: np.int8 = np.int8(ShiftType.SIMPLE_RETURN)
-SHIFT_DIFFERENCE: np.int8 = np.int8(ShiftType.DIFFERENCE)
+SHIFT_NO_SHIFT_ID: np.int8 = np.int8(ShiftType.NO_SHIFT)
+SHIFT_LOG_RETURN_ID: np.int8 = np.int8(ShiftType.LOG_RETURN)
+SHIFT_SIMPLE_RETURN_ID: np.int8 = np.int8(ShiftType.SIMPLE_RETURN)
+SHIFT_DIFFERENCE_ID: np.int8 = np.int8(ShiftType.DIFFERENCE)
 
 
 # Names tuple
-SHIFT_TYPE_NAMES: tuple[str, ...] = tuple(
-    method.name.upper() for method in ShiftType
-)
+SHIFT_TYPE_NAMES: tuple[str, ...] = tuple(method.name.upper() for method in ShiftType)
 
 # Registry
-SHIFT_TYPE_REGISTRY: dict[str, np.int8] = {
-    "NO_SHIFT": SHIFT_NO_SHIFT,
-    "LOG_RETURN": SHIFT_LOG_RETURN,
-    "SIMPLE_RETURN": SHIFT_SIMPLE_RETURN,
-    "DIFFERENCE": SHIFT_DIFFERENCE,
+SHIFT_TYPE_NAME_TO_ID_REGISTRY: dict[str, np.int8] = {
+    "NO_SHIFT": SHIFT_NO_SHIFT_ID,
+    "LOG_RETURN": SHIFT_LOG_RETURN_ID,
+    "SIMPLE_RETURN": SHIFT_SIMPLE_RETURN_ID,
+    "DIFFERENCE": SHIFT_DIFFERENCE_ID,
 }
 
 

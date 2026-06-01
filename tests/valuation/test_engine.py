@@ -4,22 +4,18 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from riskquant.portfolio.compiled import CompiledPortfolio
-from riskquant.portfolio.blocks.spot_block import SpotBlock
-from riskquant.portfolio.blocks.forward_block import (
-    ForwardNodeBlock,
-    ForwardCurveBlock,
-)
-from riskquant.portfolio.blocks.vanilla_european_option_block import (
-    VanillaEuropeanOptionNodeBlock,
+from riskquant.constants import (
+    NO_DATE_UIX,
+    NO_DISCOUNT_CURVE_ID,
+    NO_FX_RF_REQUIRED,
 )
 from riskquant.market_data.state import MarketDataMatrix
-from riskquant.valuation.engine import run_valuation
-from riskquant.constants import (
-    NO_FX_RF_REQUIRED,
-    NO_DISCOUNT_CURVE_ID,
-    NO_DATE_UIX,
+from riskquant.portfolio.blocks.spot_block import SpotBlock
+from riskquant.portfolio.blocks.vanilla_forward_block import (
+    VanillaForwardNodeBlock,
 )
+from riskquant.portfolio.compiled import CompiledPortfolio
+from riskquant.valuation.engine import run_valuation
 
 # =========================================================================
 # CONSTANTS
@@ -58,8 +54,8 @@ def _make_spot_block(n: int, price_offset: int = 0) -> SpotBlock:
     )
 
 
-def _make_fwd_node_block(n: int, price_offset: int = 0) -> ForwardNodeBlock:
-    return ForwardNodeBlock(
+def _make_fwd_node_block(n: int, price_offset: int = 0) -> VanillaForwardNodeBlock:
+    return VanillaForwardNodeBlock(
         trade_uids=np.arange(100, 100 + n, dtype=np.int64),
         qty=np.ones(n, dtype=np.float64),
         strike=np.full(n, 50.0, dtype=np.float64),
@@ -69,12 +65,8 @@ def _make_fwd_node_block(n: int, price_offset: int = 0) -> ForwardNodeBlock:
         fx_strike_to_settle_uix=np.full(n, NO_FX_RF_REQUIRED, dtype=np.int32),
         fx_under_to_settle_invert=np.zeros(n, dtype=np.bool_),
         fx_strike_to_settle_invert=np.zeros(n, dtype=np.bool_),
-        under_discount_curve_uix=np.full(
-            n, NO_DISCOUNT_CURVE_ID, dtype=np.int32
-        ),
-        strike_discount_curve_uix=np.full(
-            n, NO_DISCOUNT_CURVE_ID, dtype=np.int32
-        ),
+        under_discount_curve_uix=np.full(n, NO_DISCOUNT_CURVE_ID, dtype=np.int32),
+        strike_discount_curve_uix=np.full(n, NO_DISCOUNT_CURVE_ID, dtype=np.int32),
     )
 
 
@@ -117,7 +109,7 @@ def test_single_forward_node_block() -> None:
     fwd = np.full((n, N_SCENARIOS), 100.0)
 
     fwd_block = _make_fwd_node_block(n)
-    portfolio = CompiledPortfolio(forward_node=fwd_block)
+    portfolio = CompiledPortfolio(vanilla_forward_node=fwd_block)
 
     md = MarketDataMatrix(
         num_scenarios=N_SCENARIOS,
@@ -149,7 +141,7 @@ def test_multiple_block_types_contiguous_output() -> None:
 
     spot = _make_spot_block(n_spot)
     fwd = _make_fwd_node_block(n_fwd)
-    portfolio = CompiledPortfolio(spot=spot, forward_node=fwd)
+    portfolio = CompiledPortfolio(spot=spot, vanilla_forward_node=fwd)
 
     md = MarketDataMatrix(
         num_scenarios=N_SCENARIOS,
@@ -211,7 +203,7 @@ def test_total_trades_matches_output_rows() -> None:
     """Output row count equals portfolio.total_trades."""
     spot = _make_spot_block(4)
     fwd = _make_fwd_node_block(3)
-    portfolio = CompiledPortfolio(spot=spot, forward_node=fwd)
+    portfolio = CompiledPortfolio(spot=spot, vanilla_forward_node=fwd)
 
     spot_prices = np.ones((4, N_SCENARIOS))
     fwd_prices = np.full((3, N_SCENARIOS), 100.0)

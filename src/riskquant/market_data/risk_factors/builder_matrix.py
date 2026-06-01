@@ -1,8 +1,8 @@
 # src\riskquant\market_data\risk_factors\builder_matrix.py
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Mapping, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -15,7 +15,7 @@ from riskquant.market_data.risk_factors.builder_utils import (
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.utils.dates import (
     coerce_as_of_date_to_pd_timestamp,
-    datetime64D_to_ordinal32,
+    datetime64D_to_ord32,
 )
 
 # --- BUILD A RISK FACTOR MATRIX FROM A DATAFRAME
@@ -24,7 +24,7 @@ from riskquant.utils.dates import (
 def build_risk_factor_matrix_from_df(
     *,
     df: pd.DataFrame,
-    name_to_id_map: Optional[Mapping[str, int]] = None,
+    name_to_id_map: Mapping[str, int] | None = None,
     use_int32_dates: bool = True,
     float_dtype: type[np.floating] = np.float32,
 ) -> RiskFactorMatrix:
@@ -89,7 +89,7 @@ def build_risk_factor_matrix_from_df(
 
     # Dates: obtain a datetime64[D] view and optionally convert to int32 ordinal
     dts_64D = df.index.to_numpy(dtype="datetime64[D]", copy=False)
-    dates = datetime64D_to_ordinal32(dts_64D) if use_int32_dates else dts_64D
+    dates = datetime64D_to_ord32(dts_64D) if use_int32_dates else dts_64D
 
     # Columns -> factor_ids: either direct integer parsing or mapping lookup.
     cols = df.columns
@@ -138,13 +138,13 @@ def build_risk_factor_matrix_from_df(
 
 def build_risk_factor_matrix_from_xlsx(
     *,
-    path: Union[str, Path],
-    sheet_name: Union[str, int] = 0,
-    name_to_id_map: Optional[Mapping[str, int]] = None,
+    path: str | Path,
+    sheet_name: str | int = 0,
+    name_to_id_map: Mapping[str, int] | None = None,
     use_int32_dates: bool = True,
     float_dtype: type[np.floating] = np.float32,
-    as_of_date: Optional[pd.Timestamp] = None,
-) -> "RiskFactorMatrix":
+    as_of_date: pd.Timestamp | None = None,
+) -> RiskFactorMatrix:
     """Load a RiskFactorMatrix from an Excel workbook/sheet.
 
     Parameters

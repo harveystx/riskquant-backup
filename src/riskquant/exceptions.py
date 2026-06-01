@@ -10,3 +10,18 @@ class PrettyKeyError(KeyError):
 
     def __str__(self) -> str:
         return str(self.args[0])
+
+
+class RiskQuantError(Exception):
+    """Base exception for all custom riskquant errors."""
+
+    pass
+
+
+class ConfigurationError(RiskQuantError):
+    """
+    Raised when static configuration, ID namespaces, or
+    market data mappings violate the engine's strict contracts.
+    """
+
+    pass

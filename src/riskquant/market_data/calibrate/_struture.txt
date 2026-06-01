@@ -1,0 +1,21 @@
+src/riskquant/market_data/calibration/
+├── __init__.py
+├── pipeline.py               # Master DAG: Filters -> Bootstraps -> Fits -> Sanitizes -> Returns Grids
+├── filters.py                # Bid/ask sanitization, put-call parity splicing
+├── sanitizers.py             # Calendar/Butterfly arbitrage firewalls
+├── root_finders.py           # Vectorized 1D solvers (Newton/Brent)
+├── bootstrappers/
+│   ├── __init__.py
+│   ├── discount_curve.py     # Swap/OIS to Zero-Rate solvers
+│   └── forward_curve.py      # Futures/Fra to Fwd-Rate solvers
+├── optimizers/
+│   ├── __init__.py
+│   ├── levenberg_marquardt.py # Numba-compiled N-dimensional solver
+│   └── lbfgsb.py              
+└── models/
+    ├── __init__.py
+    ├── black_76.py           # Forward model for futures options
+    ├── black_scholes.py      # Spot model for equity options
+    ├── sabr.py               # SABR parameter fitting
+    ├── svi.py                # SVI / SSVI parameter fitting
+    └── dupire.py             # Implied Vol -> Local Vol translator

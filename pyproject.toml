@@ -13,14 +13,22 @@ dependencies = [
   "matplotlib>=3.10",
   "scipy>=1.15",
   "numba>=0.59",
+  "seaborn>=0.13",
+  "pandas-stubs>=2.0",
 ]
 
-# Dev-only tooling (not installed for normal users)
 [project.optional-dependencies]
 dev = [
   "ruff>=0.6",
-  "black>=24.0",
   "pytest>=8.0",
+]
+scripts = [
+  "python-dotenv>=1.0,<2.0",
+  "SQLAlchemy>=2.0,<3.0",
+  "psycopg[binary]>=3.1,<4.0",
+]
+notebooks = [
+  "marimo[recommended]",
 ]
 
 [tool.setuptools]
@@ -30,16 +38,14 @@ package-dir = {"" = "src"}
 where = ["src"]
 include = ["riskquant*"]
 
-# --- Tooling config ---
-[tool.black]
-line-length = 80
-target-version = ["py310"]
-
 [tool.ruff]
-line-length = 80
+line-length = 88
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "NPY"]
 ignore = ["E501"]
 fixable = ["ALL"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["riskquant"]

@@ -5,15 +5,17 @@ from __future__ import annotations
 import numpy as np
 
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
-from riskquant.market_data.risk_factors.shift_types import SHIFT_DIFFERENCE
-from riskquant.simlab.scenarios.bootstrap import BootstrapMCScenarioGenerator
+from riskquant.market_data.risk_factors.shift_types import SHIFT_DIFFERENCE_ID
+from riskquant.simlab.scenarios.bootstrap_sbb import (
+    StationaryBlockBootstrapGenerator,
+)
 
 # =========================================================================
 # MOCK PORTFOLIO CONSTANTS
 # =========================================================================
 MOCK_REQ_FACTOR_IDS = np.array([101, 202], dtype=np.int32)
 MOCK_REQ_SHIFT_TYPES = np.array(
-    [SHIFT_DIFFERENCE, SHIFT_DIFFERENCE], dtype=np.int8
+    [SHIFT_DIFFERENCE_ID, SHIFT_DIFFERENCE_ID], dtype=np.int8
 )
 MOCK_REQ_SHOCK_SCALES = np.ones(2, dtype=np.float32)
 
@@ -40,7 +42,7 @@ def _build_matrix() -> RiskFactorMatrix:
 
 
 def _collect_shocks(
-    generator: BootstrapMCScenarioGenerator, batch_size: int
+    generator: StationaryBlockBootstrapGenerator, batch_size: int
 ) -> np.ndarray:
     batches = generator.iter_batches(
         required_shift_type_id=MOCK_REQ_SHIFT_TYPES,
@@ -58,7 +60,7 @@ def _collect_shocks(
 
 def test_seeded_stream_replays_exactly() -> None:
     matrix = _build_matrix()
-    generator = BootstrapMCScenarioGenerator(
+    generator = StationaryBlockBootstrapGenerator(
         matrix=matrix,
         total_scenarios=257,
         expected_block_size=5.0,
@@ -78,7 +80,7 @@ def test_seeded_stream_replays_exactly() -> None:
 def test_seeded_stream_is_batch_size_invariant() -> None:
     matrix = _build_matrix()
 
-    generator_a = BootstrapMCScenarioGenerator(
+    generator_a = StationaryBlockBootstrapGenerator(
         matrix=matrix,
         total_scenarios=257,
         expected_block_size=7.0,
@@ -86,7 +88,7 @@ def test_seeded_stream_is_batch_size_invariant() -> None:
         seed=123,
         shock_dtype=np.float64,
     )
-    generator_b = BootstrapMCScenarioGenerator(
+    generator_b = StationaryBlockBootstrapGenerator(
         matrix=matrix,
         total_scenarios=257,
         expected_block_size=7.0,
@@ -104,7 +106,7 @@ def test_seeded_stream_is_batch_size_invariant() -> None:
 def test_different_seeds_produce_different_paths() -> None:
     matrix = _build_matrix()
 
-    generator_a = BootstrapMCScenarioGenerator(
+    generator_a = StationaryBlockBootstrapGenerator(
         matrix=matrix,
         total_scenarios=128,
         expected_block_size=6.0,
@@ -112,7 +114,7 @@ def test_different_seeds_produce_different_paths() -> None:
         seed=7,
         shock_dtype=np.float64,
     )
-    generator_b = BootstrapMCScenarioGenerator(
+    generator_b = StationaryBlockBootstrapGenerator(
         matrix=matrix,
         total_scenarios=128,
         expected_block_size=6.0,

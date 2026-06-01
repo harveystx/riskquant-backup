@@ -1,119 +1,84 @@
 # src/riskquant/valuation/pricers/vanilla_european_option_node.py
-import numpy as np
+"""
+Vanilla European option pricer, node variant.
+
+Synthesises the forward in strike currency via Covered Interest Parity,
+prices via Black-76, then discounts and FX-translates back to settle ccy.
+
+Math (per trade i, scenario s)
+------------------------------
+    rate_k = fx_spots_effective[fx_k_eff_uix(i), s]   # k_ccy -> settle_ccy
+
+    # CIP forward in strike currency
+    fwd_strike_ccy
+        = forward_node[p, s]
+          * fx_spots_effective[fx_u_eff_uix(i), s]    # u_ccy -> settle_ccy
+          * df_grid[df_u_uix(i), expiry_uix(i), s]    # under-DF at expiry
+          / rate_k                                    # settle_ccy -> k_ccy
+          / df_grid[df_k_uix(i), expiry_uix(i), s]    # strike-DF at expiry
+
+    # Black-76 future value (cp_mult = +1 call, -1 put)
+    sigma = vol_nodes[v, s]
+    std_dev = max(sigma * sqrt(tte), eps)
+    d1 = (log(fwd / k) + 0.5 * sigma**2 * tte) / std_dev
+    d2 = d1 - std_dev
+    fv = cp * (fwd * N(cp * d1) - k * N(cp * d2))
+
+    # PV discount in strike ccy, then translate back to settle ccy
+    pv_strike_ccy = fv * df_grid[df_k_uix(i), settle_uix(i), s]
+    pv_settle_ccy = pv_strike_ccy * rate_k
+
+    out[i, s] = qty[i] * pv_settle_ccy
+
+FX rows are already EFFECTIVE in `MarketDataMatrix.fx_spots_effective`; the
+kernel does NO inversion math. The strike-FX rate `rate_k` is loaded once
+per scenario and used as a divisor in the forward synthesis and as a
+multiplier in the PV translation — equivalent counts to the legacy code
+but with the `(1.0 / rate_k) if inv_k else rate_k` gymnastics gone.
+"""
+
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
-# Note: We import the Future Value (FV) kernel to maintain ownership of the memory
-# so we can apply final discounting and FX conversions in-place.
-from riskquant.valuation.models.black_scholes import fv_black_scholes_vanilla_3d
+import numpy as np
+import numpy.typing as npt
+
+from riskquant.valuation.kernels.vanilla_european_option_node import (
+    _kernel_price_vanilla_european_option_node,
+)
 
 if TYPE_CHECKING:
+    from riskquant.market_data.state import MarketDataMatrix
     from riskquant.portfolio.blocks.vanilla_european_option_block import (
         VanillaEuropeanOptionNodeBlock,
     )
-    from riskquant.market_data.state import MarketDataMatrix
 
 
 def price_vanilla_european_option_node_block(
     *,
-    block: "VanillaEuropeanOptionNodeBlock",
-    market_data_mtx: "MarketDataMatrix",
-) -> np.ndarray:
-    """
-    God-Tier Vectorized Vanilla European Option Node Pricer.
-    Uses in-place mutations, sentinel-skipping, and caching to minimize RAM.
-    """
-    # ==========================================
-    # 1. FETCH UNDERLYING (Allocates Master Array)
-    # ==========================================
-    # Fancy indexing returns a copy. We own this memory and will use it
-    # to synthesize the Forward Price in the Strike Currency in-place.
-    fwd_in_strike_ccy = market_data_mtx.forward_nodes[
-        block.underlying_price_uix, :
-    ]
-
-    # ==========================================
-    # 2. SYNTHESIZE FORWARD FX (In-Place)
-    # ==========================================
-
-    # --- Underlying FX ---
-    mask_fx_u = block.fx_under_to_settle_uix >= 0
-    if np.any(mask_fx_u):
-        valid_fx_u = block.fx_under_to_settle_uix[mask_fx_u]
-        fx_u = market_data_mtx.fx_spots[valid_fx_u, :]
-
-        inv_u = block.fx_under_to_settle_invert[mask_fx_u].astype(
-            bool, copy=False
-        )
-        if np.any(inv_u):
-            fx_u[inv_u, :] = 1.0 / fx_u[inv_u, :]
-
-        fwd_in_strike_ccy[mask_fx_u, :] *= fx_u
-
-    # --- Underlying Discount (Expiry) ---
-    mask_df_u = block.under_discount_curve_uix >= 0
-    if np.any(mask_df_u):
-        valid_df_u = block.under_discount_curve_uix[mask_df_u]
-        valid_exp_u = block.expiry_date_uix[mask_df_u]
-        df_u = market_data_mtx.discount_factor_grid[valid_df_u, valid_exp_u, :]
-
-        fwd_in_strike_ccy[mask_df_u, :] *= df_u
-
-    # --- Strike FX (Cached for later use) ---
-    mask_fx_k = block.fx_strike_to_settle_uix >= 0
-    fx_k_cache = None
-    if np.any(mask_fx_k):
-        valid_fx_k = block.fx_strike_to_settle_uix[mask_fx_k]
-        fx_k_cache = market_data_mtx.fx_spots[valid_fx_k, :]
-
-        inv_k = block.fx_strike_to_settle_invert[mask_fx_k].astype(
-            bool, copy=False
-        )
-        if np.any(inv_k):
-            fx_k_cache[inv_k, :] = 1.0 / fx_k_cache[inv_k, :]
-
-        fwd_in_strike_ccy[mask_fx_k, :] /= fx_k_cache
-
-    # --- Strike Discount (Expiry) ---
-    mask_df_k = block.strike_discount_curve_uix >= 0
-    if np.any(mask_df_k):
-        valid_df_k = block.strike_discount_curve_uix[mask_df_k]
-        valid_exp_k = block.expiry_date_uix[mask_df_k]
-        df_k = market_data_mtx.discount_factor_grid[valid_df_k, valid_exp_k, :]
-
-        fwd_in_strike_ccy[mask_df_k, :] /= df_k
-
-    # ==========================================
-    # 3. EXECUTE BLACK-SCHOLES (FV)
-    # ==========================================
-    # This allocates our final PV array. We fetch TTE and Vols natively here.
-    pvs = fv_black_scholes_vanilla_3d(
-        fwd=fwd_in_strike_ccy,
-        strike=block.strike[:, None],
-        vol=market_data_mtx.vol_nodes[block.vol_uix, :],
-        tte=market_data_mtx.tte_grid[block.expiry_date_uix][:, None],
-        is_call=block.is_call[:, None],
+    block: VanillaEuropeanOptionNodeBlock,
+    market_data_mtx: MarketDataMatrix,
+    out: npt.NDArray[np.float64],
+) -> None:
+    """European-option-node pricer entrypoint."""
+    _kernel_price_vanilla_european_option_node(
+        out,
+        market_data_mtx.forward_nodes,
+        market_data_mtx.vol_nodes,
+        market_data_mtx.fx_spots_effective,
+        market_data_mtx.discount_factor_grid,
+        market_data_mtx.sqrt_tte_grid,
+        market_data_mtx.half_tte_grid,
+        block.qty,
+        block.strike,
+        block.cp_mult,
+        block.underlying_price_uix,
+        block.vol_uix,
+        block.fx_under_to_settle_effective_uix,
+        block.under_discount_curve_uix,
+        block.fx_strike_to_settle_effective_uix,
+        block.strike_discount_curve_uix,
+        block.expiry_date_uix,
+        block.settlement_date_uix,
     )
-
-    # ==========================================
-    # 4. FINAL PV ASSEMBLY (In-Place)
-    # ==========================================
-    # Discount the Future Value back to today
-    if np.any(mask_df_k):
-        # Note: We reuse the mask_df_k since the settlement discount curve
-        # is the same curve used for the strike leg
-        valid_df_k = block.strike_discount_curve_uix[mask_df_k]
-        valid_stl_k = block.settlement_date_uix[mask_df_k]
-        df_settle = market_data_mtx.discount_factor_grid[
-            valid_df_k, valid_stl_k, :
-        ]
-
-        pvs[mask_df_k, :] *= df_settle
-
-    # Translate PV from Strike Currency to Settlement Currency
-    if fx_k_cache is not None:
-        pvs[mask_fx_k, :] *= fx_k_cache
-
-    # Scale by quantity
-    pvs *= block.qty[:, None]
-
-    return pvs

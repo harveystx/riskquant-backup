@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Final, Iterable, List, Tuple, Union
+from collections.abc import Iterable
+from typing import Final
 
 import numpy as np
 import pandas as pd
@@ -31,10 +32,8 @@ def coerce_as_of_date_to_pd_timestamp(
 
     # If caller passed a date (no time), treat it as end-of-day inclusive
     # so 2026-01-02 includes all times on 2026-01-02.
-    if isinstance(as_of_date, dt.date) and not isinstance(
-        as_of_date, dt.datetime
-    ):
-        ts = ts + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
+    if isinstance(as_of_date, dt.date) and not isinstance(as_of_date, dt.datetime):
+        ts = ts + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)  # type: ignore[operator]  # mypy doesn't know Timestamp supports this math
 
     # Normalize tz handling (if any). Adjust policy as you like.
     if ts.tzinfo is not None:
@@ -63,9 +62,7 @@ def is_date_str_valid(date_str: str) -> bool:
 def assert_date_str_is_iso_format(date_str: str) -> None:
     """Assert that date_str is in ISO format 'YYYY-MM-DD'."""
     if not is_date_str_valid(date_str):
-        raise ValueError(
-            f"Date string '{date_str}' is not in 'YYYY-MM-DD' format."
-        )
+        raise ValueError(f"Date string '{date_str}' is not in 'YYYY-MM-DD' format.")
 
 
 def date_str_to_date(date_str: str) -> dt.date:
@@ -74,7 +71,7 @@ def date_str_to_date(date_str: str) -> dt.date:
     return pd.to_datetime(date_str, format="%Y-%m-%d", errors="raise").date()
 
 
-def date_to_ordinal32(d: dt.date) -> np.int32:
+def date_to_ord32(d: dt.date) -> np.int32:
     return np.int32((d - DATE_EPOCH).days)
 
 
@@ -82,7 +79,7 @@ def ordinal32_to_date(days: int) -> dt.date:
     return DATE_EPOCH + pd.Timedelta(days=int(days))  # or datetime.timedelta
 
 
-def datetime64D_to_ordinal32(dts: np.ndarray) -> np.ndarray:
+def datetime64D_to_ord32(dts: np.ndarray) -> np.ndarray:
     """
     Convert numpy datetime64[D] array -> int32 days since DATE_EPOCH.
     Returns a view/copy depending on input; no pandas involvement.
@@ -186,8 +183,8 @@ def half_year_diff(
 def get_previous_business_date_as_iso_str(
     *,
     lag_in_bus_days: int = 0,
-    holiday_dates: Union[List[str], Tuple[str, ...]] = None,
-    time_str_to_append_to_date: str = None,
+    holiday_dates: list[str] | tuple[str, ...] | None = None,
+    time_str_to_append_to_date: str | None = None,
 ) -> str:
     # Ensure holidays is a list of strings.
     if holiday_dates is None:
@@ -207,15 +204,15 @@ def get_previous_business_date_as_iso_str(
 
     # Append the time string if provided, and return.
     if time_str_to_append_to_date is not None:
-        return date_as_str + " {}".format(time_str_to_append_to_date)
+        return date_as_str + f" {time_str_to_append_to_date}"
     return date_as_str
 
 
 def get_previous_business_date_as_date(
     *,
     lag_in_bus_days: int = 0,
-    holiday_dates: Union[List[str], Tuple[str, ...]] = None,
-    time_str_to_append_to_date: str = None,
+    holiday_dates: list[str] | tuple[str, ...] | None = None,
+    time_str_to_append_to_date: str | None = None,
 ) -> dt.date:
     # Get as string.
     date_string = get_previous_business_date_as_iso_str(
@@ -226,7 +223,3 @@ def get_previous_business_date_as_date(
 
     # To date.
     return dt.date.fromisoformat(date_string)
-
-
-if __name__ == "__main__":
-    pass

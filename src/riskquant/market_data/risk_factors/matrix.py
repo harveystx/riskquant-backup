@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -30,7 +29,7 @@ class RiskFactorMatrix:
     # int32
     factor_ids: np.ndarray
 
-    # float32/64, shape (T, N)
+    # float32/64, shape (T, N) --> (observations, factors)
     values: np.ndarray
 
     # Default memory layout (F-contiguous for time-series)
@@ -38,7 +37,7 @@ class RiskFactorMatrix:
 
     def __post_init__(self) -> None:
         # ---- Basic checks ----
-        T, N = self.values.shape
+        t_obs, n_factors = self.values.shape
         if self.dates.ndim != 1:
             raise ValueError("dates must be 1D")
         if self.factor_ids.ndim != 1:
@@ -48,33 +47,27 @@ class RiskFactorMatrix:
 
         # ---- dtype checks ----
         if not np.issubdtype(self.values.dtype, np.floating):
-            raise TypeError(
-                f"values must be float dtype, got {self.values.dtype}"
-            )
+            raise TypeError(f"values must be float dtype, got {self.values.dtype}")
 
         if np.issubdtype(self.dates.dtype, np.integer):
             if self.dates.dtype != np.int32:
-                raise TypeError(
-                    f"int dates must be int32, got {self.dates.dtype}"
-                )
+                raise TypeError(f"int dates must be int32, got {self.dates.dtype}")
         elif self.dates.dtype != np.dtype("datetime64[D]"):
             raise TypeError(
                 f"datetime dates must be datetime64[D], got {self.dates.dtype}"
             )
 
         if self.factor_ids.dtype != np.int32:
-            raise TypeError(
-                f"factor_ids must be int32, got {self.factor_ids.dtype}"
-            )
+            raise TypeError(f"factor_ids must be int32, got {self.factor_ids.dtype}")
 
         # ---- shape checks ----
-        if self.dates.size != T:
+        if self.dates.size != t_obs:
             raise ValueError(
-                f"len(dates) ({self.dates.size}) != values.shape[0] ({T})"
+                f"len(dates) ({self.dates.size}) != values.shape[0] ({t_obs})"
             )
-        if self.factor_ids.size != N:
+        if self.factor_ids.size != n_factors:
             raise ValueError(
-                f"len(factor_ids) ({self.factor_ids.size}) != values.shape[1] ({N})"
+                f"len(factor_ids) ({self.factor_ids.size}) != values.shape[1] ({n_factors})"
             )
 
         # ---- memory layout ----
@@ -88,14 +81,14 @@ class RiskFactorMatrix:
                 object.__setattr__(self, "values", vals)
 
         # ---- dates sorted + unique ----
-        if T > 1:
+        if t_obs > 1:
             if np.any(self.dates[1:] < self.dates[:-1]):
                 raise ValueError("dates must be sorted ascending")
             if np.any(self.dates[1:] == self.dates[:-1]):
                 raise ValueError("dates must be unique")
 
         # ---- factor_ids sorted + unique ----
-        if N > 1 and np.any(self.factor_ids[1:] < self.factor_ids[:-1]):
+        if n_factors > 1 and np.any(self.factor_ids[1:] < self.factor_ids[:-1]):
             perm = np.argsort(self.factor_ids, kind="mergesort")
             sorted_ids = self.factor_ids[perm]
             if np.any(sorted_ids[1:] == sorted_ids[:-1]):
@@ -115,9 +108,7 @@ class RiskFactorMatrix:
             if np.issubdtype(self.dates.dtype, np.integer)
             else self.dates
         )
-        df = pd.DataFrame(
-            data=self.values, index=index, columns=self.factor_ids
-        )
+        df = pd.DataFrame(data=self.values, index=index, columns=self.factor_ids)
         df.index.name = "date"
         df.columns.name = "factor_id"
         return df
@@ -162,8 +153,8 @@ class RiskFactorMatrix:
 
     # ---------------------------- Slicing Methods ----------------------------
     def slice_dates(
-        self, start: Optional[int] = None, end: Optional[int] = None
-    ) -> "RiskFactorMatrix":
+        self, start: int | None = None, end: int | None = None
+    ) -> RiskFactorMatrix:
         start = 0 if start is None else start
         end = self.num_dates if end is None else end
         vals = self.values[start:end, :]
@@ -178,7 +169,7 @@ class RiskFactorMatrix:
             fortran_order=self.fortran_order,
         )
 
-    def slice_factors(self, factor_indices: np.ndarray) -> "RiskFactorMatrix":
+    def slice_factors(self, factor_indices: np.ndarray) -> RiskFactorMatrix:
         vals = self.values[:, factor_indices]
         if self.fortran_order and not vals.flags["F_CONTIGUOUS"]:
             vals = np.asfortranarray(vals)
@@ -194,11 +185,7 @@ class RiskFactorMatrix:
     # ---------------------------- Time-Series Optimization ----------------------------
     def to_time_series_optimized_array(self) -> np.ndarray:
         """Return F-contiguous array for column-major operations (Numba/Cython)."""
-        return (
-            np.asfortranarray(self.values)
-            if not self.fortran_order
-            else self.values
-        )
+        return np.asfortranarray(self.values) if not self.fortran_order else self.values
 
     def get_factor_time_series(self, factor_id: int) -> np.ndarray:
         idx = np.searchsorted(self.factor_ids, factor_id)
@@ -208,10 +195,10 @@ class RiskFactorMatrix:
 
     # ---------------------------- Snapshot ----------------------------
     def get_snapshot(self, target_date: date) -> RiskFactorLevelSnapshot:
-        from riskquant.utils.dates import date_to_ordinal32
+        from riskquant.utils.dates import date_to_ord32
 
         target_val = (
-            date_to_ordinal32(target_date)
+            date_to_ord32(target_date)
             if np.issubdtype(self.dates.dtype, np.integer)
             else np.datetime64(target_date, "D")
         )
@@ -225,4 +212,34 @@ class RiskFactorMatrix:
             as_of_date=target_date,
             factor_ids=self.factor_ids[valid_mask],
             factor_levels=levels[valid_mask],
+        )
+
+    @classmethod
+    def from_snapshot(
+        cls,
+        snapshot: RiskFactorLevelSnapshot,
+        *,
+        fortran_order: bool = True,
+    ) -> RiskFactorMatrix:
+        """
+        Elevate this snapshot into a 1-row RiskFactorMatrix.
+
+        S-Tier mechanics:
+        - factor_ids: Passed by reference (zero-copy).
+        - values: Reshaped via np.newaxis (zero-copy view).
+        - dates: Minimal 1-element array allocation aligned to datetime64[D].
+        """
+
+        # 1. Align dates invariant: 1D array of datetime64[D]
+        dates_arr = np.array([snapshot.as_of_date], dtype="datetime64[D]")
+
+        # 2. Align values invariant: 2D array (T, N) -> (1, N)
+        # Using np.newaxis creates a fast, zero-copy view of the 1D C-contiguous array.
+        values_2d = snapshot.factor_levels[np.newaxis, :]
+
+        return RiskFactorMatrix(
+            dates=dates_arr,
+            factor_ids=snapshot.factor_ids,  # Already validated, sorted, and unique
+            values=values_2d,
+            fortran_order=fortran_order,
         )

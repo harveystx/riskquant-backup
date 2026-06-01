@@ -1,185 +1,407 @@
 # src/riskquant/portfolio/ingest/batch.py
 """
-Struct-of-Arrays (SoA) container for a validated batch of trades.
+Struct-of-Arrays (SoA) container for validated trade ingestion.
+
+Design goals:
+- contiguous homogeneous arrays
+- strict dtype enforcement
+- cache-friendly SoA layout
+- immutable batch semantics
+- zero object arrays in engine paths
+- explicit debug-only reconstruction utilities
+
+Dtype change in this revision
+-----------------------------
+`fx_u2s_inv` and `fx_k2s_inv` are now int8 (was int32). Flags are 1 byte per row,
+matching the project flag convention. The block compilers convert int8 -> bool
+via .view() (same itemsize, no allocation) for the block-layer signatures.
+
+Architecture update
+-------------------
+- Purged all UIX coordinates. The batch acts purely as a global ID ledger.
+- Semantic Collapsing: Sparse curve/node arrays fused into dense `underlying_ids`
+  and `volatility_ids`.
+- `vol_surface_y_axis_type_ids` is now resolved by `compile_ingest_soa_payload_
+  from_df` (sourced from `static_config.surface_meta_dict[id].y_axis_kind`).
+  `from_compiled_ingest_soa` is a pure copy with no synthetic sentinels.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Final
+
 import numpy as np
-from pandas import DataFrame, Series, NaT
+import numpy.typing as npt
 
 from riskquant.constants import (
-    NO_DISCOUNT_CURVE_ID,
+    NO_DATE_ORD32,
     NO_FX_RF_REQUIRED,
-    NO_DELIVERY_DATE_ORDINAL32,
-    NO_SETTLEMENT_DATE_ORDINAL32,
-    NO_EXPIRY_DATE_ORDINAL32,
-    NOT_OPTION,
+    NO_ID,
+    NOT_OPTION_MULT,
 )
-from riskquant.portfolio import fx
+from riskquant.portfolio.ingest.compile import CompiledIngestSoA
 from riskquant.utils.dates import ordinal32_to_datetime64D
+
+if TYPE_CHECKING:
+    from pandas import DataFrame
+
+# ==============================================================================
+# MODULE-LEVEL DTYPE / LENGTH CONTRACT
+# ==============================================================================
+# Built once at module load. Each IngestBatch construction reads from these
+# rather than rebuilding the spec dict inline.
+
+_EXPECTED_DTYPES: Final = MappingProxyType(
+    {
+        # CORE
+        "instrument_ids": np.dtype(np.int32),
+        "uids": np.dtype(np.int64),
+        # MARKET RISK
+        "qty": np.dtype(np.float64),
+        "strike_price": np.dtype(np.float64),
+        "cp_mult": np.dtype(np.int8),
+        # DATES (Ordinals Only)
+        "settle_ord": np.dtype(np.int32),
+        "delivery_ord": np.dtype(np.int32),
+        "expiry_ord": np.dtype(np.int32),
+        # MARKET LINKAGES (Dense)
+        "underlying_ids": np.dtype(np.int32),
+        "volatility_ids": np.dtype(np.int32),
+        # FX
+        "fx_u2s_ids": np.dtype(np.int32),
+        "fx_u2s_inv": np.dtype(np.int8),
+        "fx_k2s_ids": np.dtype(np.int32),
+        "fx_k2s_inv": np.dtype(np.int8),
+        # CURVES & SURFACES
+        "under_discount_curve_ids": np.dtype(np.int32),
+        "strike_discount_curve_ids": np.dtype(np.int32),
+        "vol_surface_y_axis_type_ids": np.dtype(np.int8),
+        # NETTING SET
+        "netting_set_id": np.dtype(np.int64),
+    }
+)
+
+_VARIABLE_LENGTH_FIELDS: Final[tuple[str, ...]] = tuple(_EXPECTED_DTYPES.keys())
+
+
+# ==============================================================================
+# INTERNAL HELPERS
+# ==============================================================================
+
+
+def _assert_c_contiguous(arr: npt.NDArray, *, name: str) -> None:
+    if not arr.flags.c_contiguous:
+        raise ValueError(f"IngestBatch field '{name}' must be C-contiguous.")
+
+
+def _assert_dtype(
+    arr: npt.NDArray,
+    expected_dtype: np.dtype,
+    *,
+    name: str,
+) -> None:
+    if arr.dtype != expected_dtype:
+        raise TypeError(
+            f"IngestBatch field '{name}' has dtype={arr.dtype}, "
+            f"expected={expected_dtype}."
+        )
+
+
+def _masked_float_copy(
+    arr: npt.NDArray,
+    *,
+    mask_value: float | int,
+    replace_with: float = np.nan,
+    copy: bool,
+) -> npt.NDArray[np.float64]:
+    """Create float view/copy and replace sentinel-like values with NaN."""
+    out = arr.copy() if copy else arr.astype(arr.dtype, copy=False)
+
+    mask = out == mask_value
+
+    if np.any(mask):
+        out = out.copy()
+        out[mask] = replace_with
+
+    return out
+
+
+def _decode_dates(
+    ord_array: npt.NDArray[np.int32],
+    *,
+    sentinel: int,
+    copy: bool,
+) -> npt.NDArray[np.datetime64]:
+    """Decode ordinal32 dates to datetime64[D] with NaT masking."""
+    dts = ordinal32_to_datetime64D(ord_array)
+
+    mask = ord_array == sentinel
+    if copy or np.any(mask):
+        dts = dts.copy()
+    if np.any(mask):
+        dts[mask] = np.datetime64("NaT")
+
+    return dts
+
+
+def _debug_mask_int_sentinel(
+    arr: npt.NDArray,
+    *,
+    sentinel: int,
+    replacement: str,
+) -> npt.NDArray[np.object_]:
+    """
+    Debug-only helper.
+
+    Converts integer arrays into object arrays for human-readable auditing.
+    NEVER use in pricing/risk kernels.
+    """
+    out = arr.astype(object, copy=True)
+    mask = arr == sentinel
+    if np.any(mask):
+        out[mask] = replacement
+    return out
+
+
+# ==============================================================================
+# INGEST BATCH
+# ==============================================================================
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class IngestBatch:
     """
-    Pristine, contiguous array container for trade ingestion.
+    Immutable Struct-of-Arrays ingestion container.
+
+    All arrays:
+    - must be contiguous
+    - must be strongly typed (see _EXPECTED_DTYPES)
+    - must have length == size (see _VARIABLE_LENGTH_FIELDS)
     """
 
-    # Number of trades in this batch
     size: int
 
-    # ========== ROUTING / DISPATCH ==========
-    instrument_ids: np.ndarray
+    # ROUTING / DISPATCH
+    instrument_ids: npt.NDArray[np.int32]
 
-    # ========== CORE IDENTITY & ECONOMICS ==========
-    uids: np.ndarray
-    qty: np.ndarray
-    strike_price: np.ndarray
-    is_call: np.ndarray
+    # ECONOMICS
+    uids: npt.NDArray[np.int64]
+    qty: npt.NDArray[np.float64]
+    strike_price: npt.NDArray[np.float64]
+    cp_mult: npt.NDArray[np.int8]
 
-    # ========== DATES (ORDINAL32) ==========
-    settle_ord: np.ndarray
-    delivery_ord: np.ndarray
-    expiry_ord: np.ndarray
+    # DATES (ORDINAL32)
+    settle_ord: npt.NDArray[np.int32]
+    delivery_ord: npt.NDArray[np.int32]
+    expiry_ord: npt.NDArray[np.int32]
 
-    # Unique set of all relevant dates across the batch, mapped to a compact UIX space for curve lookups.
-    unique_dates_ordinal32: np.ndarray
+    # MARKET LINKAGES
+    underlying_ids: npt.NDArray[np.int32]
+    volatility_ids: npt.NDArray[np.int32]
 
-    # ========= DATES UIX =========
+    # FX
+    fx_u2s_ids: npt.NDArray[np.int32]
+    fx_u2s_inv: npt.NDArray[np.int8]
+    fx_k2s_ids: npt.NDArray[np.int32]
+    fx_k2s_inv: npt.NDArray[np.int8]
 
-    # UIX arrays for the settlement, delivery, and expiry dates of each trade. These map into the unique_dates_ordinal32 array.
-    settle_date_uix: np.ndarray
-    delivery_date_uix: np.ndarray
-    expiry_date_uix: np.ndarray
+    # DISCOUNT CURVES & SURFACES
+    under_discount_curve_ids: npt.NDArray[np.int32]
+    strike_discount_curve_ids: npt.NDArray[np.int32]
+    vol_surface_y_axis_type_ids: npt.NDArray[np.int8]
 
-    # ========== MARKET & FX LINKAGES (UNIVERSE INDICES) ==========
-    fx_under_to_settle_ids: np.ndarray
-    fx_under_to_settle_invert: np.ndarray
-    fx_strike_to_settle_ids: np.ndarray
-    fx_strike_to_settle_invert: np.ndarray
-    price_rf_ids: np.ndarray
-    price_curve_ids: np.ndarray
-    vol_rf_ids: np.ndarray
-    vol_surface_rf_ids: np.ndarray
-    under_discount_curve_ids: np.ndarray
-    strike_discount_curve_ids: np.ndarray
-    vol_surface_y_axis_type_ids: np.ndarray
+    # NETTING SET LINKAGE
+    netting_set_id: npt.NDArray[np.int64]
 
-    def to_df(self) -> DataFrame:
+    # ==========================================================================
+    # POST INIT VALIDATION
+    # ==========================================================================
+
+    def __post_init__(self) -> None:
+        """Enforce dtype, contiguity, and length consistency."""
+        for field_name, expected_dtype in _EXPECTED_DTYPES.items():
+            arr = getattr(self, field_name)
+            if not isinstance(arr, np.ndarray):
+                raise TypeError(
+                    f"IngestBatch field '{field_name}' is not a numpy ndarray."
+                )
+            _assert_dtype(arr, expected_dtype, name=field_name)
+            _assert_c_contiguous(arr, name=field_name)
+
+        for field_name in _VARIABLE_LENGTH_FIELDS:
+            arr = getattr(self, field_name)
+            if arr.shape[0] != self.size:
+                raise ValueError(
+                    f"IngestBatch field '{field_name}' has "
+                    f"length={arr.shape[0]}, expected={self.size}."
+                )
+
+    # ==========================================================================
+    # DEBUG RECONSTRUCTION
+    # ==========================================================================
+
+    def to_df(self, *, copy: bool = True) -> DataFrame:
         """
-        Reconstructs a Pandas DataFrame from the SoA arrays for auditing and debugging.
-        Translates ordinals back to datetimes and applies NaT/NaN for sentinels.
+        DEBUG / AUDIT ONLY.
+
+        Reconstruct a DataFrame from the SoA container. Alloc-heavy,
+        produces object arrays. Not engine-safe.
         """
+        from pandas import DataFrame
 
-        def decode_dates(ord_array: np.ndarray, sentinel: int) -> Series:
-            mask = ord_array == sentinel
-            dts = ordinal32_to_datetime64D(ord_array)
-            s = Series(dts)
-            s[mask] = NaT
-            return s
-
-        def mask_fx(fx_array: np.ndarray) -> Series:
-            s = Series(fx_array, dtype=object)
-            s[fx_array == NO_FX_RF_REQUIRED] = "NONE"
-            return s
-
-        def mask_fx_invert(fx_invert_array: np.ndarray) -> Series:
-            s = Series(fx_invert_array, dtype=bool)
-            return s
-
-        def mask_curve(curve_array: np.ndarray) -> Series:
-            s = Series(curve_array, dtype=object)
-            s[curve_array == NO_DISCOUNT_CURVE_ID] = "NONE"
-            return s
+        strike_price = _masked_float_copy(
+            self.strike_price,
+            mask_value=0.0,
+            copy=copy,
+        )
+        cp_mult = _masked_float_copy(
+            self.cp_mult.astype(np.float64, copy=False),
+            mask_value=int(NOT_OPTION_MULT),
+            copy=copy,
+        )
 
         return DataFrame(
             {
-                # IDS
+                # CORE
                 "uid": self.uids,
-                "instrument_id": self.instrument_ids,
+                "inst_id": self.instrument_ids,
                 # ECONOMICS
                 "qty": self.qty,
-                "strike_price": Series(self.strike_price).replace(0.0, np.nan),
-                "is_call": Series(self.is_call).replace(NOT_OPTION, np.nan),
-                # LINKAGES
-                "price_rf_id": self.price_rf_ids,
-                "price_curve_id": self.price_curve_ids,
-                "vol_rf_id": self.vol_rf_ids,
-                "vol_surface_rf_id": self.vol_surface_rf_ids,
-                "fx_u2s": mask_fx(self.fx_under_to_settle_ids),
-                "fx_u2s_invert": mask_fx_invert(self.fx_under_to_settle_invert),
-                "fx_k2s": mask_fx(self.fx_strike_to_settle_ids),
-                "fx_k2s_invert": mask_fx_invert(
-                    self.fx_strike_to_settle_invert
+                "k": strike_price,
+                "cp_mult": cp_mult,
+                # MARKET LINKAGES
+                "und_ids": _debug_mask_int_sentinel(
+                    self.underlying_ids,
+                    sentinel=int(NO_ID),
+                    replacement="NONE",
                 ),
-                "under_discount_curve_id": mask_curve(
-                    self.under_discount_curve_ids
+                "vol_ids": _debug_mask_int_sentinel(
+                    self.volatility_ids,
+                    sentinel=int(NO_ID),
+                    replacement="NONE",
                 ),
-                "strike_discount_curve_id": mask_curve(
-                    self.strike_discount_curve_ids
+                # FX IDs
+                "fx_u2s_ids": _debug_mask_int_sentinel(
+                    self.fx_u2s_ids,
+                    sentinel=int(NO_FX_RF_REQUIRED),
+                    replacement="NONE",
+                ),
+                "fx_u2s_inv": self.fx_u2s_inv,
+                "fx_k2s_ids": _debug_mask_int_sentinel(
+                    self.fx_k2s_ids,
+                    sentinel=int(NO_FX_RF_REQUIRED),
+                    replacement="NONE",
+                ),
+                "fx_k2s_inv": self.fx_k2s_inv,
+                # CURVES
+                "disc_und_id": _debug_mask_int_sentinel(
+                    self.under_discount_curve_ids,
+                    sentinel=int(NO_ID),
+                    replacement="NONE",
+                ),
+                "disc_k_id": _debug_mask_int_sentinel(
+                    self.strike_discount_curve_ids,
+                    sentinel=int(NO_ID),
+                    replacement="NONE",
                 ),
                 # DATES
-                "expiry_date": decode_dates(
-                    self.expiry_ord,
-                    NO_EXPIRY_DATE_ORDINAL32,
-                ),
-                "delivery_date": decode_dates(
-                    self.delivery_ord,
-                    NO_DELIVERY_DATE_ORDINAL32,
-                ),
-                "settle_date": decode_dates(
+                "settle_date": _decode_dates(
                     self.settle_ord,
-                    NO_SETTLEMENT_DATE_ORDINAL32,
+                    sentinel=int(NO_DATE_ORD32),
+                    copy=copy,
                 ),
-                # DATE GRID FIELDS
-                "settle_date_uix": self.settle_date_uix,
-                "delivery_date_uix": self.delivery_date_uix,
-                "expiry_date_uix": self.expiry_date_uix,
-                # Volatility Surface Y-Axis Type
+                "delivery_date": _decode_dates(
+                    self.delivery_ord,
+                    sentinel=int(NO_DATE_ORD32),
+                    copy=copy,
+                ),
+                "expiry_date": _decode_dates(
+                    self.expiry_ord,
+                    sentinel=int(NO_DATE_ORD32),
+                    copy=copy,
+                ),
+                # VOL
                 "vol_surface_y_axis_type_id": self.vol_surface_y_axis_type_ids,
-            }
+                # NETTING
+                "netting_set_id": _debug_mask_int_sentinel(
+                    self.netting_set_id,
+                    sentinel=int(NO_ID),
+                    replacement="NONE",
+                ),
+            },
+            copy=copy,
         )
 
     @property
     def df(self) -> DataFrame:
-        """
-        Alias for .to_df() to allow easy access to the reconstructed DataFrame.
-        """
-        return self.to_df()
+        """Convenience debug alias for to_df(copy=False)."""
+        return self.to_df(copy=False)
 
-    def reorder(
-        self,
-        order: np.ndarray,
-    ) -> "IngestBatch":
-        """
-        Returns a new IngestBatch with all arrays reordered according to the provided index array.
-        This is useful for sorting or grouping trades while maintaining the SoA structure.
-        """
+    # ==========================================================================
+    # REORDERING
+    # ==========================================================================
+
+    def reorder(self, order: np.ndarray, *, copy: bool = False) -> IngestBatch:
+        """Reorder batch arrays consistently."""
+        if order.dtype.kind not in ("i", "u"):
+            raise TypeError("order must contain integer indices.")
+        if order.ndim != 1:
+            raise ValueError("order must be 1-dimensional.")
+        if order.shape[0] != self.size:
+            raise ValueError(
+                f"order length={order.shape[0]} does not match batch size={self.size}."
+            )
+
+        def _reorder(arr: np.ndarray) -> np.ndarray:
+            return np.take(arr, order) if copy else arr[order]
+
         return IngestBatch(
             size=self.size,
-            instrument_ids=self.instrument_ids[order],
-            uids=self.uids[order],
-            qty=self.qty[order],
-            strike_price=self.strike_price[order],
-            is_call=self.is_call[order],
-            settle_ord=self.settle_ord[order],
-            delivery_ord=self.delivery_ord[order],
-            expiry_ord=self.expiry_ord[order],
-            unique_dates_ordinal32=self.unique_dates_ordinal32,  # Unchanged
-            settle_date_uix=self.settle_date_uix[order],
-            delivery_date_uix=self.delivery_date_uix[order],
-            expiry_date_uix=self.expiry_date_uix[order],
-            fx_under_to_settle_ids=self.fx_under_to_settle_ids[order],
-            fx_under_to_settle_invert=self.fx_under_to_settle_invert[order],
-            fx_strike_to_settle_ids=self.fx_strike_to_settle_ids[order],
-            fx_strike_to_settle_invert=self.fx_strike_to_settle_invert[order],
-            price_rf_ids=self.price_rf_ids[order],
-            price_curve_ids=self.price_curve_ids[order],
-            vol_rf_ids=self.vol_rf_ids[order],
-            vol_surface_rf_ids=self.vol_surface_rf_ids[order],
-            under_discount_curve_ids=self.under_discount_curve_ids[order],
-            strike_discount_curve_ids=self.strike_discount_curve_ids[order],
-            vol_surface_y_axis_type_ids=(
-                self.vol_surface_y_axis_type_ids[order]
-            ),
+            instrument_ids=_reorder(self.instrument_ids),
+            uids=_reorder(self.uids),
+            qty=_reorder(self.qty),
+            strike_price=_reorder(self.strike_price),
+            cp_mult=_reorder(self.cp_mult),
+            settle_ord=_reorder(self.settle_ord),
+            delivery_ord=_reorder(self.delivery_ord),
+            expiry_ord=_reorder(self.expiry_ord),
+            underlying_ids=_reorder(self.underlying_ids),
+            volatility_ids=_reorder(self.volatility_ids),
+            fx_u2s_ids=_reorder(self.fx_u2s_ids),
+            fx_u2s_inv=_reorder(self.fx_u2s_inv),
+            fx_k2s_ids=_reorder(self.fx_k2s_ids),
+            fx_k2s_inv=_reorder(self.fx_k2s_inv),
+            under_discount_curve_ids=_reorder(self.under_discount_curve_ids),
+            strike_discount_curve_ids=_reorder(self.strike_discount_curve_ids),
+            vol_surface_y_axis_type_ids=_reorder(self.vol_surface_y_axis_type_ids),
+            netting_set_id=_reorder(self.netting_set_id),
+        )
+
+    @classmethod
+    def from_compiled_ingest_soa(cls, c: CompiledIngestSoA) -> IngestBatch:
+        # Pure copy. `vol_surface_y_axis_type_ids` is now produced by the
+        # compiler against `static_config.surface_meta_dict`; no synthetic
+        # sentinel fill happens here.
+        return cls(
+            size=c.size,
+            instrument_ids=c.instrument_ids,
+            uids=c.uids,
+            qty=c.qty,
+            strike_price=c.strike,
+            cp_mult=c.cp_mult,
+            settle_ord=c.settle_ord,
+            delivery_ord=c.delivery_ord,
+            expiry_ord=c.expiry_ord,
+            underlying_ids=c.underlying_ids,
+            volatility_ids=c.volatility_ids,
+            fx_u2s_ids=c.fx_u2s_ids,
+            fx_u2s_inv=c.fx_u2s_inv,
+            fx_k2s_ids=c.fx_k2s_ids,
+            fx_k2s_inv=c.fx_k2s_inv,
+            under_discount_curve_ids=c.under_discount_curve_ids,
+            strike_discount_curve_ids=c.strike_discount_curve_ids,
+            vol_surface_y_axis_type_ids=c.vol_surface_y_axis_type_ids,
+            netting_set_id=c.netting_set_id,
         )

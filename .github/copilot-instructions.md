@@ -6,7 +6,7 @@ You are always expected to follow the instructions below when writing code for t
 
 You are always required to optimize for performance and efficiency, as this is a high-performance library used in production environments. Always prefer vectorized operations, in-place modifications, and memory-efficient data handling. We avoid pandas/numpy operations that create unnecessary copies of data. We also avoid loading large datasets into memory at once, preferring generators or iterators where appropriate.
 
-This repository prioritizes **Data-Oriented Design (DOD)**, bare-metal memory sympathy, and absolute maximum throughput. The core philosophy of this codebase is: **"Human-readable at the edge, C-contiguous at the core."**
+This repository prioritizes **Data-Oriented Design (DOD)**, **Structures-of-Arrays (SoA)**, bare-metal memory sympathy, and absolute maximum throughput. The core philosophy of this codebase is: **"Human-readable at the edge, C-contiguous at the core."** Strings must die early. Bare-metal performance is the north star.
 
 When generating code, autocomplete suggestions, or answering questions, you must strictly adhere to the following architectural rules and anti-patterns.
 

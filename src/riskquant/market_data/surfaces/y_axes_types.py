@@ -4,13 +4,13 @@ import numpy as np
 
 
 class SurfaceYAxisType(IntEnum):
-    STRIKE = np.int8(1)
-    LOG_STRIKE = np.int8(2)
-    MONEYNESS_SPOT = np.int8(3)
-    MONEYNESS_FWD = np.int8(4)
-    LOG_MONEYNESS_SPOT = np.int8(5)
-    LOG_MONEYNESS_FWD = np.int8(6)
-    DELTA_CALL = np.int8(7)
+    STRIKE = 1
+    LOG_STRIKE = 2
+    MONEYNESS_SPOT = 3
+    MONEYNESS_FWD = 4
+    LOG_MONEYNESS_SPOT = 5
+    LOG_MONEYNESS_FWD = 6
+    DELTA_CALL = 7
 
 
 # compiler-friendly int8 constants

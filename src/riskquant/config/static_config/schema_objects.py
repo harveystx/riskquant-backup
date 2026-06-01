@@ -1,286 +1,227 @@
-# src/riskquant/config/schema_objects.py
+# src/riskquant/config/static_config/schema_objects.py
 """
-Schema objects for config data.
+Immutable value objects for the god-tier static config pipeline.
 
-Design intent:
-- Immutable, slot-based value objects used by config loading/compiling/validation.
-- Keep this module lightweight: avoid importing pandas/numpy here to prevent
-  config schema from dragging heavy deps into runtime/model code.
+One dataclass per input table. Every field is non-null in its own table:
+no nullability cascades, no "must be null when this is null" rules. The
+three first-class object kinds (Node, Curve, Surface) each get their own
+metadata table and child point table.
+
+  NodeMeta              - scalar observable. A node IS its own risk factor.
+                          FX rate nodes additionally carry fx_base_ccy.
+  CurveMeta             - 1D function metadata. Optional discount-basis tag
+                          marks IR discount curves.
+  CurvePointMeta        - one row per point on a curve. The point's
+                          tenor_token is parsed using the parent's
+                          x_axis_kind.
+  SurfaceMeta           - 2D function metadata (expiry x strike-axis).
+  SurfacePointMeta      - one row per point on a surface; x_tenor_token
+                          is parsed using the surface's x_axis_kind,
+                          y_label using its y_axis_kind.
+  SpotRollRule          - one named rule. PK is the rule name.
+  HolidayCalendar       - one calendar with sorted int32 holiday ordinals.
+  Ccy                   - one currency with its dense int8 id.
+
+All system-defined taxonomies (asset class, unit, shift, interp/extrap,
+x/y axis kind, roll method, discount basis) live in riskquant.config.enums
+and riskquant.market_data — never inside these dataclasses as derived state.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
-import re
-from typing import Optional, Pattern, Tuple
 
-import pandas as pd
+import numpy as np
+import numpy.typing as npt
 
-from riskquant.utils.printer import print_success_message
-
-# =============== #
-# --- LOOKUPS --- #
-# =============== #
+# ============================================================
+# CURRENCY
+# ============================================================
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Ccy:
-    ccy: str
+    """A currency in the organisation's active universe."""
+
+    ccy_name: str
     ccy_id: int
 
 
-@dataclass(frozen=True, slots=True)
-class AssetClass:
-    asset_class: str
-    asset_class_id: int
+# ============================================================
+# HOLIDAY CALENDAR
+# ============================================================
 
 
-@dataclass(frozen=True, slots=True)
-class AssetSubclass:
-    asset_subclass: str
-    asset_subclass_id: int
-    asset_class: str  # FK -> AssetClass.asset_class (validated in compile step)
-
-
-@dataclass(frozen=True, slots=True)
-class UnitType:
-    unit_type_name: str
-    unit_type_name_id: int
-
-
-@dataclass(frozen=True, slots=True)
-class UnitScale:
-    unit_scale_name: str
-    unit_scale_name_id: int
-    scale_to_base: float
-
-
-@dataclass(frozen=True, slots=True)
-class ShiftType:
-    shift_type: str
-    shift_type_id: int
-
-
-@dataclass(frozen=True, slots=True)
-class InterpolationMethod:
-    interpolation_method: str
-    interpolation_method_id: int
-
-
-@dataclass(frozen=True, slots=True)
-class ExtrapolationMethod:
-    extrapolation_method: str
-    extrapolation_method_id: int
-
-
-@dataclass(frozen=True, slots=True)
-class SurfaceYAxisType:
-    y_axis_type_name: str
-
-
-# =================== #
-# --- CONVENTIONS --- #
-# =================== #
-
-
-@dataclass(frozen=True, slots=True)
-class DayCountConvention:
-    day_count_convention: str
-    day_count_convention_id: int
-
-
-@dataclass(frozen=True, slots=True)
-class BusinessDayConvention:
-    business_day_convention: str
-    business_day_convention_id: int
-
-
-@dataclass(frozen=True, slots=True)
-class CompoundingConvention:
-    compounding_convention: str
-    compounding_convention_id: int
-    compounding_type: str
-    frequency_per_year: Optional[float]
-
-
-# ===================== #
-# --- CORE ENTITIES --- #
-# ===================== #
-
-
-@dataclass(frozen=True, slots=True)
-class ContainerMeta:
-    """
-    Metadata for a container (curve, surface, FX spot, etc).
-
-    Notes:
-    - tenor_type_name / spot_roll_rule_name / alias_type_name are typically None for container_dim == 0 (e.g., FX).
-    - surface_y_axis_type_name / interp_method_name_y / extrap_method_name_y are typically None for non-surfaces.
-    """
-
-    container_name: str
-    container_name_id: int
-
-    base_ccy: str
-    quote_ccy: str
-
-    unit_type_name: str
-    unit_scale_name: str
-
-    container_dim: int  # 0 or 1 for now (extend later)
-
-    asset_class: str
-    asset_subclass: str
-
-    tenor_type_name: Optional[str]
-    spot_roll_rule_name: Optional[str]
-    alias_type_name: Optional[str]
-
-    surface_y_axis_type_name: Optional[str]
-
-    shift_type_name: str
-
-    interp_method_name_x: Optional[str]
-    interp_method_name_y: Optional[str]
-    extrap_method_name_x: Optional[str]
-    extrap_method_name_y: Optional[str]
-
-    def __post_init__(self) -> None:
-        if self.container_dim not in (0, 1):
-            raise ValueError(
-                f"container_dim must be 0 or 1 for now; got {self.container_dim!r} "
-                f"for container_name={self.container_name!r}"
-            )
-
-        # Basic "dim implies curve metadata" checks.
-        if self.container_dim == 0:
-            # Scalar containers (FX spot etc) should not specify tenor/roll/alias.
-            if self.tenor_type_name is not None:
-                raise ValueError(
-                    "tenor_type_name must be None when container_dim==0 "
-                    f"(container_name={self.container_name!r}, tenor_type_name={self.tenor_type_name!r})"
-                )
-            if self.spot_roll_rule_name is not None:
-                raise ValueError(
-                    "spot_roll_rule_name must be None when container_dim==0 "
-                    f"(container_name={self.container_name!r}, spot_roll_rule_name={self.spot_roll_rule_name!r})"
-                )
-            if self.alias_type_name is not None:
-                raise ValueError(
-                    "alias_type_name must be None when container_dim==0 "
-                    f"(container_name={self.container_name!r}, alias_type_name={self.alias_type_name!r})"
-                )
-
-        # Strong defaults that catch config typos early.
-        # (Hard errors only for the really obvious ones.)
-        if self.asset_class == "FX":
-            if self.container_dim != 0:
-                raise ValueError(
-                    "FX containers must have container_dim==0 "
-                    f"(container_name={self.container_name!r}, container_dim={self.container_dim!r})"
-                )
-            if self.unit_type_name != "FX_RATE":
-                raise ValueError(
-                    "FX containers must have unit_type_name=='FX_RATE' "
-                    f"(container_name={self.container_name!r}, unit_type_name={self.unit_type_name!r})"
-                )
-
-        if self.asset_class == "IR":
-            # IR should never be FX_RATE; this catches copy/paste errors.
-            if self.unit_type_name == "FX_RATE":
-                raise ValueError(
-                    "IR containers cannot have unit_type_name=='FX_RATE' "
-                    f"(container_name={self.container_name!r})"
-                )
-
-
-@dataclass(frozen=True, slots=True)
-class RiskFactor:
-    risk_factor_name: str
-    risk_factor_name_id: int
-    tenor_token: Optional[str]
-    container_name: str
-
-    def __post_init__(self) -> None:
-        # Remove tenor token as a suffix only (safer than replace)
-        rf_name_prefix = (
-            self.risk_factor_name.removesuffix(self.tenor_token)
-            if self.tenor_token
-            else self.risk_factor_name
-        )
-
-        if rf_name_prefix != self.container_name:
-            raise ValueError(
-                f"risk_factor_name ({self.risk_factor_name!r}) must match "
-                f"container_name ({self.container_name!r}) "
-                f"after removing tenor_token ({self.tenor_token!r})."
-            )
-
-
-# ===================== #
-# --- SCHEMA TABLES --- #
-# ===================== #
-
-
-@dataclass(frozen=True, slots=True)
-class TenorSchema:
-    tenor_type_name: str
-    tenor_unit: str
-    digits: int
-    token_regex: Optional[Pattern[str]]
-    abs_name_regex: Optional[Pattern[str]]
-    rel_name_regex: Optional[Pattern[str]]
-    abs_name_example: str
-    rel_name_example: str
-
-    def __str__(self) -> str:
-        """Returns a human-readable, formatted tree of the schema rules."""
-        # Helper to safely extract the raw string pattern from the compiled regex
-        fmt_re = lambda r: f"'{r.pattern}'" if r else "None"
-
-        return (
-            f"TenorSchema('{self.tenor_type_name}')\n"
-            f"  ├─ Tenor Unit: {self.tenor_unit} (Digits: {self.digits})\n"
-            f"  ├─ Regex Rules:\n"
-            f"  │   ├─ Token:    {fmt_re(self.token_regex)}\n"
-            f"  │   ├─ Absolute: {fmt_re(self.abs_name_regex)}\n"
-            f"  │   └─ Relative: {fmt_re(self.rel_name_regex)}\n"
-            f"  └─ Examples:\n"
-            f"      ├─ Absolute: '{self.abs_name_example}'\n"
-            f"      └─ Relative: '{self.rel_name_example}'"
-        )
-
-    def __repr__(self) -> str:
-        """Fallback to the pretty string when printing from a list or dict."""
-        return self.__str__()
-
-
-@dataclass(frozen=True, slots=True)
-class AliasSchema:
-    alias_type_name: str
-    alias_kind: str  # OFFSET or LABEL
-    alias_unit: Optional[str]
-
-
-@dataclass(frozen=True, slots=True)
-class SpotRollRule:
-    spot_roll_rule_name: str
-    tenor_type_name: str
-    spot_roll_method: str
-    offset_in_tenor_units: Optional[int]
-    roll_month: Optional[int]
-    roll_day: Optional[int]
-    fh_bh_ddmm: Optional[str]
-    post_roll_shift: Optional[int]
-
-
-# ======================== #
-# --- HOLIDAY CALENDAR --- #
-# ======================== #
-
-
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class HolidayCalendar:
+    """
+    Holiday dates for one named calendar, stored as sorted int32
+    ordinals (days since 1970-01-01) for O(log N) np.searchsorted
+    bisection in the business-day engine.
+    """
+
     holiday_calendar_name: str
-    holiday_dates: Optional[Tuple[date, ...]]
+    holiday_dates_ord: npt.NDArray[np.int32]
+
+
+# ============================================================
+# SPOT ROLL RULE
+# ============================================================
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SpotRollRule:
+    """
+    Named spot-roll rule.
+
+    PK is `rule_name`. The rule's `roll_method` determines which
+    parameters are meaningful — the validator checks each parameter
+    against the method:
+
+      CALENDAR_PERIOD   -> uses offset_in_tenor_units
+      ROLL_ON_MMDD      -> uses roll_month, roll_day, post_roll_shift
+      HALF_YEAR_BY_DATE -> uses fh_bh_mmdd
+      HALF_YEAR_BY_LABEL-> uses fh_bh_mmdd
+
+    Unused parameters carry sentinel zeros (offset, post_roll_shift)
+    or None (roll_month, roll_day, fh_bh_mmdd) — these are never read by
+    the resolution code for a non-applicable method.
+    """
+
+    rule_name: str
+    roll_method: str
+    offset_in_tenor_units: int
+    roll_month: int | None
+    roll_day: int | None
+    fh_bh_mmdd: str | None
+    post_roll_shift: int
+
+
+# ============================================================
+# NODE  (scalar; IS its own risk factor)
+# ============================================================
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NodeMeta:
+    """
+    A scalar observable. Every node is both a container (for ingest
+    classification) and a risk factor (for market-data lookup). The
+    node_id IS the rf_id; there is no child point table.
+
+    fx_base_ccy contract:
+      asset_class == "FX"  <=> fx_base_ccy is not None
+      For FX nodes, node_name == fx_base_ccy + quote_ccy is enforced.
+    """
+
+    node_id: int
+    node_name: str
+
+    quote_ccy: str
+    asset_class: str
+    asset_subclass: str
+
+    unit_type: str
+    unit_scale: str
+    shift_type: str
+
+    fx_base_ccy: str | None
+
+
+# ============================================================
+# CURVE
+# ============================================================
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CurveMeta:
+    """
+    A 1D function metadata row.
+
+    x_axis_kind contract:
+      LABEL                    -> spot_roll_rule_name is None
+      OFFSET_M / OFFSET_Y /
+      OFFSET_HY                -> spot_roll_rule_name is non-None
+
+    discount_basis contract:
+      "NOT_A_DISCOUNT_CURVE"   -> non-discount curve (e.g. commodity forward).
+                                  is_default_discount_for_ccy must be False.
+      any other value          -> discount curve. asset_class must be "IR".
+                                  Exactly one discount curve per (ccy) is
+                                  flagged is_default_discount_for_ccy=True
+                                  and its basis must be the firm default.
+    """
+
+    curve_id: int
+    curve_name: str
+
+    quote_ccy: str
+    asset_class: str
+    asset_subclass: str
+
+    unit_type: str
+    unit_scale: str
+    shift_type: str
+
+    x_axis_kind: str
+    x_interp_method: str
+    x_extrap_method: str
+    spot_roll_rule_name: str | None
+
+    discount_basis: str
+    is_default_discount_for_ccy: bool
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CurvePointMeta:
+    """One addressable point on a curve."""
+
+    rf_id: int
+    curve_id: int
+    curve_name: str
+    tenor_token: str
+
+
+# ============================================================
+# SURFACE
+# ============================================================
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SurfaceMeta:
+    """
+    A 2D function metadata row. Same x_axis_kind / spot_roll_rule
+    contract as CurveMeta. y_axis_kind has no roll-method coupling: the
+    y coordinate is value-typed (a strike, log-strike, moneyness, delta).
+    """
+
+    surface_id: int
+    surface_name: str
+
+    quote_ccy: str
+    asset_class: str
+    asset_subclass: str
+
+    unit_type: str
+    unit_scale: str
+    shift_type: str
+
+    x_axis_kind: str
+    x_interp_method: str
+    x_extrap_method: str
+    spot_roll_rule_name: str | None
+
+    y_axis_kind: str
+    y_interp_method: str
+    y_extrap_method: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SurfacePointMeta:
+    """One addressable point on a surface."""
+
+    rf_id: int
+    surface_id: int
+    surface_name: str
+    x_tenor_token: str
+    y_label: str
