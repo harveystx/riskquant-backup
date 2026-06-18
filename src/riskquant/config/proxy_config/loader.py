@@ -20,9 +20,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+# "active" column is not a hard requirement.
 _REQUIRED_COLS: frozenset[str] = frozenset(
     {
-        "active",
         "proxying_level",
         "required_name",
         "proxy_name",
@@ -88,8 +88,11 @@ def load_proxy_config_xlsx_into_df(
         )
 
     # --- active filter ---
-    mask = df["active"].fillna(False).astype(bool)
-    df = df.loc[mask, list(_POST_FILTER_COLS)].reset_index(drop=True)
+    if "active" in df.columns:
+        mask = df["active"].fillna(False).astype(bool)
+        df = df.loc[mask, list(_POST_FILTER_COLS)].reset_index(drop=True)
+    else:
+        df = df[list(_POST_FILTER_COLS)].reset_index(drop=True)
 
     # --- type coercions ---
     # String columns: strip whitespace, leave nulls as nulls (validator
@@ -104,6 +107,8 @@ def load_proxy_config_xlsx_into_df(
 
 
 if __name__ == "__main__":
+    import pathlib  # Add this at the top of your file
+
     from riskquant.utils.printer import (
         print_calling_file,
         print_success_message,
@@ -111,10 +116,26 @@ if __name__ == "__main__":
 
     print_calling_file()
 
-    DEV_DATA_DIR: str = "C:/Users/mharvey/Documents/code/riskquant/data/dev"
-    DEV_DATA_FILE_NAME: str = "dev_risk_base_proxy_config_v01.xlsx"
+    # 1. Get the absolute path of the directory containing THIS script
+    current_dir = pathlib.Path(__file__).parent.resolve()
 
-    df = load_proxy_config_xlsx_into_df(path=f"{DEV_DATA_DIR}/{DEV_DATA_FILE_NAME}")
+    # Project directory is 4 levels up from the current script
+    project_dir = current_dir.parent.parent.parent.parent
+    print(f"Project directory: {project_dir}")
+
+    # 2. Build the path dynamically relative to the current script.
+    # NOTE: You may need to add .parent if this script is nested deeper.
+    # For example: current_dir.parent / "data" / "dev"
+    DEV_DATA_DIR = project_dir / "data" / "dev"
+    DEV_DATA_FILE_NAME = "dev_risk_base_proxy_config_v01.xlsx"
+
+    # Combine them using the / operator (a handy feature of pathlib)
+    full_path = DEV_DATA_DIR / DEV_DATA_FILE_NAME
+    print(f"\nFull path to Excel file: {full_path}")
+
+    # Convert the Path object back to a string just in case
+    # load_proxy_config_xlsx_into_df strictly requires a string
+    df = load_proxy_config_xlsx_into_df(path=str(full_path))
 
     print(f"\nLoaded proxy config DataFrame (shape: {df.shape}):")
     print(df.to_string(index=False))

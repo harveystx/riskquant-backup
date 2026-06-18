@@ -10,11 +10,11 @@ from riskquant.constants import (
     NO_FX_RF_REQUIRED,
 )
 from riskquant.market_data.state import MarketDataMatrix
-from riskquant.portfolio.blocks.spot_block import SpotBlock
-from riskquant.portfolio.blocks.vanilla_forward_block import (
+from riskquant.portfolio.compiled import CompiledPortfolio
+from riskquant.valuation.blocks.spot_block import SpotBlock
+from riskquant.valuation.blocks.vanilla_forward_block import (
     VanillaForwardNodeBlock,
 )
-from riskquant.portfolio.compiled import CompiledPortfolio
 from riskquant.valuation.engine import run_valuation
 
 # =========================================================================
@@ -48,7 +48,7 @@ def _make_spot_block(n: int, price_offset: int = 0) -> SpotBlock:
     return SpotBlock(
         trade_uids=np.arange(n, dtype=np.int64),
         qty=np.ones(n, dtype=np.float64),
-        price_uix=np.arange(price_offset, price_offset + n, dtype=np.int32),
+        spot_price_uix=np.arange(price_offset, price_offset + n, dtype=np.int32),
         fx_uix=np.full(n, NO_FX_RF_REQUIRED, dtype=np.int32),
         fx_invert=np.zeros(n, dtype=np.bool_),
     )
@@ -96,7 +96,7 @@ def test_single_spot_block() -> None:
         vol_surfaces=np.empty((0, 0, 0, N_SCENARIOS), dtype=np.float64),
     )
 
-    result = run_valuation(portfolio=portfolio, market_data_mtx=md)
+    result = run_valuation(portfolio=portfolio, valuation_state=md)
 
     assert result.shape == (n, N_SCENARIOS)
     # qty=1 * price=10 => PV=10 for all
@@ -124,7 +124,7 @@ def test_single_forward_node_block() -> None:
         vol_surfaces=np.empty((0, 0, 0, N_SCENARIOS), dtype=np.float64),
     )
 
-    result = run_valuation(portfolio=portfolio, market_data_mtx=md)
+    result = run_valuation(portfolio=portfolio, valuation_state=md)
 
     assert result.shape == (n, N_SCENARIOS)
     # qty=1, fwd=100, strike=50 => PV = 1 * (100 - 50) = 50
@@ -156,7 +156,7 @@ def test_multiple_block_types_contiguous_output() -> None:
         vol_surfaces=np.empty((0, 0, 0, N_SCENARIOS), dtype=np.float64),
     )
 
-    result = run_valuation(portfolio=portfolio, market_data_mtx=md)
+    result = run_valuation(portfolio=portfolio, valuation_state=md)
 
     assert result.shape == (n_spot + n_fwd, N_SCENARIOS)
     # Spot rows: qty=1 * 25 = 25
@@ -170,7 +170,7 @@ def test_empty_portfolio() -> None:
     portfolio = CompiledPortfolio()
     md = _empty_md()
 
-    result = run_valuation(portfolio=portfolio, market_data_mtx=md)
+    result = run_valuation(portfolio=portfolio, valuation_state=md)
 
     assert result.shape == (0, N_SCENARIOS)
 
@@ -193,7 +193,7 @@ def test_unknown_block_type_raises() -> None:
     md = _empty_md()
 
     with pytest.raises(ValueError, match="No pricer mapped"):
-        run_valuation(portfolio=portfolio, market_data_mtx=md)
+        run_valuation(portfolio=portfolio, valuation_state=md)
 
     # Restore
     portfolio.__class__.iter_blocks = original_iter
@@ -221,7 +221,7 @@ def test_total_trades_matches_output_rows() -> None:
         vol_surfaces=np.empty((0, 0, 0, N_SCENARIOS), dtype=np.float64),
     )
 
-    result = run_valuation(portfolio=portfolio, market_data_mtx=md)
+    result = run_valuation(portfolio=portfolio, valuation_state=md)
 
     assert result.shape[0] == portfolio.total_trades
     assert result.shape[0] == 7

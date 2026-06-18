@@ -31,17 +31,17 @@ from dataclasses import dataclass, field
 import numba as nb  # type: ignore[import-untyped]
 import numpy as np
 
-from riskquant._njit import parallel_njit
+from riskquant.numba import parallel_njit
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.market_data.risk_factors.shift_types import (
     SHIFT_DIFFERENCE_ID,
     SHIFT_LOG_RETURN_ID,
     SHIFT_SIMPLE_RETURN_ID,
 )
+from riskquant.simlab.builder.shock_universe import build_shock_universe
 from riskquant.simlab.scenarios.base import (
     ScenarioGenerator,
     ScenarioSetBatch,
-    resolve_shock_universe,
 )
 from riskquant.simlab.scenarios.core_math.sbb_block_generator import (
     generate_sbb_path_indices,
@@ -157,7 +157,7 @@ class StationaryBlockBootstrapGenerator(ScenarioGenerator):
         t_max = self.matrix.values.shape[0]
         h = int(self.horizon)
 
-        shock_universe = resolve_shock_universe(
+        shock_universe = build_shock_universe(
             required_shift_type_id=required_shift_type_id,
             source_factor_ids=source_factor_ids,
             available_factor_ids=self.matrix.factor_ids,

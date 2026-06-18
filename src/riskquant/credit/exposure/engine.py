@@ -1,8 +1,8 @@
 # src/riskquant/credit/exposure/engine.py
 """
-Exposure engine: model-id -> evaluator dispatch and the EAD resolution loop.
+Exposure engine: model-id -> evaluator dispatch and the simulated exposure resolution loop.
 
-`EAD_EVALUATORS` is the EAD-layer analogue of `valuation.engine.BLOCK_EVALUATORS`:
+`EXPOSURE_EVALUATORS` is the exposure-layer analogue of `valuation.engine.BLOCK_EVALUATORS`:
 a frozen tuple indexed by `ExposureModel` id. `run_exposure` reads each view's
 `EXPOSURE_MODEL_ID` class constant, indexes the table, and dispatches — no
 `type()`, no isinstance ladder. Adding SA-CCR is: one enum member, one view,
@@ -26,15 +26,15 @@ from riskquant.credit.exposure.models import (
     REPLACEMENT_COST_ID,
     ExposureModel,
 )
-from riskquant.credit.exposure.results import EadResult
+from riskquant.credit.exposure.results import NettingSetExposurePaths
 from riskquant.credit.exposure.views.base import _NettingSetView
 
 V_contra = TypeVar("V_contra", bound=_NettingSetView, contravariant=True)
 
 
 @runtime_checkable
-class EadEvaluator(Protocol[V_contra]):
-    """Structural contract for all EAD-model evaluators."""
+class ExposureEvaluator(Protocol[V_contra]):
+    """Structural contract for all exposure-model evaluators."""
 
     def __call__(
         self,
@@ -45,26 +45,28 @@ class EadEvaluator(Protocol[V_contra]):
     ) -> None: ...
 
 
-_EAD_EVALUATORS_MUT: list[EadEvaluator[Any] | None] = [None] * NUM_EXPOSURE_MODELS
+_EXPOSURE_EVALUATORS_MUT: list[ExposureEvaluator[Any] | None] = [
+    None
+] * NUM_EXPOSURE_MODELS
 
 
-def _register(model_id: int, evaluator: EadEvaluator[Any]) -> None:
-    if not isinstance(evaluator, EadEvaluator):
+def _register(model_id: int, evaluator: ExposureEvaluator[Any]) -> None:
+    if not isinstance(evaluator, ExposureEvaluator):
         raise TypeError(
             f"Evaluator for model_id={model_id} does not satisfy the "
-            f"EadEvaluator protocol: {evaluator!r}"
+            f"ExposureEvaluator protocol: {evaluator!r}"
         )
-    _EAD_EVALUATORS_MUT[model_id] = evaluator
+    _EXPOSURE_EVALUATORS_MUT[model_id] = evaluator
 
 
 _register(REPLACEMENT_COST_ID, evaluate_replacement_cost)
 
-EAD_EVALUATORS: Final[tuple[EadEvaluator[Any], ...]] = cast(
-    tuple[EadEvaluator[Any], ...], tuple(_EAD_EVALUATORS_MUT)
+EXPOSURE_EVALUATORS: Final[tuple[ExposureEvaluator[Any], ...]] = cast(
+    tuple[ExposureEvaluator[Any], ...], tuple(_EXPOSURE_EVALUATORS_MUT)
 )
 
 _unregistered = [
-    ExposureModel(i).name for i, ev in enumerate(EAD_EVALUATORS) if ev is None
+    ExposureModel(i).name for i, ev in enumerate(EXPOSURE_EVALUATORS) if ev is None
 ]
 if _unregistered:
     raise RuntimeError(
@@ -77,9 +79,9 @@ def run_exposure(
     *,
     exposure: CompiledExposure,
     mtm: npt.NDArray[np.float64],
-) -> EadResult:
+) -> NettingSetExposurePaths:
     """
-    Resolve EAD across all model views from a portfolio MtM matrix.
+    Resolve simulated exposure across all model views from a portfolio MtM matrix.
 
     Walks the compiled views in band order, dispatches each on its
     `EXPOSURE_MODEL_ID`, and writes into contiguous bands of one pre-allocated
@@ -88,13 +90,14 @@ def run_exposure(
     n_sets = exposure.total_netting_sets
     n_scenarios = mtm.shape[1]
 
-    ead: npt.NDArray[np.float64] = np.empty(
+    # Pre-allocated contiguous block for the evaluators to write into
+    out_exposure: npt.NDArray[np.float64] = np.empty(
         (n_sets, n_scenarios), dtype=np.float64, order="C"
     )
 
     views = exposure.views
     offsets = exposure.view_offsets
-    evaluators_table = EAD_EVALUATORS
+    evaluators_table = EXPOSURE_EVALUATORS
 
     for i in range(exposure.total_views):
         view = views[i]
@@ -102,6 +105,6 @@ def run_exposure(
         end = start + view.num_netting_sets
 
         evaluator = evaluators_table[view.EXPOSURE_MODEL_ID]
-        evaluator(view=view, mtm=mtm, out=ead[start:end, :])
+        evaluator(view=view, mtm=mtm, out=out_exposure[start:end, :])
 
-    return EadResult(uid=exposure.netting_set_uids, ead=ead)
+    return NettingSetExposurePaths(uid=exposure.netting_set_uids, exposure=out_exposure)

@@ -39,8 +39,8 @@ import pytest
 
 from riskquant.credit.exposure.compile import compile_exposure
 from riskquant.credit.exposure.engine import run_exposure
-from riskquant.credit.exposure.results import EadResult
-from riskquant.ingest_fixtures.credit_exposure.minimal_spot_with_netting_sets import (
+from riskquant.credit.exposure.results import NettingSetExposurePaths
+from riskquant.ingest_fixtures.credit.credit_exposure.minimal_spot_with_netting_sets import (
     CANONICAL_REPLACEMENT_COST_COLLATERAL,
     CANONICAL_REPLACEMENT_COST_INGEST_DATA,
 )
@@ -89,7 +89,7 @@ def _expected_ead_by_set() -> tuple[list[int], dict[int, np.ndarray]]:
 def _run_pipeline(
     raw_df: pd.DataFrame,
     collateral: dict[int, float],
-) -> EadResult:
+) -> NettingSetExposurePaths:
     """Full ingest -> portfolio -> exposure -> EAD pipeline for one raw frame."""
     batch = compile_raw_df_into_ingest_batch(
         raw_df=raw_df,
@@ -128,7 +128,7 @@ def _run_pipeline(
 
 
 @pytest.fixture
-def rc_result() -> EadResult:
+def rc_result() -> NettingSetExposurePaths:
     """EAD result from the canonical RC frame in its natural row order."""
     return _run_pipeline(
         pd.DataFrame(CANONICAL_REPLACEMENT_COST_INGEST_DATA),
@@ -141,7 +141,7 @@ def rc_result() -> EadResult:
 # ============================================================
 
 
-def test_end_to_end_replacement_cost_ead(rc_result: EadResult) -> None:
+def test_end_to_end_replacement_cost_ead(rc_result: NettingSetExposurePaths) -> None:
     """Canonical RC data resolves to the closed-form EAD through the full edge."""
     sets, expected = _expected_ead_by_set()
 
@@ -149,12 +149,12 @@ def test_end_to_end_replacement_cost_ead(rc_result: EadResult) -> None:
     # three netting sets survive, in ascending-uid band order.
     np.testing.assert_array_equal(rc_result.uid, np.array(sets, dtype=np.int64))
     assert rc_result.uid.dtype == np.int64
-    assert rc_result.ead.shape == (len(sets), _PRICES.shape[0])
-    assert rc_result.ead.dtype == np.float64
+    assert rc_result.exposure.shape == (len(sets), _PRICES.shape[0])
+    assert rc_result.exposure.dtype == np.float64
 
     for i, ns in enumerate(sets):
         np.testing.assert_allclose(
-            rc_result.ead[i],
+            rc_result.exposure[i],
             expected[ns],
             rtol=0.0,
             atol=1e-9,
@@ -163,13 +163,15 @@ def test_end_to_end_replacement_cost_ead(rc_result: EadResult) -> None:
 
     # Explicit scenario-0 (price 100.0) anchors — the RC floor and collateral
     # offset spelled out, decoupled from the reference helper above.
-    ead_by_set = dict(zip(rc_result.uid.tolist(), rc_result.ead, strict=True))
+    ead_by_set = dict(zip(rc_result.uid.tolist(), rc_result.exposure, strict=True))
     assert ead_by_set[101][0] == pytest.approx(950.0)  # 12*100 - 250 collateral
     assert ead_by_set[102][0] == pytest.approx(0.0)  # nets short -> floored
     assert ead_by_set[103][0] == pytest.approx(0.0)  # over-collateralized
 
 
-def test_scrambled_raw_rows_yield_identical_ead(rc_result: EadResult) -> None:
+def test_scrambled_raw_rows_yield_identical_ead(
+    rc_result: NettingSetExposurePaths,
+) -> None:
     """
     A permuted raw frame produces byte-identical EADs.
 
@@ -188,8 +190,8 @@ def test_scrambled_raw_rows_yield_identical_ead(rc_result: EadResult) -> None:
 
     np.testing.assert_array_equal(scrambled_result.uid, rc_result.uid)
     np.testing.assert_allclose(
-        scrambled_result.ead,
-        rc_result.ead,
+        scrambled_result.exposure,
+        rc_result.exposure,
         rtol=0.0,
         atol=1e-9,
     )

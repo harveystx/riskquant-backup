@@ -10,7 +10,7 @@ from riskquant.utils.printer import print_calling_file, print_success_message
 # ============================================================
 # IMPORT PRODUCTION KERNEL
 # ============================================================
-from riskquant.valuation.kernels.spot import _kernel_price_spot
+from riskquant.valuation.pricer_kernels.spot import _kernel_price_spot
 
 # ============================================================
 # BENCHMARK RUNNER

@@ -37,11 +37,15 @@ from riskquant.config.enums.discount_basis import (
     VALID_DISCOUNT_BASES,
     DiscountBasis,
 )
+from riskquant.config.enums.quote_types import (
+    VALID_QUOTE_TYPES,
+    VALID_UNIT_SCALES,
+    QuoteType,
+)
 from riskquant.config.enums.roll_methods import (
     ALLOWED_X_AXIS_KIND_ROLL_METHOD_PAIRS,
     VALID_ROLL_METHODS,
 )
-from riskquant.config.enums.unit_types import VALID_UNIT_SCALES, VALID_UNIT_TYPES
 from riskquant.config.enums.x_axis_kinds import (
     VALID_X_AXIS_KINDS,
     X_AXIS_KINDS_REQUIRING_ROLL,
@@ -248,7 +252,12 @@ def _validate_enums(dict_of_dfs: dict[str, pd.DataFrame]) -> None:
         nullable=False,
     )
     _check_enum_col(
-        node_df, "unit_type", VALID_UNIT_TYPES, "node_meta", "UnitType", nullable=False
+        node_df,
+        "quote_type",
+        VALID_QUOTE_TYPES,
+        "node_meta",
+        "UnitType",
+        nullable=False,
     )
     _check_enum_col(
         node_df,
@@ -282,8 +291,8 @@ def _validate_enums(dict_of_dfs: dict[str, pd.DataFrame]) -> None:
     )
     _check_enum_col(
         curve_df,
-        "unit_type",
-        VALID_UNIT_TYPES,
+        "quote_type",
+        VALID_QUOTE_TYPES,
         "curve_meta",
         "UnitType",
         nullable=False,
@@ -352,8 +361,8 @@ def _validate_enums(dict_of_dfs: dict[str, pd.DataFrame]) -> None:
     )
     _check_enum_col(
         surf_df,
-        "unit_type",
-        VALID_UNIT_TYPES,
+        "quote_type",
+        VALID_QUOTE_TYPES,
         "surface_meta",
         "UnitType",
         nullable=False,
@@ -609,7 +618,10 @@ def _validate_asset_class_subclass_consistency(
     def _expected_class(subclass_val: str) -> str | None:
         try:
             return ASSET_SUBCLASS_TO_CLASS[AssetSubclass(subclass_val)].value
-        except ConfigurationError:
+        except (ValueError, KeyError):
+            # AssetSubclass(...) raises ValueError on an unknown value;
+            # the dict lookup raises KeyError if a member is unmapped.
+            # (Unreachable once _validate_enums has run, but kept honest.)
             return None
 
     for sheet in ("node_meta", "curve_meta", "surface_meta"):
@@ -633,49 +645,89 @@ def _validate_asset_class_subclass_consistency(
 
 def _validate_fx_node_invariants(dict_of_dfs: dict[str, pd.DataFrame]) -> None:
     """
-    FX node contract:
-      asset_class == "FX"  <=>  fx_base_ccy is non-null
-      For FX nodes: node_name == fx_base_ccy + quote_ccy.
+    FX rate node contract:
+
+    1. unit_type == FX_RATE  =>  fx_base_ccy must be populated.
+    2. unit_type != FX_RATE  =>  fx_base_ccy must be null.
+    3. FX_RATE node_name must equal fx_base_ccy + quote_ccy.
+    4. FX_RATE pairs (base, quote) must be unique.
     """
     df = dict_of_dfs["node_meta"]
-    is_fx = df["asset_class"] == AssetClass.FX.value
-    has_base = df["fx_base_ccy"].notna()
 
-    inconsistent = is_fx != has_base
-    if inconsistent.any():
+    is_fx_rate = df["quote_type"] == QuoteType.FX_RATE.value
+
+    missing_base = is_fx_rate & df["fx_base_ccy"].isna()
+    if missing_base.any():
         offending = df.loc[
-            inconsistent,
-            ["node_name", "asset_class", "fx_base_ccy", "quote_ccy"],
+            missing_base,
+            [
+                "node_name",
+                "quote_type",
+                "fx_base_ccy",
+                "quote_ccy",
+            ],
         ]
         raise ConfigurationError(
-            "Domain violation: asset_class=='FX' iff fx_base_ccy is non-null.\n"
+            "Domain violation: FX_RATE nodes must specify fx_base_ccy.\n"
             f"{offending.to_string(index=False)}"
         )
 
-    fx_rows = df.loc[is_fx]
-    if fx_rows.empty:
+    unexpected_base = ~is_fx_rate & df["fx_base_ccy"].notna()
+    if unexpected_base.any():
+        offending = df.loc[
+            unexpected_base,
+            [
+                "node_name",
+                "asset_class",
+                "quote_type",
+                "fx_base_ccy",
+            ],
+        ]
+        raise ConfigurationError(
+            "Domain violation: only FX_RATE nodes may specify fx_base_ccy.\n"
+            f"{offending.to_string(index=False)}"
+        )
+
+    fx_rate_rows = df.loc[is_fx_rate]
+
+    if fx_rate_rows.empty:
         return
-    expected_names = fx_rows["fx_base_ccy"].astype(str) + fx_rows["quote_ccy"].astype(
-        str
-    )
-    name_mismatch = fx_rows["node_name"] != expected_names
+
+    expected_names = fx_rate_rows["fx_base_ccy"].astype(str) + fx_rate_rows[
+        "quote_ccy"
+    ].astype(str)
+
+    name_mismatch = fx_rate_rows["node_name"] != expected_names
+
     if name_mismatch.any():
-        offending = fx_rows.loc[
-            name_mismatch, ["node_name", "fx_base_ccy", "quote_ccy"]
+        offending = fx_rate_rows.loc[
+            name_mismatch,
+            ["node_name", "fx_base_ccy", "quote_ccy"],
         ]
+
         raise ConfigurationError(
-            "Domain violation: FX node_name must equal fx_base_ccy + quote_ccy.\n"
+            "Domain violation: FX_RATE node_name must equal "
+            "fx_base_ccy + quote_ccy.\n"
             f"{offending.to_string(index=False)}"
         )
 
-    # FX pairs are unique: (base, quote) appears at most once.
-    composite = list(zip(fx_rows["fx_base_ccy"], fx_rows["quote_ccy"], strict=True))
-    if len(set(composite)) != len(composite):
-        from collections import Counter
+    from collections import Counter
 
-        dupes = [k for k, c in Counter(composite).items() if c > 1]
+    pairs = list(
+        zip(
+            fx_rate_rows["fx_base_ccy"],
+            fx_rate_rows["quote_ccy"],
+            strict=True,
+        )
+    )
+
+    duplicate_pairs = [pair for pair, count in Counter(pairs).items() if count > 1]
+
+    if duplicate_pairs:
         raise ConfigurationError(
-            f"FX pair duplication: (base, quote) pairs appear more than once: {dupes}"
+            "FX pair duplication: "
+            f"(base, quote) pairs appear more than once: "
+            f"{duplicate_pairs}"
         )
 
 
@@ -741,13 +793,6 @@ def _validate_axis_roll_pairs(dict_of_dfs: dict[str, pd.DataFrame]) -> None:
         offset_rows = df.loc[needs_roll].copy()
         if offset_rows.empty:
             continue
-        # method = offset_rows["spot_roll_rule_name"].astype(str).map(rule_to_method)
-        # pair_strs = list(
-        #     zip(offset_rows["x_axis_kind"].astype(str), method, strict=True)
-        # )
-        # bad_mask = np.array(
-        #     [p not in allowed_pair_names for p in pair_strs], dtype=bool
-        # )
         method = offset_rows["spot_roll_rule_name"].astype(str).map(rule_to_method)
         # Vectorized pair check: encode each (x_kind, roll_method) tuple as a
         # single "X|M" string and isin() against the precomputed allowed set.
@@ -976,7 +1021,7 @@ def _validate_no_blanks(dict_of_dfs: dict[str, pd.DataFrame]) -> None:
             "quote_ccy": False,
             "asset_class": False,
             "asset_subclass": False,
-            "unit_type": False,
+            "quote_type": False,
             "unit_scale": False,
             "shift_type": False,
             "fx_base_ccy": True,
@@ -986,7 +1031,7 @@ def _validate_no_blanks(dict_of_dfs: dict[str, pd.DataFrame]) -> None:
             "quote_ccy": False,
             "asset_class": False,
             "asset_subclass": False,
-            "unit_type": False,
+            "quote_type": False,
             "unit_scale": False,
             "shift_type": False,
             "x_axis_kind": False,
@@ -1001,7 +1046,7 @@ def _validate_no_blanks(dict_of_dfs: dict[str, pd.DataFrame]) -> None:
             "quote_ccy": False,
             "asset_class": False,
             "asset_subclass": False,
-            "unit_type": False,
+            "quote_type": False,
             "unit_scale": False,
             "shift_type": False,
             "x_axis_kind": False,
@@ -1059,7 +1104,7 @@ def validate_static_config_dfs(dict_of_dfs: dict[str, pd.DataFrame]) -> None:
                 "quote_ccy",
                 "asset_class",
                 "asset_subclass",
-                "unit_type",
+                "quote_type",
                 "unit_scale",
                 "shift_type",
                 "fx_base_ccy",
@@ -1072,7 +1117,7 @@ def validate_static_config_dfs(dict_of_dfs: dict[str, pd.DataFrame]) -> None:
                 "quote_ccy",
                 "asset_class",
                 "asset_subclass",
-                "unit_type",
+                "quote_type",
                 "unit_scale",
                 "shift_type",
                 "x_axis_kind",
@@ -1091,7 +1136,7 @@ def validate_static_config_dfs(dict_of_dfs: dict[str, pd.DataFrame]) -> None:
                 "quote_ccy",
                 "asset_class",
                 "asset_subclass",
-                "unit_type",
+                "quote_type",
                 "unit_scale",
                 "shift_type",
                 "x_axis_kind",

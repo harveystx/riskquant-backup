@@ -1,3 +1,4 @@
+# src/riskquant/credit/jtd/blocks/base.py
 from __future__ import annotations
 
 from dataclasses import dataclass, fields
@@ -26,7 +27,8 @@ class _JtdBlock:
     # ===== Class construction guard =====
 
     def __init_subclass__(cls, **kwargs: object) -> None:
-        super().__init_subclass__(**kwargs)
+        # Explicit super() bypasses the @dataclass(slots=True) closure cell bug
+        super(_JtdBlock, cls).__init_subclass__(**kwargs)
 
         # Only consider attributes defined *on this class*
         is_abstract = cls.__dict__.get("_ABSTRACT", False) or cls.__name__.startswith(

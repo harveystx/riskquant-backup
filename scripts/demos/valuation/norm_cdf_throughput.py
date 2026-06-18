@@ -6,7 +6,7 @@ import time
 
 import numba as nb
 
-from riskquant.valuation.kernels._math import (
+from riskquant.valuation.pricer_kernels._deprecated._math_v1 import (
     numba_norm_cdf,
     numba_norm_cdf_abrom_steg,
 )

@@ -30,7 +30,10 @@ CANONICAL_SURFACE_NAMES = [
 _NUM_CANONICAL_SURFACES = len(CANONICAL_SURFACE_NAMES)
 
 _CANONICAL_SURFACE_IDS = np.arange(
-    200_000_000, 200_000_000 + _NUM_CANONICAL_SURFACES, dtype=int
+    500_000_000,
+    500_000_000 + _NUM_CANONICAL_SURFACES * 1000,
+    step=1000,
+    dtype=int,
 )
 
 
@@ -53,7 +56,7 @@ def _get_data() -> RiskStaticConfigSurfaceMeta:
             "FX_G10",
             "EQ_SINGLE_NAME",
         ],
-        "unit_type": [
+        "quote_type": [
             "VOL",
             "VOL",
             "VOL",

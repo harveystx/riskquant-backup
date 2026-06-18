@@ -21,7 +21,7 @@ Pipeline per batch
 
 Implementation
 --------------
-- `resolve_shock_universe` replaces the previous dict-loop path; gathers
+- `build_shock_universe` replaces the previous dict-loop path; gathers
   Cholesky columns / vols / GMM multipliers via vectorised `searchsorted`.
 - `work`, `correlated`, and `shocks_buf` are pre-allocated once at
   `batch_size`; the streaming loop only re-slices.
@@ -36,10 +36,10 @@ from typing import Literal
 
 import numpy as np
 
+from riskquant.simlab.builder.shock_universe import build_shock_universe
 from riskquant.simlab.scenarios.base import (
     ScenarioGenerator,
     ScenarioSetBatch,
-    resolve_shock_universe,
 )
 
 DistributionKind = Literal[
@@ -315,7 +315,7 @@ class ParametricGenerator(ScenarioGenerator):
         if batch_size <= 0:
             raise ValueError("batch_size must be positive")
 
-        shock_universe = resolve_shock_universe(
+        shock_universe = build_shock_universe(
             required_shift_type_id=required_shift_type_id,
             source_factor_ids=source_factor_ids,
             available_factor_ids=self.available_factor_ids,

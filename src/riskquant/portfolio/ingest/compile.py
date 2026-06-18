@@ -39,7 +39,7 @@ from riskquant.constants import (
     PUT_OPTION_MULT,
 )
 from riskquant.exceptions import PrettyKeyError
-from riskquant.market_data.surfaces.y_axes_types import SurfaceYAxisType
+from riskquant.market_data.surfaces.y_axes_types import surface_y_axis_kind_for_kernel
 from riskquant.portfolio.ingest.fx_resolver import resolve_fx_rf_ids_inplace
 from riskquant.portfolio.ingest.parser import (
     parse_optional_date_series_to_ord32,
@@ -298,7 +298,8 @@ def _resolve_underlying(
     if is_container.any():
         cont_int32 = container_hits[is_container].to_numpy(dtype=np.int32, copy=False)
         underlying_ids[is_container] = cont_int32
-        ccy_ids[is_container] = static_config.container_id_to_ccy_id[cont_int32]
+        cont_slots = static_config.container_slots(cont_int32)
+        ccy_ids[is_container] = static_config.container_ccy_id[cont_slots]
 
     return underlying_ids, ccy_ids
 
@@ -336,45 +337,66 @@ def _resolve_volatility_ids(
     static_config: RiskStaticConfig,
 ) -> npt.NDArray[np.int32]:
     """
-    Resolve the `volatility_container_name` column to int32 container ids.
+    Resolve the `volatility_container_name` column to int32 semantic ids.
 
-    Blank rows (non-option trades that leave the column None) collapse to
-    `NO_ID`. Populated-but-unmapped names are a hard error — the helper
-    detects them explicitly because the pre-existing `resolve_optional_ids`
-    silently turns NaN into garbage int32 on the typo path.
+    A volatility name addresses ONE of two universes, exactly like
+    `underlying`:
+      - a vol-NODE rf-id (e.g. ``AAPL_ATM_VOL``), read by the option-NODE
+        kernel as ``vol_nodes[v_uix]`` — lives in ``rel_name_to_rf_id``;
+      - a vol-SURFACE container id (e.g. ``AAPL_VOL_SURF``), interpolated
+        by the option-CURVE kernel — lives in ``container_name_to_id``.
 
-    The returned array flows into `IngestBatch.volatility_ids` and from
-    there into `market_id_universe` (see `validate_ingest_batches_against_
-    uix_universe`), which the option block compilers then `searchsorted`
-    into per-block `vol_uix` / `vol_surface_uix` slots.
+    Resolving against only ``container_name_to_id`` (the prior behaviour)
+    made every node-typed ATM vol structurally unresolvable and hard-failed
+    the ingest. We mirror `_resolve_underlying`: map BOTH universes, scatter
+    into one collapsed id array, guard the namespace collision, and let
+    blank rows (non-option trades) collapse to ``NO_ID``.
+
+    Downstream is already node-aware: the resolved id flows into
+    ``IngestBatch.volatility_ids`` -> ``market_id_universe`` (node-ids and
+    container-ids coexist in that sorted-unique space), and
+    ``_resolve_vol_surface_y_axis_type_ids`` returns
+    ``NOT_IMPLEMENTED_SENTINEL`` for any id that is not a surface (the
+    option-NODE kernel never reads y-axis type). So this is the only site
+    that needed the dual lookup.
     """
-    container_name_to_container_id = static_config.container_name_to_id
-
-    # Reuse the standard optional-id path for the dense vectorized hash
-    # join. The result is correct on blank and on successfully-mapped
-    # rows; the only failure mode it silently swallows is populated-but-
-    # unmapped (a typo) — which we detect explicitly below.
-    out = resolve_optional_ids(
-        names,
-        container_name_to_container_id,
-        sentinel=NO_ID,
-        ctx="volatility_container_name",
-    )
-
-    # Explicit typo detection. `_BLANK` is "" (per canonicalize.py NA -> "").
+    n = names.shape[0]
     blank_mask = names == ""
-    mapped = pd.Series(names).map(container_name_to_container_id)
-    unmapped = mapped.isna().to_numpy(copy=False) & ~blank_mask
-    if unmapped.any():
-        bad = sorted({str(v) for v in names[unmapped]})[:10]
+
+    ser = pd.Series(names)
+    rf_hits = ser.map(static_config.rel_name_to_rf_id)
+    container_hits = ser.map(static_config.container_name_to_id)
+
+    is_rf = rf_hits.notna().to_numpy(copy=False)
+    is_container = container_hits.notna().to_numpy(copy=False)
+
+    both = is_rf & is_container
+    if both.any():
+        bad = sorted({str(v) for v in names[both]})[:10]
         raise PrettyKeyError(
-            f"volatility_container_name: {int(unmapped.sum())} name(s) could "
-            f"not be resolved to a container id.\n"
-            f"Offending names (up to 10): {bad}\n"
-            f"Allowed names are surface / vol-node container names from "
-            f"`static_config.container_name_to_id`."
+            "volatility_container_name resolves to BOTH a risk factor AND a "
+            "container — the static config has a namespace collision. "
+            f"Offending: {bad}"
         )
 
+    # Populated rows that hit neither universe are typos / stale universe.
+    unresolved = ~(is_rf | is_container) & ~blank_mask
+    if unresolved.any():
+        bad = sorted({str(v) for v in names[unresolved]})[:10]
+        raise PrettyKeyError(
+            f"volatility_container_name: {int(unresolved.sum())} name(s) could "
+            f"not be resolved to a risk-factor universe index "
+            f"(checked node and container universes).\nUnresolved names:\n{bad}"
+        )
+
+    out = np.empty(n, dtype=np.int32)
+    out.fill(np.int32(NO_ID))
+    if is_rf.any():
+        out[is_rf] = rf_hits[is_rf].to_numpy(dtype=np.int32, copy=False)
+    if is_container.any():
+        out[is_container] = container_hits[is_container].to_numpy(
+            dtype=np.int32, copy=False
+        )
     return out
 
 
@@ -386,29 +408,39 @@ def _resolve_vol_surface_y_axis_type_ids(
     Map each non-sentinel `volatility_id` to its surface y-axis-type id (int8).
 
     The kernel's per-trade y-axis dispatch (STRIKE / LOG_STRIKE / MONEYNESS
-    / LOG_MONEYNESS / DELTA_CALL) reads from this column. Resolving here
-    keeps the option-curve block compiler a pure slicer — no static-config
-    coupling past the ingest edge.
+    / LOG_MONEYNESS) reads from this column. Resolving here keeps the
+    option-curve block compiler a pure slicer — no static-config coupling
+    past the ingest edge.
+
+    Post-calibration values
+    -----------------------
+    DELTA-quoted surfaces are calibrated to MONEYNESS_FWD at builder
+    time (see `market_data.calibrate.delta_to_moneyness`). The helper
+    `surface_y_axis_kind_for_kernel` translates the static-config kind
+    string to the post-calibration int8 id, keeping the per-trade view
+    here in lockstep with the per-surface view consumed by the runtime
+    builder.
 
     Sentinel rows (`vol_id == NO_ID`) and rows whose `vol_id` is NOT a
-    surface (e.g. a vol-node container, when that universe lands) collapse
-    to `NOT_IMPLEMENTED_SENTINEL`. The option-curve pricer's pre-flight
-    check refuses the sentinel — that's the contract.
+    surface (e.g. an ATM-vol NODE container) collapse to
+    `NOT_IMPLEMENTED_SENTINEL`. The option-curve pricer's pre-flight
+    check refuses the sentinel — that's the contract; option-NODE rows
+    never reach that pricer.
 
     Performance
     -----------
     O(n) Python loop. Vol-bearing rows are a small minority of the
-    portfolio; the surface-meta dict lookup is O(1). If the option count
-    ever dominates, swap the loop for a `np.take` on a dense surface-id
-    -> y-axis-type lookup table built once from `surface_meta_dict`.
+    portfolio; the surface-meta dict lookup is O(1) and cached per
+    container id.
     """
     n = volatility_ids.shape[0]
     out = np.empty(n, dtype=np.int8)
     out.fill(NOT_IMPLEMENTED_SENTINEL)
 
     surface_meta_dict = static_config.surface_meta_dict
-    # Build a small cache so identical surface ids (the common case)
-    # only hit the IntEnum lookup once.
+    # Per-container cache: identical surface ids (the common case) only
+    # hit the helper lookup once. Cached `NOT_IMPLEMENTED_SENTINEL`
+    # records non-surface containers so we don't re-probe `.get`.
     sid_to_y_axis_id: dict[int, np.int8] = {}
 
     for i in range(n):
@@ -423,18 +455,14 @@ def _resolve_vol_surface_y_axis_type_ids(
 
         sm = surface_meta_dict.get(vid)
         if sm is None:
-            # Resolved container is not a surface (e.g. future vol-node
-            # container). Leave as NOT_IMPLEMENTED_SENTINEL; the option-
-            # curve pricer's pre-flight check refuses it. Cache None
-            # via the sentinel so we don't re-lookup on repeats.
+            # Resolved container is not a surface — e.g. an ATM-vol node
+            # container consumed by the option-NODE kernel, which does
+            # not read y-axis-type at all.
             sid_to_y_axis_id[vid] = np.int8(NOT_IMPLEMENTED_SENTINEL)
             continue
 
-        # `SurfaceYAxisType` is the runtime enum the option-curve kernel
-        # branches on (STRIKE=1, ..., DELTA_CALL=7). Use this not
-        # `YAxisKind` which has a different ordering (STRIKE=0, ...).
         try:
-            y_id = np.int8(SurfaceYAxisType[sm.y_axis_kind].value)
+            y_id = surface_y_axis_kind_for_kernel(sm.y_axis_kind)
         except KeyError as exc:
             raise PrettyKeyError(
                 f"surface_meta_dict[{vid}].y_axis_kind={sm.y_axis_kind!r} "

@@ -88,18 +88,31 @@ class RiskFactorMatrix:
                 raise ValueError("dates must be unique")
 
         # ---- factor_ids sorted + unique ----
-        if n_factors > 1 and np.any(self.factor_ids[1:] < self.factor_ids[:-1]):
-            perm = np.argsort(self.factor_ids, kind="mergesort")
-            sorted_ids = self.factor_ids[perm]
+        # Mirror the dates check above: always run the adjacent-equality
+        # check, then sort only if needed. The previous form only entered
+        # the duplicate guard on the unsorted path, so an already-sorted
+        # input like [1, 2, 2, 3] would bypass uniqueness entirely.
+        if n_factors > 1:
+            is_unsorted = bool(np.any(self.factor_ids[1:] < self.factor_ids[:-1]))
+
+            if is_unsorted:
+                perm = np.argsort(self.factor_ids, kind="mergesort")
+                sorted_ids = self.factor_ids[perm]
+            else:
+                perm = None
+                sorted_ids = self.factor_ids
+
             if np.any(sorted_ids[1:] == sorted_ids[:-1]):
                 raise ValueError("factor_ids must be unique")
-            sorted_vals = (
-                np.asfortranarray(self.values[:, perm])
-                if self.fortran_order
-                else np.ascontiguousarray(self.values[:, perm])
-            )
-            object.__setattr__(self, "factor_ids", sorted_ids)
-            object.__setattr__(self, "values", sorted_vals)
+
+            if perm is not None:
+                sorted_vals = (
+                    np.asfortranarray(self.values[:, perm])
+                    if self.fortran_order
+                    else np.ascontiguousarray(self.values[:, perm])
+                )
+                object.__setattr__(self, "factor_ids", sorted_ids)
+                object.__setattr__(self, "values", sorted_vals)
 
     # ---------------------------- Convenience Methods ----------------------------
     def to_df(self) -> pd.DataFrame:

@@ -2,80 +2,9 @@ Directory Structure for: riskquant
 ==================================
 
 riskquant/
-├── _contexts/                                     
-│   ├── context_all.txt                            
-│   ├── context_ce_jtd.txt                         
-│   ├── context_config.txt                         
-│   ├── context_config_proxy.txt                   
-│   ├── context_config_static.txt                  
-│   ├── context_credit.txt                         
-│   ├── context_credit_reduced.txt                 
-│   ├── context_ingest.txt                         
-│   ├── context_ingest_fixtures.txt                
-│   ├── context_ingest_fixtures_market_data.txt    
-│   ├── context_ingest_fixtures_risk_static_config.txt   
-│   ├── context_market_data.txt                    
-│   ├── context_market_data_reduced.txt            
-│   ├── context_portfolio.txt                      
-│   ├── context_pricer_kernels.txt                 
-│   ├── context_pricers.txt                        
-│   ├── context_risk_quant.txt                     
-│   ├── context_risk_quant_adhoc.txt               
-│   ├── context_simlab.txt                         
-│   ├── context_simlab_extended.txt                
-│   ├── context_simlab_reduced.txt                 
-│   └── context_valuation.txt                      
-├── data/                                          
-│   └── dev/                                       
-│       ├── deprecated/                            
-│       │   └── 202600515_dev_risk_static_data_config_v01.xlsx   
-│       ├── dev_positions_test_v01.xlsx            
-│       ├── dev_positions_v01.xlsx                 
-│       ├── dev_risk_base_proxy_config_llm.txt     
-│       ├── dev_risk_base_proxy_config_v01.xlsx    
-│       ├── dev_risk_factor_levels_snapshot_v01.xlsx   
-│       ├── dev_risk_factor_levels_v01.xlsx        
-│       ├── dev_risk_static_data_config_llm.txt    
-│       └── dev_risk_static_data_config_v01.xlsx   
-├── notebooks/                                     
-│   ├── portfolio/                                 
-│   │   └── ingest/                                
-│   │       ├── __marimo__/                        
-│   │       │   └── session/                       
-│   │       │       └── ingest_pipeline_market_risk.py.json   
-│   │       ├── layouts/                           
-│   │       │   └── ingest_pipeline_market_risk.slides.json   
-│   │       ├── ingest_pipeline_market_risk.py     
-│   │       └── ingest_pipeline_synthetic_ce.py    
-│   ├── valuation/                                 
-│   │   └── valuation.ipynb                        
-│   ├── dev_01.ipynb                               
-│   └── dev_config_01.ipynb                        
 ├── scripts/                                       
 │   ├── demos/                                     
-│   │   ├── config/                                
-│   │   │   ├── proxy_config/                      
-│   │   │   │   └── demo_full.py                   
-│   │   │   └── static_config/                     
-│   │   │       └── demo_full.py                   
-│   │   ├── credit/                                
-│   │   │   ├── .deprecated/                       
-│   │   │   │   ├── demo_rq_credit_cross_master_validate.py   
-│   │   │   │   ├── demo_rq_credit_end_to_end.py   
-│   │   │   │   ├── demo_rq_credit_exposure_rc.py   
-│   │   │   │   ├── demo_rq_credit_factors_gaussian.py   
-│   │   │   │   ├── demo_rq_credit_factors_t.py    
-│   │   │   │   ├── demo_rq_credit_jtd_copula_gaussian.py   
-│   │   │   │   ├── demo_rq_credit_jtd_copula_t.py   
-│   │   │   │   ├── demo_rq_credit_jtd_deterministic.py   
-│   │   │   │   ├── demo_rq_credit_netting_set_master.py   
-│   │   │   │   └── demo_rq_credit_obligor_master.py   
-│   │   │   └── rc/                                
-│   │   │       └── demo_spot_rc_end_to_end.py     
-│   │   ├── market_data/                           
-│   │   │   └── risk_factors/                      
-│   │   │       └── demo_snapshot.py               
-│   │   ├── misc/                                  
+│   │   ├── _old/                                  
 │   │   │   ├── ce_jtd_risk_plots.png              
 │   │   │   ├── demo_rq.py                         
 │   │   │   ├── demo_rq_config_proxy_compile.py    
@@ -107,15 +36,68 @@ riskquant/
 │   │   │   ├── demo_rq_valuation_engine_throughput_benchmarking.py   
 │   │   │   ├── demo_rq_valuation_engine_validation.py   
 │   │   │   └── demo_rq_valuation_mdl_bs.py        
+│   │   ├── config/                                
+│   │   │   ├── proxy_config/                      
+│   │   │   │   └── demo_full.py                   
+│   │   │   └── static_config/                     
+│   │   │       └── demo_full.py                   
+│   │   ├── credit/                                
+│   │   │   ├── exposure/                          
+│   │   │   │   └── evaluators/                    
+│   │   │   │       └── kernels/                   
+│   │   │   │           └── rc_kernel_throughput.py   
+│   │   │   ├── jtd/                               
+│   │   │   │   ├── e2e/                           
+│   │   │   │   │   └── demo_e2e_full_jtd_portfolio.py   
+│   │   │   │   ├── evaluators/                    
+│   │   │   │   │   ├── demo_sf_copula_gaussian.py   
+│   │   │   │   │   └── demo_sf_copula_students_t.py   
+│   │   │   │   ├── kernels/                       
+│   │   │   │   │   └── demo_copula_throughput.py   
+│   │   │   │   └── validation/                    
+│   │   │   │       ├── demo_validate_asset_correlation.py   
+│   │   │   │       ├── demo_validate_beta_binomial_jtd_engine.py   
+│   │   │   │       ├── demo_validate_forced_default_engine.py   
+│   │   │   │       ├── demo_validate_independent_bernoulli_engine.py   
+│   │   │   │       ├── demo_validate_mf_gaussian_copula_jtd_engine.py   
+│   │   │   │       ├── demo_validate_sf_copula_jtd_engine_sf_gaussian.py   
+│   │   │   │       ├── demo_validate_sf_copula_jtd_engine_sf_students_t.py   
+│   │   │   │       └── demo_validate_stress_regime_bernoulli_engine.py   
+│   │   │   └── rc/                                
+│   │   │       └── demo_spot_rc_end_to_end.py     
+│   │   ├── e2e/                                   
+│   │   │   └── demo_e2e_canonical_base_valuation.py   
+│   │   ├── market_data/                           
+│   │   │   ├── calibrate/                         
+│   │   │   │   ├── e2e/                           
+│   │   │   │   ├── implied_vol/                   
+│   │   │   │   │   └── black76/                   
+│   │   │   │   │       ├── demo_calibrate.py      
+│   │   │   │   │       └── demo_kernel_black76_model.py   
+│   │   │   │   └── option_quotes/                 
+│   │   │   ├── curves/                            
+│   │   │   │   ├── demo_interp_methods_3d.py      
+│   │   │   │   ├── demo_interp_methods_3d_throughput.py   
+│   │   │   │   ├── demo_interp_methods_3d_visualizer.py   
+│   │   │   │   ├── demo_interp_strike_linear_flat_extrap_throughput.py   
+│   │   │   │   └── demo_interp_strike_linear_flat_extrap_visualizer.py   
+│   │   │   └── risk_factors/                      
+│   │   │       └── demo_snapshot.py               
+│   │   ├── misc/                                  
+│   │   │   └── demo_synthetic_level_generators.py   
 │   │   ├── simlab/                                
 │   │   │   ├── scenarios/                         
 │   │   │   │   └── core_math/                     
-│   │   │   │       ├── demo_ar1_benchmark.py      
 │   │   │   │       ├── demo_ar1_filter.py         
+│   │   │   │       ├── demo_ar1_filter_benchmark.py   
+│   │   │   │       ├── demo_ar1_filter_flatline.py   
+│   │   │   │       ├── demo_ar1_filter_illiquid.py   
 │   │   │   │       ├── demo_ar1_filter_rejection_visualizer.py   
+│   │   │   │       ├── demo_ar1_filter_synthetics.py   
 │   │   │   │       ├── demo_ar1_filter_visualizer.py   
-│   │   │   │       ├── demo_ar1_flatline.py       
-│   │   │   │       ├── demo_ar1_illiquid.py       
+│   │   │   │       ├── demo_ewma_volatility_edge_cases.py.py   
+│   │   │   │       ├── demo_ewma_volatility_ratios.py   
+│   │   │   │       ├── demo_ewma_volatility_throughput.py   
 │   │   │   │       ├── demo_sbb_acf.py            
 │   │   │   │       ├── demo_sbb_expected_block_size.py   
 │   │   │   │       ├── demo_sbb_fanout_visualizer.py   
@@ -136,7 +118,6 @@ riskquant/
 │   │       └── verify_pricing_kernels.py          
 │   ├── liquidity/                                 
 │   ├── misc/                                      
-│   │   └── gen_test_data_positions_01.py          
 │   ├── reporting/                                 
 │   │   ├── credit_risk/                           
 │   │   │   └── stress_tests/                      
@@ -145,306 +126,450 @@ riskquant/
 │   │       ├── stress_tests/                      
 │   │       └── value_at_risk/                     
 │   └── tests/                                     
+│       ├── credit/                                
+│       │   └── jtd/                               
+│       │       └── test_ingest_bundle_validation.py   
 │       └── run_all_unit_tests.py                  
 ├── src/                                           
-│   ├── riskquant/                                 
-│   │   ├── config/                                
-│   │   │   ├── enums/                             
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   ├── asset_classes.py               
-│   │   │   │   ├── container_topology.py          
-│   │   │   │   ├── credit_ratings.py              
-│   │   │   │   ├── discount_basis.py              
-│   │   │   │   ├── financial_conventions.py       
-│   │   │   │   ├── roll_methods.py                
-│   │   │   │   ├── unit_types.py                  
-│   │   │   │   ├── x_axis_kinds.py                
-│   │   │   │   └── y_axis_kinds.py                
-│   │   │   ├── proxy_config/                      
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   ├── audit.py                       
-│   │   │   │   ├── compile.py                     
-│   │   │   │   ├── loader.py                      
-│   │   │   │   ├── proxy_topology.py              
-│   │   │   │   ├── schema_objects.py              
-│   │   │   │   └── validate.py                    
-│   │   │   ├── static_config/                     
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   ├── audit.py                       
-│   │   │   │   ├── compile.py                     
-│   │   │   │   ├── loader.py                      
-│   │   │   │   ├── rf_resolution.py               
-│   │   │   │   ├── schema_objects.py              
-│   │   │   │   ├── static_config.py               
-│   │   │   │   └── validate.py                    
-│   │   │   ├── __init__.py                        
-│   │   │   └── namespace.py                       
-│   │   ├── credit/                                
-│   │   │   ├── cross_master/                      
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   └── validate.py                    
-│   │   │   ├── exposure/                          
-│   │   │   │   ├── evaluators/                    
-│   │   │   │   │   ├── __init__.py                
-│   │   │   │   │   └── replacement_cost.py        
-│   │   │   │   ├── views/                         
-│   │   │   │   │   ├── __init__.py                
-│   │   │   │   │   ├── base.py                    
-│   │   │   │   │   └── replacement_cost.py        
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   ├── compile.py                     
-│   │   │   │   ├── compiled.py                    
-│   │   │   │   ├── engine.py                      
-│   │   │   │   ├── models.py                      
-│   │   │   │   └── results.py                     
-│   │   │   ├── factors/                           
-│   │   │   │   ├── simulate/                      
-│   │   │   │   │   ├── __init__.py                
-│   │   │   │   │   ├── base.py                    
-│   │   │   │   │   ├── parametric_copula_gaussian.py   
-│   │   │   │   │   └── parametric_copula_t.py     
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   └── state.py                       
-│   │   │   ├── jtd/                               
-│   │   │   │   ├── blocks/                        
-│   │   │   │   │   ├── __init__.py                
-│   │   │   │   │   ├── base.py                    
-│   │   │   │   │   ├── copula.py                  
-│   │   │   │   │   └── deterministic.py           
-│   │   │   │   ├── evaluators/                    
-│   │   │   │   │   ├── __init__.py                
-│   │   │   │   │   ├── base.py                    
-│   │   │   │   │   ├── copula.py                  
-│   │   │   │   │   └── deterministic.py           
-│   │   │   │   ├── kernels/                       
-│   │   │   │   │   ├── __init__.py                
-│   │   │   │   │   ├── copula.py                  
-│   │   │   │   │   └── deterministic.py           
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   ├── bridge.py                      
-│   │   │   │   ├── compiled.py                    
-│   │   │   │   ├── engine.py                      
-│   │   │   │   ├── ingest.py                      
-│   │   │   │   ├── models.py                      
-│   │   │   │   └── results.py                     
-│   │   │   ├── netting_set/                       
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   ├── compiled.py                    
-│   │   │   │   ├── ingest.py                      
-│   │   │   │   ├── loader.py                      
-│   │   │   │   └── validate.py                    
-│   │   │   ├── obligors/                          
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   ├── compiled.py                    
-│   │   │   │   ├── ingest.py                      
-│   │   │   │   ├── loader.py                      
-│   │   │   │   └── validate.py                    
-│   │   │   ├── __init__.py                        
-│   │   │   └── _uid_join.py                       
-│   │   ├── ingest_fixtures/                       
-│   │   │   ├── config/                            
-│   │   │   │   ├── risk_proxy_config/             
-│   │   │   │   │   ├── __init__.py                
-│   │   │   │   │   └── canonical_risk_proxy_config.py   
-│   │   │   │   ├── risk_static_config/            
-│   │   │   │   │   ├── _parts/                    
-│   │   │   │   │   │   ├── __init__.py            
-│   │   │   │   │   │   ├── ccy.py                 
-│   │   │   │   │   │   ├── curve_meta.py          
-│   │   │   │   │   │   ├── curve_point_meta.py    
-│   │   │   │   │   │   ├── holiday_calendars.py   
-│   │   │   │   │   │   ├── node_meta.py           
-│   │   │   │   │   │   ├── spot_roll_rule.py      
-│   │   │   │   │   │   ├── surface_meta.py        
-│   │   │   │   │   │   └── surface_point_meta.py   
-│   │   │   │   │   ├── __init__.py                
-│   │   │   │   │   └── canonical_risk_static_config.py   
-│   │   │   │   └── __init__.py                    
-│   │   │   ├── credit_exposure/                   
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   └── minimal_spot_with_netting_sets.py   
-│   │   │   ├── credit_factors/                    
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   ├── minimal_factor_data.py         
-│   │   │   │   └── minimal_factor_universe.py     
-│   │   │   ├── jtd/                               
-│   │   │   │   ├── copula_jtd/                    
-│   │   │   │   │   ├── __init__.py                
-│   │   │   │   │   ├── sf_gaussian_minimal.py     
-│   │   │   │   │   └── sf_t_minimal.py            
-│   │   │   │   ├── deterministic_jtd/             
-│   │   │   │   │   ├── __init__.py                
-│   │   │   │   │   └── minimal_deterministic_jtd.py   
-│   │   │   │   └── __init__.py                    
-│   │   │   ├── market_data/                       
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   ├── canonical_market_data_history.py   
-│   │   │   │   └── canonical_market_data_snapshot.py   
-│   │   │   ├── netting_set/                       
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   └── minimal_netting_set_master.py   
-│   │   │   ├── obligors/                          
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   └── minimal_obligors_master.py     
-│   │   │   ├── portfolio/                         
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   ├── exhaustive.py                  
-│   │   │   │   ├── spot.py                        
-│   │   │   │   ├── vanilla_european_option_curve.py   
-│   │   │   │   ├── vanilla_european_option_node.py   
-│   │   │   │   ├── vanilla_forward_curve.py       
-│   │   │   │   └── vanilla_forward_node.py        
-│   │   │   ├── __init__.py                        
-│   │   │   ├── as_of.py                           
-│   │   │   ├── constants.py                       
-│   │   │   ├── rng.py                             
-│   │   │   ├── schemas.py                         
-│   │   │   └── utils.py                           
-│   │   ├── market_data/                           
-│   │   │   ├── calibrate/                         
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   └── _struture.txt                  
-│   │   │   ├── curves/                            
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   ├── extrap_methods.py              
-│   │   │   │   ├── interp_defs.py                 
-│   │   │   │   ├── interp_dispatch.py             
-│   │   │   │   └── interp_methods.py              
-│   │   │   ├── risk_factors/                      
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   ├── builder_matrix.py              
-│   │   │   │   ├── builder_snapshot.py            
-│   │   │   │   ├── builder_utils.py               
-│   │   │   │   ├── compile_snapshot.py            
-│   │   │   │   ├── matrix.py                      
-│   │   │   │   ├── shift_types.py                 
-│   │   │   │   └── snapshot.py                    
-│   │   │   ├── surfaces/                          
-│   │   │   │   └── y_axes_types.py                
-│   │   │   ├── __init__.py                        
-│   │   │   ├── builder.py                         
-│   │   │   └── state.py                           
-│   │   ├── pfe/                                   
-│   │   │   └── __init__.py                        
-│   │   ├── pnl/                                   
-│   │   │   ├── __init__.py                        
-│   │   │   └── results.py                         
-│   │   ├── portfolio/                             
-│   │   │   ├── blocks/                            
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   ├── base_block.py                  
-│   │   │   │   ├── spot_block.py                  
-│   │   │   │   ├── vanilla_european_option_block.py   
-│   │   │   │   └── vanilla_forward_block.py       
-│   │   │   ├── compilers/                         
-│   │   │   │   ├── block_compilers/               
-│   │   │   │   │   ├── __init__.py                
-│   │   │   │   │   ├── spot.py                    
-│   │   │   │   │   ├── vanilla_european_option.py   
-│   │   │   │   │   └── vanilla_forward.py         
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   └── registry.py                    
-│   │   │   ├── ingest/                            
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   ├── batch.py                       
-│   │   │   │   ├── canonicalize.py                
-│   │   │   │   ├── compile.py                     
-│   │   │   │   ├── dispatcher.py                  
-│   │   │   │   ├── fx_resolver.py                 
-│   │   │   │   ├── materialize.py                 
-│   │   │   │   ├── parser.py                      
-│   │   │   │   ├── pipeline.py                    
-│   │   │   │   ├── rf_resolver.py                 
-│   │   │   │   ├── schema.py                      
-│   │   │   │   ├── utils.py                       
-│   │   │   │   └── validate.py                    
-│   │   │   ├── __init__.py                        
-│   │   │   ├── compiled.py                        
-│   │   │   ├── engine.py                          
-│   │   │   ├── fx.py                              
-│   │   │   ├── instruments.py                     
-│   │   │   └── validation.py                      
-│   │   ├── proxy_resolver/                        
-│   │   │   ├── __init__.py                        
-│   │   │   ├── proxy.py                           
-│   │   │   └── proxy_audit.py                     
-│   │   ├── simlab/                                
-│   │   │   ├── builder/                           
-│   │   │   │   └── shock_universe.py              
-│   │   │   ├── scenarios/                         
-│   │   │   │   ├── core_math/                     
-│   │   │   │   │   ├── __init__.py                
-│   │   │   │   │   ├── ar1_filter.py              
-│   │   │   │   │   ├── ewma_volatility.py         
-│   │   │   │   │   └── sbb_block_generator.py     
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   ├── base.py                        
-│   │   │   │   ├── bootstrap_fhs.py               
-│   │   │   │   ├── bootstrap_sbb.py               
-│   │   │   │   ├── historical.py                  
-│   │   │   │   ├── historical_fhs.py              
-│   │   │   │   └── parametric.py                  
-│   │   │   ├── shock_plan/                        
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   └── plan.py                        
-│   │   │   ├── shocks/                            
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   ├── apply.py                       
-│   │   │   │   └── shock_kernel.py                
-│   │   │   ├── __init__.py                        
-│   │   │   └── runner.py                          
-│   │   ├── utils/                                 
-│   │   │   ├── __init__.py                        
-│   │   │   ├── dataframes.py                      
-│   │   │   ├── dates.py                           
-│   │   │   ├── printer.py                         
-│   │   │   └── tenors.py                          
-│   │   ├── valuation/                             
-│   │   │   ├── kernels/                           
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   ├── _math.py                       
-│   │   │   │   ├── spot.py                        
-│   │   │   │   ├── vanilla_european_option_curve.py   
-│   │   │   │   ├── vanilla_european_option_node.py   
-│   │   │   │   ├── vanilla_forward_curve.py       
-│   │   │   │   └── vanilla_forward_node.py        
-│   │   │   ├── pricers/                           
-│   │   │   │   ├── __init__.py                    
-│   │   │   │   ├── spot.py                        
-│   │   │   │   ├── vanilla_european_option_curve.py   
-│   │   │   │   ├── vanilla_european_option_node.py   
-│   │   │   │   ├── vanilla_forward_curve.py       
-│   │   │   │   └── vanilla_forward_node.py        
-│   │   │   ├── __init__.py                        
-│   │   │   ├── engine.py                          
-│   │   │   └── result.py                          
-│   │   ├── var_engine/                            
-│   │   │   ├── __init__.py                        
-│   │   │   └── computer.py                        
-│   │   ├── __init__.py                            
-│   │   ├── _create_master_context_txt.py          
-│   │   ├── _njit.py                               
-│   │   ├── constants.py                           
-│   │   ├── exceptions.py                          
-│   │   └── rq_logging.py                          
-│   └── riskquant.egg-info/                        
-│       ├── dependency_links.txt                   
-│       ├── PKG-INFO                               
-│       ├── requires.txt                           
-│       ├── SOURCES.txt                            
-│       └── top_level.txt                          
+│   └── riskquant/                                 
+│       ├── config/                                
+│       │   ├── enums/                             
+│       │   │   ├── __init__.py                    
+│       │   │   ├── asset_classes.py               
+│       │   │   ├── container_topology.py          
+│       │   │   ├── credit_ratings.py              
+│       │   │   ├── discount_basis.py              
+│       │   │   ├── financial_conventions.py       
+│       │   │   ├── fixing_type.py                 
+│       │   │   ├── quote_types.py                 
+│       │   │   ├── roll_methods.py                
+│       │   │   ├── swap_direction.py              
+│       │   │   ├── x_axis_kinds.py                
+│       │   │   └── y_axis_kinds.py                
+│       │   ├── proxy_config/                      
+│       │   │   ├── __init__.py                    
+│       │   │   ├── audit.py                       
+│       │   │   ├── compile.py                     
+│       │   │   ├── loader.py                      
+│       │   │   ├── proxy_topology.py              
+│       │   │   ├── schema_objects.py              
+│       │   │   └── validate.py                    
+│       │   ├── static_config/                     
+│       │   │   ├── __init__.py                    
+│       │   │   ├── audit.py                       
+│       │   │   ├── compile.py                     
+│       │   │   ├── loader.py                      
+│       │   │   ├── rf_resolution.py               
+│       │   │   ├── schema_objects.py              
+│       │   │   ├── static_config.py               
+│       │   │   └── validate.py                    
+│       │   ├── __init__.py                        
+│       │   └── namespace.py                       
+│       ├── credit/                                
+│       │   ├── aggregate/                         
+│       │   │   ├── __init__.py                    
+│       │   │   ├── loss_metrics.py                
+│       │   │   └── summary.py                     
+│       │   ├── exposure/                          
+│       │   │   ├── evaluators/                    
+│       │   │   │   ├── kernels/                   
+│       │   │   │   │   └── replacement_cost.py    
+│       │   │   │   ├── __init__.py                
+│       │   │   │   └── replacement_cost.py        
+│       │   │   ├── views/                         
+│       │   │   │   ├── __init__.py                
+│       │   │   │   ├── base.py                    
+│       │   │   │   └── replacement_cost.py        
+│       │   │   ├── __init__.py                    
+│       │   │   ├── compile.py                     
+│       │   │   ├── compiled.py                    
+│       │   │   ├── engine.py                      
+│       │   │   ├── models.py                      
+│       │   │   └── results.py                     
+│       │   ├── factors/                           
+│       │   │   ├── simulate/                      
+│       │   │   │   ├── __init__.py                
+│       │   │   │   ├── base.py                    
+│       │   │   │   ├── mixed.py                   
+│       │   │   │   ├── parametric_beta.py         
+│       │   │   │   ├── parametric_copula_gaussian.py   
+│       │   │   │   ├── parametric_copula_t.py     
+│       │   │   │   └── parametric_uniform.py      
+│       │   │   ├── __init__.py                    
+│       │   │   └── state.py                       
+│       │   ├── jtd/                               
+│       │   │   ├── blocks/                        
+│       │   │   │   ├── __init__.py                
+│       │   │   │   ├── base.py                    
+│       │   │   │   ├── beta_binomial.py           
+│       │   │   │   ├── forced_default.py          
+│       │   │   │   ├── independent_bernoulli.py   
+│       │   │   │   ├── mf_copula.py               
+│       │   │   │   ├── mf_copula_gaussian.py      
+│       │   │   │   ├── mf_copula_students_t.py    
+│       │   │   │   ├── sf_copula.py               
+│       │   │   │   ├── sf_copula_gaussian.py      
+│       │   │   │   ├── sf_copula_students_t.py    
+│       │   │   │   ├── stress_regime_bernoulli.py   
+│       │   │   │   └── type_alias.py              
+│       │   │   ├── evaluators/                    
+│       │   │   │   ├── __init__.py                
+│       │   │   │   ├── base.py                    
+│       │   │   │   ├── beta_binomial.py           
+│       │   │   │   ├── forced_default.py          
+│       │   │   │   ├── independent_bernoulli.py   
+│       │   │   │   ├── mf_copula_gaussian.py      
+│       │   │   │   ├── mf_copula_students_t.py    
+│       │   │   │   ├── sf_copula_gaussian.py      
+│       │   │   │   ├── sf_copula_students_t.py    
+│       │   │   │   └── stress_regime_bernoulli.py   
+│       │   │   ├── ingest/                        
+│       │   │   │   ├── builders/                  
+│       │   │   │   │   ├── __init__.py            
+│       │   │   │   │   ├── beta_binomial.py       
+│       │   │   │   │   ├── forced_default.py      
+│       │   │   │   │   ├── independent_bernoulli.py   
+│       │   │   │   │   ├── mf_gaussian.py         
+│       │   │   │   │   ├── mf_students_t.py       
+│       │   │   │   │   ├── sf_gaussian.py         
+│       │   │   │   │   ├── sf_students_t.py       
+│       │   │   │   │   └── stress_regime_bernoulli.py   
+│       │   │   │   ├── __init__.py                
+│       │   │   │   ├── _shared.py                 
+│       │   │   │   ├── bundle.py                  
+│       │   │   │   ├── compile.py                 
+│       │   │   │   ├── contracts.py               
+│       │   │   │   └── validate.py                
+│       │   │   ├── kernels/                       
+│       │   │   │   ├── __init__.py                
+│       │   │   │   ├── beta_binomial.py           
+│       │   │   │   ├── forced_default.py          
+│       │   │   │   ├── independent_bernoulli.py   
+│       │   │   │   ├── mf_copula_gaussian.py      
+│       │   │   │   ├── mf_copula_students_t.py    
+│       │   │   │   ├── sf_copula_gaussian.py      
+│       │   │   │   ├── sf_copula_students_t.py    
+│       │   │   │   └── stress_regime_bernoulli.py   
+│       │   │   ├── __init__.py                    
+│       │   │   ├── bridge.py                      
+│       │   │   ├── compiled.py                    
+│       │   │   ├── engine.py                      
+│       │   │   ├── models.py                      
+│       │   │   ├── registry.py                    
+│       │   │   └── results.py                     
+│       │   ├── masters/                           
+│       │   │   ├── cross_master/                  
+│       │   │   │   ├── __init__.py                
+│       │   │   │   ├── compiled.py                
+│       │   │   │   └── validate.py                
+│       │   │   ├── enums/                         
+│       │   │   │   ├── __init__.py                
+│       │   │   │   └── credit_factor_kind.py      
+│       │   │   ├── factor_universe/               
+│       │   │   │   ├── __init__.py                
+│       │   │   │   ├── compiled.py                
+│       │   │   │   ├── ingest.py                  
+│       │   │   │   └── validate.py                
+│       │   │   ├── netting_set/                   
+│       │   │   │   ├── __init__.py                
+│       │   │   │   ├── compiled.py                
+│       │   │   │   ├── ingest.py                  
+│       │   │   │   └── validate.py                
+│       │   │   ├── obligors/                      
+│       │   │   │   ├── __init__.py                
+│       │   │   │   ├── compiled.py                
+│       │   │   │   ├── ingest.py                  
+│       │   │   │   └── validate.py                
+│       │   │   └── __init__.py                    
+│       │   ├── __init__.py                        
+│       │   └── STABLE_API.md                      
+│       ├── ingest_fixtures/                       
+│       │   ├── config/                            
+│       │   │   ├── risk_proxy_config/             
+│       │   │   │   ├── __init__.py                
+│       │   │   │   └── canonical_risk_proxy_config.py   
+│       │   │   ├── risk_static_config/            
+│       │   │   │   ├── _parts/                    
+│       │   │   │   │   ├── __init__.py            
+│       │   │   │   │   ├── ccy.py                 
+│       │   │   │   │   ├── curve_meta.py          
+│       │   │   │   │   ├── curve_point_meta.py    
+│       │   │   │   │   ├── holiday_calendars.py   
+│       │   │   │   │   ├── node_meta.py           
+│       │   │   │   │   ├── spot_roll_rule.py      
+│       │   │   │   │   ├── surface_meta.py        
+│       │   │   │   │   └── surface_point_meta.py   
+│       │   │   │   ├── __init__.py                
+│       │   │   │   └── canonical_risk_static_config.py   
+│       │   │   └── __init__.py                    
+│       │   ├── credit/                            
+│       │   │   ├── credit_exposure/               
+│       │   │   │   ├── __init__.py                
+│       │   │   │   └── minimal_spot_with_netting_sets.py   
+│       │   │   ├── credit_factors/                
+│       │   │   │   ├── __init__.py                
+│       │   │   │   ├── minimal_factor_data.py     
+│       │   │   │   ├── minimal_factor_universe.py   
+│       │   │   │   └── minimal_factor_universe_master.py   
+│       │   │   ├── jtd/                           
+│       │   │   │   ├── beta_binomial/             
+│       │   │   │   │   ├── __init__.py            
+│       │   │   │   │   └── minimal_beta_binomial_jtd.py   
+│       │   │   │   ├── forced_default/            
+│       │   │   │   │   ├── __init__.py            
+│       │   │   │   │   └── minimal_forced_default_jtd.py   
+│       │   │   │   ├── independent_bernoulli/     
+│       │   │   │   │   ├── __init__.py            
+│       │   │   │   │   └── minimal_independent_bernoulli_jtd.py   
+│       │   │   │   ├── mf_copula/                 
+│       │   │   │   │   ├── __init__.py            
+│       │   │   │   │   └── minimal_mf_copula_gaussian.py   
+│       │   │   │   ├── mixed/                     
+│       │   │   │   │   ├── __init__.py            
+│       │   │   │   │   └── minimal_mixed.py       
+│       │   │   │   ├── sf_copula_jtd/             
+│       │   │   │   │   ├── __init__.py            
+│       │   │   │   │   ├── minimal_sf_copula_gaussian.py   
+│       │   │   │   │   └── minimal_sf_copula_students_t_global_chi.py   
+│       │   │   │   ├── stress_regime_bernoulli/   
+│       │   │   │   │   ├── __init__.py            
+│       │   │   │   │   └── minimal_stress_regime_bernoulli_jtd.py   
+│       │   │   │   └── __init__.py                
+│       │   │   ├── netting_set/                   
+│       │   │   │   ├── __init__.py                
+│       │   │   │   └── minimal_netting_set_master.py   
+│       │   │   ├── obligors/                      
+│       │   │   │   ├── __init__.py                
+│       │   │   │   └── minimal_obligors_master.py   
+│       │   │   └── __init__.py                    
+│       │   ├── market_data/                       
+│       │   │   ├── __init__.py                    
+│       │   │   ├── canonical_market_data_history.py   
+│       │   │   └── canonical_market_data_snapshot.py   
+│       │   ├── portfolio/                         
+│       │   │   ├── __init__.py                    
+│       │   │   ├── exhaustive.py                  
+│       │   │   ├── spot.py                        
+│       │   │   ├── vanilla_european_option_curve.py   
+│       │   │   ├── vanilla_european_option_node.py   
+│       │   │   ├── vanilla_forward_curve.py       
+│       │   │   ├── vanilla_forward_node.py        
+│       │   │   └── vanilla_irs.py                 
+│       │   ├── __init__.py                        
+│       │   ├── as_of.py                           
+│       │   ├── constants.py                       
+│       │   ├── rng.py                             
+│       │   ├── schemas.py                         
+│       │   └── utils.py                           
+│       ├── market_data/                           
+│       │   ├── builders/                          
+│       │   │   └── __init__.py                    
+│       │   ├── calibrate/                         
+│       │   │   ├── implied_vol/                   
+│       │   │   │   ├── black76/                   
+│       │   │   │   │   ├── kernels/               
+│       │   │   │   │   │   ├── __init__.py        
+│       │   │   │   │   │   ├── black76_implied_vol_batch.py   
+│       │   │   │   │   │   └── black76_implied_vol_scalar.py   
+│       │   │   │   │   ├── __init__.py            
+│       │   │   │   │   └── calibrate.py           
+│       │   │   │   └── __init__.py                
+│       │   │   ├── option_quotes/                 
+│       │   │   │   ├── kernels/                   
+│       │   │   │   │   ├── __init__.py            
+│       │   │   │   │   └── compile_canonical_quotes.py   
+│       │   │   │   ├── __init__.py                
+│       │   │   │   ├── compile.py                 
+│       │   │   │   ├── master.py                  
+│       │   │   │   └── validate.py                
+│       │   │   ├── __init__.py                    
+│       │   │   └── _struture.txt                  
+│       │   ├── curves/                            
+│       │   │   ├── __init__.py                    
+│       │   │   ├── extrap_methods.py              
+│       │   │   ├── interp_defs.py                 
+│       │   │   ├── interp_dispatch.py             
+│       │   │   └── interp_methods.py              
+│       │   ├── risk_factors/                      
+│       │   │   ├── __init__.py                    
+│       │   │   ├── builder_matrix.py              
+│       │   │   ├── builder_snapshot.py            
+│       │   │   ├── builder_utils.py               
+│       │   │   ├── compile_snapshot.py            
+│       │   │   ├── matrix.py                      
+│       │   │   ├── shift_types.py                 
+│       │   │   └── snapshot.py                    
+│       │   ├── surfaces/                          
+│       │   │   ├── __init__.py                    
+│       │   │   └── y_axes_types.py                
+│       │   ├── transformers/                      
+│       │   │   ├── __init__.py                    
+│       │   │   └── delta_to_moneyness.py          
+│       │   ├── __init__.py                        
+│       │   ├── assemble.py                        
+│       │   ├── builder.py                         
+│       │   └── state.py                           
+│       ├── pnl/                                   
+│       │   ├── __init__.py                        
+│       │   └── results.py                         
+│       ├── portfolio/                             
+│       │   ├── compilers/                         
+│       │   │   ├── block_compilers/               
+│       │   │   │   ├── __init__.py                
+│       │   │   │   ├── spot.py                    
+│       │   │   │   ├── vanilla_european_option.py   
+│       │   │   │   └── vanilla_forward.py         
+│       │   │   ├── __init__.py                    
+│       │   │   └── registry.py                    
+│       │   ├── ingest/                            
+│       │   │   ├── __init__.py                    
+│       │   │   ├── batch.py                       
+│       │   │   ├── canonicalize.py                
+│       │   │   ├── compile.py                     
+│       │   │   ├── dispatcher.py                  
+│       │   │   ├── fx_resolver.py                 
+│       │   │   ├── materialize.py                 
+│       │   │   ├── parser.py                      
+│       │   │   ├── pipeline.py                    
+│       │   │   ├── rf_resolver.py                 
+│       │   │   ├── schema.py                      
+│       │   │   ├── utils.py                       
+│       │   │   └── validate.py                    
+│       │   ├── __init__.py                        
+│       │   ├── compiled.py                        
+│       │   ├── engine.py                          
+│       │   ├── fx.py                              
+│       │   ├── instruments.py                     
+│       │   └── validation.py                      
+│       ├── proxy_resolver/                        
+│       │   ├── __init__.py                        
+│       │   ├── proxy.py                           
+│       │   └── proxy_audit.py                     
+│       ├── scenario_metrics/                      
+│       │   ├── _kernels/                          
+│       │   │   ├── __init__.py                    
+│       │   │   └── _tail_metrics.py               
+│       │   ├── api/                               
+│       │   │   ├── __init__.py                    
+│       │   │   └── var_es.py                      
+│       │   ├── __init__.py                        
+│       │   ├── _computer.py                       
+│       │   ├── _result.py                         
+│       │   ├── _types.py                          
+│       │   └── _validate.py                       
+│       ├── simlab/                                
+│       │   ├── builder/                           
+│       │   │   └── shock_universe.py              
+│       │   ├── scenarios/                         
+│       │   │   ├── core_math/                     
+│       │   │   │   ├── __init__.py                
+│       │   │   │   ├── ar1_filter.py              
+│       │   │   │   ├── ewma_volatility.py         
+│       │   │   │   └── sbb_block_generator.py     
+│       │   │   ├── __init__.py                    
+│       │   │   ├── base.py                        
+│       │   │   ├── bootstrap_fhs.py               
+│       │   │   ├── bootstrap_sbb.py               
+│       │   │   ├── historical.py                  
+│       │   │   ├── historical_fhs.py              
+│       │   │   └── parametric.py                  
+│       │   ├── shock_plan/                        
+│       │   │   ├── __init__.py                    
+│       │   │   └── plan.py                        
+│       │   ├── shocks/                            
+│       │   │   ├── __init__.py                    
+│       │   │   ├── apply.py                       
+│       │   │   └── shock_kernel.py                
+│       │   ├── __init__.py                        
+│       │   └── runner.py                          
+│       ├── utils/                                 
+│       │   ├── __init__.py                        
+│       │   ├── dataframes.py                      
+│       │   ├── dates.py                           
+│       │   ├── printer.py                         
+│       │   └── tenors.py                          
+│       ├── valuation/                             
+│       │   ├── blocks/                            
+│       │   │   ├── __init__.py                    
+│       │   │   ├── _base_block.py                 
+│       │   │   ├── block_type.py                  
+│       │   │   ├── discounted_cashflow_block.py   
+│       │   │   ├── spot_block.py                  
+│       │   │   ├── vanilla_european_option_block.py   
+│       │   │   └── vanilla_forward_block.py       
+│       │   ├── pricer_kernels/                    
+│       │   │   ├── _deprecated/                   
+│       │   │   │   ├── _math_v1.py                
+│       │   │   │   ├── vanilla_european_option_curve_v1.py   
+│       │   │   │   ├── vanilla_european_option_node_v1.py   
+│       │   │   │   ├── vanilla_forward_curve_v1.py   
+│       │   │   │   └── vanilla_forward_node_v1.py   
+│       │   │   ├── __init__.py                    
+│       │   │   ├── fixed_cashflow.py              
+│       │   │   ├── floating_cashflow.py           
+│       │   │   ├── principal_cashflow.py          
+│       │   │   ├── spot.py                        
+│       │   │   ├── vanilla_european_option.py     
+│       │   │   └── vanilla_forward.py             
+│       │   ├── pricers/                           
+│       │   │   ├── _deprecated/                   
+│       │   │   │   ├── vanilla_european_option_curve_v1.py   
+│       │   │   │   ├── vanilla_european_option_node_v1.py   
+│       │   │   │   ├── vanilla_forward_curve_v1.py   
+│       │   │   │   └── vanilla_forward_node_v1.py   
+│       │   │   ├── __init__.py                    
+│       │   │   ├── fixed_cashflow.py              
+│       │   │   ├── floating_cashflow.py           
+│       │   │   ├── principal_cashflow.py          
+│       │   │   ├── spot.py                        
+│       │   │   ├── vanilla_european_option.py     
+│       │   │   └── vanilla_forward.py             
+│       │   ├── pricing_models/                    
+│       │   │   ├── black76/                       
+│       │   │   │   ├── __init__.py                
+│       │   │   │   ├── api.py                     
+│       │   │   │   ├── kernels.py                 
+│       │   │   │   └── model.py                   
+│       │   │   ├── __init__.py                    
+│       │   │   └── math.py                        
+│       │   ├── __init__.py                        
+│       │   ├── engine.py                          
+│       │   ├── pricer_registry.py                 
+│       │   └── result.py                          
+│       ├── workflows/                             
+│       │   ├── pricing/                           
+│       │   │   ├── __init__.py                    
+│       │   │   └── vanilla_european_option_node.py   
+│       │   └── __init__.py                        
+│       ├── __init__.py                            
+│       ├── _arrays.py                             
+│       ├── _create_master_context_txt.py          
+│       ├── constants.py                           
+│       ├── exceptions.py                          
+│       ├── numba.py                               
+│       ├── rq_logging.py                          
+│       ├── synthetic_level_generators.py          
+│       └── universe.py                            
 ├── tests/                                         
 │   ├── credit/                                    
 │   │   └── exposure/                              
 │   │       ├── test_compile_exposure.py           
 │   │       └── test_compile_exposure_end_to_end.py   
+│   ├── market_data/                               
+│   │   └── calibrate/                             
+│   │       ├── implied_vol/                       
+│   │       │   └── black76/                       
+│   │       │       └── test_calibrate.py          
+│   │       └── option_quotes/                     
+│   │           └── test_option_quotes.py          
 │   ├── simlab/                                    
-│   │   └── scenarios/                             
-│   │       ├── core_math/                         
-│   │       │   └── test_ar1_filter.py             
-│   │       ├── test_bootstrap_scenarios.py        
-│   │       ├── test_historical_math.py            
-│   │       └── test_parametric_scenarios.py       
+│   │   ├── scenarios/                             
+│   │   │   ├── core_math/                         
+│   │   │   │   └── test_ar1_filter.py             
+│   │   │   ├── test_bootstrap_scenarios.py        
+│   │   │   ├── test_historical_math.py            
+│   │   │   └── test_parametric_scenarios.py       
+│   │   └── test_market_data_from_snapshot.py      
 │   └── valuation/                                 
 │       ├── models/                                
 │       │   └── test_black_scholes.py              

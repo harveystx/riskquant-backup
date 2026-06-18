@@ -4,11 +4,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from riskquant.portfolio.blocks.vanilla_forward_block import (
+from riskquant.valuation.blocks.vanilla_forward_block import (
     VanillaForwardCurveBlock,
 )
 from riskquant.market_data.state import MarketDataMatrix
-from riskquant.valuation.pricers.vanilla_forward_curve import (
+from riskquant.valuation.pricers._deprecated.vanilla_forward_curve_v1 import (
     price_forward_curve_block,
 )
 from riskquant.constants import (

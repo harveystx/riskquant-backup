@@ -261,7 +261,7 @@ def build_proxy_resolution_audit_df(
         rf_proxy_ids = proxy_topology.rf_id_to_proxy_rf_id[req[is_rf_proxy]]
         rf_proxy_names = _rf_ids_to_relative_names(rf_proxy_ids, static_config)
         idx_positions = np.flatnonzero(is_rf_proxy)
-        for pos, name in zip(idx_positions, rf_proxy_names):
+        for pos, name in zip(idx_positions, rf_proxy_names, strict=True):
             rf_proxy_target[pos] = name
 
     # container-level proxy targets (only for CONTAINER_PROXY rows).
@@ -269,13 +269,16 @@ def build_proxy_resolution_audit_df(
     if is_container_proxy.any():
         req_subset = req[is_container_proxy]
         # parent_id for these is the required's container_id (curve or surface).
-        req_parent_id = static_config.rf_id_to_parent_id[req_subset]
-        proxy_container_ids = proxy_topology.container_id_to_proxy_id[req_parent_id]
+        req_parent_id = static_config.rf_id_to_parent_id[req_subset].astype(
+            np.int32, copy=False
+        )
+        slots = static_config.container_slots(req_parent_id)
+        proxy_container_ids = proxy_topology.container_proxy_id[slots]
         proxy_container_names = _container_ids_to_names(
             proxy_container_ids, static_config
         )
         idx_positions = np.flatnonzero(is_container_proxy)
-        for pos, name in zip(idx_positions, proxy_container_names):
+        for pos, name in zip(idx_positions, proxy_container_names, strict=True):
             container_proxy_target[pos] = name
 
     return pd.DataFrame(
@@ -303,7 +306,7 @@ def _container_ids_to_names(
     static_config: RiskStaticConfig,
 ) -> list[str]:
     """Resolve container_ids to their (curve_name | surface_name)."""
-    kind_arr = static_config.container_id_to_topology_type
+    kind_arr = static_config.container_topology_type
     cm = static_config.curve_meta_dict
     sm = static_config.surface_meta_dict
 
@@ -313,7 +316,7 @@ def _container_ids_to_names(
         if cid_int < 0:
             out.append("<no_proxy>")
             continue
-        k = int(kind_arr[cid_int])
+        k = int(kind_arr[static_config.container_slot(cid_int)])
         if k == 1:
             out.append(cm[cid_int].curve_name)
         elif k == 2:

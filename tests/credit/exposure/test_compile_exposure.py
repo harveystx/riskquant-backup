@@ -27,9 +27,9 @@ from riskquant.credit.exposure.compile import (
 from riskquant.credit.exposure.compiled import CompiledExposure
 from riskquant.credit.exposure.engine import run_exposure
 from riskquant.credit.exposure.models import REPLACEMENT_COST_ID
-from riskquant.credit.exposure.results import EadResult
+from riskquant.credit.exposure.results import NettingSetExposurePaths
 from riskquant.credit.exposure.views.replacement_cost import RcNettingSetView
-from riskquant.portfolio.blocks.spot_block import SpotBlock
+from riskquant.valuation.blocks.spot_block import SpotBlock
 from riskquant.portfolio.compiled import CompiledPortfolio
 from riskquant.portfolio.ingest.batch import IngestBatch
 
@@ -122,7 +122,7 @@ def _make_portfolio(*, trade_uids) -> CompiledPortfolio:
     block = SpotBlock(
         trade_uids=trade_uids,
         qty=np.zeros(n, dtype=np.float64),
-        price_uix=np.zeros(n, dtype=np.int32),
+        spot_price_uix=np.zeros(n, dtype=np.int32),
         fx_uix=np.zeros(n, dtype=np.int32),
         fx_invert=np.zeros(n, dtype=np.bool_),
     )
@@ -354,11 +354,11 @@ class TestRunExposureIntegration:
         mtm = _make_mtm(minimal_case.portfolio, n_scenarios=4)
         result = run_exposure(exposure=exposure, mtm=mtm)
 
-        assert isinstance(result, EadResult)
+        assert isinstance(result, NettingSetExposurePaths)
         np.testing.assert_array_equal(result.uid, [101, 102, 103])
-        assert result.ead.shape == (3, 4)
-        assert result.ead.dtype == np.float64
-        assert result.ead.flags.c_contiguous
+        assert result.exposure.shape == (3, 4)
+        assert result.exposure.dtype == np.float64
+        assert result.exposure.flags.c_contiguous
 
     def test_rc_floor_collateral_and_negative_netting(self, minimal_case):
         # V: 101 -> 180, 102 -> -70, 103 -> 500.  C: 101=80, 103 over-collateralized.
@@ -368,7 +368,7 @@ class TestRunExposureIntegration:
             collateral={101: 80.0, 102: 0.0, 103: 1_000_000.0},
         )
         mtm = _make_mtm(minimal_case.portfolio, n_scenarios=2)
-        ead = run_exposure(exposure=exposure, mtm=mtm).ead
+        ead = run_exposure(exposure=exposure, mtm=mtm).exposure
 
         np.testing.assert_allclose(ead[0], [100.0, 100.0])  # 101: max(180-80,0)
         np.testing.assert_allclose(ead[1], [0.0, 0.0])  # 102: net short -> 0
@@ -379,7 +379,7 @@ class TestRunExposureIntegration:
             portfolio=minimal_case.portfolio, batch=minimal_case.batch
         )
         mtm = _make_mtm(minimal_case.portfolio, n_scenarios=1)
-        ead = run_exposure(exposure=exposure, mtm=mtm).ead
+        ead = run_exposure(exposure=exposure, mtm=mtm).exposure
 
         np.testing.assert_allclose(ead[:, 0], [180.0, 0.0, 500.0])
 
@@ -391,7 +391,7 @@ class TestRunExposureIntegration:
             collateral={101: 400.0},
         )
         mtm = _make_mtm(minimal_case.portfolio, n_scenarios=3, scale_by_scenario=True)
-        ead = run_exposure(exposure=exposure, mtm=mtm).ead
+        ead = run_exposure(exposure=exposure, mtm=mtm).exposure
 
         np.testing.assert_allclose(ead[0], [0.0, 0.0, 140.0])
 
@@ -406,7 +406,7 @@ class TestRunExposureIntegration:
                 collateral={103: 500.0},
             ),
             mtm=mtm,
-        ).ead
+        ).exposure
         assert ead_eq[2, 0] == 0.0
 
         ead_below = run_exposure(
@@ -416,7 +416,7 @@ class TestRunExposureIntegration:
                 collateral={103: 499.0},
             ),
             mtm=mtm,
-        ).ead
+        ).exposure
         np.testing.assert_allclose(ead_below[2, 0], 1.0)
 
     def test_ead_per_scenario_independent(self, minimal_case):
@@ -427,7 +427,7 @@ class TestRunExposureIntegration:
             collateral={101: 80.0},
         )
         mtm = _make_mtm(minimal_case.portfolio, n_scenarios=3, scale_by_scenario=True)
-        ead = run_exposure(exposure=exposure, mtm=mtm).ead
+        ead = run_exposure(exposure=exposure, mtm=mtm).exposure
 
         np.testing.assert_allclose(ead[0], [100.0, 280.0, 460.0])  # 180*(s+1)-80
 

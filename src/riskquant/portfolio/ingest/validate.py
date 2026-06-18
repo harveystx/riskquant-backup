@@ -10,8 +10,8 @@ from riskquant.constants import POSITION_DUST_TOLERANCE
 from riskquant.portfolio.ingest.schema import STRING_COLS
 from riskquant.portfolio.instruments import (
     INSTRUMENT_NAME_TO_ID_REGISTRY,
-    INSTRUMENT_TO_FAMILY_ARRAY,
-    InstrumentFamily,
+    INSTRUMENT_TYPE_TO_FAMILY_ARRAY,
+    InstrumentTypeFamily,
 )
 from riskquant.utils.dataframes import validate_string_cols
 
@@ -109,7 +109,7 @@ def _extract_instrument_id_array(
 def _derive_family_array(
     inst_id_arr: npt.NDArray[np.int32],
 ) -> npt.NDArray[np.int8]:
-    return np.take(INSTRUMENT_TO_FAMILY_ARRAY, inst_id_arr)
+    return np.take(INSTRUMENT_TYPE_TO_FAMILY_ARRAY, inst_id_arr)
 
 
 def _mask_eq(
@@ -256,9 +256,9 @@ def validate_materialized_ingest_df(df: pd.DataFrame) -> None:
     # ------------------------------------------------------------------
 
     # --- FAMILY MASKS (PRIMARY DISPATCH) ---
-    spot_mask = _mask_eq(family, InstrumentFamily.SPOT.value)
-    fwd_mask = _mask_eq(family, InstrumentFamily.FORWARD.value)
-    opt_mask = _mask_eq(family, InstrumentFamily.OPTION.value)
+    spot_mask = _mask_eq(family, InstrumentTypeFamily.SPOT.value)
+    fwd_mask = _mask_eq(family, InstrumentTypeFamily.FORWARD.value)
+    opt_mask = _mask_eq(family, InstrumentTypeFamily.OPTION.value)
 
     # --- INSTRUMENT MASKS (SECONDARY DISPATCH) ---
     # (none yet, but this is where they'd go once we have any instrument-level validators)

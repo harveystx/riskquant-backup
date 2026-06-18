@@ -1,8 +1,6 @@
 # src/riskquant/simlab/scenarios/base.py
 """
-Scenario-generator protocol, batch container, and the one canonical entry
-point for resolving a required-factor universe into a ShockUniverse +
-ShockComputePlan.
+Scenario-generator protocol and streaming-batch payload.
 
 Design
 ------
@@ -11,10 +9,10 @@ Design
 the full (T, K) shock matrix. The runner holds one pre-allocated
 shocked-levels buffer and consumes each batch in place.
 
-`resolve_shock_universe` replaces the old dict-based
-`build_factor_id_to_col_index` + `build_shock_key_plan` helpers. It
-takes `RiskFactorMatrix.factor_ids` (sorted ascending int32) directly
-and uses `np.searchsorted` for O(K log N) vectorised resolution.
+Universe resolution itself lives in `simlab.builder.shock_universe.
+build_shock_universe` — generators call it directly. (The former
+`resolve_shock_universe` wrapper here was a zero-logic, identical-
+signature pass-through and has been removed.)
 """
 
 from __future__ import annotations
@@ -24,12 +22,6 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import numpy as np
-import numpy.typing as npt
-
-from riskquant.simlab.builder.shock_universe import (
-    ShockUniverse,
-    build_shock_universe,
-)
 
 # ============================================================
 # Streaming-batch payload
@@ -73,35 +65,3 @@ class ScenarioGenerator(Protocol):
         shock_scale: np.ndarray,  # (Nreq,) float32
         batch_size: int,
     ) -> Iterator[ScenarioSetBatch]: ...
-
-
-# ============================================================
-# Vectorised universe resolution
-# ============================================================
-
-
-def resolve_shock_universe(
-    *,
-    required_shift_type_id: npt.NDArray[np.int8],
-    source_factor_ids: npt.NDArray[np.int32],
-    available_factor_ids: npt.NDArray[np.int32],
-) -> ShockUniverse:
-    """
-    Build a `ShockUniverse` from the run's resolved-source universe and
-    the generator's available-factor index.
-
-    `available_factor_ids` MUST be sorted ascending and unique (the
-    `RiskFactorMatrix` invariant). This lets us replace the dict-based
-    lookup with one vectorised `np.searchsorted` inside
-    `build_shock_universe`.
-
-    The previous two-stage helper pair (`build_factor_id_to_col_index`
-    + `build_shock_key_plan`) is gone — both were Python-loop with
-    dict-lookup anti-patterns. This is the single entry point all
-    generators use.
-    """
-    return build_shock_universe(
-        required_shift_type_id=required_shift_type_id,
-        source_factor_ids=source_factor_ids,
-        available_factor_ids=available_factor_ids,
-    )

@@ -10,7 +10,7 @@ from typing import Final
 # ============================================================
 
 
-class Instrument(IntEnum):
+class InstrumentType(IntEnum):
     """
     Instrument = dispatch identifier for evaluation units.
 
@@ -21,7 +21,6 @@ class Instrument(IntEnum):
     Behavior is defined by EvaluationTopology, NOT by instrument name.
     """
 
-    # --- Market Risk ---
     SPOT = 0
 
     VANILLA_FORWARD_NODE = 1
@@ -30,25 +29,28 @@ class Instrument(IntEnum):
     VANILLA_EUROPEAN_OPTION_NODE = 3
     VANILLA_EUROPEAN_OPTION_CURVE = 4
 
+    VANILLA_IRS = 5
 
-NUM_INSTRUMENTS: Final[int] = len(Instrument)
+
+NUM_INSTRUMENTS: Final[int] = len(InstrumentType)
 
 
-INSTRUMENT_NAMES = frozenset(inst.name for inst in Instrument)
+INSTRUMENT_TYPE_NAMES = frozenset(inst.name for inst in InstrumentType)
 
 # ============================================================
 # IDS FOR DISPATCH (SINGLE SOURCE OF TRUTH)
 # ============================================================
 
-SPOT_ID: Final[int] = Instrument.SPOT.value
-VANILLA_FORWARD_NODE_ID: Final[int] = Instrument.VANILLA_FORWARD_NODE.value
-VANILLA_FORWARD_CURVE_ID: Final[int] = Instrument.VANILLA_FORWARD_CURVE.value
+SPOT_ID: Final[int] = InstrumentType.SPOT.value
+VANILLA_FORWARD_NODE_ID: Final[int] = InstrumentType.VANILLA_FORWARD_NODE.value
+VANILLA_FORWARD_CURVE_ID: Final[int] = InstrumentType.VANILLA_FORWARD_CURVE.value
 VANILLA_EUROPEAN_OPTION_NODE_ID: Final[int] = (
-    Instrument.VANILLA_EUROPEAN_OPTION_NODE.value
+    InstrumentType.VANILLA_EUROPEAN_OPTION_NODE.value
 )
 VANILLA_EUROPEAN_OPTION_CURVE_ID: Final[int] = (
-    Instrument.VANILLA_EUROPEAN_OPTION_CURVE.value
+    InstrumentType.VANILLA_EUROPEAN_OPTION_CURVE.value
 )
+VANILLA_IRS_ID: Final[int] = InstrumentType.VANILLA_IRS.value
 
 
 # ============================================================
@@ -72,11 +74,12 @@ class EvaluationTopology(IntEnum):
 # ============================================================
 
 
-class InstrumentFamily(IntEnum):
+class InstrumentTypeFamily(IntEnum):
     SPOT = 0
     FORWARD = 1
     OPTION = 2
-    CREDIT = 3
+    RATES = 3
+    CREDIT = 4
 
 
 # ============================================================
@@ -84,23 +87,34 @@ class InstrumentFamily(IntEnum):
 # ============================================================
 
 
-INSTRUMENT_TO_TOPOLOGY: Final[dict[Instrument, EvaluationTopology]] = {
+INSTRUMENT_TYPE_TO_EVALUATION_TOPOLOGY: Final[
+    dict[InstrumentType, EvaluationTopology]
+] = {
     # --- MTM ---
-    Instrument.SPOT: EvaluationTopology.MTM,
-    Instrument.VANILLA_FORWARD_NODE: EvaluationTopology.MTM,
-    Instrument.VANILLA_FORWARD_CURVE: EvaluationTopology.MTM,
+    InstrumentType.SPOT: EvaluationTopology.MTM,
+    InstrumentType.VANILLA_FORWARD_NODE: EvaluationTopology.MTM,
+    InstrumentType.VANILLA_FORWARD_CURVE: EvaluationTopology.MTM,
     # --- Options ---
-    Instrument.VANILLA_EUROPEAN_OPTION_NODE: EvaluationTopology.MTM,
-    Instrument.VANILLA_EUROPEAN_OPTION_CURVE: EvaluationTopology.MTM,
+    InstrumentType.VANILLA_EUROPEAN_OPTION_NODE: EvaluationTopology.MTM,
+    InstrumentType.VANILLA_EUROPEAN_OPTION_CURVE: EvaluationTopology.MTM,
+    # --- Interest Rate Swaps ---
+    InstrumentType.VANILLA_IRS: EvaluationTopology.MTM,
 }
 
 
-INSTRUMENT_TO_FAMILY: Final[dict[Instrument, InstrumentFamily]] = {
-    Instrument.SPOT: InstrumentFamily.SPOT,
-    Instrument.VANILLA_FORWARD_NODE: InstrumentFamily.FORWARD,
-    Instrument.VANILLA_FORWARD_CURVE: InstrumentFamily.FORWARD,
-    Instrument.VANILLA_EUROPEAN_OPTION_NODE: InstrumentFamily.OPTION,
-    Instrument.VANILLA_EUROPEAN_OPTION_CURVE: InstrumentFamily.OPTION,
+INSTRUMENT_TYPE_TO_INSTRUMENT_FAMILY: Final[
+    dict[InstrumentType, InstrumentTypeFamily]
+] = {
+    # SPOT
+    InstrumentType.SPOT: InstrumentTypeFamily.SPOT,
+    # FORWARDS
+    InstrumentType.VANILLA_FORWARD_NODE: InstrumentTypeFamily.FORWARD,
+    InstrumentType.VANILLA_FORWARD_CURVE: InstrumentTypeFamily.FORWARD,
+    # OPTIONS
+    InstrumentType.VANILLA_EUROPEAN_OPTION_NODE: InstrumentTypeFamily.OPTION,
+    InstrumentType.VANILLA_EUROPEAN_OPTION_CURVE: InstrumentTypeFamily.OPTION,
+    # RATES
+    InstrumentType.VANILLA_IRS: InstrumentTypeFamily.RATES,
 }
 
 
@@ -109,13 +123,13 @@ INSTRUMENT_TO_FAMILY: Final[dict[Instrument, InstrumentFamily]] = {
 # ============================================================
 
 
-_ALL = frozenset(Instrument)
+_ALL_INST_TYPES = frozenset(InstrumentType)
 
-if _ALL - frozenset(INSTRUMENT_TO_TOPOLOGY):
-    raise RuntimeError("Missing topology mappings")
+if frozenset(INSTRUMENT_TYPE_TO_EVALUATION_TOPOLOGY) != _ALL_INST_TYPES:
+    raise RuntimeError("Topology registry drift")
 
-if _ALL - frozenset(INSTRUMENT_TO_FAMILY):
-    raise RuntimeError("Missing family mappings")
+if frozenset(INSTRUMENT_TYPE_TO_INSTRUMENT_FAMILY) != _ALL_INST_TYPES:
+    raise RuntimeError("Family registry drift")
 
 
 # ============================================================
@@ -124,13 +138,15 @@ if _ALL - frozenset(INSTRUMENT_TO_FAMILY):
 
 
 # Dense arrays for O(1) lookup without dicts
-INSTRUMENT_TO_TOPOLOGY_ARRAY: Final[list[int]] = [
-    INSTRUMENT_TO_TOPOLOGY[Instrument(i)] for i in range(0, NUM_INSTRUMENTS)
-]
+INSTRUMENT_TYPE_TO_TOPOLOGY_ARRAY: Final[tuple[int, ...]] = tuple(
+    INSTRUMENT_TYPE_TO_EVALUATION_TOPOLOGY[InstrumentType(i)]
+    for i in range(0, NUM_INSTRUMENTS)
+)
 
-INSTRUMENT_TO_FAMILY_ARRAY: Final[list[int]] = [
-    INSTRUMENT_TO_FAMILY[Instrument(i)] for i in range(0, NUM_INSTRUMENTS)
-]
+INSTRUMENT_TYPE_TO_FAMILY_ARRAY: Final[tuple[int, ...]] = tuple(
+    INSTRUMENT_TYPE_TO_INSTRUMENT_FAMILY[InstrumentType(i)]
+    for i in range(0, NUM_INSTRUMENTS)
+)
 
 
 # ============================================================
@@ -138,17 +154,17 @@ INSTRUMENT_TO_FAMILY_ARRAY: Final[list[int]] = [
 # ============================================================
 
 
-INSTRUMENT_NAME_TO_INSTRUMENT_REGISTRY: Final[dict[str, Instrument]] = {
-    inst.name: inst for inst in Instrument
+INSTRUMENT_NAME_TO_INSTRUMENT_REGISTRY: Final[dict[str, InstrumentType]] = {
+    inst.name: inst for inst in InstrumentType
 }
 
 INSTRUMENT_NAME_TO_ID_REGISTRY: Final[dict[str, int]] = {
-    inst.name: inst.value for inst in Instrument
+    inst.name: inst.value for inst in InstrumentType
 }
 
-INSTRUMENT_ID_TO_NAME_REGISTRY: Final[list[str]] = [
-    Instrument(i).name for i in range(0, NUM_INSTRUMENTS)
-]
+INSTRUMENT_ID_TO_NAME_REGISTRY: Final[tuple[str, ...]] = tuple(
+    InstrumentType(i).name for i in range(0, NUM_INSTRUMENTS)
+)
 
 
 # ============================================================
@@ -156,44 +172,57 @@ INSTRUMENT_ID_TO_NAME_REGISTRY: Final[list[str]] = [
 # ============================================================
 
 
-# Family → list of instrument names (all instruments in a family)
-FAMILY_TO_INSTRUMENT_NAMES: Final[dict[InstrumentFamily, list[str]]] = {
-    family: [inst.name for inst, fam in INSTRUMENT_TO_FAMILY.items() if fam == family]
-    for family in InstrumentFamily
+# Family → tuple of instrument names (all instruments in a family)
+INSTRUMENT_FAMILY_TO_INSTRUMENT_NAMES: Final[
+    dict[InstrumentTypeFamily, tuple[str, ...]]
+] = {
+    family: tuple(
+        inst.name
+        for inst, fam in INSTRUMENT_TYPE_TO_INSTRUMENT_FAMILY.items()
+        if fam == family
+    )
+    for family in InstrumentTypeFamily
 }
 
-# Family → list of instrument IDs
-FAMILY_TO_INSTRUMENT_IDS: Final[dict[InstrumentFamily, list[int]]] = {
-    family: [inst.value for inst, fam in INSTRUMENT_TO_FAMILY.items() if fam == family]
-    for family in InstrumentFamily
+# Family → tuple of instrument IDs
+INSTRUMENT_FAMILY_TO_INSTRUMENT_IDS: Final[
+    dict[InstrumentTypeFamily, tuple[int, ...]]
+] = {
+    family: tuple(
+        inst.value
+        for inst, fam in INSTRUMENT_TYPE_TO_INSTRUMENT_FAMILY.items()
+        if fam == family
+    )
+    for family in InstrumentTypeFamily
 }
 
-# Family name (string) → list of instrument names
-FAMILY_NAME_TO_INSTRUMENT_NAMES: Final[dict[str, list[str]]] = {
-    family.name: [
-        inst.name for inst, fam in INSTRUMENT_TO_FAMILY.items() if fam == family
-    ]
-    for family in InstrumentFamily
+# Family name (string) → tuple of instrument names
+INSTRUMENT_FAMILY_NAME_TO_INSTRUMENT_NAMES: Final[dict[str, tuple[str, ...]]] = {
+    family.name: tuple(
+        inst.name
+        for inst, fam in INSTRUMENT_TYPE_TO_INSTRUMENT_FAMILY.items()
+        if fam == family
+    )
+    for family in InstrumentTypeFamily
 }
-
 
 if __name__ == "__main__":
     # Instument.
     print("\nInstruments:")
-    for inst in Instrument:
+    for inst in InstrumentType:
         print(f"  {inst.name} (ID={inst.value})")
 
     # Sanity check: print all registries
     print("\nINSTRUMENT_TO_TOPOLOGY:")
-    for inst, topo in INSTRUMENT_TO_TOPOLOGY.items():
+    for inst, topo in INSTRUMENT_TYPE_TO_EVALUATION_TOPOLOGY.items():
         print(f"  {inst.name} → {topo.name}")
 
     print("\nINSTRUMENT_TO_FAMILY:")
-    for inst, fam in INSTRUMENT_TO_FAMILY.items():
+    for inst, fam in INSTRUMENT_TYPE_TO_INSTRUMENT_FAMILY.items():
         print(f"  {inst.name} → {fam.name}")
 
     print("\nFAMILY_TO_INSTRUMENT_NAMES:")
-    for fam, insts in FAMILY_TO_INSTRUMENT_NAMES.items():
+    for fam, insts in INSTRUMENT_FAMILY_TO_INSTRUMENT_NAMES.items():
         print(f"  {fam.name} → {insts}")
 
     print("\n --- END: ALL CHECKS PASSED --- \n")

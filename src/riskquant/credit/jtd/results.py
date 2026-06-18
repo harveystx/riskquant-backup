@@ -3,6 +3,10 @@
 
 from __future__ import annotations
 
+__all__ = [
+    "JtdLossResult",
+]
+
 from dataclasses import dataclass
 
 import numpy as np

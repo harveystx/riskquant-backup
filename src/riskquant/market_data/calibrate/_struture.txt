@@ -3,7 +3,7 @@ src/riskquant/market_data/calibration/
 ├── pipeline.py               # Master DAG: Filters -> Bootstraps -> Fits -> Sanitizes -> Returns Grids
 ├── filters.py                # Bid/ask sanitization, put-call parity splicing
 ├── sanitizers.py             # Calendar/Butterfly arbitrage firewalls
-├── root_finders.py           # Vectorized 1D solvers (Newton/Brent)
+├── kernels.py                #
 ├── bootstrappers/
 │   ├── __init__.py
 │   ├── discount_curve.py     # Swap/OIS to Zero-Rate solvers
@@ -11,7 +11,7 @@ src/riskquant/market_data/calibration/
 ├── optimizers/
 │   ├── __init__.py
 │   ├── levenberg_marquardt.py # Numba-compiled N-dimensional solver
-│   └── lbfgsb.py              
+│   └── lbfgsb.py
 └── models/
     ├── __init__.py
     ├── black_76.py           # Forward model for futures options

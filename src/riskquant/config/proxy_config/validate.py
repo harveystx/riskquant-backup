@@ -22,6 +22,7 @@ roundtripping through a DataFrame.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -220,7 +221,7 @@ def _check_chain(proxies: dict[str, ProxyMap], level_label: str) -> None:
 
 def _check_fk(
     proxies: dict[str, ProxyMap],
-    name_to_id: dict[str, int] | dict[str, np.int32],
+    name_to_id: dict[str, int | np.int32] | Mapping[str, int | np.int32],
     namespace_label: str,
 ) -> None:
     """
@@ -262,15 +263,15 @@ def _check_cross_level_conflict(
 
     # Resolve each proxied container to its container_id.
     name_to_cid = static_config.container_name_to_id
-    container_id_to_topology_type = (
-        static_config.container_id_to_topology_type
-    )  # 0=node, 1=curve, 2=surface
+    topology_type_arr = (
+        static_config.container_topology_type
+    )  # slot-indexed: 0=node, 1=curve, 2=surface
 
     proxied_curve_ids: set[int] = set()
     proxied_surface_ids: set[int] = set()
     for pm in container_proxies.values():
         cid = int(name_to_cid[pm.required_name])
-        topology_type = int(container_id_to_topology_type[cid])
+        topology_type = int(topology_type_arr[static_config.container_slot(cid)])
         if topology_type == ContainerTopologyType.CURVE.value:
             proxied_curve_ids.add(cid)
         elif topology_type == ContainerTopologyType.SURFACE.value:
@@ -278,7 +279,7 @@ def _check_cross_level_conflict(
 
     if not (proxied_curve_ids or proxied_surface_ids):
         # FK passed but no proxied container resolved to curve or surface.
-        # This should be unreachable; if we get here, container_id_to_topology_type
+        # This should be unreachable; if we get here, container_topology_type
         # has a bug or container_proxies contains a node name (forbidden).
         raise ValueError(
             "internal: cross-level conflict check found proxied containers "

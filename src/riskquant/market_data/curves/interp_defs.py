@@ -1,4 +1,40 @@
 # src/riskquant/market_data/curves/interp_defs.py
+"""
+INTERP DEFS
+
+Interpolation kernels used by RiskQuant.
+
+Input conventions
+-----------------
+
+All kernels operate directly on the values supplied in the ``values``
+array.
+
+For kernels operating on log values:
+
+    * ``log_values`` MUST already contain logarithms of the quantity
+      being interpolated.
+    * The kernel interpolates linearly in log-space.
+    * The result is transformed back to original space via ``exp()``.
+
+Example
+-------
+
+To interpolate discount factors log-linearly:
+
+    logged_dfs = np.log(discount_factors)
+
+    interp_linear_on_log_values_flat_extrap_3d_numba_kernel(
+        tenors,
+        logged_dfs,
+        targets,
+        out,
+    )
+
+Passing raw discount factors to a LOG kernel will produce incorrect
+results.
+"""
+
 from __future__ import annotations
 
 import math
@@ -6,50 +42,35 @@ import math
 import numba as nb
 import numpy as np
 
+from riskquant.numba import (
+    _F64_1D,
+    _F64_2D,
+    _F64_3D,
+    parallel_njit,
+)
+
+# --- HELPERS ---
+
+_NB_VOID_3D = nb.void(
+    _F64_2D,  # tenors
+    _F64_3D,  # values
+    _F64_1D,  # targets
+    _F64_3D,  # out
+)
+
+_NB_VOID_2D = nb.void(
+    _F64_2D,  # pillars
+    _F64_3D,  # values
+    _F64_2D,  # targets
+    _F64_2D,  # out
+)
+
 # ==============================================================================
 # --- LINEAR INTERPOLATION WITH FLAT EXTRAPOLATION ---
 # ==============================================================================
 
 
-def interp_linear_flat_extrap_3d(
-    tenors: np.ndarray,
-    values: np.ndarray,
-    targets: np.ndarray,
-) -> np.ndarray:
-    """
-    Vectorized 3D Linear Interpolation with Flat Extrapolation.
-    Shapes: tenors (c_curves, m_pillars), values (c_curves, m_pillars, s_scenarios), targets (d_targets,)
-    Returns: (c_curves, d_targets, s_scenarios)
-    """
-    c_curves, m_pillars = tenors.shape
-    idx1 = np.clip(
-        np.sum(tenors[:, None, :] <= targets[None, :, None], axis=2),
-        1,
-        m_pillars - 1,
-    )
-    idx0 = idx1 - 1
-
-    c_idx = np.arange(c_curves)[:, None]
-    t0, t1 = tenors[c_idx, idx0], tenors[c_idx, idx1]
-    y0, y1 = values[c_idx, idx0, :], values[c_idx, idx1, :]
-
-    dt = np.where((t1 - t0) == 0, 1.0, t1 - t0)
-    w = (targets[None, :] - t0) / dt
-
-    # FLAT EXTRAPOLATION: Clamp weights to [0.0, 1.0]
-    w = np.clip(w, 0.0, 1.0)
-
-    return y0 + w[:, :, None] * (y1 - y0)
-
-
-@nb.njit(
-    parallel=True,
-    fastmath={"contract", "reassoc", "nsz"},
-    nogil=True,
-    boundscheck=False,
-    error_model="numpy",
-    cache=True,
-)
+@parallel_njit(_NB_VOID_3D)
 def interp_linear_flat_extrap_3d_numba_kernel(
     tenors: np.ndarray,
     values: np.ndarray,
@@ -90,43 +111,7 @@ def interp_linear_flat_extrap_3d_numba_kernel(
 # ==============================================================================
 
 
-def interp_linear_linear_extrap_3d(
-    tenors: np.ndarray,
-    values: np.ndarray,
-    targets: np.ndarray,
-) -> np.ndarray:
-    """
-    Vectorized 3D Linear Interpolation with Linear Extrapolation.
-    Shapes: tenors (c_curves, m_pillars), values (c_curves, m_pillars, s_scenarios), targets (d_targets,)
-    Returns: (c_curves, d_targets, s_scenarios)
-    """
-    c_curves, m_pillars = tenors.shape
-    idx1 = np.clip(
-        np.sum(tenors[:, None, :] <= targets[None, :, None], axis=2),
-        1,
-        m_pillars - 1,
-    )
-    idx0 = idx1 - 1
-
-    c_idx = np.arange(c_curves)[:, None]
-    t0, t1 = tenors[c_idx, idx0], tenors[c_idx, idx1]
-    y0, y1 = values[c_idx, idx0, :], values[c_idx, idx1, :]
-
-    dt = np.where((t1 - t0) == 0, 1.0, t1 - t0)
-    w = (targets[None, :] - t0) / dt
-
-    # LINEAR EXTRAPOLATION: Do not clamp weights
-    return y0 + w[:, :, None] * (y1 - y0)
-
-
-@nb.njit(
-    parallel=True,
-    fastmath={"contract", "reassoc", "nsz"},
-    nogil=True,
-    boundscheck=False,
-    error_model="numpy",
-    cache=True,
-)
+@parallel_njit(_NB_VOID_3D)
 def interp_linear_linear_extrap_3d_numba_kernel(
     tenors: np.ndarray,
     values: np.ndarray,
@@ -163,60 +148,33 @@ def interp_linear_linear_extrap_3d_numba_kernel(
 
 
 # ==============================================================================
-# --- LOG-LINEAR INTERPOLATION WITH FLAT EXTRAPOLATION ---
+# --- LINEAR INTERPOLATION ON LOG VALUES WITH FLAT EXTRAPOLATION ---
 # ==============================================================================
 
 
-def interp_log_linear_flat_extrap_3d(
+@parallel_njit(_NB_VOID_3D)
+def interp_linear_on_log_values_flat_extrap_3d_numba_kernel(
     tenors: np.ndarray,
-    values: np.ndarray,
-    targets: np.ndarray,
-) -> np.ndarray:
-    """
-    Vectorized 3D Log-Linear Interpolation with Constant Forward Extrapolation.
-    """
-    c_curves, m_pillars = tenors.shape
-    mask = tenors[:, None, :] <= targets[None, :, None]
-    idx1 = np.sum(mask, axis=2)
-    idx1 = np.clip(idx1, 1, m_pillars - 1)
-    idx0 = idx1 - 1
-
-    c_idx = np.arange(c_curves)[:, None]
-    t0 = tenors[c_idx, idx0]
-    t1 = tenors[c_idx, idx1]
-
-    y0 = values[c_idx, idx0, :]
-    y1 = values[c_idx, idx1, :]
-
-    dt = t1 - t0
-    dt = np.where(dt == 0, 1.0, dt)
-    w = (targets[None, :] - t0) / dt
-
-    ln_interp = y0 + w[:, :, None] * (y1 - y0)
-    return np.exp(ln_interp)
-
-
-@nb.njit(
-    parallel=True,
-    fastmath={"contract", "reassoc", "nsz"},
-    nogil=True,
-    boundscheck=False,
-    error_model="numpy",
-    cache=True,
-)
-def interp_log_linear_flat_extrap_3d_numba_kernel(
-    tenors: np.ndarray,
-    values: np.ndarray,
+    log_values: np.ndarray,
     targets: np.ndarray,
     out: np.ndarray,
 ) -> None:
     """
-    Zero-allocation 3D Log-Linear Interpolator.
-    Mathematically equivalent to linear interpolation on Zero Rates.
+    Log-linear interpolation of discount factors.
+
+    Interpolates linearly in log-discount-factor space and then exponentiates.
+
+    If discount factors are represented as
+
+        D(T) = exp(-z(T) * T)
+
+    this corresponds to piecewise-linear interpolation of the
+    discount-factor exponent (-z(T)T), not necessarily piecewise-linear
+    interpolation of zero rates themselves.
     """
     c_curves, m_pillars = tenors.shape
     d_target_dates = targets.shape[0]
-    s_scenarios = values.shape[2]
+    s_scenarios = log_values.shape[2]
 
     for c in nb.prange(c_curves):
         for d in range(d_target_dates):
@@ -234,10 +192,11 @@ def interp_log_linear_flat_extrap_3d_numba_kernel(
                 dt = 1.0
 
             w = (target - t0) / dt
+            w = min(max(w, 0.0), 1.0)
 
             for s in range(s_scenarios):
-                y0 = values[c, idx0, s]
-                y1 = values[c, idx1, s]
+                y0 = log_values[c, idx0, s]
+                y1 = log_values[c, idx1, s]
                 ln_interp = y0 + w * (y1 - y0)
                 out[c, d, s] = math.exp(ln_interp)
 
@@ -247,54 +206,26 @@ def interp_log_linear_flat_extrap_3d_numba_kernel(
 # ==============================================================================
 
 
-def interp_log_linear_linear_extrap_3d(
+@parallel_njit(_NB_VOID_3D)
+def interp_linear_on_log_values_linear_extrap_3d_numba_kernel(
     tenors: np.ndarray,
-    values: np.ndarray,
-    targets: np.ndarray,
-) -> np.ndarray:
-    """
-    Vectorized 3D Log-Linear Interpolation with Linear Extrapolation.
-    """
-    c_curves, m_pillars = tenors.shape
-    idx1 = np.clip(
-        np.sum(tenors[:, None, :] <= targets[None, :, None], axis=2),
-        1,
-        m_pillars - 1,
-    )
-    idx0 = idx1 - 1
-
-    c_idx = np.arange(c_curves)[:, None]
-    t0, t1 = tenors[c_idx, idx0], tenors[c_idx, idx1]
-    y0, y1 = values[c_idx, idx0, :], values[c_idx, idx1, :]
-
-    dt = np.where((t1 - t0) == 0, 1.0, t1 - t0)
-    w = (targets[None, :] - t0) / dt
-
-    ln_interp = y0 + w[:, :, None] * (y1 - y0)
-    return np.exp(ln_interp)
-
-
-@nb.njit(
-    parallel=True,
-    fastmath={"contract", "reassoc", "nsz"},
-    nogil=True,
-    boundscheck=False,
-    error_model="numpy",
-    cache=True,
-)
-def interp_log_linear_linear_extrap_3d_numba_kernel(
-    tenors: np.ndarray,
-    values: np.ndarray,
+    log_values: np.ndarray,
     targets: np.ndarray,
     out: np.ndarray,
 ) -> None:
     """
     Zero-allocation 3D Log-Linear Interpolator with Linear Extrapolation.
-    Mathematically identical to the flat forward logic in log-space.
+
+    Same code shape as the flat-extrap sibling EXCEPT the weight `w =
+    (target - t0) / dt` is not clamped to `[0, 1]`. On targets past
+    the last pillar, `w > 1` extrapolates linearly in log-space (i.e.
+    the implied zero-rate is extrapolated linearly off the last
+    pillar segment, then exponentiated). Inside the pillar range the
+    behaviour is identical to the flat-extrap kernel.
     """
     c_curves, m_pillars = tenors.shape
     d_target_dates = targets.shape[0]
-    s_scenarios = values.shape[2]
+    s_scenarios = log_values.shape[2]
 
     for c in nb.prange(c_curves):
         for d in range(d_target_dates):
@@ -314,8 +245,8 @@ def interp_log_linear_linear_extrap_3d_numba_kernel(
             w = (target - t0) / dt
 
             for s in range(s_scenarios):
-                y0 = values[c, idx0, s]
-                y1 = values[c, idx1, s]
+                y0 = log_values[c, idx0, s]
+                y1 = log_values[c, idx1, s]
                 ln_interp = y0 + w * (y1 - y0)
                 out[c, d, s] = math.exp(ln_interp)
 
@@ -325,31 +256,8 @@ def interp_log_linear_linear_extrap_3d_numba_kernel(
 # ==============================================================================
 
 
-def interp_step_left_flat_extrap_3d(
-    tenors: np.ndarray,
-    values: np.ndarray,
-    targets: np.ndarray,
-) -> np.ndarray:
-    """Vectorized 3D Step Left (LOCF) Interpolation."""
-    c_curves, m_pillars = tenors.shape
-    idx = np.clip(
-        np.sum(tenors[:, None, :] <= targets[None, :, None], axis=2) - 1,
-        0,
-        m_pillars - 1,
-    )
-    c_idx = np.arange(c_curves)[:, None]
-    return values[c_idx, idx, :]
-
-
-@nb.njit(
-    parallel=True,
-    fastmath={"contract", "reassoc", "nsz"},
-    nogil=True,
-    boundscheck=False,
-    error_model="numpy",
-    cache=True,
-)
-def interp_step_left_flat_extrap_3d_numba_kernel(
+@parallel_njit(_NB_VOID_3D)
+def interp_locf_flat_extrap_3d_numba_kernel(
     tenors: np.ndarray,
     values: np.ndarray,
     targets: np.ndarray,
@@ -377,39 +285,28 @@ def interp_step_left_flat_extrap_3d_numba_kernel(
 # ==============================================================================
 
 
-def interp_step_left_linear_extrap_3d(
-    tenors: np.ndarray,
-    values: np.ndarray,
-    targets: np.ndarray,
-) -> np.ndarray:
-    """Vectorized 3D Step Left (LOCF) Interpolation with Linear Extrapolation."""
-    c_curves, m_pillars = tenors.shape
-    idx = np.clip(
-        np.sum(tenors[:, None, :] <= targets[None, :, None], axis=2) - 1,
-        0,
-        m_pillars - 1,
-    )
-    c_idx = np.arange(c_curves)[:, None]
-    return values[c_idx, idx, :]
-
-
-@nb.njit(
-    parallel=True,
-    fastmath={"contract", "reassoc", "nsz"},
-    nogil=True,
-    boundscheck=False,
-    error_model="numpy",
-    cache=True,
-)
-def interp_step_left_linear_extrap_3d_numba_kernel(
+@parallel_njit(_NB_VOID_3D)
+def interp_locf_linear_extrap_3d_numba_kernel(
     tenors: np.ndarray,
     values: np.ndarray,
     targets: np.ndarray,
     out: np.ndarray,
 ) -> None:
     """
-    Zero-allocation 3D Step Left (LOCF) Interpolator.
-    Mathematically identical to flat extrapolation for step functions.
+    Zero-allocation 3D Step Left (LOCF) Interpolator with linear-extrap label.
+
+    A step function has no segment slope to extrapolate along, so on
+    a step function "linear extrapolation" reduces to flat
+    extrapolation: the last observed value is carried forward (past
+    the last pillar) or backward (before the first). The
+    implementation is byte-identical to the flat-extrap kernel; both
+    are registered separately in `CURVE_MATH_REGISTRY` for taxonomy
+    completeness.
+
+    If a future requirement asks for true slope-extrapolation of a
+    piecewise-constant function (e.g. extrap using the slope of the
+    last two pillar VALUES rather than the last segment), this is the
+    place to fork the implementation.
     """
     c_curves, m_pillars = tenors.shape
     d_target_dates = targets.shape[0]
@@ -430,31 +327,8 @@ def interp_step_left_linear_extrap_3d_numba_kernel(
 # ==============================================================================
 
 
-def interp_step_right_flat_extrap_3d(
-    tenors: np.ndarray,
-    values: np.ndarray,
-    targets: np.ndarray,
-) -> np.ndarray:
-    """Vectorized 3D Step Right (NOCB) Interpolation."""
-    c_curves, m_pillars = tenors.shape
-    idx = np.clip(
-        np.sum(tenors[:, None, :] < targets[None, :, None], axis=2),
-        0,
-        m_pillars - 1,
-    )
-    c_idx = np.arange(c_curves)[:, None]
-    return values[c_idx, idx, :]
-
-
-@nb.njit(
-    parallel=True,
-    fastmath={"contract", "reassoc", "nsz"},
-    nogil=True,
-    boundscheck=False,
-    error_model="numpy",
-    cache=True,
-)
-def interp_step_right_flat_extrap_3d_numba_kernel(
+@parallel_njit(_NB_VOID_3D)
+def interp_nocb_flat_extrap_3d_numba_kernel(
     tenors: np.ndarray,
     values: np.ndarray,
     targets: np.ndarray,
@@ -481,39 +355,22 @@ def interp_step_right_flat_extrap_3d_numba_kernel(
 # ==============================================================================
 
 
-def interp_step_right_linear_extrap_3d(
-    tenors: np.ndarray,
-    values: np.ndarray,
-    targets: np.ndarray,
-) -> np.ndarray:
-    """Vectorized 3D Step Right (NOCB) Interpolation with Linear Extrapolation."""
-    c_curves, m_pillars = tenors.shape
-    idx = np.clip(
-        np.sum(tenors[:, None, :] < targets[None, :, None], axis=2),
-        0,
-        m_pillars - 1,
-    )
-    c_idx = np.arange(c_curves)[:, None]
-    return values[c_idx, idx, :]
-
-
-@nb.njit(
-    parallel=True,
-    fastmath={"contract", "reassoc", "nsz"},
-    nogil=True,
-    boundscheck=False,
-    error_model="numpy",
-    cache=True,
-)
-def interp_step_right_linear_extrap_3d_numba_kernel(
+@parallel_njit(_NB_VOID_3D)
+def interp_nocb_linear_extrap_3d_numba_kernel(
     tenors: np.ndarray,
     values: np.ndarray,
     targets: np.ndarray,
     out: np.ndarray,
 ) -> None:
     """
-    Zero-allocation 3D Step Right (NOCB) Interpolator.
-    Mathematically identical to flat extrapolation for step functions.
+    Zero-allocation 3D Step Right (NOCB) Interpolator with linear-extrap label.
+
+    Mirror of `interp_step_left_linear_extrap_3d_numba_kernel` — see
+    its docstring. A step function has no segment slope, so "linear
+    extrapolation" reduces to flat extrapolation; this kernel is
+    byte-identical to the flat-extrap step-right sibling and is
+    registered separately in `CURVE_MATH_REGISTRY` for taxonomy
+    completeness.
     """
     c_curves, m_pillars = tenors.shape
     d_target_dates = targets.shape[0]
@@ -534,47 +391,7 @@ def interp_step_right_linear_extrap_3d_numba_kernel(
 # ==============================================================================
 
 
-def interp_strike_linear_flat_extrap(
-    pillars: np.ndarray,  # Shape: (N_trades, K_strikes)
-    values: np.ndarray,  # Shape: (N_trades, K_strikes, S_scenarios)
-    targets: np.ndarray,  # Shape: (N_trades, S_scenarios)
-) -> np.ndarray:
-    """
-    Vectorized 1D linear interpolation along the strike/Y-axis with flat extrapolation.
-    Used dynamically inside Option Pricers to resolve exact strike vol across scenarios.
-    """
-    N, K_dim = pillars.shape
-    S = targets.shape[1]
-
-    mask = pillars[:, None, :] <= targets[:, :, None]
-    idx1 = np.sum(mask, axis=2)
-    idx1 = np.clip(idx1, 1, K_dim - 1)
-    idx0 = idx1 - 1
-
-    n_idx = np.arange(N)[:, None]
-    s_idx = np.arange(S)[None, :]
-
-    x0 = pillars[n_idx, idx0]
-    x1 = pillars[n_idx, idx1]
-
-    y0 = values[n_idx, idx0, s_idx]
-    y1 = values[n_idx, idx1, s_idx]
-
-    dx = np.where((x1 - x0) == 0, 1.0, x1 - x0)
-    w = (targets - x0) / dx
-
-    w = np.clip(w, 0.0, 1.0)
-    return y0 + w * (y1 - y0)
-
-
-@nb.njit(
-    parallel=True,
-    fastmath={"contract", "reassoc", "nsz"},
-    nogil=True,
-    boundscheck=False,
-    error_model="numpy",
-    cache=True,
-)
+@parallel_njit(_NB_VOID_2D)
 def interp_strike_linear_flat_extrap_numba_kernel(
     pillars: np.ndarray,
     values: np.ndarray,

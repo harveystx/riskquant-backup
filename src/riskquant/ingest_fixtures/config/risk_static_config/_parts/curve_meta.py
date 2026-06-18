@@ -8,10 +8,13 @@ import pandas as pd
 from riskquant.ingest_fixtures.schemas import RiskStaticConfigCurveMeta
 from riskquant.ingest_fixtures.utils import validate_column_lengths
 
-# container_id namespace partition (shared across curves and surfaces):
-#   discount curves       : 100..199
-#   non-discount curves   : 200..299
-#   surfaces              : 300..399
+# container_id allocation. Curve and surface ids are DISJOINT id-spaces in
+# the GlobalIdNamespace ranges (validate._validate_global_id_namespace):
+#   curves    : CURVES range   — 250_000_000 + k*1_000   (this table)
+#   surfaces  : SURFACES range — 500_000_000 + k*1_000
+# The compiled RiskStaticConfig stores per-container attributes SLOT-indexed
+# (parallel to a sorted container_ids axis), so these large ids never size a
+# dense array.
 #
 # Discount-curve invariants (enforced by validate.py):
 #   - Every ccy that holds any discount curve has exactly one row with
@@ -42,8 +45,9 @@ CANONICAL_CURVE_NAMES = [
 _NUM_CANONICAL_CURVES = len(CANONICAL_CURVE_NAMES)
 
 _CANONICAL_CURVE_IDS = np.arange(
-    100_000_000,
-    100_000_000 + _NUM_CANONICAL_CURVES,
+    250_000_000,
+    250_000_000 + _NUM_CANONICAL_CURVES * 1_000,
+    step=1_000,
     dtype=int,
 )
 
@@ -97,7 +101,7 @@ def _get_data() -> RiskStaticConfigCurveMeta:
             "CM_EUA",
             "CM_POWER",
         ],
-        "unit_type": [
+        "quote_type": [
             "RATE",
             "RATE",
             "RATE",

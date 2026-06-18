@@ -1,10 +1,140 @@
 # src/riskquant/_create_master_context.py
 import argparse
+import ast
 import time
+from dataclasses import dataclass
 from pathlib import Path
+
+from riskquant.utils.printer import print_calling_file, print_success_message
+
+
+@dataclass(slots=True)
+class FileSummary:
+    path: Path
+    module_docstring: str | None
+    imports: list[str]
+    classes: list[str]
+    functions: list[str]
+
+
+def analyse_file(path: Path) -> FileSummary:
+    """
+    Lightweight AST analysis for LLM navigation.
+
+    Extracts:
+
+    - module docstring
+    - public imports
+    - public classes
+    - public functions
+
+    The goal is architectural navigation rather than full semantic analysis.
+    """
+
+    try:
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+    except Exception:
+        return FileSummary(
+            path=path,
+            module_docstring=None,
+            imports=[],
+            classes=[],
+            functions=[],
+        )
+
+    imports: set[str] = set()
+    classes: list[str] = []
+    functions: list[str] = []
+
+    for node in tree.body:
+        # ==========================================================
+        # Imports
+        # ==========================================================
+
+        if isinstance(node, ast.Import):
+            imports.update(alias.name for alias in node.names)
+            continue
+
+        if isinstance(node, ast.ImportFrom):
+            if node.module:
+                imports.add(node.module)
+            continue
+
+        # ==========================================================
+        # Public classes
+        # ==========================================================
+
+        if isinstance(node, ast.ClassDef):
+            classes.append(node.name)
+            continue
+
+        # ==========================================================
+        # Public functions
+        # ==========================================================
+
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            functions.append(node.name)
+            continue
+
+    return FileSummary(
+        path=path,
+        module_docstring=ast.get_docstring(tree),
+        imports=sorted(imports),
+        classes=sorted(classes),
+        functions=sorted(functions),
+    )
+
+
+def build_directory_tree(
+    files: list[Path],
+    root: Path,
+) -> str:
+    """
+    Build a unicode directory tree from a list of files.
+    """
+
+    tree: dict[str, dict] = {}
+
+    for file in files:
+        rel = file.relative_to(root)
+
+        node = tree
+
+        for part in rel.parts:
+            node = node.setdefault(part, {})
+
+    lines: list[str] = []
+
+    def walk(
+        node: dict[str, dict],
+        prefix: str = "",
+    ) -> None:
+
+        items = sorted(node.items())
+
+        for i, (name, child) in enumerate(items):
+            is_last = i == len(items) - 1
+
+            connector = "└── " if is_last else "├── "
+
+            lines.append(prefix + connector + name)
+
+            extension = "    " if is_last else "│   "
+
+            walk(
+                child,
+                prefix + extension,
+            )
+
+    walk(tree)
+
+    return "\n".join(lines)
 
 
 def main(profile: str | None = None):
+    print_calling_file()
+
     # 1. Handle Inputs: Check if called directly vs from CLI
     if profile is None:
         parser = argparse.ArgumentParser(
@@ -37,6 +167,8 @@ def main(profile: str | None = None):
         base_dir = Path().resolve() / "src" / "riskquant"
         base_dir_parent = base_dir.parent.parent
 
+    print("\n" + "-" * 100)
+    print("PROFILE:", profile)
     print(f"Generating context for profile '{profile}' from: {base_dir}")
 
     # 2. Define Domain Profiles
@@ -72,9 +204,12 @@ def main(profile: str | None = None):
             base_dir / "pnl" / "results.py",
         ],
         "valuation": [
+            base_dir / "utils",
             base_dir / "valuation",
+            base_dir / "_arrays.py",
             base_dir / "constants.py",
-            base_dir_parent / "scripts" / "demos" / "valuation",
+            base_dir / "exceptions.py",
+            base_dir / "numba.py",
         ],
         "pricers": [
             base_dir / "valuation",
@@ -108,8 +243,6 @@ def main(profile: str | None = None):
         "ce_jtd": [
             base_dir / "portfolio",
             base_dir / "simlab" / "scenarios" / "base.py",
-            base_dir / "simlab" / "scenarios" / "parametric_copula_t.py",
-            base_dir / "simlab" / "scenarios" / "parametric_copula_gaussian.py",
             base_dir / "valuation",
             base_dir / "constants.py",
         ],
@@ -118,18 +251,27 @@ def main(profile: str | None = None):
             # base_dir / "credit",
             base_dir / "ingest_fixtures",
             base_dir / "market_data",
+            base_dir / "pnl",
             base_dir / "portfolio",
             base_dir / "proxy_resolver",
             base_dir / "simlab",
             base_dir / "utils",
             base_dir / "valuation",
-            base_dir / "_njit.py",
+            base_dir / "scenario_metrics",
+            base_dir / "_arrays.py",
+            base_dir / "numba.py",
             base_dir / "constants.py",
             base_dir / "exceptions.py",
+            # base_dir / "synthetic_level_generators.py",
+            base_dir / "universe.py",
+            # SCRIPTS
             base_dir_parent / "scripts" / "demos" / "config",
-            base_dir_parent / "scripts" / "demos" / "credit" / "rc",
-            base_dir_parent / "scripts" / "demos" / "valuation",
-            base_dir_parent / "scripts" / "demos" / "simlab",
+            # base_dir_parent / "scripts" / "demos" / "credit",
+            base_dir_parent / "scripts" / "demos" / "e2e",
+            # base_dir_parent / "scripts" / "demos" / "market_data",
+            # base_dir_parent / "scripts" / "demos" / "misc",
+            # base_dir_parent / "scripts" / "demos" / "simlab",
+            # base_dir_parent / "scripts" / "demos" / "valuation",
         ],
         "ingest_fixtures": [
             base_dir / "ingest_fixtures",
@@ -183,36 +325,91 @@ def main(profile: str | None = None):
         #     base_dir / "valuation" / "engine.py",
         # ],
         "market_data": [
-            base_dir / "market_data",
-            base_dir / "ingest_fixtures",
             base_dir / "config",
+            base_dir / "ingest_fixtures",
+            base_dir / "market_data",
             base_dir / "utils",
+            base_dir / "valuation",
+            base_dir / "_arrays.py",
             base_dir / "constants.py",
             base_dir / "exceptions.py",
+            base_dir / "numba.py",
+            base_dir / "universe.py",
+            # SCRIPTS
+            base_dir_parent / "scripts" / "demos" / "market_data",
+            # TESTS
+            base_dir_parent / "tests" / "market_data",
         ],
         "market_data_reduced": [
             base_dir / "market_data",
             # base_dir / "ingest_fixtures",
             # base_dir / "config",
-            # base_dir / "utils",
-            # base_dir / "constants.py",
-            # base_dir / "exceptions.py",
-        ],
-        "credit": [
-            base_dir / "credit",
-            base_dir / "config",
-            base_dir / "ingest_fixtures",
-            base_dir / "market_data",
-            base_dir / "portfolio",
-            base_dir / "valuation" / "pricers",
-            base_dir / "valuation" / "engine.py",
-            base_dir / "simlab",
+            base_dir / "valuation" / "kernels" / "_math.py",
             base_dir / "utils",
+            base_dir / "_arrays.py",
+            base_dir / "numba.py",
             base_dir / "constants.py",
             base_dir / "exceptions.py",
-            # base_dir_parent / "tests" / "credit" / "exposure",
-            base_dir_parent / "scripts" / "demos" / "credit",
-            # base_dir_parent / "scripts" / "reporting" / "credit_risk" / "stress_tests",
+            base_dir / "universe.py",
+        ],
+        "market_data_calibrate": [
+            base_dir / "market_data" / "calibrate",
+            base_dir / "ingest_fixtures",
+            base_dir / "numba.py",
+            base_dir / "constants.py",
+            # SCRIPTS
+            base_dir_parent / "scripts" / "demos" / "market_data" / "calibrate",
+            # TESTS
+            base_dir_parent / "tests" / "market_data" / "calibrate",
+        ],
+        "credit": [
+            # SOURCE CODE
+            base_dir / "credit",
+            # base_dir / "config",
+            base_dir / "ingest_fixtures" / "credit",
+            base_dir / "ingest_fixtures" / "as_of.py",
+            base_dir / "ingest_fixtures" / "constants.py",
+            base_dir / "ingest_fixtures" / "rng.py",
+            base_dir / "ingest_fixtures" / "schemas.py",
+            base_dir / "ingest_fixtures" / "utils.py",
+            # base_dir / "market_data",
+            # base_dir / "portfolio",
+            # base_dir / "valuation" / "pricers",
+            # base_dir / "valuation" / "engine.py",
+            # base_dir / "simlab",
+            base_dir / "utils",
+            base_dir / "scenario_metrics",
+            base_dir / "_arrays.py",
+            base_dir / "constants.py",
+            base_dir / "exceptions.py",
+            base_dir / "numba.py",
+            base_dir / "universe.py",
+            # SCRIPTS
+            base_dir_parent / "scripts" / "demos" / "credit" / "exposure",
+            base_dir_parent / "scripts" / "demos" / "credit" / "jtd",
+            # # base_dir_parent / "scripts" / "reporting" / "credit_risk" / "stress_tests",
+        ],
+        "credit_jtd": [
+            # SOURCE CODE
+            base_dir / "credit" / "factors",
+            base_dir / "credit" / "jtd",
+            base_dir / "credit" / "masters",
+            base_dir / "ingest_fixtures" / "credit" / "credit_factors",
+            base_dir / "ingest_fixtures" / "credit" / "jtd",
+            base_dir / "ingest_fixtures" / "as_of.py",
+            base_dir / "ingest_fixtures" / "constants.py",
+            base_dir / "ingest_fixtures" / "rng.py",
+            base_dir / "ingest_fixtures" / "schemas.py",
+            base_dir / "ingest_fixtures" / "utils.py",
+            base_dir / "utils",
+            base_dir / "_arrays.py",
+            base_dir / "numba.py",
+            base_dir / "constants.py",
+            base_dir / "exceptions.py",
+            base_dir / "universe.py",
+            # SCRIPTS
+            base_dir_parent / "scripts" / "demos" / "credit" / "exposure",
+            base_dir_parent / "scripts" / "demos" / "credit" / "jtd",
         ],
         "credit_reduced": [
             base_dir / "credit",
@@ -229,10 +426,19 @@ def main(profile: str | None = None):
             # base_dir_parent / "scripts" / "reporting" / "credit_risk" / "stress_tests",
         ],
         "portfolio": [
+            base_dir / "config",
             base_dir / "portfolio",
             base_dir / "utils",
+            base_dir / "valuation",
+            base_dir / "_arrays.py",
+            base_dir / "numba.py",
             base_dir / "constants.py",
             base_dir / "exceptions.py",
+            base_dir / "universe.py",
+        ],
+        "scenario_metrics": [
+            base_dir / "scenario_metrics",
+            base_dir / "numba.py",
         ],
     }
 
@@ -255,7 +461,7 @@ def main(profile: str | None = None):
         ".env",
         "venv",
         ".pytest_cache",
-        "tests",
+        # "tests",
         "_create_master_context.py",
         ".ruff_cache",
         "ruff_cache",
@@ -269,7 +475,13 @@ def main(profile: str | None = None):
             print(f"Warning: Path not found: {path}")
             continue
 
-        paths_to_check = path.rglob("*.py") if path.is_dir() else [path]
+        # paths_to_check = path.rglob("*.py") if path.is_dir() else [path]
+
+        paths_to_check = (
+            [p for p in path.rglob("*") if p.suffix in {".py", ".md"}]
+            if path.is_dir()
+            else [path]
+        )
 
         for subpath in paths_to_check:
             if (
@@ -280,6 +492,8 @@ def main(profile: str | None = None):
                 valid_files.append(subpath)
 
     valid_files.sort()
+
+    file_summaries = [analyse_file(path) for path in valid_files]
 
     if out_file.exists():
         out_file.unlink()
@@ -292,28 +506,90 @@ def main(profile: str | None = None):
         out.write(
             f"This document contains the source code for the RiskQuant '{profile.upper()}' profile.\n"
         )
-        out.write(
-            "Use this structural map and source code as the ground-truth context for answering subsequent queries.\n"
-            "This is god-tier quantitative code, not typical Python scripts. Pay close attention to the structure and patterns used.\n"
-            "RiskQuant prioritizes Data-Oriented Design (DOD), Structures-of-Arrays (SoA), bare-metal memory sympathy, and absolute maximum throughput. The core philosophy of this codebase is: Human-readable at the edge, C-contiguous at the core. Strings must die early. Bare-metal performance is the north star.\n"
-        )
+        out.write("Treat this source code as the authoritative implementation.\n")
         out.write("</purpose>\n\n")
 
-        # Give the AI a mental map of the directory before dumping the code
-        out.write("<directory_structure>\n")
+        out.write("<llm_guidance>\n")
+        out.write(
+            "RiskQuant Design Principles:\n"
+            "- Data-Oriented Design (DOD)\n"
+            "- Structure-of-Arrays (SoA)\n"
+            "- Human-readable at the edge\n"
+            "- C-contiguous at the core\n"
+            "- Strings must die early\n"
+            "- Memory locality matters\n"
+            "- CPU efficiency matters\n"
+            "- Memory efficiency matters\n"
+            "- Kernels do not contain policy - they are purely computational\n"
+            "- Compilers are responsible for policy and orchestration; they must fail fast on invalid inputs\n"
+            "- Avoid unnecessary branching in hot paths\n"
+            "- Skip '__init__.py' files (they are always empty)\n\n"
+            "When proposing code:\n"
+            "- Preserve existing SoA layouts\n"
+            "- Avoid object-heavy designs in hot paths\n"
+            "- Avoid pandas in performance-critical code\n"
+            "- Minimize allocations\n"
+            "- Prefer vectorized NumPy operations\n"
+            "- Preserve existing architectural patterns\n"
+        )
+        out.write("</llm_guidance>\n\n")
+
         project_folder = base_dir_parent.parent
-        for f in valid_files:
-            # print(f)
-            rel = f.relative_to(project_folder)
-            out.write(f"{rel}\n")
-        out.write("</directory_structure>\n\n")
+        # project_folder = base_dir
+        out.write("<directory_tree>\n")
+        out.write(
+            build_directory_tree(
+                valid_files,
+                base_dir_parent.parent,
+            )
+        )
+        out.write("\n</directory_tree>\n\n")
+
+        out.write("<symbol_index>\n")
+
+        for summary in file_summaries:
+            rel = summary.path.relative_to(project_folder)
+
+            for cls in summary.classes:
+                out.write(f'<class name="{cls}" file="{rel}" />\n')
+
+            for fn in summary.functions:
+                out.write(f'<function name="{fn}" file="{rel}" />\n')
+
+        out.write("</symbol_index>\n\n")
 
         # Isolate the code blocks cleanly
         out.write("<files>\n")
-        for subpath in valid_files:
+        for summary in file_summaries:
+            subpath = summary.path
+
             rel_path = subpath.relative_to(project_folder)
-            # .strip() removes excessive trailing newlines to save tokens
+
+            out.write("<file_summary>\n")
+            out.write(f"path: {rel_path}\n")
+
+            if summary.module_docstring:
+                out.write(f"module_docstring: {summary.module_docstring[:120]}...\n")
+
+            if summary.classes:
+                out.write(f"classes: {', '.join(summary.classes)}\n")
+
+            if summary.functions:
+                out.write(f"functions: {', '.join(summary.functions)}\n")
+
+            if summary.imports:
+                out.write("imports:\n")
+
+                for imp in summary.imports:
+                    if imp.startswith("riskquant"):
+                        out.write(f"- {imp}\n")
+
+            out.write("</file_summary>\n\n")
+
             content = subpath.read_text(encoding="utf-8").strip()
+
+            if subpath.name == "__init__.py" and not content:
+                continue  # skip empty __init__.py files
 
             out.write(f'<file path="{rel_path}">\n')
             out.write(f"```python\n{content}\n```\n")
@@ -321,30 +597,37 @@ def main(profile: str | None = None):
         out.write("</files>\n")
 
     print(
-        f"Successfully generated {out_file.name} containing {len(valid_files)} files."
+        f"SUCCESS! Successfully generated {out_file.name} containing {len(valid_files)} files."
     )
+    print("-" * 100 + "\n")
+
+    print_success_message()
 
 
 if __name__ == "__main__":
-    main(profile="all")
-    main(profile="config")
-    main(profile="config_static")
-    main(profile="config_proxy")
+    # main(profile="all")
+    # main(profile="config")
+    # main(profile="config_static")
+    # main(profile="config_proxy")
     main(profile="valuation")
-    main(profile="simlab")
-    main(profile="simlab_reduced")
-    main(profile="simlab_extended")
+    # main(profile="simlab")
+    # main(profile="simlab_reduced")
+    # main(profile="simlab_extended")
     main(profile="ingest")
-    main(profile="ce_jtd")
-    main(profile="risk_quant")
-    main(profile="risk_quant_adhoc")
-    main(profile="pricers")
+    # main(profile="ce_jtd")
+    # main(profile="risk_quant")
+    # main(profile="risk_quant_adhoc")
+    # main(profile="pricers")
     main(profile="market_data")
-    main(profile="market_data_reduced")
+    # main(profile="market_data_reduced")
+    main(profile="market_data_calibrate")
     main(profile="credit")
-    main(profile="credit_reduced")
-    main(profile="ingest_fixtures")
-    main(profile="ingest_fixtures_risk_static_config")
-    main(profile="ingest_fixtures_market_data")
+    # main(profile="credit_jtd")
+    # main(profile="credit_reduced")
+    # main(profile="ingest_fixtures")
+    # main(profile="ingest_fixtures_risk_static_config")
+    # main(profile="ingest_fixtures_market_data")
     main(profile="portfolio")
-    main(profile="pricer_kernels")
+    main(profile="portfolio_blocks")
+    # main(profile="pricer_kernels")
+    main(profile="scenario_metrics")

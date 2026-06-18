@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 import numba as nb  # type: ignore[import-untyped]
 import numpy as np
 
-from riskquant._njit import parallel_njit
+from riskquant.numba import parallel_njit
 from riskquant.constants import EWMA_DECAY_FACTOR, MAX_EWMA_VOL_RATIO
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.market_data.risk_factors.shift_types import (
@@ -38,10 +38,10 @@ from riskquant.market_data.risk_factors.shift_types import (
     SHIFT_LOG_RETURN_ID,
     SHIFT_SIMPLE_RETURN_ID,
 )
+from riskquant.simlab.builder.shock_universe import build_shock_universe
 from riskquant.simlab.scenarios.base import (
     ScenarioGenerator,
     ScenarioSetBatch,
-    resolve_shock_universe,
 )
 from riskquant.simlab.scenarios.core_math.ar1_filter import kernel_ar1_residuals
 from riskquant.simlab.scenarios.core_math.ewma_volatility import (
@@ -220,7 +220,7 @@ class FilteredHistoricalGenerator(ScenarioGenerator):
         h = int(self.horizon)
         s_total = t_max - h
 
-        shock_universe = resolve_shock_universe(
+        shock_universe = build_shock_universe(
             required_shift_type_id=required_shift_type_id,
             source_factor_ids=source_factor_ids,
             available_factor_ids=self.matrix.factor_ids,

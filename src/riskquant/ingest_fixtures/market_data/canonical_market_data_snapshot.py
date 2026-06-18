@@ -19,10 +19,10 @@ The primary contract is a single flat `dict[rel_name, level]`:
 
 Coverage
 --------
-- 7 nodes        (all canonical FX + equity)
+- 10 nodes       (6 FX + 1 equity + 3 ATM-vol scalars)
 - 98 curve points  (13 curves: 8 IR × 9 pillars + 3 OFFSET_M × 6 + 1 OFFSET_Y × 4 + 1 OFFSET_HY × 4)
 - 60 surface points  (3 surfaces × 4 expiries × 5 y-labels)
-Total: 165 levels.
+Total: 168 levels.
 
 Unit conventions
 ----------------
@@ -42,11 +42,16 @@ always in base DECIMAL.
 
 DELTA-quoted surfaces (USDEUR_VOL_SURF)
 ---------------------------------------
-The runtime `build_market_data_matrix` REJECTS delta-quoted surfaces
-because no DELTA → STRIKE calibration is in place. The snapshot still
-emits the levels — it is a pure-data fixture with no opinion about
-which surfaces are pricer-runnable. Downstream filtering is the caller's
-job.
+The runtime `build_market_data_matrix` now CALIBRATES DELTA-quoted
+surfaces to MONEYNESS_FWD at build time via
+`market_data.calibrate.delta_to_moneyness`. Per-surface reference
+(T_REF, σ_REF) scalars produce expiry- and scenario-independent
+moneyness pillars; the conversion is F-independent so no per-trade
+forward coupling enters the calibrator. The kernel's existing
+`_Y_KIND_MONEYNESS` dispatch consumes the shadow surface unchanged.
+
+The snapshot still emits DELTA-quoted levels — calibration happens
+downstream in the builder.
 
 Validation
 ----------
@@ -75,9 +80,13 @@ from riskquant.ingest_fixtures.config.risk_static_config._parts.surface_point_me
 )
 
 # ============================================================================
-# 1. NODES  (7 scalars, all DECIMAL per node_meta.unit_scale)
+# 1. NODES  (10 scalars, all DECIMAL per node_meta.unit_scale)
 # ============================================================================
 # FX convention: <base><quote>, value = 1 unit of base in quote ccy.
+# ATM-vol nodes: per-underlying scalar implied vols consumed by the
+# option-NODE kernel. Values are seeded from the corresponding surface's
+# ATM σ at a representative tenor (1M for equity, 3M for FX, M+0 for
+# commodity) — the snapshot is the source of truth, not derived.
 _NODE_LEVELS: Final[dict[str, float]] = {
     "USDEUR": 0.9250,
     "USDCHF": 0.8800,
@@ -86,6 +95,10 @@ _NODE_LEVELS: Final[dict[str, float]] = {
     "EURGBP": 0.8480,
     "EURCHF": 0.9510,
     "AAPL_EQ": 185.50,
+    # ATM-vol scalars (DECIMAL, e.g. 0.22 = 22% vol).
+    "AAPL_ATM_VOL": 0.22,  # mirrors AAPL_VOL_SURF[1M][0.00]
+    "USDEUR_ATM_VOL": 0.084,  # mirrors USDEUR_VOL_SURF[3M][0.50]
+    "BRENT_CRUDE_ATM_VOL": 0.31,  # mirrors BRENT_CRUDE_VOL_SURF[M+1][75.00]
 }
 
 
@@ -340,7 +353,7 @@ def _build_expected_curve_rel_names() -> set[str]:
     """Reconstruct the curve-point rel-name keyset from the static config."""
     curve_id_to_name = dict(
         zip(
-            range(100_000_000, 100_000_000 + len(CANONICAL_CURVE_NAMES)),
+            range(250_000_000, 250_000_000 + len(CANONICAL_CURVE_NAMES) * 1_000, 1_000),
             CANONICAL_CURVE_NAMES,
             strict=True,
         )
@@ -359,7 +372,9 @@ def _build_expected_surface_rel_names() -> set[str]:
     """Reconstruct the surface-point rel-name keyset from the static config."""
     surface_id_to_name = dict(
         zip(
-            range(200_000_000, 200_000_000 + len(CANONICAL_SURFACE_NAMES)),
+            range(
+                500_000_000, 500_000_000 + len(CANONICAL_SURFACE_NAMES) * 1_000, 1_000
+            ),
             CANONICAL_SURFACE_NAMES,
             strict=True,
         )

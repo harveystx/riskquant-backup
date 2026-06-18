@@ -19,7 +19,7 @@ Resolution priority (first match wins, per required_id):
 
   (3) Container-level proxy (CONTAINER_PROXY)
         required's parent container is proxied:
-        proxy_topology.container_id_to_proxy_id[parent_id] >= 0.
+        proxy_topology.container_proxy_id[slot(parent_id)] >= 0.
         Find the matching tenor point on the proxy container, restricted
         to B. Apply container-level scale.
         Curves only. Surface container-proxy raises NotImplementedError —
@@ -61,6 +61,7 @@ from typing import Final
 import numpy as np
 import numpy.typing as npt
 
+from riskquant._arrays import searchsorted_or_raise, unique_first_seen
 from riskquant.config.enums.x_axis_kinds import XAxisKind
 from riskquant.config.proxy_config.proxy_topology import ProxyTopology
 from riskquant.config.static_config.static_config import RiskStaticConfig
@@ -401,30 +402,31 @@ def resolve_required_factor_ids_to_market_data_factor_ids(
 
     # Container-level proxy: only valid for curve / surface children.
     # For nodes (parent_kind == 0), parent_id equals the node's rf_id —
-    # which lives in the rf-id space, not container-id. Guard with a
-    # safe-index pattern before the gather.
+    # which lives in the rf-id space, not container-id. We resolve only the
+    # container-child rows, mapping raw container_id -> slot into the proxy
+    # topology's slot-indexed container arrays (container ids live at 250M+,
+    # so the arrays are keyed by slot, never by raw id).
     is_container_child = parent_kind > _PK_NODE
-    safe_parent_id = np.where(is_container_child, parent_id, np.int32(0))
+    container_proxy_id = np.full(n, np.int32(-1), dtype=np.int32)
+    container_proxy_scale = np.full(n, np.float64(1.0), dtype=np.float64)
 
     if is_container_child.any():
-        max_pid = int(safe_parent_id[is_container_child].max())
-        if max_pid > proxy_topology.container_id_to_proxy_id.size - 1:
-            raise PrettyKeyError(
-                "parent_id out of range for proxy_topology.container_id_to_proxy_id; "
-                f"max parent_id={max_pid}, array length="
-                f"{proxy_topology.container_id_to_proxy_id.size}"
-            )
+        child_parent_ids = parent_id[is_container_child].astype(np.int32, copy=False)
+        # searchsorted_or_raise doubles as the integrity check the old
+        # explicit bounds guard provided: an unknown parent container id
+        # (a static-config break) raises here rather than gathering garbage.
+        slots = searchsorted_or_raise(
+            universe=static_config.container_ids,
+            raw=child_parent_ids,
+            label="parent container_id",
+        )
+        container_proxy_id[is_container_child] = proxy_topology.container_proxy_id[
+            slots
+        ]
+        container_proxy_scale[is_container_child] = (
+            proxy_topology.container_proxy_vol_scale[slots]
+        )
 
-    cont_proxy_id_raw = proxy_topology.container_id_to_proxy_id[safe_parent_id]
-    cont_proxy_scale_raw = proxy_topology.container_id_to_proxy_vol_scale[
-        safe_parent_id
-    ]
-    container_proxy_id = np.where(
-        is_container_child, cont_proxy_id_raw, np.int32(-1)
-    ).astype(np.int32)
-    container_proxy_scale = np.where(
-        is_container_child, cont_proxy_scale_raw, np.float64(1.0)
-    ).astype(np.float64)
     has_container_proxy = container_proxy_id >= 0
 
     # ------------------------------------------------------------------ #
@@ -471,7 +473,9 @@ def resolve_required_factor_ids_to_market_data_factor_ids(
         if not proxies_in_b.all():
             bad_required = required_factor_ids[mask][~proxies_in_b]
             bad_proxies = proxy_ids[~proxies_in_b]
-            pairs = list(zip(bad_required.tolist(), bad_proxies.tolist()))[:10]
+            pairs = list(zip(bad_required.tolist(), bad_proxies.tolist(), strict=True))[
+                :10
+            ]
             raise PrettyKeyError(
                 "RF-level proxy resolved to rf_id(s) absent from market data:\n"
                 + "\n".join(f"  required={r} -> proxy={p}" for r, p in pairs)
@@ -561,7 +565,7 @@ def resolve_required_factor_ids_to_market_data_factor_ids(
     # Phase 4: unique source universe + required -> source index         #
     # ------------------------------------------------------------------ #
 
-    unique_sources, inverse = _unique_first_seen(source_factor_ids)
+    unique_sources, inverse = unique_first_seen(source_factor_ids)
     required_to_source_index = inverse.astype(np.int32, copy=False)
 
     return ProxyResolution(
@@ -740,37 +744,6 @@ def _resolve_tenor_fallback_inplace(
 # ============================================================
 # Helpers
 # ============================================================
-
-
-def _unique_first_seen(
-    arr: npt.NDArray[np.int32],
-) -> tuple[npt.NDArray[np.int32], npt.NDArray[np.int32]]:
-    """
-    Return (unique_first_seen, inverse).
-
-    np.unique sorts; we need first-seen order for deterministic
-    shock-compute plans across reruns of identical inputs.
-
-    Strategy: get sorted-unique + first-index + inverse-sorted via one
-    np.unique call, then permute to first-seen order.
-    """
-    if arr.size == 0:
-        return np.empty(0, dtype=np.int32), np.empty(0, dtype=np.int32)
-
-    _, first_idx, inverse_sorted = np.unique(
-        arr, return_index=True, return_inverse=True
-    )
-    # Reorder unique to first-seen order.
-    order = np.argsort(first_idx, kind="mergesort")
-    unique_first_seen = arr[first_idx[order]]
-    # Build inverse_first_seen: sorted_idx -> first_seen_idx.
-    sorted_to_first_seen = np.empty(order.size, dtype=np.int32)
-    sorted_to_first_seen[order] = np.arange(order.size, dtype=np.int32)
-    inverse_first_seen = sorted_to_first_seen[inverse_sorted].astype(
-        np.int32, copy=False
-    )
-
-    return unique_first_seen.astype(np.int32, copy=False), inverse_first_seen
 
 
 def _smoke_test_inputs(

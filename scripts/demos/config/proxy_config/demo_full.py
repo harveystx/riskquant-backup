@@ -4,11 +4,15 @@ Demo of proxy config generation.
 """
 
 from riskquant.config.proxy_config.compile import compile_proxy_topology_from_df
-from riskquant.config.static_config.compile import compile_risk_static_config_from_dict_of_dfs
+from riskquant.config.static_config.compile import (
+    compile_risk_static_config_from_dict_of_dfs,
+)
 from riskquant.ingest_fixtures.config.risk_proxy_config.canonical_risk_proxy_config import (
     CANONICAL_RISK_PROXY_CONFIG_DF,
 )
-from riskquant.ingest_fixtures.config.risk_static_config.canonical_risk_static_config import CANONICAL_RISK_STATIC_CONFIG_DICT_OF_DFS
+from riskquant.ingest_fixtures.config.risk_static_config.canonical_risk_static_config import (
+    CANONICAL_RISK_STATIC_CONFIG_DICT_OF_DFS,
+)
 from riskquant.utils.printer import (
     print_calling_file,
     print_df,
@@ -19,7 +23,6 @@ from riskquant.utils.printer import (
 
 def main():
     print_calling_file()
-
 
     ###################
     # Static Config
@@ -32,7 +35,6 @@ def main():
     )
 
     rsc.summary()
-
 
     #################
     # Proxy Config

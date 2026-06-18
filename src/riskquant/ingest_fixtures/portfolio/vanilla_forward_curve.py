@@ -50,13 +50,13 @@ from riskquant.ingest_fixtures.utils import (
     generate_netting_set_ids,
     validate_column_lengths,
 )
-from riskquant.portfolio.instruments import Instrument
+from riskquant.portfolio.instruments import InstrumentType
 
 
 def _get_data() -> MarketRiskIngestData:
     return {
         "uid": [200, 201, 202, 203, 204, 205],
-        "instrument": [Instrument.VANILLA_FORWARD_CURVE.name] * 6,
+        "instrument": [InstrumentType.VANILLA_FORWARD_CURVE.name] * 6,
         "quantity": [
             5_000.0,  # 200. long BRENT fwd curve
             -2_500.0,  # 201. short BRENT fwd, discounted
@@ -124,6 +124,7 @@ def _get_data() -> MarketRiskIngestData:
         ],
         "is_call": [None] * 6,
         "expiry_date": [None] * 6,
+        "volatility_container_name": [None] * 6,
         "netting_set_id": generate_netting_set_ids(n=6, none_probability=0.0),
     }
 

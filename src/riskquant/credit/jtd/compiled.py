@@ -12,58 +12,89 @@ uids into one flat int64 array in band order — the row order the engine's
 
 from __future__ import annotations
 
+__all__ = [
+    "CompiledJtdPortfolio",
+]
+
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import TypeAlias
 
 import numpy as np
 import numpy.typing as npt
 
-from riskquant.credit.jtd.blocks.copula import (
-    GaussianCopulaJtdBlock,
-    TCopulaJtdBlock,
+from riskquant.credit.jtd.blocks.beta_binomial import (
+    BetaBinomialJtdBlock,
 )
-from riskquant.credit.jtd.blocks.deterministic import DeterministicJtdBlock
-
-JtdBlockT: TypeAlias = GaussianCopulaJtdBlock | TCopulaJtdBlock | DeterministicJtdBlock
+from riskquant.credit.jtd.blocks.forced_default import ForcedDefaultJtdBlock
+from riskquant.credit.jtd.blocks.independent_bernoulli import (
+    IndependentBernoulliJtdBlock,
+)
+from riskquant.credit.jtd.blocks.mf_copula_gaussian import MfGaussianCopulaJtdBlock
+from riskquant.credit.jtd.blocks.mf_copula_students_t import (
+    MfStudentsTCopulaJtdBlock,
+)
+from riskquant.credit.jtd.blocks.sf_copula_gaussian import SfGaussianCopulaJtdBlock
+from riskquant.credit.jtd.blocks.sf_copula_students_t import (
+    SfStudentsTCopulaJtdBlock,
+)
+from riskquant.credit.jtd.blocks.stress_regime_bernoulli import (
+    StressRegimeBernoulliJtdBlock,
+)
+from riskquant.credit.jtd.blocks.type_alias import JtdBlockTypeUnion
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CompiledJtdPortfolio:
     """JTD-ready credit portfolio: an ordered set of compiled obligor blocks."""
 
-    # Compiled blocks
-    gaussian_copula_jtd: GaussianCopulaJtdBlock | None = None
-    t_copula_jtd: TCopulaJtdBlock | None = None
-    deterministic_jtd: DeterministicJtdBlock | None = None
+    # --- COMPILED BLOCKS ---
+
+    # Non-copula blocks
+    forced_default_jtd_block: ForcedDefaultJtdBlock | None = None
+    independent_bernoulli_jtd_block: IndependentBernoulliJtdBlock | None = None
+    beta_binomial_jtd_block: BetaBinomialJtdBlock | None = None
+    stress_regime_bernoulli_jtd_block: StressRegimeBernoulliJtdBlock | None = None
+
+    # SF Copula blocks
+    sf_gaussian_copula_jtd_block: SfGaussianCopulaJtdBlock | None = None
+    sf_students_t_copula_jtd_block: SfStudentsTCopulaJtdBlock | None = None
+
+    # MF Copula blocks
+    mf_gaussian_copula_jtd_block: MfGaussianCopulaJtdBlock | None = None
+    mf_students_t_copula_jtd_block: MfStudentsTCopulaJtdBlock | None = None
 
     # Internal fields derived from the above and used by the engine.
-    _blocks: tuple[JtdBlockT, ...] = field(init=False, repr=False)
+    _blocks: tuple[JtdBlockTypeUnion, ...] = field(init=False, repr=False)
     _block_offsets: npt.NDArray[np.int64] = field(init=False, repr=False)
     _total_blocks: int = field(init=False, repr=False)
     _total_obligors: int = field(init=False, repr=False)
     _obligor_uids: npt.NDArray[np.int64] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        ordered: tuple[JtdBlockT | None, ...] = (
-            self.gaussian_copula_jtd,
-            self.t_copula_jtd,
-            self.deterministic_jtd,
+        # Band order + slot names are owned by the model registry; getattr by
+        # compiled_slot fails fast here if a spec names a slot this dataclass
+        # does not declare.
+        from riskquant.credit.jtd.registry import JTD_MODEL_SPECS
+
+        ordered: tuple[JtdBlockTypeUnion | None, ...] = tuple(
+            getattr(self, spec.compiled_slot) for spec in JTD_MODEL_SPECS
         )
-        blocks: tuple[JtdBlockT, ...] = tuple(b for b in ordered if b is not None)
+        blocks: tuple[JtdBlockTypeUnion, ...] = tuple(
+            b for b in ordered if b is not None
+        )
         total_blocks = len(blocks)
 
-        block_offsets = np.zeros(total_blocks, dtype=np.int64)
-        counts = np.fromiter(
-            (b.num_obligors for b in blocks), dtype=np.int64, count=total_blocks
-        )
-        total_obligors = int(counts.sum())
-        if total_blocks > 1:
-            np.cumsum(counts[:-1], out=block_offsets[1:])
+        # 1. Calculate the total size needed
+        total_obligors = sum(b.num_obligors for b in blocks)
 
+        # 2. Allocate uninitialized arrays (faster than zeros)
+        block_offsets = np.empty(total_blocks, dtype=np.int64)
         obligor_uids = np.empty(total_obligors, dtype=np.int64)
+
+        # 3. Populate both arrays in a single, clean pass
         offset = 0
-        for b in blocks:
+        for i, b in enumerate(blocks):
+            block_offsets[i] = offset
             n = b.num_obligors
             obligor_uids[offset : offset + n] = b.obligor_uids
             offset += n
@@ -75,7 +106,7 @@ class CompiledJtdPortfolio:
         object.__setattr__(self, "_obligor_uids", obligor_uids)
 
     @property
-    def blocks(self) -> tuple[JtdBlockT, ...]:
+    def blocks(self) -> tuple[JtdBlockTypeUnion, ...]:
         return self._blocks
 
     @property
@@ -94,7 +125,7 @@ class CompiledJtdPortfolio:
     def obligor_uids(self) -> npt.NDArray[np.int64]:
         return self._obligor_uids
 
-    def iter_blocks(self) -> Iterator[JtdBlockT]:
+    def iter_blocks(self) -> Iterator[JtdBlockTypeUnion]:
         yield from self._blocks
 
     def summary(self) -> None:

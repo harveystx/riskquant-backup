@@ -99,7 +99,7 @@ def _build_canonical_universe() -> list[tuple[str, _MarketRiskFactorParams]]:
         for cid, name, utype in zip(
             curve_meta["curve_id"],
             curve_meta["curve_name"],
-            curve_meta["unit_type"],
+            curve_meta["quote_type"],
             strict=True,
         )
     }
@@ -110,10 +110,10 @@ def _build_canonical_universe() -> list[tuple[str, _MarketRiskFactorParams]]:
         curve_point_meta["tenor_token"],
         strict=True,
     ):
-        curve_name, unit_type = curve_info[cid]
+        curve_name, quote_type = curve_info[cid]
         factor_name = f"{curve_name}{tenor}"
 
-        if unit_type == "RATE":
+        if quote_type == "RATE":
             specs.append((factor_name, RATE_DEFAULTS))
         elif "GAS" in curve_name:
             specs.append((factor_name, GAS_COMMODITY_DEFAULTS))

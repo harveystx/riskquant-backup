@@ -85,3 +85,52 @@ class CompiledExposure:
 
     def iter_views(self) -> Iterator[ViewT]:
         yield from self._views
+
+    def summary(self) -> str:
+        """Return a console-friendly overview of compiled exposure layout."""
+
+        lines: list[str] = []
+
+        width = 90
+
+        lines.append("=" * width)
+        lines.append(f"{'COMPILED EXPOSURE SUMMARY':^{width}}")
+        lines.append("=" * width)
+
+        lines.append(f"Total Views        : {self._total_views:,}")
+        lines.append(f"Total Netting Sets : {self._total_netting_sets:,}")
+
+        lines.append("-" * width)
+        lines.append(f"{'View Type':<40} {'Netting Sets':>15} {'Offset':>15}")
+        lines.append("-" * width)
+
+        if self._total_views == 0:
+            lines.append(f"{'Empty Exposure':^{width}}")
+        else:
+            for offset, view in zip(
+                self._view_offsets,
+                self._views,
+                strict=True,
+            ):
+                lines.append(
+                    f"{type(view).__name__:<40} "
+                    f"{view.num_netting_sets:>15,} "
+                    f"{offset:>15,}"
+                )
+
+        lines.append("=" * width)
+
+        return "\n".join(lines)
+
+    def print_view_details(self, max_items: int | None = 10) -> None:
+        """Cascade into each view and print its raw SoA arrays."""
+        print("=" * 90)
+        print(f"{f'VIEW DETAILS (MAX {max_items} ITEMS PER VIEW)':^90}")
+        print("=" * 90 + "\n")
+        for view in self._views:
+            title = f"View: {type(view).__name__}"
+            print("-" * len(title))
+            print(title)
+            print("-" * len(title))
+            view.print(max_items=max_items)
+        print("=" * 90 + "\n")

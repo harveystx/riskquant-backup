@@ -46,7 +46,7 @@ from riskquant.ingest_fixtures.utils import (
     generate_netting_set_ids,
     validate_column_lengths,
 )
-from riskquant.portfolio.instruments import Instrument
+from riskquant.portfolio.instruments import InstrumentType
 
 _rng: np.random.Generator = get_canonical_rng()
 
@@ -54,7 +54,7 @@ _rng: np.random.Generator = get_canonical_rng()
 def _get_data() -> MarketRiskIngestData:
     return {
         "uid": [400, 401, 402, 403, 404],
-        "instrument": [Instrument.VANILLA_EUROPEAN_OPTION_CURVE.name] * 5,
+        "instrument": [InstrumentType.VANILLA_EUROPEAN_OPTION_CURVE.name] * 5,
         "quantity": [
             2_000.0,  # 400. long call on Brent fwd
             -1_500.0,  # 401. short put on Brent fwd

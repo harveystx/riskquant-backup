@@ -4,114 +4,37 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 import numpy as np
 
+from riskquant.synthetic_level_generators import create_complex_levels_series
 from riskquant.simlab.scenarios.core_math.sbb_block_generator import (
     generate_sbb_path_indices,
 )
 
 
-def inject_stale_periods(
-    returns: np.ndarray,
-    n_stale: int,
-    n_stale_len: int,
-    rng: np.random.Generator,
-) -> None:
-    """
-    Injects non-overlapping contiguous periods of zero returns in-place.
-    """
-    n = len(returns)
-    if n_stale * n_stale_len > n:
-        raise ValueError("Requested stale periods exceed total array length.")
-
-    # Maintain a list of valid starting indices that can fit the block length
-    valid_starts = list(range(n - n_stale_len + 1))
-
-    for _ in range(n_stale):
-        if not valid_starts:
-            raise ValueError(
-                "Array is too crowded to fit another non-overlapping stale block."
-            )
-
-        # Pick a random valid starting index
-        start_idx = rng.choice(valid_starts)
-
-        # Zero out the return block
-        returns[start_idx : start_idx + n_stale_len] = 0.0
-
-        # Prune the candidate pool to prevent overlapping blocks.
-        # If we chose start_idx, any new start index 's' must be far enough
-        # away so the blocks don't bleed into each other.
-        min_invalid = start_idx - n_stale_len + 1
-        max_invalid = start_idx + n_stale_len - 1
-
-        valid_starts = [x for x in valid_starts if x < min_invalid or x > max_invalid]
-
-
-def create_complex_timeseries(
-    seed: int = 101,
-    n_days: int = 330,  # Added parameter (defaults to original length)
-    n_stale: int = 5,
-    n_stale_len: int = 22,
-) -> np.ndarray:
-    """Generates log-returns featuring regime changes, contiguous stale periods, and jumps."""
-    rng = np.random.default_rng(seed)
-
-    # Proportional split: ~33% / 33% / 34%
-    len1 = int(n_days * 0.33)
-    len2 = int(n_days * 0.33)
-    len3 = n_days - len1 - len2  # Absorbs any rounding differences
-
-    # Safety checks: ensure the regimes are long enough to fit the anomalies
-    if len1 < n_stale * n_stale_len:
-        raise ValueError(
-            f"n_days={n_days} makes Regime 1 ({len1} days) too short to "
-            f"fit {n_stale} stale periods of {n_stale_len} days."
-        )
-    if len2 < 4:
-        raise ValueError(
-            f"n_days={n_days} makes Regime 2 ({len2} days) too short to fit 4 jumps."
-        )
-
-    # Regime 1: Low Volatility with CONTIGUOUS Stale periods (Illiquid phase)
-    ret1 = rng.standard_normal(len1) * 0.005
-
-    # Regime 2: High Volatility with Jumps (Crisis/Earnings phase)
-    ret2 = rng.standard_normal(len2) * 0.030
-    jump_indices = rng.choice(len2, size=4, replace=False)
-    ret2[jump_indices] = rng.choice([-0.08, 0.07, -0.12, 0.09], size=4)
-
-    # Regime 3: Medium Volatility with Drift (Recovery phase)
-    ret3 = rng.standard_normal(len3) * 0.01 + 0.001
-
-    log_returns = np.concatenate([ret1, ret2, ret3])
-
-    inject_stale_periods(log_returns, n_stale=n_stale, n_stale_len=n_stale_len, rng=rng)
-
-    # Construct level prices starting at 100.0
-    levels = 100.0 * np.exp(np.cumsum(log_returns))
-    return np.concatenate(([100.0], levels))
-
-
 def plot_multipath_fanout(
-    n_days: int = 306,  # Shortened for demo purposes
-    n_stale: int = 3,
-    n_stale_len: int = 20,
-    horizon: int = 50,
-    total_scenarios: int = 20,
-    expected_block_size: float = 20.0,
-    seed: int = 123_234,
+    num_obs: int = 400,  # Shortened for demo purposes
+    n_stale: int = 2,
+    n_stale_len: int = 50,
+    horizon: int = 100,
+    total_scenarios: int = 30,
+    expected_block_size: float = 25.0,
+    rng_seed: int = 999_999,
+    len_01_proportion: float = 0.30,
+    len_02_proportion: float = 0.30,
 ) -> None:
-    levels = create_complex_timeseries(
-        n_days=n_days,
+    levels = create_complex_levels_series(
+        num_obs=num_obs,
         n_stale=n_stale,
         n_stale_len=n_stale_len,
-        seed=seed,
+        rng_seed=rng_seed,
+        len_01_proportion=len_01_proportion,
+        len_02_proportion=len_02_proportion,
     )
     t_max = len(levels)
 
     # Extract historical shifts
     shifts = np.log(levels[1:] / levels[:-1])
 
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(rng_seed)
 
     # Generate the index matrix (B, h)
     path_indices = generate_sbb_path_indices(
@@ -134,8 +57,8 @@ def plot_multipath_fanout(
     # ------------------------------------------------------------------
     # Calculate dynamic breakpoints for plotting
     # ------------------------------------------------------------------
-    len1 = int(n_days * 0.33)
-    len2 = int(n_days * 0.33)
+    len1 = int(num_obs * len_01_proportion)
+    len2 = int(num_obs * len_02_proportion)
     break1 = len1
     break2 = len1 + len2
 
@@ -158,7 +81,7 @@ def plot_multipath_fanout(
     )
 
     plt.text(
-        break2 + ((n_days - break2) / 2),
+        break2 + ((num_obs - break2) / 2),
         np.max(levels),
         "Medium Vol",
         ha="center",

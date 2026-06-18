@@ -19,12 +19,11 @@ class RcNettingSetView(_NettingSetView):
     EXPOSURE_MODEL_ID: ClassVar[int] = REPLACEMENT_COST_ID
 
     collateral: npt.NDArray[np.float64]
-    is_collateralized: npt.NDArray[np.bool_]
 
     def print(
         self,
         *,
-        max_rows: int = 10,
+        max_items: int | None = 10,
         precision: int = 2,
         show_collateral: bool = True,
         add_space_before_table: bool = True,
@@ -43,6 +42,7 @@ class RcNettingSetView(_NettingSetView):
         add_space_before_table
             Insert a blank line before the table header.
         """
+        max_items = max_items if max_items is not None else 10
         n_sets = self.num_netting_sets
         n_trades = self.num_trades
 
@@ -51,7 +51,7 @@ class RcNettingSetView(_NettingSetView):
 
         print(f"RcNettingSetView: {n_sets} netting sets, {n_trades} trades")
 
-        display_rows = min(n_sets, max_rows)
+        display_rows = min(n_sets, max_items)
 
         header = f"{'Netting Set UID':>16}"
         if show_collateral:

@@ -14,20 +14,20 @@ from riskquant.market_data.curves.extrap_methods import (
 from riskquant.market_data.curves.interp_defs import (
     interp_linear_flat_extrap_3d_numba_kernel,
     interp_linear_linear_extrap_3d_numba_kernel,
-    interp_log_linear_flat_extrap_3d_numba_kernel,
-    interp_log_linear_linear_extrap_3d_numba_kernel,
-    interp_step_left_flat_extrap_3d_numba_kernel,
-    interp_step_left_linear_extrap_3d_numba_kernel,
-    interp_step_right_flat_extrap_3d_numba_kernel,
-    interp_step_right_linear_extrap_3d_numba_kernel,
+    interp_linear_on_log_values_flat_extrap_3d_numba_kernel,
+    interp_linear_on_log_values_linear_extrap_3d_numba_kernel,
+    interp_locf_flat_extrap_3d_numba_kernel,
+    interp_locf_linear_extrap_3d_numba_kernel,
+    interp_nocb_flat_extrap_3d_numba_kernel,
+    interp_nocb_linear_extrap_3d_numba_kernel,
 )
 
 # Import your enum constants
 from riskquant.market_data.curves.interp_methods import (
     INTERP_LINEAR,
+    INTERP_LOCF,
     INTERP_LOG_LINEAR,
-    INTERP_STEP_LEFT,
-    INTERP_STEP_RIGHT,
+    INTERP_NOCB,
 )
 
 # ============================================================
@@ -52,25 +52,25 @@ CURVE_MATH_REGISTRY: dict[tuple[int, int], InterpKernelFn] = {
     (
         int(INTERP_LOG_LINEAR),
         int(EXTRAP_FLAT),
-    ): interp_log_linear_flat_extrap_3d_numba_kernel,
+    ): interp_linear_on_log_values_flat_extrap_3d_numba_kernel,
     (
         int(INTERP_LOG_LINEAR),
         int(EXTRAP_LINEAR),
-    ): interp_log_linear_linear_extrap_3d_numba_kernel,
+    ): interp_linear_on_log_values_linear_extrap_3d_numba_kernel,
     (
-        int(INTERP_STEP_LEFT),
+        int(INTERP_LOCF),
         int(EXTRAP_FLAT),
-    ): interp_step_left_flat_extrap_3d_numba_kernel,
+    ): interp_locf_flat_extrap_3d_numba_kernel,
     (
-        int(INTERP_STEP_LEFT),
+        int(INTERP_LOCF),
         int(EXTRAP_LINEAR),
-    ): interp_step_left_linear_extrap_3d_numba_kernel,
+    ): interp_locf_linear_extrap_3d_numba_kernel,
     (
-        int(INTERP_STEP_RIGHT),
+        int(INTERP_NOCB),
         int(EXTRAP_FLAT),
-    ): interp_step_right_flat_extrap_3d_numba_kernel,
+    ): interp_nocb_flat_extrap_3d_numba_kernel,
     (
-        int(INTERP_STEP_RIGHT),
+        int(INTERP_NOCB),
         int(EXTRAP_LINEAR),
-    ): interp_step_right_linear_extrap_3d_numba_kernel,
+    ): interp_nocb_linear_extrap_3d_numba_kernel,
 }

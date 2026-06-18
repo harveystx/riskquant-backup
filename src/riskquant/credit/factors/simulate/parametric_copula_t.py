@@ -28,9 +28,13 @@ LAYOUT
 
 from __future__ import annotations
 
+__all__ = [
+    "TCopulaGenerator",
+]
+
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -40,6 +44,11 @@ from riskquant.credit.factors.simulate.base import (
     CreditFactorGenerator,
 )
 
+if TYPE_CHECKING:
+    from riskquant.credit.masters.factor_universe.compiled import (
+        CompiledCreditFactorUniverse,
+    )
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TCopulaGenerator(CreditFactorGenerator):
@@ -47,9 +56,16 @@ class TCopulaGenerator(CreditFactorGenerator):
     Zero-allocation Student-t-copula latent-factor generator.
 
     `chi_factor_columns` lists the factor-axis positions that carry a
-    chi-square mixing variable W; `nu_by_chi` is the degrees-of-freedom
+    chi-square mixing variable $W$; `nu_by_chi` is the degrees-of-freedom
     array aligned to it. Every other column is a standard-normal latent
     factor.
+
+    **CRITICAL KERNEL OPTIMIZATION:**
+    The columns corresponding to `chi_factor_columns` DO NOT emit raw $\\chi^2$ draws.
+    Instead, they emit the precomputed inverse square root: $1/\\sqrt{W}$.
+    This allows the downstream JTD kernel to evaluate the Student-t variable as
+    $\\sqrt{\\nu} \\cdot (1/\\sqrt{W}) \\cdot Z$, entirely eliminating the `np.sqrt`
+    and division operations from the engine's innermost scenario loop.
     """
 
     available_factor_ids: npt.NDArray[np.int32]
@@ -57,6 +73,44 @@ class TCopulaGenerator(CreditFactorGenerator):
     chi_factor_columns: npt.NDArray[np.int32]  # (n_chi,) positions in the F axis
     nu_by_chi: npt.NDArray[np.float64]  # (n_chi,) dof, aligned
     seed: int | None = field(default=None)
+
+    @classmethod
+    def from_universe(
+        cls,
+        universe: CompiledCreditFactorUniverse,
+        *,
+        total_scenarios: int,
+        seed: int | None = None,
+    ) -> TCopulaGenerator:
+        """Build from the credit factor-universe master.
+
+        `chi_factor_columns` and `nu_by_chi` come straight from the universe
+        (`chi_uix` / `chi_nu_vector`, aligned by construction), so the dof a chi
+        column is drawn with cannot drift from the dof JTD ingest reconciles
+        obligor `nu` against — both read the one master. Sizes the matrix to the
+        universe's factor axis; non-chi columns are standard normals, correct
+        for t-copula portfolios (which read systemic / idiosyncratic / chi).
+        """
+        return cls(
+            available_factor_ids=universe.factor_ids,
+            total_scenarios=total_scenarios,
+            chi_factor_columns=universe.chi_uix,
+            nu_by_chi=universe.chi_nu_vector,
+            seed=seed,
+        )
+
+    def chi_nu_by_uix(self) -> dict[int, float]:
+        """{chi factor UIX -> dof} — the reconciliation map JTD ingest checks
+        obligor ``nu`` against. This generator is the source of truth for the
+        dof each chi column is drawn with; pass the result as
+        ``compile_jtd_portfolio_from_df(..., chi_nu_by_uix=...)``."""
+        return dict(
+            zip(
+                self.chi_factor_columns.tolist(),
+                self.nu_by_chi.tolist(),
+                strict=True,
+            )
+        )
 
     def iter_batches(self, *, batch_size: int) -> Iterator[CreditFactorBatch]:
         if batch_size <= 0:
@@ -68,7 +122,7 @@ class TCopulaGenerator(CreditFactorGenerator):
 
         n_factors = int(self.available_factor_ids.shape[0])
         chi_cols = self.chi_factor_columns
-        chi_shape_halved = self.nu_by_chi * 0.5  # chi2(nu) = 2 * Gamma(nu/2)
+        chi_shape_halved = self.nu_by_chi * 0.5  # chi^2(nu) = 2 * Gamma(nu/2)
         n_chi = int(chi_cols.shape[0])
 
         rng = np.random.default_rng(self.seed)
@@ -88,14 +142,24 @@ class TCopulaGenerator(CreditFactorGenerator):
             # Fill the whole batch with standard normals...
             rng.standard_normal(out=cast(np.ndarray, view))
 
-            # ...then overwrite the chi columns with raw chi-square draws.
+            # ...then overwrite the chi columns with transformed chi-square draws.
             # Draw into a 1D contiguous scratch, then write across (the
             # destination is a strided 1D view, but the write itself is
             # not the `out=` target).
+
             for c in range(n_chi):
                 chi_view = chi_scratch[:bs]
                 rng.standard_gamma(chi_shape_halved[c], out=cast(np.ndarray, chi_view))
-                chi_view *= 2.0
+                chi_view *= 2.0  # W ~ chi^2(nu)
+
+                # =====================================================================
+                # MATHEMATICAL INVARIANT: PRECOMPUTED INVERSE SQUARE ROOT
+                # We apply the 1/sqrt(W) transform in-place before writing to the
+                # C-contiguous buffer. This ensures the downstream JTD kernel receives
+                # the optimized factor and avoids calculating square roots in the hot path.
+                # =====================================================================
+                np.reciprocal(np.sqrt(chi_view), out=chi_view)
+
                 buffer[:bs, chi_cols[c]] = chi_view
 
             yield CreditFactorBatch(

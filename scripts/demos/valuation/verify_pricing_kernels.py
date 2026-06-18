@@ -3,14 +3,14 @@
 import numpy as np
 
 # Import the kernels directly
-from riskquant.valuation.kernels.spot import _kernel_price_spot
-from riskquant.valuation.kernels.vanilla_european_option_curve import (
+from riskquant.valuation.pricer_kernels.spot import _kernel_price_spot
+from riskquant.valuation.pricer_kernels._deprecated.vanilla_european_option_curve_v1 import (
     _kernel_price_vanilla_european_option_curve,
 )
-from riskquant.valuation.kernels.vanilla_european_option_node import (
+from riskquant.valuation.pricer_kernels._deprecated.vanilla_european_option_node_v1 import (
     _kernel_price_vanilla_european_option_node,
 )
-from riskquant.valuation.kernels.vanilla_forward_node import (
+from riskquant.valuation.pricer_kernels._deprecated.vanilla_forward_node_v1 import (
     _kernel_price_vanilla_forward_node,
 )
 

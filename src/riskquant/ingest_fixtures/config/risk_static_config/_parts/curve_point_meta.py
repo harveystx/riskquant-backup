@@ -11,10 +11,13 @@ from riskquant.ingest_fixtures.utils import validate_column_lengths
 # first rf_id of the block is `_rf_id_base`, and points are emitted in
 # the order their tenor_tokens appear in `_tenor_tokens`.
 #
-# rf_id partition (must not collide with node_meta or surface_point_meta):
-#   nodes          : 0 ... 99_999
-#   curve_points   : 100_000 ... 199_999
-#   surface_points : 200_000 ... 299_999
+# rf_id allocation (one shared id-space; globally unique vs node_meta and
+# surface_point_meta — enforced by validate._validate_rf_id_uniqueness).
+# Each curve gets a contiguous 1_000-wide block; the block's first rf_id is
+# `rf_id_base` and points are emitted in `_tenor_tokens` order:
+#   nodes          : 0 .. n_nodes-1
+#   curve_points   : 1_000-wide blocks from 1_000        (this table)
+#   surface_points : 100_000-wide blocks from 100_000
 #
 # Tenor labels follow the IR conventional schedule: [ON]..[10Y].
 # Monthly commodities use OFFSET_M tokens [M+k]; annual carbon uses
@@ -59,24 +62,24 @@ _HALF_YEAR_OFFSETS: tuple[str, ...] = (
 # (curve_id, rf_id_base, tenor_tokens)
 _CURVE_BLOCKS: tuple[tuple[int, int, tuple[str, ...]], ...] = (
     # --- USD discount curves ---
-    (100_000_000, 1000, _LABEL_TENORS),  # USD_SOFR_OIS
-    (100_000_001, 1010, _LABEL_TENORS),  # USD_LIBOR_3M
-    (100_000_002, 1020, _LABEL_TENORS),  # USD_CSA_EUR
+    (250_000_000, 1000, _LABEL_TENORS),  # USD_SOFR_OIS
+    (250_001_000, 2000, _LABEL_TENORS),  # USD_LIBOR_3M
+    (250_002_000, 3000, _LABEL_TENORS),  # USD_CSA_EUR
     # --- EUR discount curves ---
-    (100_000_003, 1100, _LABEL_TENORS),  # EUR_ESTR_OIS
-    (100_000_004, 1110, _LABEL_TENORS),  # EUR_EURIBOR_6M
+    (250_003_000, 4000, _LABEL_TENORS),  # EUR_ESTR_OIS
+    (250_004_000, 5000, _LABEL_TENORS),  # EUR_EURIBOR_6M
     # --- GBP discount curves ---
-    (100_000_005, 1200, _LABEL_TENORS),  # GBP_SONIA_OIS
+    (250_005_000, 6000, _LABEL_TENORS),  # GBP_SONIA_OIS
     # --- CHF discount curves ---
-    (100_000_006, 1300, _LABEL_TENORS),  # CHF_SARON_OIS
+    (250_006_000, 7000, _LABEL_TENORS),  # CHF_SARON_OIS
     # --- AUD discount curves ---
-    (100_000_007, 1400, _LABEL_TENORS),  # AUD_AONIA_OIS
+    (250_007_000, 8000, _LABEL_TENORS),  # AUD_AONIA_OIS
     # --- Commodity forward curves ---
-    (100_000_008, 2000, _MONTHLY_OFFSETS),  # BRENT_CRUDE_FWD
-    (100_000_009, 2010, _MONTHLY_OFFSETS),  # WTI_CRUDE_FWD
-    (100_000_010, 2020, _MONTHLY_OFFSETS),  # HENRY_HUB_GAS_FWD
-    (100_000_011, 2100, _ANNUAL_OFFSETS),  # CO2_EUA_ANNUAL_FWD
-    (100_000_012, 2200, _HALF_YEAR_OFFSETS),  # POWER_CH_BASELOAD_HY
+    (250_008_000, 9000, _MONTHLY_OFFSETS),  # BRENT_CRUDE_FWD
+    (250_009_000, 10_000, _MONTHLY_OFFSETS),  # WTI_CRUDE_FWD
+    (250_010_000, 11_000, _MONTHLY_OFFSETS),  # HENRY_HUB_GAS_FWD
+    (250_011_000, 12_000, _ANNUAL_OFFSETS),  # CO2_EUA_ANNUAL_FWD
+    (250_012_000, 13_000, _HALF_YEAR_OFFSETS),  # POWER_CH_BASELOAD_HY
 )
 
 

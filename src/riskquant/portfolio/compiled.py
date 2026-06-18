@@ -30,29 +30,37 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import TypeAlias
+from typing import TypeAlias, TypedDict
 
 import numpy as np
 import numpy.typing as npt
 
-from riskquant.portfolio.blocks.spot_block import SpotBlock
-from riskquant.portfolio.blocks.vanilla_european_option_block import (
+from riskquant.valuation.blocks.spot_block import SpotBlock
+from riskquant.valuation.blocks.vanilla_european_option_block import (
     VanillaEuropeanOptionCurveBlock,
     VanillaEuropeanOptionNodeBlock,
 )
-from riskquant.portfolio.blocks.vanilla_forward_block import (
+from riskquant.valuation.blocks.vanilla_forward_block import (
     VanillaForwardCurveBlock,
     VanillaForwardNodeBlock,
 )
 
 BlockT: TypeAlias = (
-    # --- Market Risk ---
     SpotBlock
     | VanillaForwardNodeBlock
     | VanillaForwardCurveBlock
     | VanillaEuropeanOptionNodeBlock
     | VanillaEuropeanOptionCurveBlock
 )
+
+
+class CompiledPortfolioFields(TypedDict, total=False):
+    unique_dates_ord32: npt.NDArray[np.int32]
+    spot: SpotBlock | None
+    vanilla_forward_node: VanillaForwardNodeBlock | None
+    vanilla_forward_curve: VanillaForwardCurveBlock | None
+    vanilla_european_option_node: VanillaEuropeanOptionNodeBlock | None
+    vanilla_european_option_curve: VanillaEuropeanOptionCurveBlock | None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

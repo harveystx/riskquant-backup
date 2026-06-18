@@ -16,14 +16,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from riskquant.portfolio.blocks.vanilla_forward_block import (
+from riskquant.valuation.blocks.vanilla_forward_block import (
     VanillaForwardCurveBlock,
     VanillaForwardNodeBlock,
 )
 from riskquant.portfolio.ingest.batch import IngestBatch
 
 if TYPE_CHECKING:
-    from riskquant.portfolio.engine import UixMapper
+    from riskquant.universe import UixMapper
 
 
 def compile_vanilla_forward_node(

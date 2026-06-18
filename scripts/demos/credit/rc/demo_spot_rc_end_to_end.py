@@ -47,7 +47,6 @@ from riskquant.ingest_fixtures.market_data.canonical_market_data_snapshot import
 from riskquant.ingest_fixtures.portfolio.exhaustive import (
     CANONICAL_EXHAUSTIVE_MARKET_RISK_PORTFOLIO_DATA,
 )
-from riskquant.market_data.builder import build_market_data_matrix
 from riskquant.market_data.risk_factors.compile_snapshot import (
     compile_risk_factor_level_snapshot_from_levels_dict,
 )
@@ -57,7 +56,7 @@ from riskquant.portfolio.engine import (
 )
 from riskquant.portfolio.ingest.batch import IngestBatch
 from riskquant.portfolio.ingest.pipeline import compile_raw_df_into_ingest_batch
-from riskquant.portfolio.instruments import Instrument
+from riskquant.portfolio.instruments import InstrumentType
 from riskquant.portfolio.validation import validate_ingest_batches_against_uix_universe
 from riskquant.utils.printer import (
     print_array,
@@ -90,9 +89,11 @@ _NUM_SCENARIOS: int = 1
 # exhaustive fixture down to these before ingest.
 _PRICEABLE_INSTRUMENTS: frozenset[str] = frozenset(
     {
-        Instrument.SPOT.name,
-        Instrument.VANILLA_FORWARD_NODE.name,
-        Instrument.VANILLA_FORWARD_CURVE.name,
+        InstrumentType.SPOT.name,
+        InstrumentType.VANILLA_FORWARD_NODE.name,
+        InstrumentType.VANILLA_FORWARD_CURVE.name,
+        InstrumentType.VANILLA_EUROPEAN_OPTION_NODE.name,
+        InstrumentType.VANILLA_EUROPEAN_OPTION_CURVE.name,
     }
 )
 
@@ -287,12 +288,11 @@ if __name__ == "__main__":
     print_subheader(title="Details of Blocks in Compiled Portfolio")
     compiled_portfolio.print_block_details()
 
-
     # ---- PHASE 5: BUILD MARKET DATA MATRIX -------------------------------
 
     print_header(title="SECTION: BUILD MARKET DATA MATRIX")
 
-    market_data_mtx = Market
+    market_data_mtx = None
 
     print_text(
         f"MARKET DATA MATRIX BUILT  "
@@ -319,7 +319,7 @@ if __name__ == "__main__":
 
     base_valuation_result = run_valuation(
         portfolio=compiled_portfolio,
-        market_data_mtx=market_data_mtx,
+        valuation_state=market_data_mtx,
     )
 
     print_array(

@@ -27,6 +27,7 @@ from dataclasses import dataclass
 import numpy as np
 import numpy.typing as npt
 
+from riskquant._arrays import unique_first_seen
 from riskquant.simlab.shock_plan.plan import (
     ShockComputePlan,
     build_shock_compute_plan,
@@ -81,41 +82,6 @@ def _pack_keys(
 
 
 # ============================================================
-# First-seen dedup
-# ============================================================
-
-
-def _unique_first_seen_int64(
-    arr: npt.NDArray[np.int64],
-) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int32]]:
-    """
-    Vectorised first-seen dedup.
-
-    Returns
-    -------
-    unique_first_seen
-        (K,) int64 — unique values in first-seen order.
-    inverse_first_seen
-        (N,) int32 — for each input position, the index in
-        `unique_first_seen`.
-    """
-    if arr.size == 0:
-        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int32)
-
-    _, first_idx, inverse_sorted = np.unique(
-        arr, return_index=True, return_inverse=True
-    )
-    order = np.argsort(first_idx, kind="mergesort")
-    unique_first_seen = arr[first_idx[order]]
-    sorted_to_first_seen = np.empty(order.size, dtype=np.int32)
-    sorted_to_first_seen[order] = np.arange(order.size, dtype=np.int32)
-    inverse_first_seen = sorted_to_first_seen[inverse_sorted].astype(
-        np.int32, copy=False
-    )
-    return unique_first_seen, inverse_first_seen
-
-
-# ============================================================
 # Public API
 # ============================================================
 
@@ -146,7 +112,7 @@ def build_shock_universe(
     keys = _pack_keys(source_factor_ids, required_shift_type_id)
 
     # --- DEDUPLICATE (first-seen) ---
-    unique_keys, req_to_uix = _unique_first_seen_int64(keys)
+    unique_keys, req_to_uix = unique_first_seen(keys)
 
     # Unpack unique keys back to int32 / int8 components.
     shock_source_ids = (unique_keys >> _SHIFT_TYPE_BITS).astype(np.int32, copy=False)

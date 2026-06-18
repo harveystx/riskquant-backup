@@ -16,15 +16,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Final, TypeAlias
 
-from riskquant.portfolio.blocks.spot_block import SpotBlock
-from riskquant.portfolio.blocks.vanilla_european_option_block import (
-    VanillaEuropeanOptionCurveBlock,
-    VanillaEuropeanOptionNodeBlock,
-)
-from riskquant.portfolio.blocks.vanilla_forward_block import (
-    VanillaForwardCurveBlock,
-    VanillaForwardNodeBlock,
-)
+from riskquant.valuation.blocks._base_block import Block
 from riskquant.portfolio.compilers.block_compilers.spot import compile_spot
 from riskquant.portfolio.compilers.block_compilers.vanilla_european_option import (
     compile_vanilla_euro_option_curve,
@@ -45,24 +37,17 @@ from riskquant.portfolio.instruments import (
 )
 
 if TYPE_CHECKING:
-    from riskquant.portfolio.engine import UixMapper
+    from riskquant.universe import UixMapper
 
 
 # ==============================================================================
-# Type aliases
+# Block Name aliases
 # ==============================================================================
 
-BlockType: TypeAlias = (
-    SpotBlock
-    | VanillaForwardNodeBlock
-    | VanillaForwardCurveBlock
-    | VanillaEuropeanOptionNodeBlock
-    | VanillaEuropeanOptionCurveBlock
-)
 
 CompilerFn: TypeAlias = Callable[
     [IngestBatch, int, int, "UixMapper"],
-    BlockType | None,
+    Block | None,
 ]
 
 
@@ -85,8 +70,14 @@ def _register(instrument_id: int, field_name: str, fn: CompilerFn) -> None:
 # Registration (executed once at import)
 # ==============================================================================
 
-_register(int(SPOT_ID), "spot", compile_spot)
+# --- SPOT ---
+_register(
+    int(SPOT_ID),
+    "spot",
+    compile_spot,
+)
 
+# --- VANILLA FORWARD ---
 _register(
     int(VANILLA_FORWARD_NODE_ID),
     "vanilla_forward_node",
@@ -98,6 +89,7 @@ _register(
     compile_vanilla_forward_curve,
 )
 
+# --- VANILLA EUROPEAN OPTION ---
 _register(
     int(VANILLA_EUROPEAN_OPTION_NODE_ID),
     "vanilla_european_option_node",

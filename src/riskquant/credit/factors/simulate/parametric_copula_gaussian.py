@@ -17,9 +17,14 @@ break here on the final partial batch.)
 
 from __future__ import annotations
 
+__all__ = [
+    "GaussianCopulaGenerator",
+]
+
+
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -29,6 +34,11 @@ from riskquant.credit.factors.simulate.base import (
     CreditFactorGenerator,
 )
 
+if TYPE_CHECKING:
+    from riskquant.credit.masters.factor_universe.compiled import (
+        CompiledCreditFactorUniverse,
+    )
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class GaussianCopulaGenerator(CreditFactorGenerator):
@@ -37,6 +47,25 @@ class GaussianCopulaGenerator(CreditFactorGenerator):
     available_factor_ids: npt.NDArray[np.int32]
     total_scenarios: int
     seed: int | None = field(default=None)
+
+    @classmethod
+    def from_universe(
+        cls,
+        universe: CompiledCreditFactorUniverse,
+        *,
+        total_scenarios: int,
+        seed: int | None = None,
+    ) -> GaussianCopulaGenerator:
+        """Build from the credit factor-universe master (sizes the matrix to
+        the universe's factor axis). Fills EVERY column with standard normal, so it is
+        correct only for portfolios that read systemic / idiosyncratic columns. Use
+        MixedCreditFactorGenerator.from_universe for a matrix that also honours chi / uniform / indicator columns.
+        """
+        return cls(
+            available_factor_ids=universe.factor_ids,
+            total_scenarios=total_scenarios,
+            seed=seed,
+        )
 
     def iter_batches(self, *, batch_size: int) -> Iterator[CreditFactorBatch]:
         if batch_size <= 0:

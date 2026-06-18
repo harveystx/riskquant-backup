@@ -65,7 +65,7 @@ class RiskStaticConfigNodeMeta(TypedDict):
     quote_ccy: Sequence[str]
     asset_class: Sequence[str]
     asset_subclass: Sequence[str]
-    unit_type: Sequence[str]
+    quote_type: Sequence[str]
     unit_scale: Sequence[str]
     shift_type: Sequence[str]
     fx_base_ccy: Sequence[str | None]
@@ -82,7 +82,7 @@ class RiskStaticConfigCurveMeta(TypedDict):
     quote_ccy: Sequence[str]
     asset_class: Sequence[str]
     asset_subclass: Sequence[str]
-    unit_type: Sequence[str]
+    quote_type: Sequence[str]
     unit_scale: Sequence[str]
     shift_type: Sequence[str]
     x_axis_kind: Sequence[str]
@@ -110,7 +110,7 @@ class RiskStaticConfigSurfaceMeta(TypedDict):
     quote_ccy: Sequence[str]
     asset_class: Sequence[str]
     asset_subclass: Sequence[str]
-    unit_type: Sequence[str]
+    quote_type: Sequence[str]
     unit_scale: Sequence[str]
     shift_type: Sequence[str]
     x_axis_kind: Sequence[str]
@@ -176,22 +176,22 @@ class _BaseIngestData(TypedDict):
 # ============================================================
 
 
-class _MarketCoreIngestData(_BaseIngestData):
-    quantity: Sequence[float]
-    underlying: Sequence[str]
-    settlement_ccy: Sequence[str]
-
-
 class _OptionalNettingSet(TypedDict, total=False):
     # Effective-netting-set linkage. Optional: absent/None -> NO_NETTING_SET.
     netting_set_id: Sequence[int | None]
 
 
-class MarketRiskIngestData(_MarketCoreIngestData, _OptionalNettingSet):
+class _SpotForwardOptionFields(TypedDict, total=False):
+    # --- SPOT / FORWARD / OPTION ---
+
+    quantity: Sequence[float | None]
+    underlying: Sequence[str | None]
+    settlement_ccy: Sequence[str | None]
+
     strike_price: Sequence[float | None]
     strike_ccy: Sequence[str | None]
 
-    is_call: Sequence[float | None]
+    is_call: Sequence[bool | None]
 
     expiry_date: Sequence[str | None]
     delivery_date: Sequence[str | None]
@@ -206,6 +206,60 @@ class MarketRiskIngestData(_MarketCoreIngestData, _OptionalNettingSet):
     # None for SPOT and FORWARD rows. Resolved to an int32 container
     # id at compile time against `static_config.container_name_to_id`.
     volatility_container_name: Sequence[str | None]
+
+
+class _VanillaIrsFields(TypedDict, total=False):
+    notional: Sequence[float | None]
+
+    pay_receive_fixed: Sequence[str | None]
+
+    fixed_rate: Sequence[float | None]
+    float_spread: Sequence[float | None]
+
+    settlement_ccy: Sequence[str | None]
+
+    effective_date: Sequence[str | None]
+    maturity_date: Sequence[str | None]
+
+    fixed_freq: Sequence[str | None]
+    float_freq: Sequence[str | None]
+
+    fixed_daycount: Sequence[str | None]
+    float_daycount: Sequence[str | None]
+
+    forecast_curve: Sequence[str | None]
+    discount_curve: Sequence[str | None]
+
+    fixed_holiday_calendar: Sequence[str | None]
+    float_holiday_calendar: Sequence[str | None]
+
+    fixed_business_day_convention: Sequence[str | None]
+    float_business_day_convention: Sequence[str | None]
+
+    date_generation_rule: Sequence[str | None]  # "FORWARD" or "BACKWARD"
+
+    payment_lag: Sequence[int | None]
+    fixing_lag: Sequence[int | None]
+
+
+class MarketRiskIngestData(
+    _BaseIngestData,
+    _OptionalNettingSet,
+    _SpotForwardOptionFields,
+    _VanillaIrsFields,
+):
+    """
+    Canonical market-risk fixture schema.
+
+    Represents the union of all supported market-risk instrument
+    columns. Each instrument family populates only the subset of
+    columns it requires; all other columns are None.
+
+    This schema exists for fixture authoring and validation only.
+    It is NOT a runtime contract.
+    """
+
+    pass
 
 
 # ============================================================
@@ -258,6 +312,38 @@ class NettingSetMasterIngestData(TypedDict):
     net_collateral: Sequence[float]
 
 
+class _OptionalFactorNu(TypedDict, total=False):
+    # Chi degrees of freedom. Present (and > 0) only for CHI rows; absent /
+    # None for every other kind, mapped to NO_CHI_NU at compile time.
+    nu: Sequence[float | None]
+
+
+class _OptionalFactorBetaParams(TypedDict, total=False):
+    # Beta distribution parameters for Beta PD factors. Present and > 0 only for
+    # BETA_PD rows; absent / None for every other kind, mapped to NO_BETA_PARAMS
+    # at compile time.
+    alpha: Sequence[float | None]
+    beta: Sequence[float | None]
+
+
+class CreditFactorUniverseIngestData(_OptionalFactorNu, _OptionalFactorBetaParams):
+    """
+    Credit factor-universe master ingest frame.
+
+    Single source of truth for the credit factor space. One row per factor:
+    a stable `factor_id` identity (sorted ascending -> dense UIX = row position
+    in the (F, S) CreditFactorMatrix), the human `factor_name` obligor JTD
+    frames reference, and the `factor_kind` (a `CreditFactorKind` name). `nu`
+    is the only kind-specific column: required and > 0 for CHI factors, omitted
+    elsewhere — so each chi factor's degrees of freedom live here, once, rather
+    than being duplicated onto obligor rows.
+    """
+
+    factor_id: Sequence[int]
+    factor_name: Sequence[str]
+    factor_kind: Sequence[str]  # a CreditFactorKind name (SYSTEMIC, CHI, ...)
+
+
 # ============================================================
 # CREDIT RISK | DETERMINISTIC JTD
 # ============================================================
@@ -288,7 +374,7 @@ class _SingleFactorCopulaJTDCoreIngestData(_BaseIngestData):
     intentionally absent from this schema.
     """
 
-    beta: Sequence[float]
+    factor_loading: Sequence[float]
     systemic_factor: Sequence[str]
     idiosyncratic_factor: Sequence[str]
 
@@ -300,3 +386,82 @@ class GaussianCopulaJTDIngestData(_SingleFactorCopulaJTDCoreIngestData):
 class TCopulaJTDIngestData(_SingleFactorCopulaJTDCoreIngestData):
     chi_squared_factor: Sequence[str]
     nu: Sequence[float]
+
+
+# ============================================================
+# CREDIT RISK | BERNOULLI-FAMILY JTD (conditional-independence)
+# ============================================================
+
+
+class IndependentBernoulliJTDIngestData(_BaseIngestData):
+    """
+    Independent-Bernoulli JTD frame.
+
+    Each obligor defaults if its OWN uniform draw falls below its (fixed,
+    master-sourced) PD: ``u_i < pd_i``. The uniforms MUST be per-obligor
+    distinct UNIFORM factors — sharing a row makes defaults comonotonic rather
+    than independent. PD/LGD are joined off the obligor master.
+    """
+
+    uniform_factor: Sequence[str]
+
+
+class StressRegimeBernoulliJTDIngestData(_BaseIngestData):
+    """
+    Stress-regime Bernoulli JTD frame.
+
+    Independent-Bernoulli with a single shared STRESS_INDICATOR factor that, when
+    on, scales each obligor's PD by ``stress_pd_multiplier``. Uniforms are
+    per-obligor distinct; the stress regime factor is global (shared).
+    """
+
+    uniform_factor: Sequence[str]
+    stress_regime_factor: Sequence[str]
+    stress_pd_multiplier: Sequence[float]
+
+
+class BetaBinomialJTDIngestData(_BaseIngestData):
+    """
+    Beta-binomial JTD frame.
+
+    A shared per-scenario default probability ``P_s ~ Beta(alpha, beta)`` (drawn
+    into the BETA_PD factor row) drives conditionally-independent obligor
+    defaults ``u_i < P_s``. Uniforms are per-obligor distinct; the beta factor is
+    shared (the common shock). PD is NOT carried — it is stochastic; only LGD is
+    joined off the obligor master.
+    """
+
+    uniform_factor: Sequence[str]
+    beta_factor: Sequence[str]
+
+
+# ============================================================
+# CREDIT RISK | MULTI-FACTOR COPULA JTD
+# ============================================================
+
+
+class MfGaussianCopulaJTDIngestData(_BaseIngestData):
+    """
+    Multi-factor Gaussian copula per-obligor frame: one row per obligor.
+
+    The systemic loadings are NOT here — they are ragged (each obligor loads on
+    a different subset of systemic factors), so they live in a separate
+    long-format loadings frame (`MfCopulaLoadingsData`), one row per
+    obligor x systemic factor, packed into CSR at compile time. Only the
+    per-obligor idiosyncratic factor lives here. PD/LGD are joined off the
+    obligor master.
+    """
+
+    idiosyncratic_factor: Sequence[str]
+
+
+class MfCopulaLoadingsData(TypedDict):
+    """
+    Long-format multi-factor copula loadings: one row per obligor x systemic
+    factor (`obligor_uid`, `factor_name`, `factor_loading`). Packed into CSR in
+    block-band order at compile time; `sum factor_loading^2 <= 1` per obligor.
+    """
+
+    obligor_uid: Sequence[int]
+    factor_name: Sequence[str]
+    factor_loading: Sequence[float]

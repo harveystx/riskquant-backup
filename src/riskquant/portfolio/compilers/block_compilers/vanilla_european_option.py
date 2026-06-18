@@ -18,14 +18,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from riskquant.portfolio.blocks.vanilla_european_option_block import (
+from riskquant.valuation.blocks.vanilla_european_option_block import (
     VanillaEuropeanOptionCurveBlock,
     VanillaEuropeanOptionNodeBlock,
 )
 from riskquant.portfolio.ingest.batch import IngestBatch
 
 if TYPE_CHECKING:
-    from riskquant.portfolio.engine import UixMapper
+    from riskquant.universe import UixMapper
 
 
 def compile_vanilla_euro_option_node(

@@ -5,8 +5,11 @@ from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 from riskquant.ingest_fixtures.schemas import (
+    BetaBinomialJTDIngestData,
+    CreditFactorUniverseIngestData,
     DeterministicJTDIngestData,
     GaussianCopulaJTDIngestData,
+    IndependentBernoulliJTDIngestData,
     MarketRiskIngestData,
     NettingSetMasterIngestData,
     ObligorCreditIngestData,
@@ -20,6 +23,7 @@ from riskquant.ingest_fixtures.schemas import (
     RiskStaticConfigSpotRollRule,
     RiskStaticConfigSurfaceMeta,
     RiskStaticConfigSurfacePointMeta,
+    StressRegimeBernoulliJTDIngestData,
     TCopulaJTDIngestData,
 )
 
@@ -27,9 +31,13 @@ _DATA = (
     MarketRiskIngestData
     | GaussianCopulaJTDIngestData
     | TCopulaJTDIngestData
+    | IndependentBernoulliJTDIngestData
+    | StressRegimeBernoulliJTDIngestData
+    | BetaBinomialJTDIngestData
     | DeterministicJTDIngestData
     | ObligorCreditIngestData
     | NettingSetMasterIngestData
+    | CreditFactorUniverseIngestData
     # Risk Static Config
     | RiskStaticConfigSpotRollRule
     | RiskStaticConfigData
@@ -80,7 +88,7 @@ def generate_netting_set_ids(
 
     import numpy as np
 
-    from riskquant.ingest_fixtures.netting_set.minimal_netting_set_master import (
+    from riskquant.ingest_fixtures.credit.netting_set.minimal_netting_set_master import (
         CANONICAL_NETTING_SET_UIDS,
     )
     from riskquant.ingest_fixtures.rng import get_canonical_rng
@@ -104,5 +112,3 @@ def generate_netting_set_ids(
     _rng.shuffle(ns_ids)
 
     return ns_ids
-
-

@@ -32,7 +32,7 @@ import math
 
 import numba as nb  # type: ignore[import-untyped]
 
-from riskquant._njit import inline_njit, parallel_njit
+from riskquant.numba import inline_njit, parallel_njit
 from riskquant.constants import MIN_EWMA_VARIANCE
 from riskquant.market_data.risk_factors.shift_types import (
     SHIFT_DIFFERENCE_ID,

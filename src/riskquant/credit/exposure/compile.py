@@ -31,11 +31,11 @@ from __future__ import annotations
 import numpy as np
 import numpy.typing as npt
 
-from riskquant.constants import NO_NETTING_SET_ID
-from riskquant.credit._uid_join import searchsorted_or_raise
+from riskquant._arrays import searchsorted_or_raise
+from riskquant.constants import NO_ID
 from riskquant.credit.exposure.compiled import CompiledExposure
 from riskquant.credit.exposure.views.replacement_cost import RcNettingSetView
-from riskquant.credit.netting_set.compiled import CompiledNettingSetMaster
+from riskquant.credit.masters.netting_set.compiled import CompiledNettingSetMaster
 
 # =====================================================================
 # Validation
@@ -76,9 +76,9 @@ def _validate_master(master: CompiledNettingSetMaster) -> None:
 def _validate_no_missing_netting_sets(
     trade_netting_set_id: npt.NDArray[np.int64],
 ) -> None:
-    if np.any(trade_netting_set_id == NO_NETTING_SET_ID):
+    if np.any(trade_netting_set_id == NO_ID):
         raise ValueError(
-            "NO_NETTING_SET_ID detected. "
+            "NO_ID detected. "
             "All trades must be assigned to a valid or singleton netting set upstream."
         )
 
@@ -126,10 +126,7 @@ def _build_csr(
 def _project_netting_set_attributes(
     netting_set_uids: npt.NDArray[np.int64],
     master: CompiledNettingSetMaster,
-) -> tuple[
-    npt.NDArray[np.float64],  # collateral
-    npt.NDArray[np.bool_],  # is_collateralized
-]:
+) -> npt.NDArray[np.float64]:
     """
     Strict projection from master.
 
@@ -138,8 +135,8 @@ def _project_netting_set_attributes(
     """
 
     pos = searchsorted_or_raise(
-        target=netting_set_uids,
-        superset_sorted=master.uid,
+        raw=netting_set_uids,
+        universe=master.uid,
         ctx="compile_exposure: netting_set_uids",
     )
 
@@ -148,9 +145,7 @@ def _project_netting_set_attributes(
         dtype=np.float64,
     )
 
-    is_collateralized = collateral > 0.0
-
-    return collateral, is_collateralized
+    return collateral
 
 
 # =====================================================================
@@ -186,7 +181,7 @@ def compile_exposure(
     netting_set_uids, offsets, mtm_row_perm = _build_csr(trade_netting_set_id)
 
     # ---- Project attributes ----
-    collateral, is_collateralized = _project_netting_set_attributes(
+    collateral = _project_netting_set_attributes(
         netting_set_uids,
         netting_set_master,
     )
@@ -197,7 +192,6 @@ def compile_exposure(
         netting_set_offsets=offsets,
         mtm_row_perm=mtm_row_perm,
         collateral=collateral,
-        is_collateralized=is_collateralized,
     )
 
     return CompiledExposure(replacement_cost=rc_view)

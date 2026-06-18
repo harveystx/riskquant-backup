@@ -121,7 +121,7 @@ class NodeMeta:
     asset_class: str
     asset_subclass: str
 
-    unit_type: str
+    quote_type: str
     unit_scale: str
     shift_type: str
 
@@ -159,7 +159,7 @@ class CurveMeta:
     asset_class: str
     asset_subclass: str
 
-    unit_type: str
+    quote_type: str
     unit_scale: str
     shift_type: str
 
@@ -202,7 +202,7 @@ class SurfaceMeta:
     asset_class: str
     asset_subclass: str
 
-    unit_type: str
+    quote_type: str
     unit_scale: str
     shift_type: str
 

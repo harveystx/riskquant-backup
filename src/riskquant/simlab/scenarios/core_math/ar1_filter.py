@@ -26,7 +26,7 @@ import math
 
 import numba as nb  # type: ignore[import-untyped]
 
-from riskquant._njit import inline_njit, parallel_njit  # type: ignore[import]
+from riskquant.numba import inline_njit, parallel_njit  # type: ignore[import]
 from riskquant.market_data.risk_factors.shift_types import (
     SHIFT_DIFFERENCE_ID,
     SHIFT_LOG_RETURN_ID,

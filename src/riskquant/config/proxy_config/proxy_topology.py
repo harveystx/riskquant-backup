@@ -12,8 +12,9 @@ factory returns a brand-new instance.
 Resolution semantics (single-hop, enforced by the validator)
 ------------------------------------------------------------
 For any required_id `r`:
-    proxy_id    = container_id_to_proxy_id[r]            (or rf_id_to_proxy_rf_id[r])
-    proxy_scale = container_id_to_proxy_vol_scale[r]     (or rf_id_to_proxy_vol_scale[r])
+    slot        = searchsorted(container_ids, r)         (container level)
+    proxy_id    = container_proxy_id[slot]               (or rf_id_to_proxy_rf_id[r])
+    proxy_scale = container_proxy_vol_scale[slot]        (or rf_id_to_proxy_vol_scale[r])
 
 If proxy_id < 0, no proxy is registered — pass through.
 If proxy_id >= 0, the proxy must NOT itself be proxied (the validator
@@ -59,11 +60,11 @@ class ProxyTopology:
     `with_overrides`, which re-routes through `build`); they are not
     intended to be constructed directly by user code.
 
-    Hot-path readers consume only the four dense arrays:
-        container_id_to_proxy_id
-        container_id_to_proxy_vol_scale
-        rf_id_to_proxy_rf_id
-        rf_id_to_proxy_vol_scale
+    Hot-path readers consume only the dense arrays:
+        container_proxy_id        (slot-indexed, parallel to container_ids)
+        container_proxy_vol_scale (slot-indexed, parallel to container_ids)
+        rf_id_to_proxy_rf_id      (raw-rf-id-indexed)
+        rf_id_to_proxy_vol_scale  (raw-rf-id-indexed)
 
     The two dicts (container_proxies, rf_proxies) are retained for
     audit and override purposes and are never touched on the hot path.
@@ -79,12 +80,18 @@ class ProxyTopology:
     # ------------------------------------------------------------------ #
     # Hot-path dense arrays                                              #
     # ------------------------------------------------------------------ #
-    # Length = static_config.max_container_id + 1.
-    # Indexed by required_container_id.
-    container_id_to_proxy_id: npt.NDArray[np.int32] = field(repr=False)
-    container_id_to_proxy_vol_scale: npt.NDArray[np.float64] = field(repr=False)
+    # `container_ids` is the sorted-unique container axis (mirrors
+    # static_config.container_ids). The two container_proxy_* arrays are
+    # parallel to it — index by SLOT (searchsorted on container_ids), not
+    # raw container_id. Container ids live at 250M+, so a dense-by-raw-id
+    # layout would allocate multi-GB arrays.
+    container_ids: npt.NDArray[np.int32] = field(repr=False)
+    container_proxy_id: npt.NDArray[np.int32] = field(repr=False)
+    container_proxy_vol_scale: npt.NDArray[np.float64] = field(repr=False)
 
     # Length = static_config.max_rf_id + 1. Indexed by required_rf_id.
+    # rf_ids are kept small (<= a few hundred K), so the dense-by-id
+    # layout is retained on the rf side.
     rf_id_to_proxy_rf_id: npt.NDArray[np.int32] = field(repr=False)
     rf_id_to_proxy_vol_scale: npt.NDArray[np.float64] = field(repr=False)
 
@@ -113,7 +120,8 @@ class ProxyTopology:
         static_config
             Source of truth for name -> id resolution and id-space sizes.
         """
-        n_container = int(static_config.max_container_id) + 1
+        container_ids = np.asarray(static_config.container_ids, dtype=np.int32)
+        n_container = int(container_ids.shape[0])
         n_rf = int(static_config.max_rf_id) + 1
 
         c_proxy = np.full(n_container, _NO_PROXY_ID, dtype=np.int32)
@@ -121,12 +129,15 @@ class ProxyTopology:
         r_proxy = np.full(n_rf, _NO_PROXY_ID, dtype=np.int32)
         r_scale = np.full(n_rf, _DEFAULT_VOL_SCALE, dtype=np.float64)
 
+        # Container arrays are SLOT-indexed: the required container's slot
+        # is its position in container_ids. The stored VALUE is the proxy's
+        # raw container id (consumers gather it as a downstream id).
         name_to_cid = static_config.container_name_to_id
         for pm in container_proxies.values():
-            req_id = int(name_to_cid[pm.required_name])
+            req_slot = static_config.container_slot(int(name_to_cid[pm.required_name]))
             proxy_id = int(name_to_cid[pm.proxy_name])
-            c_proxy[req_id] = np.int32(proxy_id)
-            c_scale[req_id] = float(pm.vol_scaling_factor)
+            c_proxy[req_slot] = np.int32(proxy_id)
+            c_scale[req_slot] = float(pm.vol_scaling_factor)
 
         name_to_rfid = static_config.rel_name_to_rf_id
         for pm in rf_proxies.values():
@@ -138,8 +149,9 @@ class ProxyTopology:
         return cls(
             container_proxies=container_proxies,
             rf_proxies=rf_proxies,
-            container_id_to_proxy_id=c_proxy,
-            container_id_to_proxy_vol_scale=c_scale,
+            container_ids=container_ids,
+            container_proxy_id=c_proxy,
+            container_proxy_vol_scale=c_scale,
             rf_id_to_proxy_rf_id=r_proxy,
             rf_id_to_proxy_vol_scale=r_scale,
         )
@@ -195,16 +207,20 @@ class ProxyTopology:
         """
         Return (proxy_container_id, vol_scale) for a single required id.
 
-        If no proxy is registered, returns (required_container_id, 1.0)
-        — the identity mapping the kernel applies via branchless masking.
-        Hot paths must use the dense arrays directly; this is a
-        convenience for tests and notebook sessions.
+        If no proxy is registered (or the id is not a known container),
+        returns (required_container_id, 1.0) — the identity mapping the
+        kernel applies via branchless masking. Hot paths must use the
+        dense arrays directly (after resolving id->slot in batch); this is
+        a convenience for tests and notebook sessions.
         """
-        i = int(required_container_id)
-        proxy_id = int(self.container_id_to_proxy_id[i])
+        cid = int(required_container_id)
+        slot = int(np.searchsorted(self.container_ids, cid))
+        if slot >= self.container_ids.size or int(self.container_ids[slot]) != cid:
+            return (cid, _DEFAULT_VOL_SCALE)
+        proxy_id = int(self.container_proxy_id[slot])
         if proxy_id < 0:
-            return (i, _DEFAULT_VOL_SCALE)
-        return (proxy_id, float(self.container_id_to_proxy_vol_scale[i]))
+            return (cid, _DEFAULT_VOL_SCALE)
+        return (proxy_id, float(self.container_proxy_vol_scale[slot]))
 
     def resolve_rf(self, required_rf_id: int) -> tuple[int, float]:
         """Same as resolve_container, but for the rf-id space."""
@@ -239,7 +255,7 @@ class ProxyTopology:
             f"  Container proxies   : {self.num_container_proxies}",
             f"  RF proxies          : {self.num_rf_proxies}",
             f"  Total               : {self.num_total_proxies}",
-            f"  c_proxy array size  : {self.container_id_to_proxy_id.size}",
+            f"  c_proxy array size  : {self.container_proxy_id.size}",
             f"  rf_proxy array size : {self.rf_id_to_proxy_rf_id.size}",
             "================================",
         ]

@@ -30,13 +30,13 @@ from riskquant.ingest_fixtures.utils import (
     generate_netting_set_ids,
     validate_column_lengths,
 )
-from riskquant.portfolio.instruments import Instrument
+from riskquant.portfolio.instruments import InstrumentType
 
 
 def _get_data() -> MarketRiskIngestData:
     return {
         "uid": [100, 101, 102, 103, 104, 105],
-        "instrument": [Instrument.VANILLA_FORWARD_NODE.name] * 6,
+        "instrument": [InstrumentType.VANILLA_FORWARD_NODE.name] * 6,
         "quantity": [
             10.0,  # 100. long AAPL fwd
             1_000_000.0,  # 101. long USDEUR fwd
@@ -105,6 +105,7 @@ def _get_data() -> MarketRiskIngestData:
         # FWD has no expiry / is_call / vol.
         "is_call": [None] * 6,
         "expiry_date": [None] * 6,
+        "volatility_container_name": [None] * 6,
         # netting linkage: leave empty here; spot fixture carries it.
         "netting_set_id": generate_netting_set_ids(n=6, none_probability=0.0),
     }

@@ -24,7 +24,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.sql import text
 
-from riskquant.ingest_fixtures.jtd.deterministic_jtd.minimal_deterministic_jtd import (
+from riskquant.ingest_fixtures.credit.jtd.deterministic_jtd.minimal_deterministic_jtd import (
     CANONICAL_DETERMINISTIC_JTD_INGEST_DATA,
 )
 

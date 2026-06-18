@@ -10,15 +10,14 @@ import numpy.typing as npt
 
 from riskquant.exceptions import ConfigurationError
 
-# Expand to 100 Million per block
-_NODE_MIN_ID = 0
-_NODE_MAX_ID = 99_999_999
+_BLOCK_SIZE: int = 250_000_000  # one block
 
-_CURVE_MIN_ID = 100_000_000
-_CURVE_MAX_ID = 199_999_999
-
-_SURFACE_MIN_ID = 200_000_000
-_SURFACE_MAX_ID = 299_999_999
+_NODE_MIN_ID = 0  # node id 0 stays valid
+_NODE_MAX_ID = _BLOCK_SIZE - 1  # [0,           249_999_999]
+_CURVE_MIN_ID = _BLOCK_SIZE  # [250_000_000, 499_999_999]
+_CURVE_MAX_ID = 2 * _BLOCK_SIZE - 1
+_SURFACE_MIN_ID = 2 * _BLOCK_SIZE  # [500_000_000, 749_999_999]
+_SURFACE_MAX_ID = 3 * _BLOCK_SIZE - 1
 
 
 class IdNamespaceBounds(NamedTuple):
@@ -35,6 +34,9 @@ assert (
     < _SURFACE_MIN_ID
     < _SURFACE_MAX_ID
 ), "ID namespace boundaries must be strictly increasing and non-overlapping."
+
+
+assert max(_NODE_MAX_ID, _CURVE_MAX_ID, _SURFACE_MAX_ID) <= np.iinfo(np.int32).max
 
 
 class GlobalIdNamespace:
@@ -59,7 +61,7 @@ class GlobalIdNamespace:
 
 def enforce_id_namespace(
     *,
-    ids: npt.NDArray[np.int32],
+    ids: npt.NDArray[np.integer],
     bounds: IdNamespaceBounds,
 ) -> None:
     """
@@ -75,3 +77,14 @@ def enforce_id_namespace(
             f"Expected IDs between {bounds.min_id:1_.0f} and {bounds.max_id:1_.0f}.\n"
             f"Found {out_of_bounds.size:1,.0f} violations. Examples: {bad_examples}"
         )
+
+
+if __name__ == "__main__":
+    # Quick sanity check of namespace boundaries
+    print("Global ID Namespace Boundaries:")
+    for namespace in [
+        GlobalIdNamespace.NODES,
+        GlobalIdNamespace.CURVES,
+        GlobalIdNamespace.SURFACES,
+    ]:
+        print(f"{namespace.name}: {namespace.min_id:1_.0f} to {namespace.max_id:1_.0f}")

@@ -15,7 +15,7 @@ from datetime import date
 import numpy as np
 
 # ==============================================================================
-# Typed sentinel values for payload fields
+# GLOBAL SENTINELS
 # ==============================================================================
 
 # Universal sentinel for "no valid ID".
@@ -37,7 +37,7 @@ INVALID_UIX = np.int32(-999)
 NOT_IMPLEMENTED_SENTINEL: np.int8 = np.int8(-99)
 
 # ==============================================================================
-# Option encoding
+# OPTION ENCODING
 # ==============================================================================
 
 # 1 for call options, -1 for put options, 0 for not-an-option.
@@ -53,7 +53,7 @@ NOT_OPTION_MULT = np.int8(0)
 DATE_EPOCH: date = date(1970, 1, 1)
 
 # ==============================================================================
-# Numeric configuration
+# CONFIGURATION CONSTANTS
 # ==============================================================================
 
 ROUND_DECIMALS_LEVEL = 8
@@ -63,14 +63,14 @@ ROUND_DECIMALS_STRIKE_PRICE = 8
 POSITION_DUST_TOLERANCE = 1e-8
 PD_DUST_TOLERANCE = 1e-10
 
-# ============================================
-# --- DEVELOPMENT-ONLY FALLBACK VALUES
-# ============================================
+# ==============================================================================
+# DEVELOPMENT-ONLY FALLBACK VALUES
+# ==============================================================================
 
 FALLBACK_MOCK_VOLATILITY_DO_NOT_SHIP: float = 0.50
 
 # ==============================================================================
-# --- EWMA Volatility Calculation Constants
+# EWMA Volatility Calculation Constants
 # ==============================================================================
 
 EWMA_DECAY_FACTOR: float = 0.94
@@ -78,7 +78,7 @@ MAX_EWMA_VOL_RATIO: float = 10.0
 MIN_EWMA_VARIANCE: float = 1e-12
 
 # ==============================================================================
-# --- Credit Risk Constants
+# CREDIT RISK CONSTANTS
 # ==============================================================================
 
 NO_PARENT_OBLIGOR: np.int64 = np.int64(-1)
@@ -86,8 +86,43 @@ NO_RATING_ID: np.int8 = np.int8(0)
 NO_SECTOR_ID: np.int32 = np.int32(-1)
 NO_COUNTRY_ID: np.int32 = np.int32(-1)
 
+# Degrees-of-freedom sentinel for non-chi credit factors. nu is strictly
+# positive for a chi-square mixing factor, so a negative value is an
+# unambiguous "this factor carries no nu" marker (sentinel over NaN, per the
+# core blocks contract).
+NO_CHI_NU: np.float64 = np.float64(-1.0)
+
+# Beta(alpha, beta) parameter sentinel for non-BETA_PD credit factors. Both
+# shape parameters are strictly positive for a Beta factor, so a negative value
+# is an unambiguous "this factor carries no alpha/beta" marker.
+NO_BETA_PARAM: np.float64 = np.float64(-1.0)
+
 # ==============================================================================
 # RANDOM SEED FOR TESTING
 # ==============================================================================
 
 RNG_SEED: int = 42
+
+# ==============================================================================
+# DAYS PER YEAR FOR TTE CALCULATION
+# ==============================================================================
+
+DAYS_PER_YR_ACT_365_25: float = 365.25
+TTE_FLOOR: float = 1e-9
+
+# ==============================================================================
+# IMPLIED VOL CALIBRATION CONSTANTS
+# ==============================================================================
+
+#: Failure sentinel written into the iv output for non-invertible option quotes.
+#: Negative by construction, so the downstream contract ``success_mask = iv >= 0.0``
+#: flags it as a failed solve. Imported by the Black-76 scalar solver and asserted
+#: against by the CalibratedOptionQuotes master.
+IV_SOLVER_FAILED_SENTINEL = -1.0
+
+#: Reliability floor for calibrated implied vols, expressed as vega / forward.
+#: A solved iv reprices its target even when vega is ~0, but such a vol is
+#: under-determined (deep ITM/OTM, ultra-short tenors). Quotes with
+#: ``vega < MIN_RELIABLE_VEGA_OVER_FWD * fwd`` are gated out by
+#: ``CalibratedOptionQuotes.reliable_mask``. Heuristic; tune per surface.
+MIN_RELIABLE_VEGA_OVER_FWD: float = 1e-3

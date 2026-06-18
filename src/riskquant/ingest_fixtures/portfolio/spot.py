@@ -49,7 +49,7 @@ from riskquant.ingest_fixtures.utils import (
     generate_netting_set_ids,
     validate_column_lengths,
 )
-from riskquant.portfolio.instruments import Instrument
+from riskquant.portfolio.instruments import InstrumentType
 
 _UIDS: list[int] = list(range(1, 12))  # uids 1..11, contiguous and unique.
 _NUM_UIDS: int = len(_UIDS)
@@ -58,7 +58,7 @@ _NUM_UIDS: int = len(_UIDS)
 def _get_data() -> MarketRiskIngestData:
     return {
         "uid": _UIDS,
-        "instrument": [Instrument.SPOT.name] * _NUM_UIDS,
+        "instrument": [InstrumentType.SPOT.name] * _NUM_UIDS,
         "quantity": [
             100.0,  # uid 1.  long AAPL
             100.0,  # uid 2.  long AAPL (duplicate underlying)
@@ -110,6 +110,7 @@ def _get_data() -> MarketRiskIngestData:
         "settlement_date": [None] * _NUM_UIDS,
         "under_discount_curve": [None] * _NUM_UIDS,
         "strike_discount_curve": [None] * _NUM_UIDS,
+        "volatility_container_name": [None] * _NUM_UIDS,
     }
 
 

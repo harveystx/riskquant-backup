@@ -21,26 +21,47 @@ Any addition MUST:
 
 from __future__ import annotations
 
+__all__ = [
+    "JtdModel",
+]
+
 from enum import IntEnum
 from typing import Final
 
 
 class JtdModel(IntEnum):
     # ---------------------------------------------------------------------
-    # Deterministic model
+    # Forced default model
     # ---------------------------------------------------------------------
-    DETERMINISTIC = 0  # scenario-independent worst-case JTD
+    FORCED_DEFAULT = 0  # scenario-independent worst-case JTD
+
+    # --------------------------------------------------------------------
+    # INDEPENDENT DEFAULT MODELS
+    # ---------------------------------------------------------------------
+    INDEPENDENT_BERNOULLI = 1
+
+    # ---------------------------------------------------------------------
+    # BETA BINOMIAL MODEL
+    # ---------------------------------------------------------------------
+
+    BETA_BINOMIAL = 2
+
+    # ---------------------------------------------------------------------
+    # STRESS REGIME BERNOULLI MODEL
+    # ---------------------------------------------------------------------
+    STRESS_REGIME_BERNOULLI = 3
 
     # ---------------------------------------------------------------------
     # Single-factor copula models
     # ---------------------------------------------------------------------
-    COPULA_SF_GAUSSIAN = 1  # single-factor Gaussian copula
-    COPULA_SF_T = 2  # single-factor Student-t copula
+    COPULA_SF_GAUSSIAN = 4  # single-factor Gaussian copula
+    COPULA_SF_STUDENTS_T = 5  # single-factor Student-t copula
 
     # ---------------------------------------------------------------------
     # Multi-factor copula models
     # ---------------------------------------------------------------------
-    # TODO
+    COPULA_MF_GAUSSIAN = 6  # multi-factor Gaussian copula
+    COPULA_MF_STUDENTS_T = 7  # multi-factor Student-t copula
 
 
 # -------------------------------------------------------------------------
@@ -49,6 +70,17 @@ class JtdModel(IntEnum):
 
 NUM_JTD_MODELS: Final[int] = len(JtdModel)
 
+VALID_JTD_MODEL_NAMES: Final[set[str]] = set(item.name for item in JtdModel)
+VALID_JTD_MODEL_IDS: Final[set[int]] = set(item.value for item in JtdModel)
+
+# Multi-factor copula models consume the shared long-format loadings frame.
+# Extend as further MF copulas land (e.g. COPULA_MF_T).
+MF_COPULA_MODELS: Final[frozenset[JtdModel]] = frozenset(
+    {JtdModel.COPULA_MF_GAUSSIAN, JtdModel.COPULA_MF_STUDENTS_T}
+)
+MF_COPULA_MODEL_NAMES: Final[frozenset[str]] = frozenset(
+    m.name for m in MF_COPULA_MODELS
+)
 
 # -------------------------------------------------------------------------
 # Fast-path integer aliases (optional, performance-oriented)
@@ -56,12 +88,22 @@ NUM_JTD_MODELS: Final[int] = len(JtdModel)
 # These exist to avoid enum dereferencing in tight loops / NumPy code.
 # Safe because they derive directly from the enum.
 
-# Deterministic model
-DETERMINISTIC_ID: Final[int] = int(JtdModel.DETERMINISTIC)
+# Forced default model
+FORCED_DEFAULT_ID: Final[int] = int(JtdModel.FORCED_DEFAULT)
+
+# Independent bernoulli model
+INDEPENDENT_BERNOULLI_ID: Final[int] = int(JtdModel.INDEPENDENT_BERNOULLI)
+
+# Beta binomial model
+BETA_BINOMIAL_ID: Final[int] = int(JtdModel.BETA_BINOMIAL)
+
+# Stress regime bernoulli model
+STRESS_REGIME_BERNOULLI_ID: Final[int] = int(JtdModel.STRESS_REGIME_BERNOULLI)
 
 # Single-factor copula models
 COPULA_SF_GAUSSIAN_ID: Final[int] = int(JtdModel.COPULA_SF_GAUSSIAN)
-COPULA_SF_T_ID: Final[int] = int(JtdModel.COPULA_SF_T)
+COPULA_SF_T_ID: Final[int] = int(JtdModel.COPULA_SF_STUDENTS_T)
 
 # Multi-factor copula models
-# TODO
+COPULA_MF_GAUSSIAN_ID: Final[int] = int(JtdModel.COPULA_MF_GAUSSIAN)
+COPULA_MF_T_ID: Final[int] = int(JtdModel.COPULA_MF_STUDENTS_T)

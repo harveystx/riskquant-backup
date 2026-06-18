@@ -67,9 +67,10 @@ from typing import TYPE_CHECKING
 import numpy as np
 import numpy.typing as npt
 
+from riskquant._arrays import searchsorted_or_raise
 from riskquant.config.enums.container_topology import ContainerTopologyType
 from riskquant.config.enums.discount_basis import DiscountBasis
-from riskquant.config.enums.unit_types import UNIT_SCALE_TO_BASE, UnitScale
+from riskquant.config.enums.quote_types import UNIT_SCALE_TO_BASE, UnitScale
 from riskquant.config.enums.x_axis_kinds import XAxisKind
 from riskquant.config.static_config.schema_objects import (
     Ccy,
@@ -168,17 +169,26 @@ class RfState(NameLookupState):
 
 @dataclass(frozen=True)
 class ContainerState(RfState):
-    """+ per-container dense attribute arrays."""
+    """
+    + per-container dense attribute arrays, SLOT-indexed.
 
-    max_container_id: int
-    container_id_to_topology_type: npt.NDArray[np.int8]
-    container_id_to_interp_x_id: npt.NDArray[np.int8]
-    container_id_to_extrap_x_id: npt.NDArray[np.int8]
-    container_id_to_interp_y_id: npt.NDArray[np.int8]
-    container_id_to_extrap_y_id: npt.NDArray[np.int8]
-    container_id_to_ccy_id: npt.NDArray[np.int8]
-    container_id_to_spot_roll_rule_name: tuple[str, ...]
-    container_id_to_x_axis_kind: npt.NDArray[np.int8]
+    Every array below is parallel to ``container_ids`` (sorted-ascending,
+    unique). Index by SLOT — obtained from ``searchsorted_or_raise`` on
+    ``container_ids`` — never by raw container_id. Container ids live in
+    the CURVES / SURFACES namespace ranges (250M+); a dense-by-raw-id
+    layout would allocate multi-GB arrays sized ``max_container_id + 1``,
+    so the store is O(num_containers) instead.
+    """
+
+    container_ids: npt.NDArray[np.int32]
+    container_topology_type: npt.NDArray[np.int8]
+    container_interp_x_id: npt.NDArray[np.int8]
+    container_extrap_x_id: npt.NDArray[np.int8]
+    container_interp_y_id: npt.NDArray[np.int8]
+    container_extrap_y_id: npt.NDArray[np.int8]
+    container_ccy_id: npt.NDArray[np.int8]
+    container_spot_roll_rule_name: tuple[str, ...]
+    container_x_axis_kind: npt.NDArray[np.int8]
 
 
 @dataclass(frozen=True)
@@ -429,14 +439,26 @@ def _build_container_state(
     curve_meta_dict: dict[int, CurveMeta],
     surface_meta_dict: dict[int, SurfaceMeta],
 ) -> ContainerState:
-    """Stage 4: Build per-container dense attribute arrays."""
-    container_ids: list[int] = [c.curve_id for c in curve_meta_dict.values()] + [
+    """
+    Stage 4: Build per-container SLOT-indexed dense attribute arrays.
+
+    ``container_ids`` is the sorted-ascending-unique axis; every other
+    array is parallel to it. A container's slot is its position in
+    ``container_ids`` (resolved at read time via searchsorted). Curve and
+    surface ids are disjoint by namespace, so their sorted union is
+    unambiguous. Memory is O(num_containers), independent of how large
+    the raw ids are (they live at 250M+).
+    """
+    all_ids: list[int] = [c.curve_id for c in curve_meta_dict.values()] + [
         s.surface_id for s in surface_meta_dict.values()
     ]
-    max_container_id = max(container_ids) if container_ids else 0
-    n = max_container_id + 1
+    container_ids = np.array(sorted(all_ids), dtype=np.int32)
+    n = int(container_ids.shape[0])
+    id_to_slot: dict[int, int] = {
+        int(cid): slot for slot, cid in enumerate(container_ids.tolist())
+    }
 
-    rf_topology_type = np.full(n, -1, dtype=np.int8)
+    topology_type = np.full(n, -1, dtype=np.int8)
     interp_x = np.full(n, -1, dtype=np.int8)
     extrap_x = np.full(n, -1, dtype=np.int8)
     interp_y = np.full(n, -1, dtype=np.int8)
@@ -448,8 +470,8 @@ def _build_container_state(
     ccy_name_to_id = state.ccy_name_to_id
 
     for cm in curve_meta_dict.values():
-        i = cm.curve_id
-        rf_topology_type[i] = ContainerTopologyType.CURVE.value
+        i = id_to_slot[cm.curve_id]
+        topology_type[i] = ContainerTopologyType.CURVE.value
         interp_x[i] = _resolve_interp_id(cm.x_interp_method)
         extrap_x[i] = _resolve_extrap_id(cm.x_extrap_method)
         cont_ccy[i] = ccy_name_to_id[cm.quote_ccy]
@@ -457,8 +479,8 @@ def _build_container_state(
         x_kind[i] = int(XAxisKind[cm.x_axis_kind])
 
     for sm in surface_meta_dict.values():
-        i = sm.surface_id
-        rf_topology_type[i] = ContainerTopologyType.SURFACE.value
+        i = id_to_slot[sm.surface_id]
+        topology_type[i] = ContainerTopologyType.SURFACE.value
         interp_x[i] = _resolve_interp_id(sm.x_interp_method)
         extrap_x[i] = _resolve_extrap_id(sm.x_extrap_method)
         interp_y[i] = _resolve_interp_id(sm.y_interp_method)
@@ -479,15 +501,15 @@ def _build_container_state(
         rf_id_to_ccy_id=state.rf_id_to_ccy_id,
         rf_id_to_shift_type_id=state.rf_id_to_shift_type_id,
         rf_id_to_unit_scale_factor=state.rf_id_to_unit_scale_factor,
-        max_container_id=max_container_id,
-        container_id_to_topology_type=rf_topology_type,
-        container_id_to_interp_x_id=interp_x,
-        container_id_to_extrap_x_id=extrap_x,
-        container_id_to_interp_y_id=interp_y,
-        container_id_to_extrap_y_id=extrap_y,
-        container_id_to_ccy_id=cont_ccy,
-        container_id_to_spot_roll_rule_name=tuple(roll_rule),
-        container_id_to_x_axis_kind=x_kind,
+        container_ids=container_ids,
+        container_topology_type=topology_type,
+        container_interp_x_id=interp_x,
+        container_extrap_x_id=extrap_x,
+        container_interp_y_id=interp_y,
+        container_extrap_y_id=extrap_y,
+        container_ccy_id=cont_ccy,
+        container_spot_roll_rule_name=tuple(roll_rule),
+        container_x_axis_kind=x_kind,
     )
 
 
@@ -584,15 +606,15 @@ def _build_curve_tenor_state(
         rf_id_to_ccy_id=state.rf_id_to_ccy_id,
         rf_id_to_shift_type_id=state.rf_id_to_shift_type_id,
         rf_id_to_unit_scale_factor=state.rf_id_to_unit_scale_factor,
-        max_container_id=state.max_container_id,
-        container_id_to_topology_type=state.container_id_to_topology_type,
-        container_id_to_interp_x_id=state.container_id_to_interp_x_id,
-        container_id_to_extrap_x_id=state.container_id_to_extrap_x_id,
-        container_id_to_interp_y_id=state.container_id_to_interp_y_id,
-        container_id_to_extrap_y_id=state.container_id_to_extrap_y_id,
-        container_id_to_ccy_id=state.container_id_to_ccy_id,
-        container_id_to_spot_roll_rule_name=state.container_id_to_spot_roll_rule_name,
-        container_id_to_x_axis_kind=state.container_id_to_x_axis_kind,
+        container_ids=state.container_ids,
+        container_topology_type=state.container_topology_type,
+        container_interp_x_id=state.container_interp_x_id,
+        container_extrap_x_id=state.container_extrap_x_id,
+        container_interp_y_id=state.container_interp_y_id,
+        container_extrap_y_id=state.container_extrap_y_id,
+        container_ccy_id=state.container_ccy_id,
+        container_spot_roll_rule_name=state.container_spot_roll_rule_name,
+        container_x_axis_kind=state.container_x_axis_kind,
         curve_id_to_tenor_index=curve_id_to_tenor_index,
     )
 
@@ -631,15 +653,15 @@ def _build_fx_state(
         rf_id_to_ccy_id=state.rf_id_to_ccy_id,
         rf_id_to_shift_type_id=state.rf_id_to_shift_type_id,
         rf_id_to_unit_scale_factor=state.rf_id_to_unit_scale_factor,
-        max_container_id=state.max_container_id,
-        container_id_to_topology_type=state.container_id_to_topology_type,
-        container_id_to_interp_x_id=state.container_id_to_interp_x_id,
-        container_id_to_extrap_x_id=state.container_id_to_extrap_x_id,
-        container_id_to_interp_y_id=state.container_id_to_interp_y_id,
-        container_id_to_extrap_y_id=state.container_id_to_extrap_y_id,
-        container_id_to_ccy_id=state.container_id_to_ccy_id,
-        container_id_to_spot_roll_rule_name=state.container_id_to_spot_roll_rule_name,
-        container_id_to_x_axis_kind=state.container_id_to_x_axis_kind,
+        container_ids=state.container_ids,
+        container_topology_type=state.container_topology_type,
+        container_interp_x_id=state.container_interp_x_id,
+        container_extrap_x_id=state.container_extrap_x_id,
+        container_interp_y_id=state.container_interp_y_id,
+        container_extrap_y_id=state.container_extrap_y_id,
+        container_ccy_id=state.container_ccy_id,
+        container_spot_roll_rule_name=state.container_spot_roll_rule_name,
+        container_x_axis_kind=state.container_x_axis_kind,
         curve_id_to_tenor_index=state.curve_id_to_tenor_index,
         fx_spot_lookup=out,
     )
@@ -670,15 +692,15 @@ def _build_fx_matrix_state(
         rf_id_to_ccy_id=state.rf_id_to_ccy_id,
         rf_id_to_shift_type_id=state.rf_id_to_shift_type_id,
         rf_id_to_unit_scale_factor=state.rf_id_to_unit_scale_factor,
-        max_container_id=state.max_container_id,
-        container_id_to_topology_type=state.container_id_to_topology_type,
-        container_id_to_interp_x_id=state.container_id_to_interp_x_id,
-        container_id_to_extrap_x_id=state.container_id_to_extrap_x_id,
-        container_id_to_interp_y_id=state.container_id_to_interp_y_id,
-        container_id_to_extrap_y_id=state.container_id_to_extrap_y_id,
-        container_id_to_ccy_id=state.container_id_to_ccy_id,
-        container_id_to_spot_roll_rule_name=state.container_id_to_spot_roll_rule_name,
-        container_id_to_x_axis_kind=state.container_id_to_x_axis_kind,
+        container_ids=state.container_ids,
+        container_topology_type=state.container_topology_type,
+        container_interp_x_id=state.container_interp_x_id,
+        container_extrap_x_id=state.container_extrap_x_id,
+        container_interp_y_id=state.container_interp_y_id,
+        container_extrap_y_id=state.container_extrap_y_id,
+        container_ccy_id=state.container_ccy_id,
+        container_spot_roll_rule_name=state.container_spot_roll_rule_name,
+        container_x_axis_kind=state.container_x_axis_kind,
         curve_id_to_tenor_index=state.curve_id_to_tenor_index,
         fx_spot_lookup=state.fx_spot_lookup,
         fx_spot_matrix=matrix,
@@ -730,15 +752,15 @@ def _build_discount_state(
         rf_id_to_ccy_id=state.rf_id_to_ccy_id,
         rf_id_to_shift_type_id=state.rf_id_to_shift_type_id,
         rf_id_to_unit_scale_factor=state.rf_id_to_unit_scale_factor,
-        max_container_id=state.max_container_id,
-        container_id_to_topology_type=state.container_id_to_topology_type,
-        container_id_to_interp_x_id=state.container_id_to_interp_x_id,
-        container_id_to_extrap_x_id=state.container_id_to_extrap_x_id,
-        container_id_to_interp_y_id=state.container_id_to_interp_y_id,
-        container_id_to_extrap_y_id=state.container_id_to_extrap_y_id,
-        container_id_to_ccy_id=state.container_id_to_ccy_id,
-        container_id_to_spot_roll_rule_name=state.container_id_to_spot_roll_rule_name,
-        container_id_to_x_axis_kind=state.container_id_to_x_axis_kind,
+        container_ids=state.container_ids,
+        container_topology_type=state.container_topology_type,
+        container_interp_x_id=state.container_interp_x_id,
+        container_extrap_x_id=state.container_extrap_x_id,
+        container_interp_y_id=state.container_interp_y_id,
+        container_extrap_y_id=state.container_extrap_y_id,
+        container_ccy_id=state.container_ccy_id,
+        container_spot_roll_rule_name=state.container_spot_roll_rule_name,
+        container_x_axis_kind=state.container_x_axis_kind,
         curve_id_to_tenor_index=state.curve_id_to_tenor_index,
         fx_spot_lookup=state.fx_spot_lookup,
         fx_spot_matrix=state.fx_spot_matrix,
@@ -773,17 +795,15 @@ def _freeze_state(state: DiscountState) -> DiscountState:
         rf_id_to_ccy_id=_freeze_array(state.rf_id_to_ccy_id),
         rf_id_to_shift_type_id=_freeze_array(state.rf_id_to_shift_type_id),
         rf_id_to_unit_scale_factor=_freeze_array(state.rf_id_to_unit_scale_factor),
-        max_container_id=state.max_container_id,
-        container_id_to_topology_type=_freeze_array(
-            state.container_id_to_topology_type
-        ),
-        container_id_to_interp_x_id=_freeze_array(state.container_id_to_interp_x_id),
-        container_id_to_extrap_x_id=_freeze_array(state.container_id_to_extrap_x_id),
-        container_id_to_interp_y_id=_freeze_array(state.container_id_to_interp_y_id),
-        container_id_to_extrap_y_id=_freeze_array(state.container_id_to_extrap_y_id),
-        container_id_to_ccy_id=_freeze_array(state.container_id_to_ccy_id),
-        container_id_to_spot_roll_rule_name=state.container_id_to_spot_roll_rule_name,
-        container_id_to_x_axis_kind=_freeze_array(state.container_id_to_x_axis_kind),
+        container_ids=_freeze_array(state.container_ids),
+        container_topology_type=_freeze_array(state.container_topology_type),
+        container_interp_x_id=_freeze_array(state.container_interp_x_id),
+        container_extrap_x_id=_freeze_array(state.container_extrap_x_id),
+        container_interp_y_id=_freeze_array(state.container_interp_y_id),
+        container_extrap_y_id=_freeze_array(state.container_extrap_y_id),
+        container_ccy_id=_freeze_array(state.container_ccy_id),
+        container_spot_roll_rule_name=state.container_spot_roll_rule_name,
+        container_x_axis_kind=_freeze_array(state.container_x_axis_kind),
         curve_id_to_tenor_index=_freeze_dict(state.curve_id_to_tenor_index),
         fx_spot_lookup=_freeze_dict(state.fx_spot_lookup),
         fx_spot_matrix=_freeze_array(state.fx_spot_matrix),
@@ -946,42 +966,73 @@ class RiskStaticConfig:
     def rf_id_to_unit_scale_factor(self) -> npt.NDArray[np.float64]:
         return self._state.rf_id_to_unit_scale_factor
 
-    # -- Per-container attributes --
+    # -- Per-container attributes (SLOT-indexed; parallel to container_ids) --
+    @property
+    def container_ids(self) -> npt.NDArray[np.int32]:
+        """Sorted-ascending-unique container-id axis. Index every
+        ``container_*`` array by SLOT (``container_slots``), not raw id."""
+        return self._state.container_ids
+
+    @property
+    def num_containers(self) -> int:
+        return int(self._state.container_ids.shape[0])
+
     @property
     def max_container_id(self) -> int:
-        return self._state.max_container_id
+        """Largest container id present (informational only — NOT an array
+        length; the per-container arrays are slot-length, not id-length)."""
+        ids = self._state.container_ids
+        return int(ids[-1]) if ids.size else int(NO_ID)
+
+    def container_slots(
+        self, container_ids: npt.NDArray[np.int32]
+    ) -> npt.NDArray[np.int64]:
+        """Resolve raw container ids -> slots into the ``container_*`` arrays.
+
+        Raises if any id is absent. Container ids live at 250M+, so the
+        per-container store is keyed by slot (this lookup), never by raw id.
+        """
+        return searchsorted_or_raise(
+            universe=self._state.container_ids,
+            raw=container_ids,
+            ctx="container_id",
+        )
+
+    def container_slot(self, container_id: int) -> int:
+        """Scalar form of ``container_slots`` for loop/diagnostic sites."""
+        return int(self.container_slots(np.asarray([container_id], dtype=np.int32))[0])
 
     @property
-    def container_id_to_topology_type(self) -> npt.NDArray[np.int8]:
-        return self._state.container_id_to_topology_type
+    def container_topology_type(self) -> npt.NDArray[np.int8]:
+        return self._state.container_topology_type
 
     @property
-    def container_id_to_interp_x_id(self) -> npt.NDArray[np.int8]:
-        return self._state.container_id_to_interp_x_id
+    def container_interp_x_id(self) -> npt.NDArray[np.int8]:
+        return self._state.container_interp_x_id
 
     @property
-    def container_id_to_extrap_x_id(self) -> npt.NDArray[np.int8]:
-        return self._state.container_id_to_extrap_x_id
+    def container_extrap_x_id(self) -> npt.NDArray[np.int8]:
+        return self._state.container_extrap_x_id
 
     @property
-    def container_id_to_interp_y_id(self) -> npt.NDArray[np.int8]:
-        return self._state.container_id_to_interp_y_id
+    def container_interp_y_id(self) -> npt.NDArray[np.int8]:
+        return self._state.container_interp_y_id
 
     @property
-    def container_id_to_extrap_y_id(self) -> npt.NDArray[np.int8]:
-        return self._state.container_id_to_extrap_y_id
+    def container_extrap_y_id(self) -> npt.NDArray[np.int8]:
+        return self._state.container_extrap_y_id
 
     @property
-    def container_id_to_ccy_id(self) -> npt.NDArray[np.int8]:
-        return self._state.container_id_to_ccy_id
+    def container_ccy_id(self) -> npt.NDArray[np.int8]:
+        return self._state.container_ccy_id
 
     @property
-    def container_id_to_spot_roll_rule_name(self) -> tuple[str, ...]:
-        return self._state.container_id_to_spot_roll_rule_name
+    def container_spot_roll_rule_name(self) -> tuple[str, ...]:
+        return self._state.container_spot_roll_rule_name
 
     @property
-    def container_id_to_x_axis_kind(self) -> npt.NDArray[np.int8]:
-        return self._state.container_id_to_x_axis_kind
+    def container_x_axis_kind(self) -> npt.NDArray[np.int8]:
+        return self._state.container_x_axis_kind
 
     # -- Curve tenor index --
     @property
@@ -1037,10 +1088,6 @@ class RiskStaticConfig:
     @property
     def num_risk_factors(self) -> int:
         return self.num_nodes + self.num_curve_points + self.num_surface_points
-
-    @property
-    def num_containers(self) -> int:
-        return self.num_curves + self.num_surfaces
 
     @property
     def num_fx_pairs(self) -> int:

@@ -7,10 +7,12 @@ import pandas as pd
 from riskquant.ingest_fixtures.schemas import RiskStaticConfigSurfacePointMeta
 from riskquant.ingest_fixtures.utils import validate_column_lengths
 
-# rf_id partition (must not collide with node_meta or curve_point_meta):
-#   nodes          : 1..99
-#   curve_points   : 1_000..9_999
-#   surface_points : 10_000..99_999
+# rf_id allocation (one shared id-space; globally unique vs node_meta and
+# curve_point_meta — enforced by validate._validate_rf_id_uniqueness).
+# Each surface gets a contiguous 100_000-wide block from `rf_id_base`:
+#   nodes          : 0 .. n_nodes-1
+#   curve_points   : 1_000-wide blocks from 1_000
+#   surface_points : 100_000-wide blocks from 100_000    (this table)
 #
 # Each surface is a 4-expiry x 5-y-label grid (20 points per surface).
 # Total surface points: 3 surfaces x 20 = 60.
@@ -24,22 +26,22 @@ from riskquant.ingest_fixtures.utils import validate_column_lengths
 _SURFACE_BLOCKS: tuple[tuple[int, int, tuple[str, ...], tuple[str, ...]], ...] = (
     # --- BRENT_VOL_SURF: 4 monthly expiries x 5 absolute strikes ---
     (
-        200_000_000,
-        10_000,
+        500_000_000,
+        100_000,
         ("[M+0]", "[M+1]", "[M+3]", "[M+6]"),
         ("50.00", "65.00", "75.00", "85.00", "100.00"),
     ),
     # --- USDEUR_VOL_SURF: 4 LABEL expiries x 5 delta points ---
     (
-        200_000_001,
-        11_000,
+        500_001_000,
+        200_000,
         ("[1W]", "[1M]", "[3M]", "[1Y]"),
         ("0.10", "0.25", "0.50", "0.75", "0.90"),
     ),
     # --- AAPL_VOL_SURF: 4 LABEL expiries x 5 log-moneyness levels ---
     (
-        200_000_002,
-        12_000,
+        500_002_000,
+        300_000,
         ("[1M]", "[3M]", "[6M]", "[1Y]"),
         ("-0.20", "-0.10", "0.00", "0.10", "0.20"),
     ),

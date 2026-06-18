@@ -17,25 +17,28 @@ from typing import TYPE_CHECKING
 import numpy as np
 import numpy.typing as npt
 
-from riskquant.valuation.kernels.spot import _kernel_price_spot
+from riskquant.valuation.pricer_kernels.spot import _kernel_price_spot
 
 if TYPE_CHECKING:
-    from riskquant.market_data.state import MarketDataMatrix
-    from riskquant.portfolio.blocks.spot_block import SpotBlock
+    from riskquant.market_data.state import ValuationState
+    from riskquant.valuation.blocks.spot_block import SpotBlock
 
 
 def price_spot_block(
     *,
     block: SpotBlock,
-    market_data_mtx: MarketDataMatrix,
+    valuation_state: ValuationState,
     out: npt.NDArray[np.float64],
 ) -> None:
     """Spot pricer entrypoint. All arrays must be C-contiguous and dtype-stable."""
     _kernel_price_spot(
+        # OUTPUT
         out,
-        market_data_mtx.prices,
-        block.price_uix,
+        # MARKET DATA
+        valuation_state.spot_prices,
+        valuation_state.fx_spots_effective,
+        # BLOCK FIELDS
         block.qty,
-        market_data_mtx.fx_spots_effective,
-        block.fx_spots_effective_uix,
+        block.spot_price_uix,
+        block.fx_spot_effective_uix,
     )

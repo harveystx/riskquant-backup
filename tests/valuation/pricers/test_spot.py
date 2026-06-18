@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
-from riskquant.portfolio.blocks.spot_block import SpotBlock
-from riskquant.market_data.state import MarketDataMatrix
-from riskquant.valuation.pricers.spot import price_spot_block
 from riskquant.constants import NO_FX_RF_REQUIRED
+from riskquant.market_data.state import MarketDataMatrix
+from riskquant.valuation.blocks.spot_block import SpotBlock
+from riskquant.valuation.pricers.spot import price_spot_block
 
 # =========================================================================
 # CONSTANTS
@@ -36,7 +35,7 @@ def _make_spot_block(
     return SpotBlock(
         trade_uids=trade_uids,
         qty=qty,
-        price_uix=price_uix,
+        spot_price_uix=price_uix,
         fx_uix=fx_uix,
         fx_invert=fx_invert,
     )
@@ -78,7 +77,7 @@ def test_single_trade_no_fx() -> None:
     )
     md = _make_market_data(prices=prices)
 
-    result = price_spot_block(block=block, market_data_mtx=md)
+    result = price_spot_block(block=block, valuation_state=md)
 
     expected = np.array([[20.0, 40.0, 60.0, 80.0, 100.0]])
     np.testing.assert_allclose(result, expected)
@@ -96,7 +95,7 @@ def test_multiple_trades_no_fx() -> None:
     )
     md = _make_market_data(prices=prices)
 
-    result = price_spot_block(block=block, market_data_mtx=md)
+    result = price_spot_block(block=block, valuation_state=md)
 
     assert result.shape == (3, N_SCENARIOS)
     np.testing.assert_allclose(result[0, :], 100.0)
@@ -113,7 +112,7 @@ def test_negative_qty() -> None:
     )
     md = _make_market_data(prices=prices)
 
-    result = price_spot_block(block=block, market_data_mtx=md)
+    result = price_spot_block(block=block, valuation_state=md)
 
     np.testing.assert_allclose(result, -500.0)
 
@@ -136,7 +135,7 @@ def test_single_trade_with_fx() -> None:
     )
     md = _make_market_data(prices=prices, fx_spots=fx_spots)
 
-    result = price_spot_block(block=block, market_data_mtx=md)
+    result = price_spot_block(block=block, valuation_state=md)
 
     np.testing.assert_allclose(result, 5.0 * 100.0 * 1.30)
 
@@ -154,7 +153,7 @@ def test_fx_inversion() -> None:
     )
     md = _make_market_data(prices=prices, fx_spots=fx_spots)
 
-    result = price_spot_block(block=block, market_data_mtx=md)
+    result = price_spot_block(block=block, valuation_state=md)
 
     np.testing.assert_allclose(result, 100.0 * 0.5)
 
@@ -172,7 +171,7 @@ def test_mixed_fx_and_no_fx() -> None:
     )
     md = _make_market_data(prices=prices, fx_spots=fx_spots)
 
-    result = price_spot_block(block=block, market_data_mtx=md)
+    result = price_spot_block(block=block, valuation_state=md)
 
     np.testing.assert_allclose(result[0, :], 100.0)
     np.testing.assert_allclose(result[1, :], 150.0)
@@ -191,7 +190,7 @@ def test_per_scenario_prices_and_fx() -> None:
     )
     md = _make_market_data(prices=prices, fx_spots=fx_spots)
 
-    result = price_spot_block(block=block, market_data_mtx=md)
+    result = price_spot_block(block=block, valuation_state=md)
 
     expected = np.array([[20.0, 60.0, 120.0]])
     np.testing.assert_allclose(result, expected)
@@ -208,7 +207,7 @@ def test_output_shape() -> None:
     )
     md = _make_market_data(prices=prices)
 
-    result = price_spot_block(block=block, market_data_mtx=md)
+    result = price_spot_block(block=block, valuation_state=md)
 
     assert result.shape == (n, s)
 
@@ -226,7 +225,7 @@ def test_mixed_fx_invert_flags() -> None:
     )
     md = _make_market_data(prices=prices, fx_spots=fx_spots)
 
-    result = price_spot_block(block=block, market_data_mtx=md)
+    result = price_spot_block(block=block, valuation_state=md)
 
     np.testing.assert_allclose(result[0, :], 400.0)
     np.testing.assert_allclose(result[1, :], 25.0)

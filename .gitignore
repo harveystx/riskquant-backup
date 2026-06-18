@@ -3,6 +3,7 @@
 ###########################################################
 
 # Data & large artifacts (never commit)
+_deprecated*  # All deprecated data directories are ignored on commit
 _contexts/
 _data/
 _parquet_data/
@@ -194,5 +195,3 @@ cmake-build-*/
 #################################################
 # GITHUB
 #################################################
-
-.github/

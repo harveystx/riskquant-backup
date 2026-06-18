@@ -14,6 +14,10 @@ Monte Carlo run an independent scenario count `S_credit != S_market`.
 
 from __future__ import annotations
 
+__all__ = [
+    "CreditFactorMatrix",
+]
+
 from dataclasses import dataclass
 
 import numpy as np

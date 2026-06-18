@@ -4,11 +4,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from riskquant.portfolio.blocks.vanilla_european_option_block import (
+from riskquant.valuation.blocks.vanilla_european_option_block import (
     VanillaEuropeanOptionCurveBlock,
 )
 from riskquant.market_data.state import MarketDataMatrix
-from riskquant.valuation.pricers.vanilla_european_option_curve import (
+from riskquant.valuation.pricers._deprecated.vanilla_european_option_curve_v1 import (
     price_vanilla_european_option_curve_block,
 )
 from riskquant.valuation.models.black_scholes import fv_black_scholes_vanilla_3d

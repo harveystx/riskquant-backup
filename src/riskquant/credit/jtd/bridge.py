@@ -22,25 +22,32 @@ import numba as nb  # type: ignore
 import numpy as np
 import numpy.typing as npt
 
-from riskquant.credit._uid_join import (
+from riskquant._arrays import (
     searchsorted_or_raise,
-    searchsorted_or_sentinel,
+    searchsorted_soft_join,
 )
-from riskquant.credit.exposure.results import EadResult
-from riskquant.credit.netting_set.compiled import CompiledNettingSetMaster
+from riskquant.numba import (
+    _F64_2D,
+    _I32_1D,
+    _I64_1D,
+    parallel_njit,
+)
+from riskquant.constants import INVALID_UIX
+from riskquant.credit.exposure.results import NettingSetExposurePaths
+from riskquant.credit.masters.netting_set.compiled import CompiledNettingSetMaster
 
 
-@nb.njit(
-    parallel=True,
-    fastmath={"contract", "reassoc", "nsz"},
-    nogil=True,
-    boundscheck=False,
-    error_model="numpy",
-    cache=True,
+@parallel_njit(
+    nb.void(
+        _F64_2D,
+        _F64_2D,
+        _I32_1D,
+        _I64_1D,
+    )
 )
 def _kernel_aggregate_ead(
     out: npt.NDArray[np.float64],  # (n_target, S)
-    ead: npt.NDArray[np.float64],  # (n_ns,    S)
+    ead: npt.NDArray[np.float64],  # (n_ns, S)
     ead_perm: npt.NDArray[np.int32],  # (n_ns,)   ead row -> target band order
     target_offsets: npt.NDArray[np.int64],  # (n_target + 1,)
 ) -> None:
@@ -64,7 +71,7 @@ def _kernel_aggregate_ead(
 
 def aggregate_ead_to_obligor(
     *,
-    ead_result: EadResult,
+    ead_result: NettingSetExposurePaths,
     netting_set_master: CompiledNettingSetMaster,
     obligor_uids_target: npt.NDArray[np.int64],
 ) -> npt.NDArray[np.float64]:
@@ -86,16 +93,20 @@ def aggregate_ead_to_obligor(
     """
     # Strict: ns uid -> obligor uid.
     ns_pos = searchsorted_or_raise(
-        target=ead_result.uid,
-        superset_sorted=netting_set_master.uid,
+        raw=ead_result.uid,
+        universe=netting_set_master.uid,
         ctx="aggregate_ead_to_obligor: netting-set uid(s)",
     )
     obligor_per_ns = netting_set_master.obligor_uid[ns_pos]
 
-    # Soft: target obligor index per ns; absences -> NO_UID_MATCH_IDX_I32 (-1).
-    target_idx = searchsorted_or_sentinel(
-        target=obligor_per_ns,
-        superset_sorted=obligor_uids_target,
+    # Soft: target obligor index per ns; absences -> INVALID_UIX (-999).
+    # We must explicitly probe membership here, because it is valid and
+    # expected for some netting sets to belong to obligors not modeled
+    # in the target JTD portfolio.
+    target_idx = searchsorted_soft_join(
+        raw=obligor_per_ns,
+        universe=obligor_uids_target,
+        sentinel=INVALID_UIX,
     )
 
     # Drop ns rows whose obligor isn't in the target universe.
@@ -110,11 +121,11 @@ def aggregate_ead_to_obligor(
     counts = np.bincount(target_idx, minlength=obligor_uids_target.shape[0])
     np.cumsum(counts.astype(np.int64, copy=False), out=target_offsets[1:])
 
-    s = ead_result.ead.shape[1]
+    s = ead_result.exposure.shape[1]
     out = np.empty((obligor_uids_target.shape[0], s), dtype=np.float64, order="C")
     _kernel_aggregate_ead(
         out=out,
-        ead=ead_result.ead,
+        ead=ead_result.exposure,
         ead_perm=ead_perm,
         target_offsets=target_offsets,
     )

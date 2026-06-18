@@ -299,35 +299,33 @@ def _audit_dense_rf_arrays(rsc: RiskStaticConfig, n: int) -> None:
 
 
 def _audit_dense_container_arrays(rsc: RiskStaticConfig, n: int) -> None:
-    _print_subheader("12. Dense per-container attribute arrays (head)")
-    n_total = rsc.max_container_id + 1
-    occupied = rsc.container_id_to_topology_type > ContainerTopologyType.NODE.value
+    _print_subheader("12. Per-container attribute arrays (slot-indexed; head)")
+    n_total = rsc.num_containers
+    occupied = rsc.container_topology_type > ContainerTopologyType.NODE.value
     if not occupied.any():
         print("(no containers)")
         return
 
     x_kind_names = [
         XAxisKind(int(k)).name if int(k) >= 0 else "-"
-        for k in rsc.container_id_to_x_axis_kind
+        for k in rsc.container_x_axis_kind
     ]
     df = pd.DataFrame(
         {
-            "container_id": np.arange(n_total, dtype=np.int32),
-            "topology_type": rsc.container_id_to_topology_type,  # 1=curve, 2=surface
-            "ccy_id": rsc.container_id_to_ccy_id,
-            "interp_x_id": rsc.container_id_to_interp_x_id,
-            "extrap_x_id": rsc.container_id_to_extrap_x_id,
-            "interp_y_id": rsc.container_id_to_interp_y_id,
-            "extrap_y_id": rsc.container_id_to_extrap_y_id,
+            "container_id": rsc.container_ids,
+            "topology_type": rsc.container_topology_type,  # 1=curve, 2=surface
+            "ccy_id": rsc.container_ccy_id,
+            "interp_x_id": rsc.container_interp_x_id,
+            "extrap_x_id": rsc.container_extrap_x_id,
+            "interp_y_id": rsc.container_interp_y_id,
+            "extrap_y_id": rsc.container_extrap_y_id,
             "x_axis_kind": x_kind_names,
-            "spot_roll_rule": rsc.container_id_to_spot_roll_rule_name,
+            "spot_roll_rule": rsc.container_spot_roll_rule_name,
         }
     )
     df = df.loc[occupied].reset_index(drop=True)
     print(df.head(n).to_string(index=False))
-    print(
-        f"  Occupied container_id slots: {int(occupied.sum())} / {n_total} array length"
-    )
+    print(f"  Containers: {int(occupied.sum())} / {n_total} slots")
 
 
 def _audit_tenor_index(rsc: RiskStaticConfig, n: int) -> None:
@@ -412,8 +410,8 @@ if __name__ == "__main__":
 
     print_calling_file()
 
-    DEV_DATA_DIR: str = "C:/Users/mharvey/Documents/code/riskquant/data/dev"
-    DEV_DATA_FILE_NAME_STATIC_CONFIG: str = "dev_risk_static_data_config_v01.xlsx"
+    DEV_DATA_DIR: str = "C:/Users/mharvey/Documents/code/riskquant/data/canonical_examples"
+    DEV_DATA_FILE_NAME_STATIC_CONFIG: str = "canonical_risk_static_config.xlsx"
 
     rsc = compile_risk_static_config_from_xlsx(
         path=f"{DEV_DATA_DIR}/{DEV_DATA_FILE_NAME_STATIC_CONFIG}"

@@ -12,6 +12,14 @@ leaves the ingest edge.
 
 All resolution is performed through pandas `Series.map` (a C-level hash join).
 There are no Python row loops, no `.apply`, and no regex matching.
+
+Failure-mode contract
+---------------------
+Both `resolve_required_ids` and `resolve_optional_ids` HARD-FAIL on
+populated-but-unmapped names. The optional path used to swallow these
+silently via `.astype(np.float64)[...].astype(np.int32)` (NaN -> platform
+MIN_INT32), corrupting the int32 ids array on typos. That silent path is
+gone: `_detect_unmapped` now runs before any narrowing for both helpers.
 """
 
 from __future__ import annotations
@@ -89,7 +97,7 @@ def resolve_optional_ids(
     """
     Resolve a name column where blank rows are legitimately absent.
 
-    Blank rows collapse to `sentinel`. A populated-but-unmapped name is still a
+    Blank rows collapse to `sentinel`. A populated-but-unmapped name is a
     hard error: it signals a typo or a stale universe rather than absence.
 
     Parameters
@@ -102,10 +110,23 @@ def resolve_optional_ids(
         Typed sentinel (from riskquant.constants) for "no linkage".
     ctx
         Human-readable column label for diagnostics.
+
+    Notes
+    -----
+    The detection-before-narrowing ordering matters: `mapped.to_numpy(
+    dtype=np.float64)[populated].astype(np.int32)` on a NaN element returns
+    `MIN_INT32` rather than raising — that path used to silently corrupt
+    optional id columns on typos. Detection now runs unconditionally
+    before any narrowing.
     """
     n = names.shape[0]
     blank_mask = names == _BLANK
     mapped = pd.Series(names).map(mapping)
+
+    # Detect populated-but-unmapped BEFORE narrowing. After this gate the
+    # only NaN-bearing rows in `mapped` are the blank ones, and those are
+    # masked out of the scatter below.
+    _detect_unmapped(names, mapped, blank_mask, ctx=ctx)
 
     # Edge allocation; downstream kernels never touch this array directly.
     out = np.empty(n, dtype=np.int32)
@@ -113,6 +134,12 @@ def resolve_optional_ids(
 
     populated = ~blank_mask
     if populated.any():
-        out[populated] = mapped.to_numpy(dtype=np.float64)[populated].astype(np.int32)
+        # Safe int64 narrowing: `_detect_unmapped` guarantees no NaNs in
+        # the populated subset. The float64 intermediate is gone — we go
+        # straight through int64 to int32 to keep platform behaviour on
+        # NaN coercion irrelevant.
+        out[populated] = (
+            mapped[populated].to_numpy(dtype=np.int64, copy=False).astype(np.int32)
+        )
 
     return out  # np.empty is already C-contiguous

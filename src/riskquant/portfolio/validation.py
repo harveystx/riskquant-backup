@@ -17,8 +17,9 @@ from collections.abc import Iterable, Sequence
 import numpy as np
 import numpy.typing as npt
 
-from riskquant.portfolio.engine import UixMapper
+from riskquant._arrays import searchsorted_membership
 from riskquant.portfolio.ingest.batch import IngestBatch
+from riskquant.universe import UixMapper
 
 
 def validate_ingest_batches_against_uix_universe(
@@ -91,12 +92,7 @@ def _check_arrays_against_universe(
         if populated.size == 0:
             continue
 
-        idx = np.searchsorted(universe, populated)
-        in_bounds = idx < universe.size
-
-        matches = np.zeros(populated.shape[0], dtype=bool)
-        matches[in_bounds] = universe[idx[in_bounds]] == populated[in_bounds]
-
+        matches = searchsorted_membership(universe=universe, raw=populated)
         if not matches.all():
             missing = np.unique(populated[~matches])
             raise ValueError(

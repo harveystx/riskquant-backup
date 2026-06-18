@@ -37,9 +37,9 @@ from riskquant.portfolio.ingest.validate import (
 )
 from riskquant.portfolio.instruments import (
     INSTRUMENT_NAME_TO_ID_REGISTRY,
-    INSTRUMENT_TO_FAMILY_ARRAY,
+    INSTRUMENT_TYPE_TO_FAMILY_ARRAY,
     NUM_INSTRUMENTS,
-    InstrumentFamily,
+    InstrumentTypeFamily,
 )
 
 # A masked validator consumes the frame plus a boolean row selector.
@@ -49,13 +49,13 @@ ValidatorFn: TypeAlias = Callable[[pd.DataFrame, npt.NDArray[np.bool_]], None]
 # DISPATCH TABLES (DENSE, INTEGER-KEYED)
 # ==============================================================================
 
-_NUM_FAMILIES: Final[int] = len(InstrumentFamily)
+_NUM_FAMILIES: Final[int] = len(InstrumentTypeFamily)
 
 # Family id -> coarse validator. Dense list => O(1) branchless indexing.
 FAMILY_VALIDATORS: Final[list[ValidatorFn | None]] = [None] * _NUM_FAMILIES
-FAMILY_VALIDATORS[InstrumentFamily.SPOT] = validate_spot_family
-FAMILY_VALIDATORS[InstrumentFamily.FORWARD] = validate_forward_family
-FAMILY_VALIDATORS[InstrumentFamily.OPTION] = validate_option_family
+FAMILY_VALIDATORS[InstrumentTypeFamily.SPOT] = validate_spot_family
+FAMILY_VALIDATORS[InstrumentTypeFamily.FORWARD] = validate_forward_family
+FAMILY_VALIDATORS[InstrumentTypeFamily.OPTION] = validate_option_family
 
 # Instrument id -> refinement validator. Most slots stay None: only instruments
 # carrying constraints beyond their family contract register here.
@@ -64,7 +64,7 @@ INSTRUMENT_VALIDATORS: Final[list[ValidatorFn | None]] = [None] * NUM_INSTRUMENT
 # Instrument id -> family id, narrowed to int8 and frozen as an ndarray so the
 # id->family hop is a single advanced-indexing op rather than a Python lookup.
 _FAMILY_LUT: Final[npt.NDArray[np.int8]] = np.asarray(
-    INSTRUMENT_TO_FAMILY_ARRAY, dtype=np.int8
+    INSTRUMENT_TYPE_TO_FAMILY_ARRAY, dtype=np.int8
 )
 
 

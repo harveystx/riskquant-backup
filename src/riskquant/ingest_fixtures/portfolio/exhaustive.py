@@ -62,6 +62,9 @@ from riskquant.ingest_fixtures.portfolio.vanilla_forward_curve import (
 from riskquant.ingest_fixtures.portfolio.vanilla_forward_node import (
     CANONICAL_VANILLA_FORWARD_NODE_MARKET_RISK_PORTFOLIO_DATA,
 )
+from riskquant.ingest_fixtures.portfolio.vanilla_irs import (
+    CANONICAL_VANILLA_IRS_MARKET_RISK_PORTFOLIO_DATA,
+)
 from riskquant.ingest_fixtures.schemas import MarketRiskIngestData
 from riskquant.ingest_fixtures.utils import validate_column_lengths
 
@@ -77,6 +80,7 @@ def _get_data() -> MarketRiskIngestData:
         pd.DataFrame(
             CANONICAL_VANILLA_EUROPEAN_OPTION_CURVE_MARKET_RISK_PORTFOLIO_DATA
         ),
+        pd.DataFrame(CANONICAL_VANILLA_IRS_MARKET_RISK_PORTFOLIO_DATA),
     ]
 
     # Drop entirely-NA columns *before* concat so a missing column on
@@ -85,9 +89,15 @@ def _get_data() -> MarketRiskIngestData:
         df.dropna(axis=1, how="all") for df in per_instrument_dfs if not df.empty
     ]
 
+    assert valid_dfs, "No valid per-instrument DataFrames to concat"
+
     combined_df = (
         pd.concat(valid_dfs, ignore_index=True) if valid_dfs else pd.DataFrame()
     )
+
+    assert not combined_df.empty, "Combined DataFrame is empty after concat"
+
+    assert combined_df["uid"].is_unique, "Combined DataFrame has duplicate 'uid' values"
 
     return cast(MarketRiskIngestData, combined_df.to_dict(orient="list"))
 
@@ -117,7 +127,11 @@ def _debug_print() -> None:
     print_dict(CANONICAL_EXHAUSTIVE_MARKET_RISK_PORTFOLIO_DATA, title=title)
 
     title += " (as DataFrame)"
-    print_df(_CANONICAL_EXHAUSTIVE_MARKET_RISK_PORTFOLIO_DF, title=title)
+    print_df(
+        _CANONICAL_EXHAUSTIVE_MARKET_RISK_PORTFOLIO_DF,
+        title=title,
+        float_format="_.2f",
+    )
 
     print_success_message(add_space_before=False)
 

@@ -103,9 +103,9 @@ def _audit_summary(topology: ProxyTopology) -> None:
     print(f"  Container proxies   : {topology.num_container_proxies}")
     print(f"  RF proxies          : {topology.num_rf_proxies}")
     print(f"  Total               : {topology.num_total_proxies}")
-    print(f"  c_proxy array size  : {topology.container_id_to_proxy_id.size}")
+    print(f"  c_proxy array size  : {topology.container_proxy_id.size}")
     print(f"  rf_proxy array size : {topology.rf_id_to_proxy_rf_id.size}")
-    arr = topology.container_id_to_proxy_id
+    arr = topology.container_proxy_id
     n_set_c = int((arr >= 0).sum())
     arr = topology.rf_id_to_proxy_rf_id
     n_set_rf = int((arr >= 0).sum())
@@ -148,12 +148,14 @@ def _audit_proxied_containers_by_kind(
         print("(none)")
         return
     name_to_cid = static_config.container_name_to_id
-    kind_arr = static_config.container_id_to_topology_type
+    kind_arr = static_config.container_topology_type
     rows = []
     for pm in topology.container_proxies.values():
         req_id = int(name_to_cid[pm.required_name])
         prx_id = int(name_to_cid[pm.proxy_name])
-        kind_label = {1: "CURVE", 2: "SURFACE"}.get(int(kind_arr[req_id]), "?")
+        kind_label = {1: "CURVE", 2: "SURFACE"}.get(
+            int(kind_arr[static_config.container_slot(req_id)]), "?"
+        )
         rows.append(
             {
                 "kind": kind_label,
@@ -269,13 +271,13 @@ if __name__ == "__main__":
 
     print_calling_file()
 
-    DEV_DATA_DIR: str = "C:/Users/mharvey/Documents/code/riskquant/data/dev"
+    DEV_DATA_DIR: str = "C:/Users/mharvey/Documents/code/riskquant/data/canonical_examples"
 
     rsc = compile_risk_static_config_from_xlsx(
-        path=f"{DEV_DATA_DIR}/dev_risk_static_data_config_v01.xlsx"
+        path=f"{DEV_DATA_DIR}/canonical_risk_static_config.xlsx"
     )
     topology = compile_proxy_topology_from_xlsx(
-        path=f"{DEV_DATA_DIR}/dev_risk_base_proxy_config_v01.xlsx",
+        path=f"{DEV_DATA_DIR}/canonical_proxy_config.xlsx",
         static_config=rsc,
     )
 

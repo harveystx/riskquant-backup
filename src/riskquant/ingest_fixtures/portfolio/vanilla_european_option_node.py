@@ -3,41 +3,34 @@
 Canonical VANILLA_EUROPEAN_OPTION_NODE ingest fixture.
 
 VANILLA_EUROPEAN_OPTION_NODE = European option whose underlying resolves
-to a single risk-factor node (or curve-point relative name). Vol is
-sourced from a vol container — conceptually a vol-NODE, but the
-canonical static config does not currently declare any vol-node
-containers; only vol surfaces exist. This fixture therefore points
-`volatility_container_name` at the parent vol SURFACE container, which
-ingests cleanly (the schema accepts any container name) but exposes the
-documented option-node-vol-source architectural gap: the kernel reads
-`vol_nodes[v_uix]` and the slot reserved for the surface id will not
-have a populated scalar-vol row at runtime.
+to a single risk-factor node (or curve-point relative name) AND whose
+implied volatility is sourced from a per-underlying ATM-vol node.
 
-The new hoisted `if vol_uix >= 0:` sentinel branch in the kernel makes
-this SAFE (no out-of-bounds UB) but not CORRECT — see
-notes/REFACTORS_NEEDED.md for the three follow-up options.
+Per the option-NODE vol-source refactor, the canonical static config
+now declares scalar ATM-vol nodes (`AAPL_ATM_VOL`, `USDEUR_ATM_VOL`,
+`BRENT_CRUDE_ATM_VOL`) alongside the FX / equity / commodity price
+nodes. The kernel's `vol_nodes[v_uix]` access pattern lands directly on
+those node-typed risk factors — no surface ATM-slice synthesis, no
+universe-vs-surface-id slot mismatch.
 
-Coverage (resolution paths, not end-to-end PV):
+Coverage:
   - Call on equity node, no FX                 -> AAPL_EQ      (uid=300)
-                                                  vol AAPL_VOL_SURF
+                                                  vol AAPL_ATM_VOL
   - Put  on equity node, no FX                 -> AAPL_EQ      (uid=301)
-                                                  vol AAPL_VOL_SURF
+                                                  vol AAPL_ATM_VOL
   - Call on FX node, settlement in foreign ccy -> USDEUR       (uid=302)
                                                   strike=EUR, settle=EUR
-                                                  vol USDEUR_VOL_SURF
-                                                  (DELTA_CALL — runtime
-                                                  builder rejects today)
+                                                  vol USDEUR_ATM_VOL
   - Put  on FX node, RF-LEVEL PROXY underlying -> USDGBP       (uid=303)
                                                   proxies to USDEUR
-                                                  vol USDEUR_VOL_SURF
-                                                  (DELTA_CALL — same)
+                                                  vol USDEUR_ATM_VOL
   - Call on curve-point pinned underlying      -> BRENT_CRUDE_FWD[M+0]
                                                   (uid=304)
-                                                  vol BRENT_CRUDE_VOL_SURF
+                                                  vol BRENT_CRUDE_ATM_VOL
   - Put  on curve-point, CONTAINER PROXY       -> WTI_CRUDE_FWD[M+0]
                                                   proxies to BRENT[M+0]
                                                   (uid=305)
-                                                  vol BRENT_CRUDE_VOL_SURF
+                                                  vol BRENT_CRUDE_ATM_VOL
 """
 
 from __future__ import annotations
@@ -49,13 +42,13 @@ from riskquant.ingest_fixtures.utils import (
     generate_netting_set_ids,
     validate_column_lengths,
 )
-from riskquant.portfolio.instruments import Instrument
+from riskquant.portfolio.instruments import InstrumentType
 
 
 def _get_data() -> MarketRiskIngestData:
     return {
         "uid": [300, 301, 302, 303, 304, 305],
-        "instrument": [Instrument.VANILLA_EUROPEAN_OPTION_NODE.name] * 6,
+        "instrument": [InstrumentType.VANILLA_EUROPEAN_OPTION_NODE.name] * 6,
         "quantity": [
             100.0,  # 300. long call AAPL
             -100.0,  # 301. short put AAPL
@@ -126,21 +119,16 @@ def _get_data() -> MarketRiskIngestData:
         ],
         # OPTION_NODE has no delivery (single rf underlying).
         "delivery_date": [None] * 6,
-        # Vol-container pointer. The option-node kernel reads
-        # `vol_nodes[uix]` — a separate axis from vol_surfaces — and the
-        # canonical static config has no vol-node entries. Until a vol-
-        # node universe lands (or the option-node kernel is refactored
-        # to source from `vol_surfaces`), this fixture points at the
-        # parent vol surface so ingest validation passes; the runtime
-        # PV will be zero or garbage at the surface's universe slot.
-        # See notes/REFACTORS_NEEDED.md.
+        # Vol-container pointer — now resolves to a scalar vol-NODE
+        # container, matching the kernel's `vol_nodes[v_uix]` access.
+        # Proxy-underlying rows share the parent's ATM-vol node.
         "volatility_container_name": [
-            "AAPL_VOL_SURF",
-            "AAPL_VOL_SURF",
-            "USDEUR_VOL_SURF",
-            "USDEUR_VOL_SURF",  # USDGBP proxies to USDEUR
-            "BRENT_CRUDE_VOL_SURF",
-            "BRENT_CRUDE_VOL_SURF",  # WTI proxies to BRENT
+            "AAPL_ATM_VOL",
+            "AAPL_ATM_VOL",
+            "USDEUR_ATM_VOL",
+            "USDEUR_ATM_VOL",  # USDGBP proxies to USDEUR's ATM vol
+            "BRENT_CRUDE_ATM_VOL",
+            "BRENT_CRUDE_ATM_VOL",  # WTI proxies to BRENT's ATM vol
         ],
         "netting_set_id": generate_netting_set_ids(n=6, none_probability=0.0),
     }

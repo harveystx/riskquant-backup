@@ -10,7 +10,7 @@ from riskquant.utils.printer import print_calling_file, print_success_message
 # ============================================================
 # IMPORT PRODUCTION KERNEL
 # ============================================================
-from riskquant.valuation.kernels.vanilla_forward_node import (
+from riskquant.valuation.pricer_kernels._deprecated.vanilla_forward_node_v1 import (
     _kernel_price_vanilla_forward_node,
 )
 

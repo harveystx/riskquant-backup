@@ -6,7 +6,7 @@ import numpy as np
 
 from riskquant.constants import RNG_SEED
 from riskquant.utils.printer import print_calling_file, print_success_message
-from riskquant.valuation.kernels.vanilla_european_option_curve import (
+from riskquant.valuation.pricer_kernels._deprecated.vanilla_european_option_curve_v1 import (
     _kernel_price_vanilla_european_option_curve,
 )
 

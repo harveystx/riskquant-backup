@@ -96,4 +96,25 @@ def _debug_print() -> None:
 
 
 if __name__ == "__main__":
+    from pathlib import Path
+
     _debug_print()
+
+    # --- SAVE TO EXCEL FOR MANUAL INSPECTION ---
+
+    # Path to data folder is relative to the root of the repository.
+    fp = Path(
+        Path(__file__).resolve().parent.parent.parent.parent.parent.parent,
+        "data",
+        "canonical_examples",
+        "canonical_proxy_config.xlsx",
+    )
+
+    print(fp)
+    # Save the dict of dataframes into an Excel file for manual inspection, if desired.
+    with pd.ExcelWriter(fp) as writer:
+        CANONICAL_RISK_PROXY_CONFIG_DF.to_excel(
+            writer,
+            sheet_name="proxy_config",
+            index=False,
+        )
