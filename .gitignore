@@ -4,7 +4,7 @@
 
 # Data & large artifacts (never commit)
 _deprecated*  # All deprecated data directories are ignored on commit
-_contexts*
+_contexts*/
 _contexts/
 _data/
 _parquet_data/
@@ -31,6 +31,11 @@ temp/
 
 # Development / scratch files
 data/dev/*.xlsx
+
+# Files.
+_generate_project_structure.py
+src/riskquant/_create_master_context_txt.py
+
 
 
 ###########################################################
