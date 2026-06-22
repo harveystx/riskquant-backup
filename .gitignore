@@ -32,9 +32,9 @@ temp/
 # Development / scratch files
 data/dev/*.xlsx
 
-# Files.
-_generate_project_structure.py
-_create_master_context_txt.py
+# # Files.
+# _generate_project_structure.py
+# _create_master_context_txt.py
 
 
 
