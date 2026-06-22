@@ -15,7 +15,7 @@ from riskquant.numba import (
     parallel_njit,
 )
 from riskquant.valuation.pricing_models.black76.model import (
-    _black76_fv_with_kernel_hoists,
+    _black76_fv_kernel_primitive,
 )
 
 
@@ -91,7 +91,7 @@ def _kernel_price_vanilla_european_option(
             fwd_s = forwards_row[s]
             vol_s = vols_row[s]
 
-            fv_s = _black76_fv_with_kernel_hoists(
+            fv_s = _black76_fv_kernel_primitive(
                 fwd_s,
                 strike_i,
                 log_strike_i,

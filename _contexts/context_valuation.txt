@@ -34,6 +34,8 @@ When proposing code:
             ├── _arrays.py
             ├── constants.py
             ├── exceptions.py
+            ├── market_data
+            │   └── state.py
             ├── numba.py
             ├── utils
             │   ├── __init__.py
@@ -54,12 +56,6 @@ When proposing code:
                 ├── engine.py
                 ├── pricer_kernels
                 │   ├── __init__.py
-                │   ├── _deprecated
-                │   │   ├── _math_v1.py
-                │   │   ├── vanilla_european_option_curve_v1.py
-                │   │   ├── vanilla_european_option_node_v1.py
-                │   │   ├── vanilla_forward_curve_v1.py
-                │   │   └── vanilla_forward_node_v1.py
                 │   ├── fixed_cashflow.py
                 │   ├── floating_cashflow.py
                 │   ├── principal_cashflow.py
@@ -69,11 +65,6 @@ When proposing code:
                 ├── pricer_registry.py
                 ├── pricers
                 │   ├── __init__.py
-                │   ├── _deprecated
-                │   │   ├── vanilla_european_option_curve_v1.py
-                │   │   ├── vanilla_european_option_node_v1.py
-                │   │   ├── vanilla_forward_curve_v1.py
-                │   │   └── vanilla_forward_node_v1.py
                 │   ├── fixed_cashflow.py
                 │   ├── floating_cashflow.py
                 │   ├── principal_cashflow.py
@@ -107,6 +98,8 @@ When proposing code:
 <class name="ConfigurationError" file="riskquant\src\riskquant\exceptions.py" />
 <class name="PrettyKeyError" file="riskquant\src\riskquant\exceptions.py" />
 <class name="RiskQuantError" file="riskquant\src\riskquant\exceptions.py" />
+<class name="ValuationState" file="riskquant\src\riskquant\market_data\state.py" />
+<function name="_mtx_f64_2d" file="riskquant\src\riskquant\market_data\state.py" />
 <function name="validate_string_cols" file="riskquant\src\riskquant\utils\dataframes.py" />
 <function name="assert_date_str_is_iso_format" file="riskquant\src\riskquant\utils\dates.py" />
 <function name="coerce_as_of_date_to_pd_timestamp" file="riskquant\src\riskquant\utils\dates.py" />
@@ -153,13 +146,6 @@ When proposing code:
 <class name="VanillaEuropeanOptionBlock" file="riskquant\src\riskquant\valuation\blocks\vanilla_european_option_block.py" />
 <class name="VanillaForwardBlock" file="riskquant\src\riskquant\valuation\blocks\vanilla_forward_block.py" />
 <function name="run_valuation" file="riskquant\src\riskquant\valuation\engine.py" />
-<function name="linear_interp_scalar" file="riskquant\src\riskquant\valuation\pricer_kernels\_deprecated\_math_v1.py" />
-<function name="numba_norm_cdf" file="riskquant\src\riskquant\valuation\pricer_kernels\_deprecated\_math_v1.py" />
-<function name="numba_norm_cdf_abrom_steg" file="riskquant\src\riskquant\valuation\pricer_kernels\_deprecated\_math_v1.py" />
-<function name="_kernel_price_vanilla_european_option_curve" file="riskquant\src\riskquant\valuation\pricer_kernels\_deprecated\vanilla_european_option_curve_v1.py" />
-<function name="_kernel_price_vanilla_european_option_node" file="riskquant\src\riskquant\valuation\pricer_kernels\_deprecated\vanilla_european_option_node_v1.py" />
-<function name="_kernel_price_vanilla_forward_curve" file="riskquant\src\riskquant\valuation\pricer_kernels\_deprecated\vanilla_forward_curve_v1.py" />
-<function name="_kernel_price_vanilla_forward_node" file="riskquant\src\riskquant\valuation\pricer_kernels\_deprecated\vanilla_forward_node_v1.py" />
 <function name="_kernel_price_fixed_cashflow" file="riskquant\src\riskquant\valuation\pricer_kernels\fixed_cashflow.py" />
 <function name="_kernel_price_floating_cashflow" file="riskquant\src\riskquant\valuation\pricer_kernels\floating_cashflow.py" />
 <function name="_kernel_price_principal_cashflow" file="riskquant\src\riskquant\valuation\pricer_kernels\principal_cashflow.py" />
@@ -169,10 +155,6 @@ When proposing code:
 <class name="Pricer" file="riskquant\src\riskquant\valuation\pricer_registry.py" />
 <function name="_register_block_pricer" file="riskquant\src\riskquant\valuation\pricer_registry.py" />
 <function name="resolve_pricer" file="riskquant\src\riskquant\valuation\pricer_registry.py" />
-<function name="price_vanilla_european_option_curve_block" file="riskquant\src\riskquant\valuation\pricers\_deprecated\vanilla_european_option_curve_v1.py" />
-<function name="price_vanilla_european_option_node_block" file="riskquant\src\riskquant\valuation\pricers\_deprecated\vanilla_european_option_node_v1.py" />
-<function name="price_vanilla_forward_curve_block" file="riskquant\src\riskquant\valuation\pricers\_deprecated\vanilla_forward_curve_v1.py" />
-<function name="price_vanilla_forward_node_block" file="riskquant\src\riskquant\valuation\pricers\_deprecated\vanilla_forward_node_v1.py" />
 <function name="price_fixed_cashflow_block" file="riskquant\src\riskquant\valuation\pricers\fixed_cashflow.py" />
 <function name="price_floating_cashflow_block" file="riskquant\src\riskquant\valuation\pricers\floating_cashflow.py" />
 <function name="price_principal_cashflow_block" file="riskquant\src\riskquant\valuation\pricers\principal_cashflow.py" />
@@ -183,9 +165,9 @@ When proposing code:
 <function name="_kernel_black76_fv_batch" file="riskquant\src\riskquant\valuation\pricing_models\black76\kernels.py" />
 <function name="_black76_fv" file="riskquant\src\riskquant\valuation\pricing_models\black76\model.py" />
 <function name="_black76_fv_call" file="riskquant\src\riskquant\valuation\pricing_models\black76\model.py" />
+<function name="_black76_fv_kernel_primitive" file="riskquant\src\riskquant\valuation\pricing_models\black76\model.py" />
 <function name="_black76_fv_put" file="riskquant\src\riskquant\valuation\pricing_models\black76\model.py" />
 <function name="_black76_fv_vega" file="riskquant\src\riskquant\valuation\pricing_models\black76\model.py" />
-<function name="_black76_fv_with_kernel_hoists" file="riskquant\src\riskquant\valuation\pricing_models\black76\model.py" />
 <function name="numba_norm_cdf" file="riskquant\src\riskquant\valuation\pricing_models\math.py" />
 <function name="numba_norm_cdf_abrom_steg" file="riskquant\src\riskquant\valuation\pricing_models\math.py" />
 <function name="numba_norm_pdf" file="riskquant\src\riskquant\valuation\pricing_models\math.py" />
@@ -513,7 +495,7 @@ MIN_EWMA_VARIANCE: float = 1e-12
 # ==============================================================================
 
 NO_PARENT_OBLIGOR: np.int64 = np.int64(-1)
-NO_RATING_ID: np.int8 = np.int8(0)
+NO_RATING_ID: np.int8 = np.int8(-1)
 NO_SECTOR_ID: np.int32 = np.int32(-1)
 NO_COUNTRY_ID: np.int32 = np.int32(-1)
 
@@ -594,6 +576,208 @@ class ConfigurationError(RiskQuantError):
     """
 
     pass
+```
+</file>
+
+<file_summary>
+path: riskquant\src\riskquant\market_data\state.py
+module_docstring: TODO: WRITE DOCSTRING...
+classes: ValuationState
+functions: _mtx_f64_2d
+imports:
+</file_summary>
+
+<file path="riskquant\src\riskquant\market_data\state.py">
+```python
+# src/riskquant/market_data/state.py
+"""
+TODO: WRITE DOCSTRING
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+import numpy as np
+from numpy.typing import NDArray
+
+_F64 = np.float64
+
+_NDArrayF64 = NDArray[_F64]
+
+
+def _mtx_f64_2d() -> _NDArrayF64:
+    return np.empty((0, 0), dtype=_F64)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ValuationState:
+    """
+    Fully-resolved valuation factors consumed directly by pricing kernels.
+
+    Frozen, validated SoA container of valuation factors for vectorized valuation.
+    This is not a market-data container; it is the final, fully-resolved representation
+    of market data consumed by the valuation engine.
+
+    `ValuationState` is the final market-data representation used by the
+    valuation engine. It contains only scenario-dependent quantities with
+    direct economic meaning in pricing equations.
+
+    NB! THIS IS AN INTERNAL EXECUTION-STATE OBJECT. IT DOES NOT VALIDATE OR SANITIZE
+    MARKET DATA. IT IS THE FINAL, FULLY-RESOLVED REPRESENTATION OF MARKET DATA
+    CONSUMED BY THE VALUATION ENGINE. IT IS NOT MEANT TO BE VIEWABLE OR AUDITABLE BY
+    END USERS. THE COMPILER GUARANTEES THAT ALL MARKET DATA IS VALID AND SANITIZED
+    BEFORE IT REACHES THIS OBJECT.
+
+    Architectural role
+    ------------------
+    RiskQuant deliberately separates:
+
+        Raw Market Data
+            ↓
+        Market Data Compiler
+            ↓
+        ValuationState
+            ↓
+        Valuation Engine
+            ↓
+        Pricing Kernels
+
+    The market-data compiler is responsible for all market-data interpretation
+    and transformation, including topological synthesis of execution-ready arrays.
+
+    Pricing kernels must not perform any of the above operations.
+
+    Kernel contract
+    ---------------
+    Every array follows the convention:
+
+        [factor_uix, scenario]
+
+    where:
+
+        factor_uix
+            Dense execution coordinate produced by the market-data compiler.
+
+        scenario
+            Scenario index within the current scenario batch.
+    """
+
+    # ==================================================================================
+    # BATCH PROPERTIES
+    # ==================================================================================
+
+    batch_size: int
+
+    # ==================================================================================
+    # RESOLVED FACTORS (RAW PRIMITIVES)
+    # ==================================================================================
+
+    # # (num_spot_prices, batch_size)
+    # spot_prices: _NDArrayF64 = field(default_factory=_mtx_f64_2d)
+
+    # # (num_forward_prices, batch_size)
+    # forward_prices: _NDArrayF64 = field(default_factory=_mtx_f64_2d)
+
+    # (num_forward_rates, batch_size)
+    # Annualized simple forward interest rates
+    forward_rates: _NDArrayF64 = field(default_factory=_mtx_f64_2d)
+
+    # (num_vols, batch_size)
+    vols: _NDArrayF64 = field(default_factory=_mtx_f64_2d)
+
+    # # (num_discount_factors, batch_size)
+    # discount_factors: _NDArrayF64 = field(default_factory=_mtx_f64_2d)
+
+    # # (num_fx_effective_pairs, batch_size)
+    # # Effective FX spot rates (already inverted where needed) for direct gather by
+    # # pricer kernels - pricer kernels are as dumb as possible and do no inversion
+    # # math or dynamic checks, just one gather + multiply per leg.
+    # fx_spots_effective: _NDArrayF64 = field(default_factory=_mtx_f64_2d)
+
+    # ==================================================================================
+    # EXECUTION-READY EFFECTIVE FACTORS (TOPOLOGICALLY RESOLVED)
+    # ==================================================================================
+    # These arrays are pre-multiplied by the market data compiler to collapse memory
+    # reads in the hot path. Kernels gather these instead of combining raw primitives.
+
+    # (num_effective_discount_factors, batch_size)
+    # The Universal Multiplier. Combines time-value discounting and FX translation
+    # to the settlement currency into a single execution factor.
+    #
+    # DF_CCY(0, T) * FX_SPOT_EFFECTIVE(CCY -> SettleCCY)
+    #
+    effective_discount_factors: _NDArrayF64 = field(default_factory=_mtx_f64_2d)
+
+    # (num_effective_forward_prices, batch_size)
+    # Fully synthesized linear forward leg. Bakes the raw forward price, its asset
+    # discount factor, and its asset-to-settle FX rate into a single PV vector.
+    #
+    # FWD_PRICE_CCY(0, T) * DF_CCY(0, T) * FX_SPOT_EFFECTIVE(CCY -> SettleCCY)
+    #
+    effective_forward_prices: _NDArrayF64 = field(default_factory=_mtx_f64_2d)
+
+    # (num_effective_spot_prices, batch_size)
+    # Synthesized linear spot leg. Bakes the asset-to-settle FX rate directly
+    # into the asset's spot price.
+    #
+    # SPOT_PRICE_CCY(0) * FX_SPOT_EFFECTIVE(CCY -> SettleCCY)
+    #
+    effective_spot_prices: _NDArrayF64 = field(default_factory=_mtx_f64_2d)
+
+    # (num_forwards_strike_ccy, batch_size)
+    #
+    # Forward price re-expressed in strike-currency units for Black-76.
+    #
+    # Constructed by:
+    #
+    #   1. Discounting the underlying-currency forward to PV.
+    #   2. Translating that PV into strike-currency terms via the engine's
+    #      settlement-currency FX numeraires.
+    #   3. Re-accumulating to expiry using the strike-currency curve.
+    #
+    # Flow:
+    #
+    #     F_ccy(T)
+    #         * DF_ccy(0,T)
+    #         -> PV_ccy
+    #
+    #         * FX(ccy->settle_ccy)
+    #         / FX(strike_ccy->settle_ccy)
+    #         -> PV_strike_ccy
+    #
+    #         / DF_strike_ccy(0,T)
+    #         -> F_strike_ccy(T)
+    #
+    # Therefore:
+    #
+    #     F_strike_ccy(T)
+    #         = F_ccy(T)
+    #         * DF_ccy(0,T)
+    #         * FX(ccy->settle_ccy)
+    #         / FX(strike_ccy->settle_ccy)
+    #         / DF_strike_ccy(0,T)
+    #
+    # This is an expiry-time forward price (not a PV) expressed in strike
+    # currency units and is consumed directly by Black-76 kernels.
+    forward_prices_strike_ccy: _NDArrayF64 = field(default_factory=_mtx_f64_2d)
+
+    # ==================================================================================
+    # KERNEL CACHES
+    #
+    # These are pre-computed quantities for the pricing kernels to avoid repeated
+    # computation of expensive math functions in the hot path.
+    #
+    # ==================================================================================
+
+    # Log-forward-price cache used by option pricing kernels.
+    #
+    # Only forward prices required by option products are materialized.
+    # This is a dedicated compiler-generated factor universe and does not
+    # share indexing with `forward_prices_strike_ccy`.
+    option_log_forward_prices_strike_ccy: _NDArrayF64 = field(
+        default_factory=_mtx_f64_2d
+    )
 ```
 </file>
 
@@ -2025,12 +2209,10 @@ class _DiscountedCashflowBlock(Block):
 
     # --- LINKAGES (UIX) ---
 
-    # Index into `ValuationState.discount_factors`. Discounts cashflow to t = 0.
-    discount_factor_uix: npt.NDArray[np.int32]
-
-    # Index into `ValuationState.fx_spots_effective`. Converts cashflow to the
-    # settlemnt currency at t = 0.
-    fx_spot_effective_uix: npt.NDArray[np.int32]
+    # Index into `ValuationState.effective_discount_factors`.
+    # Discounts cashflow to t = 0 and converts to settlement currency
+    # at t = 0 in one step.
+    effective_discount_factor_uix: npt.NDArray[np.int32]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2041,6 +2223,8 @@ class PrincipalCashflowBlock(_DiscountedCashflowBlock):
     CashFlow(T) = Amount
 
     PV(0) = CashFlow(T) * DiscountFactor(0, T) * FxSpot(0)
+
+    PV(0) = CashFlow(T) * EffectiveDiscountFactor(0, T)
 
     Examples
     --------
@@ -2066,6 +2250,9 @@ class FixedCashflowBlock(_DiscountedCashflowBlock):
     CashFlow(T) = Notional * AccrualFactor * FixedRate * PayReceiveMult
 
     PV(0) = CashFlow(T) * DiscountFactor(0, T) * FxSpot(0)
+
+    PV(0) = CashFlow(T) * EffectiveDiscountFactor(0, T)
+
     """
 
     # --- BLOCK ID FOR DISPATCH ---
@@ -2159,11 +2346,8 @@ class SpotBlock(Block):
 
     # --- LINKAGES (UIX) ---
 
-    # Index into `ValuationState.spot_prices` for this row.
-    spot_price_uix: npt.NDArray[np.int32]
-
-    # Index into `ValuationState.fx_spots_effective`.
-    fx_spot_effective_uix: npt.NDArray[np.int32]
+    # Index into `ValuationState.effective_spot_prices` for this row.
+    effective_spot_price_uix: npt.NDArray[np.int32]
 ```
 </file>
 
@@ -2220,6 +2404,7 @@ class VanillaEuropeanOptionBlock(Block):
     # --- TRADE SPECIFICS ---
     qty: NDArray[np.float64]
     strike: NDArray[np.float64]
+    log_strike: NDArray[np.float64]
     cp_mult: NDArray[np.int8]
     sqrt_tte: NDArray[np.float64]
     half_tte: NDArray[np.float64]
@@ -2228,86 +2413,21 @@ class VanillaEuropeanOptionBlock(Block):
 
     # Index into ValuationState.forward_prices for the underlying forward price in
     # the STRIKE CURRENCY. This is the forward price at the expiry date of the option.
-    forward_price_uix: NDArray[np.int32]
+    forward_price_strike_ccy_uix: NDArray[np.int32]
+
+    # Index into ValuationState.log_forward_prices for the log of the underlying
+    # forward price in the STRIKE CURRENCY. This is the log of the forward price
+    # in STRIKE CURRENCY at the expiry date of the option.
+    option_log_forward_price_strike_ccy_uix: NDArray[np.int32]
 
     # Index into ValuationState.vols for the volatility of the underlying forward price.
     # This is the volatility at the expiry date of the option.
     vol_uix: NDArray[np.int32]
 
-    # Index into ValuationState.discount_factors for the discount factor in the STRIKE
-    # CURRENCY. Discounts the cashflow from the SETTLEMENT DATE of the option to t = 0.
-    discount_factor_k_uix: NDArray[np.int32]
-
-    # Index into ValuationState.fx_spots_effective for the FX rate from the STRIKE
-    # CURRENCY to the SETTLEMENT CURRENCY at t = 0.
-    fx_spot_effective_k2s_uix: NDArray[np.int32]
-
-
-# @dataclass(frozen=True, slots=True, kw_only=True)
-# class _VanillaEuropeanOptionBaseBlock(Block):
-#     """Common SoA fields shared by all vanilla European option blocks."""
-
-#     # ========== BLOCK ID FOR DISPATCH ==========
-#     BLOCK_TYPE_ID: ClassVar[int] = UNSET_BLOCK_TYPE_ID_SENTINEL
-
-#     # ========== ECONOMIC TERMS ==========
-#     qty: npt.NDArray[np.float64]
-#     strike: npt.NDArray[np.float64]
-#     # +1 for call, -1 for put, precomputed for branchless payoff sign.
-#     cp_mult: npt.NDArray[np.int8]
-
-#     # ========== DATES (DATE UIX) ==========
-#     # Indices into `unique_dates_ord32`.
-#     expiry_date_uix: npt.NDArray[np.int32]
-#     settlement_date_uix: npt.NDArray[np.int32]
-
-#     # ========== FX LINKAGES (EFFECTIVE UIX) ==========
-#     # Indices into `MarketDataMatrix.fx_spots_effective`. INVALID_UIX (< 0)
-#     # signals "no FX conversion required" for that leg.
-#     fx_under_to_settle_effective_uix: npt.NDArray[np.int32]
-#     fx_strike_to_settle_effective_uix: npt.NDArray[np.int32]
-
-#     # ========== DISCOUNT LINKAGES (CURVE UIX) ==========
-#     # Indices into `MarketDataMatrix.discount_factor_grid` axis 0.
-#     # INVALID_UIX (< 0) when no discount applies on that leg.
-#     under_discount_curve_uix: npt.NDArray[np.int32]
-#     strike_discount_curve_uix: npt.NDArray[np.int32]
-
-
-# @dataclass(frozen=True, slots=True, kw_only=True)
-# class VanillaEuropeanOptionNodeBlock(_VanillaEuropeanOptionBaseBlock):
-#     """European option whose underlying is sourced from a scalar node."""
-
-#     # ========== BLOCK ID FOR DISPATCH ==========
-#     BLOCK_TYPE_ID: ClassVar[int] = int(BlockType.VANILLA_EUROPEAN_OPTION_NODE)
-
-#     # ========== MARKET LINKAGES ==========
-#     # Index into `MarketDataMatrix.forward_nodes`.
-#     underlying_price_uix: npt.NDArray[np.int32]
-
-#     # Index into `MarketDataMatrix.vol_nodes`.
-#     vol_uix: npt.NDArray[np.int32]
-
-
-# @dataclass(frozen=True, slots=True, kw_only=True)
-# class VanillaEuropeanOptionCurveBlock(_VanillaEuropeanOptionBaseBlock):
-#     """European option whose underlying and vol come from curves/surfaces."""
-
-#     # ========== BLOCK ID FOR DISPATCH ==========
-#     BLOCK_TYPE_ID: ClassVar[int] = int(BlockType.VANILLA_EUROPEAN_OPTION_CURVE)
-
-#     # ========== DELIVERY DATE (DATE UIX) ==========
-#     delivery_date_uix: npt.NDArray[np.int32]
-
-#     # ========== MARKET LINKAGES ==========
-#     # Index into `MarketDataMatrix.price_curve_grid` axis 0.
-#     underlying_price_curve_uix: npt.NDArray[np.int32]
-
-#     # Index into `MarketDataMatrix.vol_surfaces` axis 0.
-#     vol_surface_uix: npt.NDArray[np.int32]
-
-#     # Y-axis kind for the vol surface (e.g., strike, log-moneyness).
-#     vol_surface_y_axis_type_id: npt.NDArray[np.int8]
+    # Index into ValuationState.effective_discount_factors for the discount factor in
+    # the STRIKE CURRENCY. Discounts the cashflow from the SETTLEMENT DATE of the
+    # option to t = 0.
+    effective_discount_factor_uix: NDArray[np.int32]
 ```
 </file>
 
@@ -2355,87 +2475,18 @@ class VanillaForwardBlock(Block):
 
     # ---  LINKAGES (UIX) ---
 
-    # Index into `ValuationState.forward_prices` for the underlying forward price in
+    # Index into `ValuationState.effective_forward_prices` for the underlying forward price in
     # the FORWARD PRICE CURRENCY.
-    forward_price_uix: npt.NDArray[np.int32]
+    effective_forward_price_uix: npt.NDArray[np.int32]
 
-    # Link to discount factors for discounting the FORWARD PRICE.
-    # Discount factor is in FORWARD PRICE CCY. Cashflow is
-    # converted to SETTLEMENT CCY via `fx_spot_effective_u2s_uix`
-    # if required.
-    discount_factor_u_uix: npt.NDArray[np.int32]
-
-    # Link to discount factors for discounting the STRIKE.
-    # Discount factor is in STRIKE CCY. Cashflow is
-    # converted to SETTLEMENT CCY via `fx_spot_effective_k2s_uix`
-    # if required.
-    discount_factor_k_uix: npt.NDArray[np.int32]
-
-    # Index into `ValuationState.fx_spots_effective` for the under->settle FX
-    # spot rate at t = 0.
-    fx_spot_effective_u2s_uix: npt.NDArray[np.int32]
-
-    # Index into `ValuationState.fx_spots_effective` for the strike->settle FX
-    # spot rate at t = 0.
-    fx_spot_effective_k2s_uix: npt.NDArray[np.int32]
-
-
-# @dataclass(frozen=True, slots=True, kw_only=True)
-# class _VanillaForwardBaseBlock(Block):
-#     """Common SoA fields shared by all vanilla forward blocks."""
-
-#     # ========== BLOCK ID FOR DISPATCH ==========
-#                     BLOCK_TYPE_ID: ClassVar[int] = UNSET_BLOCK_TYPE_ID_SENTINEL
-
-#     # ========== ECONOMIC TERMS ==========
-#     qty: npt.NDArray[np.float64]
-#     strike: npt.NDArray[np.float64]
-
-#     # ========== SETTLEMENT DATE (DATE UIX) ==========
-#     # Index into `unique_dates_ord32` for cashflow settlement.
-#     settlement_date_uix: npt.NDArray[np.int32]
-
-#     # ========== FX LINKAGES (EFFECTIVE UIX) ==========
-#     # Index into `MarketDataMatrix.fx_spots_effective` for the under->settle
-#     # transform. INVALID_UIX (< 0) when no FX needed for this leg.
-#     fx_under_to_settle_effective_uix: npt.NDArray[np.int32]
-
-#     # Index into `MarketDataMatrix.fx_spots_effective` for the strike->settle
-#     # transform. INVALID_UIX (< 0) when no FX needed for this leg.
-#     fx_strike_to_settle_effective_uix: npt.NDArray[np.int32]
-
-#     # ========== DISCOUNT LINKAGES (CURVE UIX) ==========
-#     # Indices into `MarketDataMatrix.discount_factor_grid` axis 0.
-#     # INVALID_UIX (< 0) when no discount applies on that leg.
-#     under_discount_curve_uix: npt.NDArray[np.int32]
-#     strike_discount_curve_uix: npt.NDArray[np.int32]
-
-
-# @dataclass(frozen=True, slots=True, kw_only=True)
-# class VanillaForwardNodeBlock(_VanillaForwardBaseBlock):
-#     """Forward priced directly off a scalar node."""
-
-#     # ========== BLOCK ID FOR DISPATCH ==========
-#     BLOCK_TYPE_ID: ClassVar[int] = int(BlockType.VANILLA_FORWARD_NODE)
-
-#     # ========== UNDERLYING MARKET LINKAGE ==========
-#     # Index into `MarketDataMatrix.forward_nodes` axis 0.
-#     price_uix: npt.NDArray[np.int32]
-
-
-# @dataclass(frozen=True, slots=True, kw_only=True)
-# class VanillaForwardCurveBlock(_VanillaForwardBaseBlock):
-#     """Forward priced off a curve requiring delivery-date interpolation."""
-
-#     # ========== BLOCK ID FOR DISPATCH ==========
-#     BLOCK_TYPE_ID: ClassVar[int] = int(BlockType.VANILLA_FORWARD_CURVE)
-
-#     # ========== DELIVERY DATE (DATE UIX) ==========
-#     delivery_date_uix: npt.NDArray[np.int32]
-
-#     # ========== UNDERLYING MARKET LINKAGE ==========
-#     # Index into `MarketDataMatrix.price_curve_grid` axis 0.
-#     price_curve_uix: npt.NDArray[np.int32]
+    # Link to effective discount factors for discounting the STRIKE.
+    # Effective discount factor is in SETTLEMENT CCY:
+    #
+    # EFF_DY(0,T) = DF_CCY(0, T) * FX_SPOT_EFFECTIVE(CCY -> SettleCCY)
+    #
+    # THat is, when an amount is multiplied by the effective discount factor,
+    # it is BOTH DISCOUNTED and CONVERTED to settlement currency.
+    effective_discount_factor_uix: npt.NDArray[np.int32]
 ```
 </file>
 
@@ -2546,837 +2597,6 @@ path: riskquant\src\riskquant\valuation\pricer_kernels\__init__.py
 </file_summary>
 
 <file_summary>
-path: riskquant\src\riskquant\valuation\pricer_kernels\_deprecated\_math_v1.py
-module_docstring: Shared bare-metal math helpers for vectorized pricer kernels.
-
-Tiny hot-path functions: `@nb.njit(inline='always')` coll...
-functions: linear_interp_scalar, numba_norm_cdf, numba_norm_cdf_abrom_steg
-imports:
-- riskquant.numba
-</file_summary>
-
-<file path="riskquant\src\riskquant\valuation\pricer_kernels\_deprecated\_math_v1.py">
-```python
-# src/riskquant/valuation/kernels/_math.py
-"""
-Shared bare-metal math helpers for vectorized pricer kernels.
-
-Tiny hot-path functions: `@nb.njit(inline='always')` collapses them into
-the surrounding kernel at compile time, so the calling kernel sees fused
-code with no call-frame overhead.
-
-Anything that needs `prange` or more than a handful of ops should not
-live here.
-"""
-
-from __future__ import annotations
-
-import math
-
-from riskquant.numba import inline_njit
-
-# 1 / sqrt(2). Lifted so the kernel never recomputes it.
-_INV_SQRT_2: float = 0.7071067811865476
-
-
-@inline_njit
-def numba_norm_cdf(x: float) -> float:
-    """Standard normal CDF: Phi(x) = 0.5 * (1 + erf(x / sqrt(2)))."""
-    return 0.5 * (1.0 + math.erf(x * _INV_SQRT_2))
-
-
-@inline_njit
-def numba_norm_cdf_abrom_steg(x: float) -> float:
-
-    ax = abs(x)
-
-    t = 1.0 / (1.0 + 0.2316419 * ax)
-
-    poly = t * (
-        0.319381530
-        + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429)))
-    )
-
-    pdf = 0.39894228040143267794 * math.exp(-0.5 * ax * ax)
-
-    cdf = 1.0 - pdf * poly
-
-    if x < 0.0:
-        return 1.0 - cdf
-
-    return cdf
-
-
-@inline_njit
-def linear_interp_scalar(x: float, xs, ys) -> float:
-    """
-    Branchless 1D linear interpolation with flat extrapolation.
-
-    Drops the `np.interp` call frame and Numba's bounds-check overhead in
-    favour of an inlinable binary search + linear blend. LLVM fuses this
-    into the caller's scenario loop.
-
-    Both `xs` and `ys` must be 1-D C-contiguous; `xs` strictly ascending.
-    For `x` outside `[xs[0], xs[-1]]` returns the corresponding edge value
-    (flat extrapolation), matching `np.interp`'s default semantics and
-    avoiding accidental log/division blow-ups on wide-strike moneyness.
-    """
-    n = xs.shape[0]
-    if n == 1:
-        return ys[0]
-
-    # Edge clamps — flat extrapolation. Branches are predictable
-    # (rare) and the compiler can lift them out of vectorised loops.
-    if x <= xs[0]:
-        return ys[0]
-    if x >= xs[n - 1]:
-        return ys[n - 1]
-
-    # Binary search for the right-hand pillar. Loop trip count is
-    # log2(n) and the compiler unrolls it for small n.
-    lo = 0
-    hi = n - 1
-    while hi - lo > 1:
-        mid = (lo + hi) >> 1
-        if xs[mid] <= x:
-            lo = mid
-        else:
-            hi = mid
-
-    x0 = xs[lo]
-    x1 = xs[hi]
-    y0 = ys[lo]
-    y1 = ys[hi]
-    # x1 > x0 by strict-monotone invariant.
-    w = (x - x0) / (x1 - x0)
-    return y0 + w * (y1 - y0)
-```
-</file>
-
-<file_summary>
-path: riskquant\src\riskquant\valuation\pricer_kernels\_deprecated\vanilla_european_option_curve_v1.py
-module_docstring: Vanilla European option pricing kernel, curve variant.
-
-Identical CIP-forward + Black-76 math to the node variant, with ...
-functions: _kernel_price_vanilla_european_option_curve
-imports:
-- riskquant.market_data.surfaces.y_axes_types
-- riskquant.numba
-- riskquant.valuation.pricer_kernels._deprecated._math_v1
-</file_summary>
-
-<file path="riskquant\src\riskquant\valuation\pricer_kernels\_deprecated\vanilla_european_option_curve_v1.py">
-```python
-# src/riskquant/valuation/kernels/vanilla_european_option_curve.py
-"""
-Vanilla European option pricing kernel, curve variant.
-
-Identical CIP-forward + Black-76 math to the node variant, with two
-structural differences:
-
-  - The underlying scalar comes from `price_curve_grid[curve_uix, delivery_uix, s]`.
-  - Volatility is sourced from a 4D vol surface and requires per-scenario
-    strike-axis interpolation along the pillar coordinate dictated by the
-    surface's y-axis type.
-
-FX rows are already EFFECTIVE — no inversion math; the strike-FX rate is
-loaded once per scenario, used as a divisor for CIP forward synthesis and
-as a multiplier for the PV translation back to settle ccy.
-
-Layout contract (CRITICAL)
---------------------------
-`vol_surfaces` MUST be `[surface, expiry, scenario, pillar]` (C-contig).
-This guarantees that the pillars for a single trade-scenario tuple form
-one contiguous run of memory: `vol_surfaces[v, exp, s]` is a 1-D view
-suitable for the binary-search interp. The builder is responsible for
-emitting this layout; the kernel relies on it for SIMD-friendly reads.
-
-Branch hoisting
----------------
-All sentinel checks (`fx_*_uix < 0`, `df_*_uix < 0`) and y-axis-type
-selection are resolved once per trade, outside the scenario loop. Within
-the scenario loop only the math executes; CPU branch predictors never
-see a `y_type` ladder or a sentinel test per scenario.
-
-Vol-surface-uix sentinel handling
----------------------------------
-`v_surf_id = vol_surface_uix[i]` may be `INVALID_UIX (< 0)` when the
-ingest compiler resolved no vol container for trade i. With
-`boundscheck=False`, `vol_surface_strikes[v_surf_id]` and
-`vol_surfaces[v_surf_id, exp_id]` on a negative id are undefined
-behaviour — out-of-bounds memory.
-
-This kernel hoists `has_vol = v_surf_id >= 0` once per trade, outside
-the scenario loop. The sentinel path writes `out_row[:] = 0.0` and skips
-the surface gather + Black-76 math entirely.
-"""
-
-from __future__ import annotations
-
-import math
-
-import numba as nb  # type: ignore[import-untyped]
-
-from riskquant.market_data.surfaces.y_axes_types import (
-    SURFACE_Y_AXIS_TYPE_LOG_MONEYNESS_FWD,
-    SURFACE_Y_AXIS_TYPE_LOG_MONEYNESS_SPOT,
-    SURFACE_Y_AXIS_TYPE_LOG_STRIKE,
-    SURFACE_Y_AXIS_TYPE_MONEYNESS_FWD,
-    SURFACE_Y_AXIS_TYPE_MONEYNESS_SPOT,
-    SURFACE_Y_AXIS_TYPE_STRIKE,
-)
-from riskquant.numba import parallel_njit
-from riskquant.valuation.pricer_kernels._deprecated._math_v1 import (
-    linear_interp_scalar,
-    numba_norm_cdf_abrom_steg,
-)
-
-_F64_2D = nb.float64[:, ::1]
-_F64_3D = nb.float64[:, :, ::1]
-_F64_4D = nb.float64[:, :, :, ::1]
-_F64_1D = nb.float64[::1]
-_I32_1D = nb.int32[::1]
-_I8_1D = nb.int8[::1]
-
-_TTE_FLOOR: float = 1e-9
-_VOL_STD_DEV_FLOOR: float = 1e-12
-
-# Y-axis kind groupings as int8 keys. Resolved once per trade and packed
-# into a 0/1/2/3 dispatch tag so the inner loop sees no branch ladder.
-_Y_KIND_STRIKE: int = 0  # raw strike: y = k
-_Y_KIND_LOG_STRIKE: int = 1  # y = log(k)
-_Y_KIND_MONEYNESS: int = 2  # y = k / fwd
-_Y_KIND_LOG_MONEYNESS: int = 3  # y = log(k / fwd)
-
-
-@parallel_njit(
-    nb.void(
-        _F64_2D,  # out
-        _F64_3D,  # price_curve_grid
-        _F64_2D,  # vol_surface_strikes
-        _F64_4D,  # vol_surfaces  [surface, expiry, scenario, pillar]
-        _F64_2D,  # fx_spots_effective
-        _F64_3D,  # df_grid
-        _F64_1D,  # tte_grid
-        _F64_1D,  # qty
-        _F64_1D,  # strike
-        _I8_1D,  # cp_mult
-        _I32_1D,  # price_curve_uix
-        _I32_1D,  # vol_surface_uix
-        _I8_1D,  # y_axis_type_id
-        _I32_1D,  # fx_u_eff_uix
-        _I32_1D,  # df_u_uix
-        _I32_1D,  # fx_k_eff_uix
-        _I32_1D,  # df_k_uix
-        _I32_1D,  # delivery_date_uix
-        _I32_1D,  # expiry_date_uix
-        _I32_1D,  # settle_date_uix
-    ),
-)
-def _kernel_price_vanilla_european_option_curve(
-    out,
-    price_curve_grid,
-    vol_surface_strikes,
-    vol_surfaces,
-    fx_spots_effective,
-    df_grid,
-    tte_grid,
-    qty,
-    strike,
-    cp_mult,
-    price_curve_uix,
-    vol_surface_uix,
-    y_axis_type_id,
-    fx_u_eff_uix,
-    df_u_uix,
-    fx_k_eff_uix,
-    df_k_uix,
-    delivery_date_uix,
-    expiry_date_uix,
-    settle_date_uix,
-) -> None:
-    m_trades, s_scenarios = out.shape
-
-    for i in nb.prange(m_trades):
-        q = qty[i]
-        k = strike[i]
-        cp = cp_mult[i]
-
-        p_curve_id = price_curve_uix[i]
-        v_surf_id = vol_surface_uix[i]
-        y_type = y_axis_type_id[i]
-
-        fx_u_id = fx_u_eff_uix[i]
-        df_u_id = df_u_uix[i]
-        fx_k_id = fx_k_eff_uix[i]
-        df_k_id = df_k_uix[i]
-
-        deliv_id = delivery_date_uix[i]
-        exp_id = expiry_date_uix[i]
-        stl_id = settle_date_uix[i]
-
-        out_row = out[i]
-
-        # ---- Hoist vol-surface-uix sentinel: no surface -> zero PV ----
-        # Resolving this BEFORE the surface gather is critical:
-        # vol_surface_strikes[<0] and vol_surfaces[<0, ...] are UB under
-        # boundscheck=False. Sentinel-trade rows write zeros and skip.
-        has_vol = v_surf_id >= 0
-
-        if not has_vol:
-            for s in range(s_scenarios):
-                out_row[s] = 0.0
-            continue
-
-        # ---- Trade-level scalars (hoist out of scenario loop) ----
-        tte = tte_grid[exp_id]
-        safe_tte = tte if tte > _TTE_FLOOR else _TTE_FLOOR
-        sqrt_tte = math.sqrt(safe_tte)
-        log_k = math.log(k)
-
-        # ---- Pre-compute the 2D plane handles ----
-        #   pillars      : 1-D, length=K_pillars  (shared across all scenarios)
-        #   v_plane      : 2-D, [scenario, pillar] — contiguous run per scenario
-        #   p_row        : 1-D, length=S          (price-curve row for delivery)
-        pillars = vol_surface_strikes[v_surf_id]
-        v_plane = vol_surfaces[v_surf_id, exp_id]
-        p_row = price_curve_grid[p_curve_id, deliv_id]
-
-        # ---- Hoist sentinel branches into per-trade booleans ----
-        has_fx_u = fx_u_id >= 0
-        has_df_u = df_u_id >= 0
-        has_fx_k = fx_k_id >= 0
-        has_df_k = df_k_id >= 0
-
-        # ---- Hoist y-axis-type ladder into a 0/1/2/3 dispatch tag ----
-        if y_type == SURFACE_Y_AXIS_TYPE_STRIKE:
-            y_kind = _Y_KIND_STRIKE
-        elif y_type == SURFACE_Y_AXIS_TYPE_LOG_STRIKE:
-            y_kind = _Y_KIND_LOG_STRIKE
-        elif y_type in (
-            SURFACE_Y_AXIS_TYPE_MONEYNESS_FWD,
-            SURFACE_Y_AXIS_TYPE_MONEYNESS_SPOT,
-        ):
-            y_kind = _Y_KIND_MONEYNESS
-        elif y_type in (
-            SURFACE_Y_AXIS_TYPE_LOG_MONEYNESS_FWD,
-            SURFACE_Y_AXIS_TYPE_LOG_MONEYNESS_SPOT,
-        ):
-            y_kind = _Y_KIND_LOG_MONEYNESS
-        else:
-            # Unknown y-axis: degrade to strike. Producer validation
-            # rejects this case before it reaches the kernel.
-            y_kind = _Y_KIND_STRIKE
-
-        for s in range(s_scenarios):
-            # ---- CIP forward in strike currency ----
-            fwd = p_row[s]
-            if has_fx_u:
-                fwd *= fx_spots_effective[fx_u_id, s]
-            if has_df_u:
-                fwd *= df_grid[df_u_id, exp_id, s]
-
-            rate_k = 1.0
-            if has_fx_k:
-                rate_k = fx_spots_effective[fx_k_id, s]
-                fwd /= rate_k
-            if has_df_k:
-                fwd /= df_grid[df_k_id, exp_id, s]
-
-            # ---- Y-axis target for vol surface lookup ----
-            # The branch tag is constant per trade; LLVM should hoist
-            # this select out of the SIMD body via loop-unswitching.
-            if y_kind == _Y_KIND_STRIKE:
-                y_target = k
-            elif y_kind == _Y_KIND_LOG_STRIKE:
-                y_target = log_k
-            elif y_kind == _Y_KIND_MONEYNESS:
-                y_target = k / fwd
-            else:  # _Y_KIND_LOG_MONEYNESS
-                y_target = log_k - math.log(fwd)
-
-            # ---- Strike-axis interpolation ----
-            # TODO: QUESTION - DO WE NEED TO DO OTHER TYPES OF INTERPOLATION FOR OTHER
-            # Y-AXIS KINDS? E.g. log-log for log-strike?
-            # v_plane[s] is a C-contig 1-D run of pillars for THIS scenario.
-            sigma = linear_interp_scalar(y_target, pillars, v_plane[s])
-
-            # ---- Black-76 future value ----
-            std_dev = sigma * sqrt_tte
-            if std_dev < _VOL_STD_DEV_FLOOR:
-                std_dev = _VOL_STD_DEV_FLOOR
-
-            d1 = (math.log(fwd) - log_k + 0.5 * sigma * sigma * safe_tte) / std_dev
-            d2 = d1 - std_dev
-
-            cdf1 = numba_norm_cdf_abrom_steg(cp * d1)
-            cdf2 = numba_norm_cdf_abrom_steg(cp * d2)
-
-            fv = cp * (fwd * cdf1 - k * cdf2)
-
-            # ---- PV discount in strike ccy, FX-translate to settle ccy ----
-            if has_df_k:
-                fv *= df_grid[df_k_id, stl_id, s]
-            fv *= rate_k
-
-            out_row[s] = q * fv
-```
-</file>
-
-<file_summary>
-path: riskquant\src\riskquant\valuation\pricer_kernels\_deprecated\vanilla_european_option_node_v1.py
-module_docstring: Vanilla European option pricing kernel, node variant.
-
-Synthesises the forward in strike currency via Covered Interest P...
-functions: _kernel_price_vanilla_european_option_node
-imports:
-- riskquant.numba
-- riskquant.valuation.pricer_kernels._deprecated._math_v1
-</file_summary>
-
-<file path="riskquant\src\riskquant\valuation\pricer_kernels\_deprecated\vanilla_european_option_node_v1.py">
-```python
-# src/riskquant/valuation/kernels/vanilla_european_option_node.py
-"""
-Vanilla European option pricing kernel, node variant.
-
-Synthesises the forward in strike currency via Covered Interest Parity,
-prices via Black-76, then discounts and FX-translates back to settle ccy.
-
-Math (per trade i, scenario s)
-------------------------------
-    rate_k = fx_spots_effective[fx_k_eff_uix(i), s]   # k_ccy -> settle_ccy
-
-    # CIP forward in strike currency
-    fwd_strike_ccy
-        = forward_node[p, s]
-          * fx_spots_effective[fx_u_eff_uix(i), s]    # u_ccy -> settle_ccy
-          * df_grid[df_u_uix(i), expiry_uix(i), s]    # under-DF at expiry
-          / rate_k                                    # settle_ccy -> k_ccy
-          / df_grid[df_k_uix(i), expiry_uix(i), s]    # strike-DF at expiry
-
-    # Black-76 future value (cp_mult = +1 call, -1 put)
-    sigma = vol_nodes[v, s]
-    std_dev = max(sigma * sqrt(tte), eps)
-    d1 = (log(fwd / k) + 0.5 * sigma**2 * tte) / std_dev
-    d2 = d1 - std_dev
-    fv = cp * (fwd * N(cp * d1) - k * N(cp * d2))
-
-    # PV discount in strike ccy, then translate back to settle ccy
-    pv_strike_ccy = fv * df_grid[df_k_uix(i), settle_uix(i), s]
-    pv_settle_ccy = pv_strike_ccy * rate_k
-
-    out[i, s] = qty[i] * pv_settle_ccy
-
-FX rows are already EFFECTIVE in `MarketDataMatrix.fx_spots_effective`; the
-kernel does NO inversion math. The strike-FX rate `rate_k` is loaded once
-per scenario and used as a divisor in the forward synthesis and as a
-multiplier in the PV translation — equivalent counts to the legacy code
-but with the `(1.0 / rate_k) if inv_k else rate_k` gymnastics gone.
-
-Vol-uix sentinel handling
--------------------------
-`v_id = vol_uix[i]` may be `INVALID_UIX (< 0)` when the ingest compiler
-resolved no vol container for trade i (e.g. a downstream trade that
-slipped past validation, or a future-class instrument whose vol path is
-not yet wired). With `boundscheck=False`, `vol_nodes[v_id]` on a negative
-id is undefined behaviour — out-of-bounds memory.
-
-This kernel hoists `has_vol = v_id >= 0` once per trade, outside the
-scenario loop. The sentinel path writes `out_row[:] = 0.0` and skips
-the vol gather + Black-76 math entirely. Two scenario loops — one for
-the priced path, one for the zero-fill path — keep the SIMD body free
-of per-scenario branches.
-"""
-
-from __future__ import annotations
-
-import math
-
-import numba as nb  # type: ignore[import-untyped]
-
-from riskquant.numba import parallel_njit
-from riskquant.valuation.pricer_kernels._deprecated._math_v1 import (
-    numba_norm_cdf_abrom_steg,
-)
-
-_F64_2D = nb.float64[:, ::1]
-_F64_3D = nb.float64[:, :, ::1]
-_F64_1D = nb.float64[::1]
-_I32_1D = nb.int32[::1]
-_I8_1D = nb.int8[::1]
-
-_TTE_FLOOR: float = 1e-9
-_VOL_STD_DEV_FLOOR: float = 1e-12
-
-
-@parallel_njit(
-    nb.void(
-        _F64_2D,  # out
-        _F64_2D,  # forward_nodes
-        _F64_2D,  # vol_nodes
-        _F64_2D,  # fx_spots_effective
-        _F64_3D,  # df_grid
-        _F64_1D,  # sqrt_tte_grid
-        _F64_1D,  # half_tte_grid
-        _F64_1D,  # qty
-        _F64_1D,  # strike
-        _I8_1D,  # cp_mult
-        _I32_1D,  # price_uix
-        _I32_1D,  # vol_uix
-        _I32_1D,  # fx_u_eff_uix
-        _I32_1D,  # df_u_uix
-        _I32_1D,  # fx_k_eff_uix
-        _I32_1D,  # df_k_uix
-        _I32_1D,  # expiry_date_uix
-        _I32_1D,  # settle_date_uix
-    ),
-)
-def _kernel_price_vanilla_european_option_node(
-    out,
-    forward_nodes,
-    vol_nodes,
-    fx_spots_effective,
-    df_grid,
-    sqrt_tte_grid,
-    half_tte_grid,
-    qty,
-    strike,
-    cp_mult,
-    price_uix,
-    vol_uix,
-    fx_u_eff_uix,
-    df_u_uix,
-    fx_k_eff_uix,
-    df_k_uix,
-    expiry_date_uix,
-    settle_date_uix,
-) -> None:
-
-    m_trades, s_scenarios = out.shape
-
-    for i in nb.prange(m_trades):
-        # ------------------------------------------------------------------
-        # Trade constants
-        # ------------------------------------------------------------------
-
-        q = qty[i]
-        k = strike[i]
-        cp = cp_mult[i]
-
-        p_id = price_uix[i]
-        v_id = vol_uix[i]
-
-        fx_u_id = fx_u_eff_uix[i]
-        df_u_id = df_u_uix[i]
-
-        fx_k_id = fx_k_eff_uix[i]
-        df_k_id = df_k_uix[i]
-
-        exp_id = expiry_date_uix[i]
-        stl_id = settle_date_uix[i]
-
-        out_row = out[i]
-
-        # ---- Hoist vol-uix sentinel: no vol container -> zero PV ----
-        has_vol = v_id >= 0
-
-        if not has_vol:
-            for s in range(s_scenarios):
-                out_row[s] = 0.0
-            continue
-
-        sqrt_tte = sqrt_tte_grid[exp_id]
-        half_tte = half_tte_grid[exp_id]
-        log_k = math.log(k)
-
-        # ------------------------------------------------------------------
-        # Scenario rows
-        # ------------------------------------------------------------------
-
-        p_row = forward_nodes[p_id]
-        v_row = vol_nodes[v_id]
-
-        has_fx_u = fx_u_id >= 0
-        has_df_u = df_u_id >= 0
-        has_fx_k = fx_k_id >= 0
-        has_df_k = df_k_id >= 0
-
-        if has_fx_u:
-            fx_u_row = fx_spots_effective[fx_u_id]
-
-        if has_fx_k:
-            fx_k_row = fx_spots_effective[fx_k_id]
-
-        if has_df_u:
-            df_u_exp_row = df_grid[df_u_id, exp_id]
-
-        if has_df_k:
-            df_k_exp_row = df_grid[df_k_id, exp_id]
-            df_k_stl_row = df_grid[df_k_id, stl_id]
-
-        # ------------------------------------------------------------------
-        # Scenario loop
-        # ------------------------------------------------------------------
-
-        for s in range(s_scenarios):
-            fwd = p_row[s]
-
-            if has_fx_u:
-                fwd *= fx_u_row[s]  # pyright: ignore[reportPossiblyUnboundVariable]
-
-            if has_df_u:
-                fwd *= df_u_exp_row[s]  # pyright: ignore[reportPossiblyUnboundVariable]
-
-            rate_k = 1.0
-
-            if has_fx_k:
-                rate_k = fx_k_row[s]  # pyright: ignore[reportPossiblyUnboundVariable]
-                fwd *= 1.0 / rate_k
-
-            if has_df_k:
-                fwd *= 1.0 / df_k_exp_row[s]  # pyright: ignore[reportPossiblyUnboundVariable]
-
-            sigma = v_row[s]
-            sigma_sq = sigma * sigma
-
-            std_dev = sigma * sqrt_tte
-            if std_dev < _VOL_STD_DEV_FLOOR:
-                std_dev = _VOL_STD_DEV_FLOOR
-
-            log_fwd = math.log(fwd)
-
-            d1 = (log_fwd - log_k + sigma_sq * half_tte) / std_dev
-
-            d2 = d1 - std_dev
-
-            cdf1 = numba_norm_cdf_abrom_steg(cp * d1)
-            cdf2 = numba_norm_cdf_abrom_steg(cp * d2)
-
-            fv = cp * (fwd * cdf1 - k * cdf2)
-
-            if has_df_k:
-                fv *= df_k_stl_row[s]  # pyright: ignore[reportPossiblyUnboundVariable]
-
-            fv *= rate_k
-
-            out_row[s] = q * fv
-```
-</file>
-
-<file_summary>
-path: riskquant\src\riskquant\valuation\pricer_kernels\_deprecated\vanilla_forward_curve_v1.py
-module_docstring: Vanilla forward pricing kernel, curve variant.
-
-Identical math to the node variant; the only structural change is that t...
-functions: _kernel_price_vanilla_forward_curve
-imports:
-- riskquant.numba
-</file_summary>
-
-<file path="riskquant\src\riskquant\valuation\pricer_kernels\_deprecated\vanilla_forward_curve_v1.py">
-```python
-# src/riskquant/valuation/kernels/vanilla_forward_curve.py
-"""
-Vanilla forward pricing kernel, curve variant.
-
-Identical math to the node variant; the only structural change is that the
-underlying scalar comes from `price_curve_grid[curve_uix, delivery_uix, s]`
-instead of `forward_nodes[uix, s]`.
-
-FX rows are already EFFECTIVE in `MarketDataMatrix.fx_spots_effective`;
-no inversion math survives into this kernel.
-"""
-
-from __future__ import annotations
-
-import numba as nb  # type: ignore[import-untyped]
-
-from riskquant.numba import parallel_njit
-
-_F64_2D = nb.float64[:, ::1]
-_F64_3D = nb.float64[:, :, ::1]
-_F64_1D = nb.float64[::1]
-_I32_1D = nb.int32[::1]
-
-
-@parallel_njit(
-    nb.void(
-        _F64_2D,  # out
-        _F64_3D,  # price_curve_grid
-        _F64_2D,  # fx_spots_effective
-        _F64_3D,  # df_grid
-        _F64_1D,  # qty
-        _F64_1D,  # strike
-        _I32_1D,  # price_curve_uix
-        _I32_1D,  # delivery_date_uix
-        _I32_1D,  # fx_u_eff_uix
-        _I32_1D,  # df_u_uix
-        _I32_1D,  # fx_k_eff_uix
-        _I32_1D,  # df_k_uix
-        _I32_1D,  # settle_date_uix
-    ),
-)
-def _kernel_price_vanilla_forward_curve(
-    out,
-    price_curve_grid,
-    fx_spots_effective,
-    df_grid,
-    qty,
-    strike,
-    price_curve_uix,
-    delivery_date_uix,
-    fx_u_eff_uix,
-    df_u_uix,
-    fx_k_eff_uix,
-    df_k_uix,
-    settle_date_uix,
-) -> None:
-    m_trades, s_scenarios = out.shape
-
-    for i in nb.prange(m_trades):
-        q = qty[i]
-        k = strike[i]
-        p_curve_id = price_curve_uix[i]
-        deliv_id = delivery_date_uix[i]
-        fx_u_id = fx_u_eff_uix[i]
-        df_u_id = df_u_uix[i]
-        fx_k_id = fx_k_eff_uix[i]
-        df_k_id = df_k_uix[i]
-        stl_id = settle_date_uix[i]
-
-        # Slice the (date, scenario) plane for this trade's underlying curve.
-        p_row = price_curve_grid[p_curve_id, deliv_id]
-        out_row = out[i]
-
-        for s in range(s_scenarios):
-            # UNDERLYING LEG
-            leg_u = p_row[s]
-            if fx_u_id >= 0:
-                leg_u *= fx_spots_effective[fx_u_id, s]
-            if df_u_id >= 0:
-                leg_u *= df_grid[df_u_id, stl_id, s]
-
-            # STRIKE LEG
-            leg_k = k
-            if fx_k_id >= 0:
-                leg_k *= fx_spots_effective[fx_k_id, s]
-            if df_k_id >= 0:
-                leg_k *= df_grid[df_k_id, stl_id, s]
-
-            out_row[s] = q * (leg_u - leg_k)
-```
-</file>
-
-<file_summary>
-path: riskquant\src\riskquant\valuation\pricer_kernels\_deprecated\vanilla_forward_node_v1.py
-module_docstring: Vanilla forward pricing kernel, node variant.
-
-    leg_u = forward_node * fx_u_effective * df_u(stl)
-    leg_k = strike ...
-functions: _kernel_price_vanilla_forward_node
-imports:
-- riskquant.numba
-</file_summary>
-
-<file path="riskquant\src\riskquant\valuation\pricer_kernels\_deprecated\vanilla_forward_node_v1.py">
-```python
-# src/riskquant/valuation/kernels/vanilla_forward_node.py
-"""
-Vanilla forward pricing kernel, node variant.
-
-    leg_u = forward_node * fx_u_effective * df_u(stl)
-    leg_k = strike       * fx_k_effective * df_k(stl)
-    PV    = qty * (leg_u - leg_k)
-
-FX rows are already EFFECTIVE (direct or pre-inverted) inside
-`MarketDataMatrix.fx_spots_effective` — pricer kernels do NO inversion math.
-Each FX gather is one indexed read + one multiply per scenario.
-
-Optional legs (FX / DF) are signalled by `INVALID_UIX (< 0)` in the
-corresponding `_uix` field. These predicates are trade-level invariants;
-Numba's LICM hoists them outside the inner scenario loop, so the inner loop
-streams straight-line arithmetic over C-contiguous memory.
-"""
-
-from __future__ import annotations
-
-import numba as nb  # type: ignore[import-untyped]
-
-from riskquant.numba import parallel_njit
-
-_F64_2D = nb.float64[:, ::1]
-_F64_3D = nb.float64[:, :, ::1]
-_F64_1D = nb.float64[::1]
-_I32_1D = nb.int32[::1]
-
-
-@parallel_njit(
-    nb.void(
-        _F64_2D,  # out
-        _F64_2D,  # forward_nodes
-        _F64_2D,  # fx_spots_effective
-        _F64_3D,  # df_grid
-        _F64_1D,  # qty
-        _F64_1D,  # strike
-        _I32_1D,  # price_uix
-        _I32_1D,  # fx_u_eff_uix
-        _I32_1D,  # df_u_uix
-        _I32_1D,  # fx_k_eff_uix
-        _I32_1D,  # df_k_uix
-        _I32_1D,  # settle_date_uix
-    ),
-)
-def _kernel_price_vanilla_forward_node(
-    out,
-    forward_nodes,
-    fx_spots_effective,
-    df_grid,
-    qty,
-    strike,
-    price_uix,
-    fx_u_eff_uix,
-    df_u_uix,
-    fx_k_eff_uix,
-    df_k_uix,
-    settle_date_uix,
-) -> None:
-    m_trades, s_scenarios = out.shape
-
-    for i in nb.prange(m_trades):
-        # Trade-level scalars (loop-invariant; Numba hoists the branches below)
-        q = qty[i]
-        k = strike[i]
-        p_id = price_uix[i]
-        fx_u_id = fx_u_eff_uix[i]
-        df_u_id = df_u_uix[i]
-        fx_k_id = fx_k_eff_uix[i]
-        df_k_id = df_k_uix[i]
-        stl_id = settle_date_uix[i]
-
-        p_row = forward_nodes[p_id]
-        out_row = out[i]
-
-        for s in range(s_scenarios):
-            # UNDERLYING LEG
-            leg_u = p_row[s]
-            if fx_u_id >= 0:
-                leg_u *= fx_spots_effective[fx_u_id, s]
-            if df_u_id >= 0:
-                leg_u *= df_grid[df_u_id, stl_id, s]
-
-            # STRIKE LEG
-            leg_k = k
-            if fx_k_id >= 0:
-                leg_k *= fx_spots_effective[fx_k_id, s]
-            if df_k_id >= 0:
-                leg_k *= df_grid[df_k_id, stl_id, s]
-
-            out_row[s] = q * (leg_u - leg_k)
-```
-</file>
-
-<file_summary>
 path: riskquant\src\riskquant\valuation\pricer_kernels\fixed_cashflow.py
 module_docstring: Fixed cashflow pricing kernel....
 functions: _kernel_price_fixed_cashflow
@@ -3409,30 +2629,26 @@ from riskquant.numba import (
         # OUTPUT
         _F64_2D,  # out
         # MARKET DATA
-        _F64_2D,  # discount_factors
-        _F64_2D,  # fx_spots_effective
+        _F64_2D,  # effective_discount_factors
         # BLOCK FIELDS
         _F64_1D,  # notional
         _F64_1D,  # accrual_factor
         _F64_1D,  # fixed_rate
         _I8_1D,  # pay_receive_mult
-        _I32_1D,  # discount_factor_uix
-        _I32_1D,  # fx_spot_effective_uix
+        _I32_1D,  # effective_discount_factor_uix
     ),
 )
 def _kernel_price_fixed_cashflow(
     # OUTPUT
     out,  # (N, S)
     # MARKET DATA
-    discount_factors,  # (D, S)
-    fx_spots_effective,  # (F, S)
+    effective_discount_factors,  # (D, S)
     # BLOCK FIELDS
     notional,  # (N,)
     accrual_factor,  # (N,)
     fixed_rate,  # (N,)
     pay_receive_mult,  # (N,)
-    discount_factor_uix,  # (N,)
-    fx_spot_effective_uix,  # (N,)
+    effective_discount_factor_uix,  # (N,)
 ) -> None:
     """
     Pricing kernel for fixed cashflows.
@@ -3443,16 +2659,13 @@ def _kernel_price_fixed_cashflow(
     for i in nb.prange(m_cashflows):
         cf_i = notional[i] * accrual_factor[i] * fixed_rate[i] * pay_receive_mult[i]
 
-        df_id = discount_factor_uix[i]
-        fx_id = fx_spot_effective_uix[i]
-
-        df_row = discount_factors[df_id]
-        fx_row = fx_spots_effective[fx_id]
+        eff_df_id = effective_discount_factor_uix[i]
+        eff_dfs_row = effective_discount_factors[eff_df_id]
 
         out_row = out[i]
 
         for s in range(s_scenarios):
-            out_row[s] = cf_i * df_row[s] * fx_row[s]
+            out_row[s] = cf_i * eff_dfs_row[s]
 ```
 </file>
 
@@ -3490,16 +2703,14 @@ from riskquant.numba import (
         _F64_2D,  # out
         # MARKET DATA
         _F64_2D,  # forward_rates
-        _F64_2D,  # discount_factors
-        _F64_2D,  # fx_spots_effective
+        _F64_2D,  # effective_discount_factors
         # BLOCK FIELDS
         _F64_1D,  # notional
         _F64_1D,  # accrual_factor
         _F64_1D,  # spread
         _I8_1D,  # pay_receive_mult
         _I32_1D,  # forward_rate_uix
-        _I32_1D,  # discount_factor_uix
-        _I32_1D,  # fx_spot_effective_uix
+        _I32_1D,  # effective_discount_factor_uix
     ),
 )
 def _kernel_price_floating_cashflow(
@@ -3507,16 +2718,14 @@ def _kernel_price_floating_cashflow(
     out,  # (N, S)
     # MARKET DATA
     forward_rates,  # (P, S)
-    discount_factors,  # (D, S)
-    fx_spots_effective,  # (F, S)
+    effective_discount_factors,  # (D, S)
     # BLOCK FIELDS
     notional,  # (N,)
     accrual_factor,  # (N,)
     spread,  # (N,)
     pay_receive_mult,  # (N,)
     forward_rate_uix,  # (N,)
-    discount_factor_uix,  # (N,)
-    fx_spot_effective_uix,  # (N,)
+    effective_discount_factor_uix,  # (N,)
 ) -> None:
     m_cashflows, s_scenarios = out.shape
 
@@ -3530,22 +2739,19 @@ def _kernel_price_floating_cashflow(
         accrued_notional_i = notional_i * accrual_factor_i * pay_receive_mult_i
 
         # --- LINKAGES TO MARKET DATA ---
-        fwd_rate_id = forward_rate_uix[i]
-        df_id = discount_factor_uix[i]
-        fx_id = fx_spot_effective_uix[i]
 
+        fwd_rate_id = forward_rate_uix[i]
         fwd_rates_row = forward_rates[fwd_rate_id]
-        df_row = discount_factors[df_id]
-        fx_row = fx_spots_effective[fx_id]
+
+        eff_df_id = effective_discount_factor_uix[i]
+        eff_dfs_row = effective_discount_factors[eff_df_id]
 
         out_row = out[i]
 
         for s in range(s_scenarios):
-            fwd_rate_s = fwd_rates_row[s]
+            floating_rate_s = fwd_rates_row[s] + spread_i
 
-            floating_rate_s = fwd_rate_s + spread_i
-
-            out_row[s] = accrued_notional_i * floating_rate_s * df_row[s] * fx_row[s]
+            out_row[s] = accrued_notional_i * floating_rate_s * eff_dfs_row[s]
 ```
 </file>
 
@@ -3581,24 +2787,20 @@ from riskquant.numba import (
         # OUTPUT
         _F64_2D,  # out
         # MARKET DATA
-        _F64_2D,  # discount_factors
-        _F64_2D,  # fx_spots_effective
+        _F64_2D,  # effective_discount_factors
         # BLOCK FIELDS
         _F64_1D,  # amount
-        _I32_1D,  # discount_factor_uix
-        _I32_1D,  # fx_spot_effective_uix
+        _I32_1D,  # effective_discount_factor_uix
     ),
 )
 def _kernel_price_principal_cashflow(
     # OUTPUT
     out,  # (N, S)
     # MARKET DATA
-    discount_factors,  # (D, S)
-    fx_spots_effective,  # (F, S)
+    effective_discount_factors,  # (D, S)
     # BLOCK FIELDS
     amount,  # (N,)
-    discount_factor_uix,  # (N,)
-    fx_spot_effective_uix,  # (N,)
+    effective_discount_factor_uix,  # (N,)
 ) -> None:
     """
     Pricing kernel for principal cashflows.
@@ -3608,16 +2810,13 @@ def _kernel_price_principal_cashflow(
     for i in nb.prange(m_cashflows):
         cf_i = amount[i]
 
-        df_id = discount_factor_uix[i]
-        fx_id = fx_spot_effective_uix[i]
-
-        df_row = discount_factors[df_id]
-        fx_row = fx_spots_effective[fx_id]
+        eff_df_id = effective_discount_factor_uix[i]
+        eff_dfs_row = effective_discount_factors[eff_df_id]
 
         out_row = out[i]
 
         for s in range(s_scenarios):
-            out_row[s] = cf_i * df_row[s] * fx_row[s]
+            out_row[s] = cf_i * eff_dfs_row[s]
 ```
 </file>
 
@@ -3666,26 +2865,22 @@ _I32_1D = nb.int32[::1]
 @parallel_njit(
     nb.void(
         _F64_2D,  # out
-        _F64_2D,  # spot_prices
-        _F64_2D,  # fx_spots_effective
+        _F64_2D,  # effective_spot_prices
         _F64_1D,  # qty
-        _I32_1D,  # spot_prices_uix
-        _I32_1D,  # fx_spots_effective_uix
+        _I32_1D,  # effective_spot_price_uix
     ),
 )
 def _kernel_price_spot(
     # OUTPUT
     out,  # (N, S)
     # MARKET DATA
-    spot_prices,  # (P, S)
-    fx_spots_effective,  # (F, S)
+    effective_spot_prices,  # (P, S)
     # BLOCK FIELDS
     qty,  # (N,)
-    spot_price_uix,  # (N,)
-    fx_spot_effective_uix,  # (N,)
+    effective_spot_price_uix,  # (N,)
 ) -> None:
     """
-    Fused spot pricing kernel: out[i, s] = spot_prices[p, s] * qty[i] * fx[f, s].
+    Fused spot pricing kernel: out[i, s] = effective_spot_prices[p, s] * qty[i].
 
     Zero allocations. Each row is a contiguous gather + scale + (gated)
     multiply streaming through C-contiguous memory.
@@ -3695,16 +2890,14 @@ def _kernel_price_spot(
     for i in nb.prange(m_trades):
         qty_i = qty[i]
 
-        spot_price_id = spot_price_uix[i]
-        fx_id = fx_spot_effective_uix[i]
+        eff_spot_price_id = effective_spot_price_uix[i]
 
-        spot_prices_row = spot_prices[spot_price_id]
-        fx_row = fx_spots_effective[fx_id]
+        eff_spot_prices_row = effective_spot_prices[eff_spot_price_id]
 
         out_row = out[i]
 
         for s in range(s_scenarios):
-            out_row[s] = qty_i * spot_prices_row[s] * fx_row[s]
+            out_row[s] = qty_i * eff_spot_prices_row[s]
 ```
 </file>
 
@@ -3724,9 +2917,7 @@ imports:
 
 from __future__ import annotations
 
-import math
-
-import numba as nb  # type: ignore[import-untyped]
+import numba as nb
 
 from riskquant.numba import (
     _F64_1D,
@@ -3736,7 +2927,7 @@ from riskquant.numba import (
     parallel_njit,
 )
 from riskquant.valuation.pricing_models.black76.model import (
-    _black76_fv_with_kernel_hoists,
+    _black76_fv_kernel_primitive,
 )
 
 
@@ -3745,45 +2936,44 @@ from riskquant.valuation.pricing_models.black76.model import (
         # OUTPUT
         _F64_2D,  # out
         # MARKET DATA
-        _F64_2D,  # forward_prices
+        _F64_2D,  # forward_prices_strike_ccy
+        _F64_2D,  # option_log_forward_prices_strike_ccy
         _F64_2D,  # vols
-        _F64_2D,  # discount_factors
-        _F64_2D,  # fx_spots_effective
+        _F64_2D,  # effective_discount_factors
         # BLOCK FIELDS (TRADE SPECIFICS)
         _F64_1D,  # qty
         _F64_1D,  # strike
+        _F64_1D,  # log_strike
         _I8_1D,  # cp_mult
         _F64_1D,  # sqrt_tte
         _F64_1D,  # half_tte
         # BLOCK FIELDS (LINKAGES / UIX)
-        _I32_1D,  # forward_price_uix
+        _I32_1D,  # forward_price_strike_ccy_uix
+        _I32_1D,  # option_log_forward_price_strike_ccy_uix
         _I32_1D,  # vol_uix
-        _I32_1D,  # fx_spot_effective_u2s_uix
-        _I32_1D,  # fx_spot_effective_k2s_uix
-        _I32_1D,  # df_u_exp_uix
-        _I32_1D,  # df_k_exp_uix
-        _I32_1D,  # df_k_settle_uix
+        _I32_1D,  # effective_discount_factor_uix
     ),
 )
 def _kernel_price_vanilla_european_option(
     # OUTPUT
     out,  # (N, S)
     # MARKET DATA
-    forward_prices,  # (P, S)
+    forward_prices_strike_ccy,  # (P, S)
+    option_log_forward_prices_strike_ccy,  # (P, S)
     vols,  # (V, S)
-    discount_factors,  # (D, S)
-    fx_spots_effective,  # (F, S)
+    effective_discount_factors,  # (D, S)
     # BLOCK FIELDS (TRADE SPECIFICS)
     qty,  # (N,)
     strike,  # (N,)
+    log_strike,  # (N,)
     cp_mult,  # (N,)
     sqrt_tte,  # (N,)
     half_tte,  # (N,)
     # BLOCK FIELDS (LINKAGES / UIX)
-    forward_price_uix,  # (N,)
+    forward_price_strike_ccy_uix,  # (N,)
+    option_log_forward_price_strike_ccy_uix,  # (N,)
     vol_uix,  # (N,)
-    discount_factor_k_uix,  # (N,)
-    fx_spot_effective_k2s_uix,  # (N,)
+    effective_discount_factor_uix,  # (N,)
 ) -> None:
     m_trades, s_scenarios = out.shape
 
@@ -3791,42 +2981,55 @@ def _kernel_price_vanilla_european_option(
         # --- TRADE SPECIFICS (FOR ROW) ---
         qty_i = qty[i]
         strike_i = strike[i]
+        log_strike_i = log_strike[i]
         sqrt_tte_i = sqrt_tte[i]
         half_tte_i = half_tte[i]
         cp_mult_i = cp_mult[i]
 
-        # --- UIX (FOR ROW) ---
-        forward_price_id = forward_price_uix[i]
+        # --- UIX (FOR ROW) AND MARKET DATA ---
+
+        # FORWARD PRICE (STRIKE CCY)
+        fwd_price_strike_ccy_id = forward_price_strike_ccy_uix[i]
+        fwd_price_strike_ccy_row = forward_prices_strike_ccy[fwd_price_strike_ccy_id]
+
+        # LOG FORWARD PRICE (STRIKE CCY)
+        option_log_fwd_price_strike_ccy_id = option_log_forward_price_strike_ccy_uix[i]
+        option_log_fwd_price_strike_ccy_row = option_log_forward_prices_strike_ccy[
+            option_log_fwd_price_strike_ccy_id
+        ]
+
+        # VOL
         vol_id = vol_uix[i]
-        df_k_id = discount_factor_k_uix[i]
-        fx_k2s_id = fx_spot_effective_k2s_uix[i]
-
-        # --- MARKET DATA (FOR ROW) ---
-        forwards_row = forward_prices[forward_price_id]
         vols_row = vols[vol_id]
-        df_k_row = discount_factors[df_k_id]
-        fx_k2s_row = fx_spots_effective[fx_k2s_id]
 
-        # --- HOISTED TRADE-SPECIFIC SCALARS (OUTSIDE SCENARIO LOOP) ---
-        log_strike_i = math.log(strike_i)
+        # EFFECTIVE DISCOUNT FACTOR (SETTLE CCY)
+        # This is the discount factor that converts from the option payoff currency
+        # (strike ccy) to the settlement currency.
+        eff_df_id = effective_discount_factor_uix[i]
+        eff_dfs_row = effective_discount_factors[eff_df_id]
 
         # --- PRICING ACROSS SCENARIOS (ACROSS ROW) ---
         for s in range(s_scenarios):
-            fwd_s = forwards_row[s]
-            vol_s = vols_row[s]
+            log_fk = option_log_fwd_price_strike_ccy_row[s] - log_strike_i
 
-            fv_s = _black76_fv_with_kernel_hoists(
-                fwd_s,
+            vol_s = vols_row[s]
+            vol_sqrt_tte_s = vol_s * sqrt_tte_i
+            vol2_half_tte_s = vol_s * vol_s * half_tte_i
+
+            fv_s = _black76_fv_kernel_primitive(
+                fwd_price_strike_ccy_row[s],
+                log_fk,
                 strike_i,
-                log_strike_i,
-                sqrt_tte_i,
-                half_tte_i,
-                vol_s,
+                vol_sqrt_tte_s,
+                vol2_half_tte_s,
                 cp_mult_i,
             )
 
-            # PV = FX RATE * DISCOUNT FACTOR * QTY * FV
-            pv_s = fx_k2s_row[s] * df_k_row[s] * qty_i * fv_s
+            # PRESENT VALUE
+            #
+            # PV = FX(StrikeCcy->SettleCcy) * DF(StrikeCcy) * QTY * FV(StrikeCcy)
+            #
+            pv_s = eff_dfs_row[s] * qty_i * fv_s
 
             out[i, s] = pv_s
 ```
@@ -3864,35 +3067,27 @@ from riskquant.numba import (
         # OUTPUT
         _F64_2D,  # out
         # MARKET DATA
-        _F64_2D,  # forward_prices
-        _F64_2D,  # discount_factors
-        _F64_2D,  # fx_spots_effective
+        _F64_2D,  # effective_forward_prices
+        _F64_2D,  # effective_discount_factors
         # BLOCK FIELDS
         _F64_1D,  # qty
         _F64_1D,  # strike
-        _I32_1D,  # forward_price_uix
-        _I32_1D,  # discount_factor_u_uix
-        _I32_1D,  # discount_factor_k_uix
-        _I32_1D,  # fx_spot_effective_u2s_uix
-        _I32_1D,  # fx_spot_effective_k2s_uix
+        _I32_1D,  # effective_forward_price_uix
+        _I32_1D,  # effective_discount_factor_uix
     ),
 )
 def _kernel_price_vanilla_forward(
     # OUTPUT
     out,  # (N, S)
     # MARKET DATA
-    forward_prices,  # (P, S)
-    discount_factors,  # (D, S)
-    fx_spots_effective,  # (F, S)
+    effective_forward_prices,  # (P, S)
+    effective_discount_factors,  # (D, S)
     # BLOCK FIELDS
     qty,  # (N,)
     strike,  # (N,)
-    forward_price_uix,  # (N,)
-    discount_factor_u_uix,  # (N,)
-    discount_factor_k_uix,  # (N,)
-    fx_spot_effective_u2s_uix,  # (N,)
-    fx_spot_effective_k2s_uix,  # (N,)
-):
+    effective_forward_price_uix,  # (N,)
+    effective_discount_factor_uix,  # (N,)
+) -> None:
 
     m_trades, s_scenarios = out.shape
 
@@ -3900,27 +3095,19 @@ def _kernel_price_vanilla_forward(
         qty_i = qty[i]
         strike_i = strike[i]
 
-        fwd_price_id = forward_price_uix[i]
-        df_u_id = discount_factor_u_uix[i]
-        df_k_id = discount_factor_k_uix[i]
-        fx_u_id = fx_spot_effective_u2s_uix[i]
-        fx_k_id = fx_spot_effective_k2s_uix[i]
+        eff_fwd_price_id = effective_forward_price_uix[i]
+        eff_fwd_prices_row = effective_forward_prices[eff_fwd_price_id]
 
-        fwd_price_row = forward_prices[fwd_price_id]
-
-        df_u_row = discount_factors[df_u_id]
-        df_k_row = discount_factors[df_k_id]
-
-        fx_u_row = fx_spots_effective[fx_u_id]
-        fx_k_row = fx_spots_effective[fx_k_id]
+        eff_df_id = effective_discount_factor_uix[i]
+        eff_dfs_row = effective_discount_factors[eff_df_id]
 
         out_row = out[i]
 
         for s in range(s_scenarios):
-            leg_u = fwd_price_row[s] * df_u_row[s] * fx_u_row[s]
-            leg_k = strike_i * df_k_row[s] * fx_k_row[s]
+            pv_leg_u = eff_fwd_prices_row[s]
+            pv_leg_k = strike_i * eff_dfs_row[s]
 
-            out_row[s] = qty_i * (leg_u - leg_k)
+            out_row[s] = qty_i * (pv_leg_u - pv_leg_k)
 ```
 </file>
 
@@ -4099,346 +3286,6 @@ path: riskquant\src\riskquant\valuation\pricers\__init__.py
 </file_summary>
 
 <file_summary>
-path: riskquant\src\riskquant\valuation\pricers\_deprecated\vanilla_european_option_curve_v1.py
-module_docstring: Vanilla European option pricer, curve variant.
-
-Identical CIP-forward + Black-76 math to the node variant, with two
-stru...
-functions: price_vanilla_european_option_curve_block
-imports:
-- riskquant.constants
-- riskquant.valuation.pricer_kernels._deprecated.vanilla_european_option_curve_v1
-</file_summary>
-
-<file path="riskquant\src\riskquant\valuation\pricers\_deprecated\vanilla_european_option_curve_v1.py">
-```python
-# src/riskquant/valuation/pricers/vanilla_european_option_curve.py
-"""
-Vanilla European option pricer, curve variant.
-
-Identical CIP-forward + Black-76 math to the node variant, with two
-structural differences:
-
-  - The underlying scalar comes from `price_curve_grid[curve_uix, delivery_uix, s]`.
-  - Volatility is sourced from a 4D vol surface and requires per-scenario
-    strike-axis interpolation: `np.interp` over the y-axis pillars.
-
-The y-axis-type id determines the strike coordinate used for the
-interpolation (strike, log-strike, moneyness vs forward, log-moneyness, ...).
-
-FX rows are already EFFECTIVE — no inversion math; the strike-FX rate is
-loaded once per scenario, used as a divisor for CIP forward synthesis and
-as a multiplier for the PV translation back to settle ccy.
-
-Mock-vol fallback
------------------
-When `MarketDataMatrix.vol_surfaces` is empty (e.g., calibration not yet
-landed), a flat `FALLBACK_MOCK_VOLATILITY_DO_NOT_SHIP` is used. This is a
-development convenience and MUST not ship in production reports.
-"""
-
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
-import numpy as np
-import numpy.typing as npt
-
-from riskquant.constants import (
-    NOT_IMPLEMENTED_SENTINEL,
-)
-from riskquant.valuation.pricer_kernels._deprecated.vanilla_european_option_curve_v1 import (
-    _kernel_price_vanilla_european_option_curve,
-)
-
-if TYPE_CHECKING:
-    from riskquant.market_data.state import MarketDataMatrix
-    from riskquant.valuation.blocks.vanilla_european_option_block import (
-        VanillaEuropeanOptionCurveBlock,
-    )
-
-
-def price_vanilla_european_option_curve_block(
-    *,
-    block: VanillaEuropeanOptionCurveBlock,
-    market_data_mtx: MarketDataMatrix,
-    out: npt.NDArray[np.float64],
-) -> None:
-    """European-option-curve pricer entrypoint."""
-    if np.any(block.vol_surface_y_axis_type_id == np.int8(NOT_IMPLEMENTED_SENTINEL)):
-        raise NotImplementedError(
-            "vol_surface_y_axis_type_id contains unresolved sentinel values. "
-            "CompiledIngestSoA must supply vol_surface_y_axis_type_ids before "
-            "vanilla European option curve trades can be priced."
-        )
-
-    _kernel_price_vanilla_european_option_curve(
-        out,
-        market_data_mtx.price_curve_grid,
-        market_data_mtx.vol_surface_strikes,
-        market_data_mtx.vol_surfaces,
-        market_data_mtx.fx_spots_effective,
-        market_data_mtx.discount_factor_grid,
-        market_data_mtx.tte_grid,
-        block.qty,
-        block.strike,
-        block.cp_mult,
-        block.underlying_price_curve_uix,
-        block.vol_surface_uix,
-        block.vol_surface_y_axis_type_id,
-        block.fx_under_to_settle_effective_uix,
-        block.under_discount_curve_uix,
-        block.fx_strike_to_settle_effective_uix,
-        block.strike_discount_curve_uix,
-        block.delivery_date_uix,
-        block.expiry_date_uix,
-        block.settlement_date_uix,
-    )
-```
-</file>
-
-<file_summary>
-path: riskquant\src\riskquant\valuation\pricers\_deprecated\vanilla_european_option_node_v1.py
-module_docstring: Vanilla European option pricer, node variant.
-
-Synthesises the forward in strike currency via Covered Interest Parity,
-p...
-functions: price_vanilla_european_option_node_block
-imports:
-- riskquant.valuation.pricer_kernels._deprecated.vanilla_european_option_node_v1
-</file_summary>
-
-<file path="riskquant\src\riskquant\valuation\pricers\_deprecated\vanilla_european_option_node_v1.py">
-```python
-# src/riskquant/valuation/pricers/vanilla_european_option_node.py
-"""
-Vanilla European option pricer, node variant.
-
-Synthesises the forward in strike currency via Covered Interest Parity,
-prices via Black-76, then discounts and FX-translates back to settle ccy.
-
-Math (per trade i, scenario s)
-------------------------------
-    rate_k = fx_spots_effective[fx_k_eff_uix(i), s]   # k_ccy -> settle_ccy
-
-    # CIP forward in strike currency
-    fwd_strike_ccy
-        = forward_node[p, s]
-          * fx_spots_effective[fx_u_eff_uix(i), s]    # u_ccy -> settle_ccy
-          * df_grid[df_u_uix(i), expiry_uix(i), s]    # under-DF at expiry
-          / rate_k                                    # settle_ccy -> k_ccy
-          / df_grid[df_k_uix(i), expiry_uix(i), s]    # strike-DF at expiry
-
-    # Black-76 future value (cp_mult = +1 call, -1 put)
-    sigma = vol_nodes[v, s]
-    std_dev = max(sigma * sqrt(tte), eps)
-    d1 = (log(fwd / k) + 0.5 * sigma**2 * tte) / std_dev
-    d2 = d1 - std_dev
-    fv = cp * (fwd * N(cp * d1) - k * N(cp * d2))
-
-    # PV discount in strike ccy, then translate back to settle ccy
-    pv_strike_ccy = fv * df_grid[df_k_uix(i), settle_uix(i), s]
-    pv_settle_ccy = pv_strike_ccy * rate_k
-
-    out[i, s] = qty[i] * pv_settle_ccy
-
-FX rows are already EFFECTIVE in `MarketDataMatrix.fx_spots_effective`; the
-kernel does NO inversion math. The strike-FX rate `rate_k` is loaded once
-per scenario and used as a divisor in the forward synthesis and as a
-multiplier in the PV translation — equivalent counts to the legacy code
-but with the `(1.0 / rate_k) if inv_k else rate_k` gymnastics gone.
-"""
-
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
-import numpy as np
-import numpy.typing as npt
-
-from riskquant.valuation.pricer_kernels._deprecated.vanilla_european_option_node_v1 import (
-    _kernel_price_vanilla_european_option_node,
-)
-
-if TYPE_CHECKING:
-    from riskquant.market_data.state import MarketDataMatrix
-    from riskquant.valuation.blocks.vanilla_european_option_block import (
-        VanillaEuropeanOptionNodeBlock,
-    )
-
-
-def price_vanilla_european_option_node_block(
-    *,
-    block: VanillaEuropeanOptionNodeBlock,
-    market_data_mtx: MarketDataMatrix,
-    out: npt.NDArray[np.float64],
-) -> None:
-    """European-option-node pricer entrypoint."""
-    _kernel_price_vanilla_european_option_node(
-        out,
-        market_data_mtx.forward_nodes,
-        market_data_mtx.vol_nodes,
-        market_data_mtx.fx_spots_effective,
-        market_data_mtx.discount_factor_grid,
-        market_data_mtx.sqrt_tte_grid,
-        market_data_mtx.half_tte_grid,
-        block.qty,
-        block.strike,
-        block.cp_mult,
-        block.underlying_price_uix,
-        block.vol_uix,
-        block.fx_under_to_settle_effective_uix,
-        block.under_discount_curve_uix,
-        block.fx_strike_to_settle_effective_uix,
-        block.strike_discount_curve_uix,
-        block.expiry_date_uix,
-        block.settlement_date_uix,
-    )
-```
-</file>
-
-<file_summary>
-path: riskquant\src\riskquant\valuation\pricers\_deprecated\vanilla_forward_curve_v1.py
-module_docstring: Vanilla forward pricer, curve variant.
-
-Identical math to the node variant; the only structural change is that the
-under...
-functions: price_vanilla_forward_curve_block
-imports:
-- riskquant.valuation.pricer_kernels._deprecated.vanilla_forward_curve_v1
-</file_summary>
-
-<file path="riskquant\src\riskquant\valuation\pricers\_deprecated\vanilla_forward_curve_v1.py">
-```python
-# src/riskquant/valuation/pricers/vanilla_forward_curve.py
-"""
-Vanilla forward pricer, curve variant.
-
-Identical math to the node variant; the only structural change is that the
-underlying scalar comes from `price_curve_grid[curve_uix, delivery_uix, s]`
-instead of `forward_nodes[uix, s]`.
-
-FX rows are already EFFECTIVE in `MarketDataMatrix.fx_spots_effective`;
-no inversion math survives into this kernel.
-"""
-
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
-import numpy as np
-import numpy.typing as npt
-
-from riskquant.valuation.pricer_kernels._deprecated.vanilla_forward_curve_v1 import (
-    _kernel_price_vanilla_forward_curve,
-)
-
-if TYPE_CHECKING:
-    from riskquant.market_data.state import MarketDataMatrix
-    from riskquant.valuation.blocks.vanilla_forward_block import (
-        VanillaForwardCurveBlock,
-    )
-
-
-def price_vanilla_forward_curve_block(
-    *,
-    block: VanillaForwardCurveBlock,
-    market_data_mtx: MarketDataMatrix,
-    out: npt.NDArray[np.float64],
-) -> None:
-    """Forward-curve pricer entrypoint."""
-    _kernel_price_vanilla_forward_curve(
-        out,
-        market_data_mtx.price_curve_grid,
-        market_data_mtx.fx_spots_effective,
-        market_data_mtx.discount_factor_grid,
-        block.qty,
-        block.strike,
-        block.price_curve_uix,
-        block.delivery_date_uix,
-        block.fx_under_to_settle_effective_uix,
-        block.under_discount_curve_uix,
-        block.fx_strike_to_settle_effective_uix,
-        block.strike_discount_curve_uix,
-        block.settlement_date_uix,
-    )
-```
-</file>
-
-<file_summary>
-path: riskquant\src\riskquant\valuation\pricers\_deprecated\vanilla_forward_node_v1.py
-module_docstring: Vanilla forward pricer, node variant.
-
-    leg_u = forward_node * fx_u_effective * df_u(stl)
-    leg_k = strike       * ...
-functions: price_vanilla_forward_node_block
-imports:
-- riskquant.valuation.pricer_kernels._deprecated.vanilla_forward_node_v1
-</file_summary>
-
-<file path="riskquant\src\riskquant\valuation\pricers\_deprecated\vanilla_forward_node_v1.py">
-```python
-# src/riskquant/valuation/pricers/vanilla_forward_node.py
-"""
-Vanilla forward pricer, node variant.
-
-    leg_u = forward_node * fx_u_effective * df_u(stl)
-    leg_k = strike       * fx_k_effective * df_k(stl)
-    PV    = qty * (leg_u - leg_k)
-
-FX rows are already EFFECTIVE (direct or pre-inverted) inside
-`MarketDataMatrix.fx_spots_effective` — pricer kernels do NO inversion math.
-Each FX gather is one indexed read + one multiply per scenario.
-
-Optional legs (FX / DF) are signalled by `INVALID_UIX (< 0)` in the
-corresponding `_uix` field. These predicates are trade-level invariants;
-Numba's LICM hoists them outside the inner scenario loop, so the inner loop
-streams straight-line arithmetic over C-contiguous memory.
-"""
-
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
-import numpy as np
-import numpy.typing as npt
-
-from riskquant.valuation.pricer_kernels._deprecated.vanilla_forward_node_v1 import (
-    _kernel_price_vanilla_forward_node,
-)
-
-if TYPE_CHECKING:
-    from riskquant.market_data.state import MarketDataMatrix
-    from riskquant.valuation.blocks.vanilla_forward_block import (
-        VanillaForwardNodeBlock,
-    )
-
-
-def price_vanilla_forward_node_block(
-    *,
-    block: VanillaForwardNodeBlock,
-    market_data_mtx: MarketDataMatrix,
-    out: npt.NDArray[np.float64],
-) -> None:
-    """Forward-node pricer entrypoint."""
-    _kernel_price_vanilla_forward_node(
-        out,
-        market_data_mtx.forward_nodes,
-        market_data_mtx.fx_spots_effective,
-        market_data_mtx.discount_factor_grid,
-        block.qty,
-        block.strike,
-        block.price_uix,
-        block.fx_under_to_settle_effective_uix,
-        block.under_discount_curve_uix,
-        block.fx_strike_to_settle_effective_uix,
-        block.strike_discount_curve_uix,
-        block.settlement_date_uix,
-    )
-```
-</file>
-
-<file_summary>
 path: riskquant\src\riskquant\valuation\pricers\fixed_cashflow.py
 module_docstring: Fixed cashflow pricer....
 functions: price_fixed_cashflow_block
@@ -4480,15 +3327,13 @@ def price_fixed_cashflow_block(
         # OUTPUT
         out,
         # MARKET DATA
-        valuation_state.discount_factors,
-        valuation_state.fx_spots_effective,
+        valuation_state.effective_discount_factors,
         # BLOCK FIELDS
         block.notional,
         block.accrual_factor,
         block.fixed_rate,
         block.pay_receive_mult,
-        block.discount_factor_uix,
-        block.fx_spot_effective_uix,
+        block.effective_discount_factor_uix,
     )
 ```
 </file>
@@ -4538,16 +3383,14 @@ def price_floating_cashflow_block(
         out,
         # MARKET DATA
         valuation_state.forward_rates,
-        valuation_state.discount_factors,
-        valuation_state.fx_spots_effective,
+        valuation_state.effective_discount_factors,
         # BLOCK FIELDS
         block.notional,
         block.accrual_factor,
         block.spread,
         block.pay_receive_mult,
         block.forward_rate_uix,
-        block.discount_factor_uix,
-        block.fx_spot_effective_uix,
+        block.effective_discount_factor_uix,
     )
 ```
 </file>
@@ -4604,11 +3447,9 @@ def price_principal_cashflow_block(
     """Principal cashflow pricer entrypoint. All arrays must be C-contiguous and dtype-stable."""
     _kernel_price_principal_cashflow(
         out,
-        valuation_state.discount_factors,
-        valuation_state.fx_spots_effective,
+        valuation_state.effective_discount_factors,
         block.amount,
-        block.discount_factor_uix,
-        block.fx_spot_effective_uix,
+        block.effective_discount_factor_uix,
     )
 ```
 </file>
@@ -4664,12 +3505,10 @@ def price_spot_block(
         # OUTPUT
         out,
         # MARKET DATA
-        valuation_state.spot_prices,
-        valuation_state.fx_spots_effective,
+        valuation_state.effective_spot_prices,
         # BLOCK FIELDS
         block.qty,
-        block.spot_price_uix,
-        block.fx_spot_effective_uix,
+        block.effective_spot_price_uix,
     )
 ```
 </file>
@@ -4723,21 +3562,22 @@ def price_vanilla_european_option_block(
         # OUTPUT
         out,
         # MARKET DATA
-        valuation_state.forward_prices,
+        valuation_state.forward_prices_strike_ccy,
+        valuation_state.option_log_forward_prices_strike_ccy,
         valuation_state.vols,
-        valuation_state.discount_factors,
-        valuation_state.fx_spots_effective,
+        valuation_state.effective_discount_factors,
         # BLOCK FIELDS (TRADE SPECIFICS)
         block.qty,
         block.strike,
+        block.log_strike,
         block.cp_mult,
         block.sqrt_tte,
         block.half_tte,
         # BLOCK FIELDS (LINKAGES / UIX)
-        block.forward_price_uix,
+        block.forward_price_strike_ccy_uix,
+        block.option_log_forward_price_strike_ccy_uix,
         block.vol_uix,
-        block.discount_factor_k_uix,
-        block.fx_spot_effective_k2s_uix,
+        block.effective_discount_factor_uix,
     )
 ```
 </file>
@@ -4791,17 +3631,13 @@ def price_vanilla_forward_block(
         # OUTPUT
         out,
         # MARKET DATA
-        valuation_state.forward_prices,
-        valuation_state.discount_factors,
-        valuation_state.fx_spots_effective,
+        valuation_state.effective_forward_prices,
+        valuation_state.effective_discount_factors,
         # BLOCK FIELDS
         block.qty,
         block.strike,
-        block.forward_price_uix,
-        block.discount_factor_u_uix,
-        block.discount_factor_k_uix,
-        block.fx_spot_effective_u2s_uix,
-        block.fx_spot_effective_k2s_uix,
+        block.effective_forward_price_uix,
+        block.effective_discount_factor_uix,
     )
 ```
 </file>
@@ -5081,7 +3917,7 @@ from riskquant.numba import (
     parallel_njit,
 )
 from riskquant.valuation.pricing_models.black76.model import (
-    _black76_fv_with_kernel_hoists,
+    _black76_fv_kernel_primitive,
 )
 
 
@@ -5168,8 +4004,9 @@ def _kernel_black76_fv_batch(
             fwd_s = forwards_row[s]
             vol_s = vols_row[s]
 
-            fv_s = _black76_fv_with_kernel_hoists(
+            fv_s = _black76_fv_kernel_primitive(
                 fwd_s,
+                log_fwd_s,
                 strike_i,
                 log_strike_i,
                 sqrt_tte_i,
@@ -5189,7 +4026,7 @@ module_docstring: Black 76 pricing model primitives.
 Scalar Black-76 mathematical primitives.
 
 This module contains the core Black-76 pri...
-functions: _black76_fv, _black76_fv_call, _black76_fv_put, _black76_fv_vega, _black76_fv_with_kernel_hoists
+functions: _black76_fv, _black76_fv_call, _black76_fv_kernel_primitive, _black76_fv_put, _black76_fv_vega
 imports:
 - riskquant.numba
 - riskquant.valuation.pricing_models.math
@@ -5255,25 +4092,46 @@ from riskquant.valuation.pricing_models.math import (
 # =======================
 
 
+# @inline_njit
+# def _black76_fv_with_kernel_hoists(
+#     fwd: float,
+#     log_fk: float,
+#     strike: float,
+#     sqrt_tte: float,
+#     half_tte: float,
+#     vol: float,
+#     cp_mult: int,
+# ) -> float:
+#     """Undiscounted Black 76 option price. Returns FV, not PV. Caller is responsible
+#     for multiplying by the discount factor to get PV."""
+
+#     std_dev = vol * sqrt_tte
+
+#     d1 = (log_fk + vol * vol * half_tte) / std_dev
+#     d2 = d1 - std_dev
+
+#     cdf_d1 = numba_norm_cdf_abrom_steg(cp_mult * d1)
+#     cdf_d2 = numba_norm_cdf_abrom_steg(cp_mult * d2)
+
+#     fv = cp_mult * (fwd * cdf_d1 - strike * cdf_d2)
+
+#     return fv
+
+
 @inline_njit
-def _black76_fv_with_kernel_hoists(
+def _black76_fv_kernel_primitive(
     fwd: float,
+    log_fk: float,
     strike: float,
-    log_strike: float,
-    sqrt_tte: float,
-    half_tte: float,
-    vol: float,
+    vol_sqrt_tte: float,
+    vol2_half_tte: float,
     cp_mult: int,
 ) -> float:
     """Undiscounted Black 76 option price. Returns FV, not PV. Caller is responsible
     for multiplying by the discount factor to get PV."""
 
-    log_fk = math.log(fwd) - log_strike
-
-    std_dev = vol * sqrt_tte
-
-    d1 = (log_fk + vol * vol * half_tte) / std_dev
-    d2 = d1 - std_dev
+    d1 = (log_fk + vol2_half_tte) / vol_sqrt_tte
+    d2 = d1 - vol_sqrt_tte
 
     cdf_d1 = numba_norm_cdf_abrom_steg(cp_mult * d1)
     cdf_d2 = numba_norm_cdf_abrom_steg(cp_mult * d2)
@@ -5294,13 +4152,20 @@ def _black76_fv(
 ) -> float:
     """Undiscounted Black 76 option price. Returns FV, not PV. Caller is responsible
     for multiplying by the discount factor to get PV."""
-    return _black76_fv_with_kernel_hoists(
+
+    log_fwd = math.log(fwd)
+    log_strike = math.log(strike)
+    log_fk = log_fwd - log_strike
+
+    vol_sqrt_tte = vol * sqrt_tte
+    vol2_half_tte = vol * vol * half_tte
+
+    return _black76_fv_kernel_primitive(
         fwd,
+        log_fk,
         strike,
-        math.log(strike),
-        sqrt_tte,
-        half_tte,
-        vol,
+        vol_sqrt_tte,
+        vol2_half_tte,
         cp_mult,
     )
 

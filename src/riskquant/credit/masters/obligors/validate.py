@@ -81,7 +81,7 @@ def validate_rating_id(
     is promoted to an IntEnum and a canonical {AAA..D} -> int8 mapping
     lands.
     """
-    bad = rating_id < np.int8(0)
+    bad = (rating_id < np.int8(0)) & (rating_id != NO_RATING_ID)
     if bad.any():
         raise ValueError(
             f"obligor master: rating_id < 0 (must be NO_RATING_ID={NO_RATING_ID} "

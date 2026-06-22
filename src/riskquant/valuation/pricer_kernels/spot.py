@@ -29,26 +29,22 @@ _I32_1D = nb.int32[::1]
 @parallel_njit(
     nb.void(
         _F64_2D,  # out
-        _F64_2D,  # spot_prices
-        _F64_2D,  # fx_spots_effective
+        _F64_2D,  # effective_spot_prices
         _F64_1D,  # qty
-        _I32_1D,  # spot_prices_uix
-        _I32_1D,  # fx_spots_effective_uix
+        _I32_1D,  # effective_spot_price_uix
     ),
 )
 def _kernel_price_spot(
     # OUTPUT
     out,  # (N, S)
     # MARKET DATA
-    spot_prices,  # (P, S)
-    fx_spots_effective,  # (F, S)
+    effective_spot_prices,  # (P, S)
     # BLOCK FIELDS
     qty,  # (N,)
-    spot_price_uix,  # (N,)
-    fx_spot_effective_uix,  # (N,)
+    effective_spot_price_uix,  # (N,)
 ) -> None:
     """
-    Fused spot pricing kernel: out[i, s] = spot_prices[p, s] * qty[i] * fx[f, s].
+    Fused spot pricing kernel: out[i, s] = effective_spot_prices[p, s] * qty[i].
 
     Zero allocations. Each row is a contiguous gather + scale + (gated)
     multiply streaming through C-contiguous memory.
@@ -58,13 +54,11 @@ def _kernel_price_spot(
     for i in nb.prange(m_trades):
         qty_i = qty[i]
 
-        spot_price_id = spot_price_uix[i]
-        fx_id = fx_spot_effective_uix[i]
+        eff_spot_price_id = effective_spot_price_uix[i]
 
-        spot_prices_row = spot_prices[spot_price_id]
-        fx_row = fx_spots_effective[fx_id]
+        eff_spot_prices_row = effective_spot_prices[eff_spot_price_id]
 
         out_row = out[i]
 
         for s in range(s_scenarios):
-            out_row[s] = qty_i * spot_prices_row[s] * fx_row[s]
+            out_row[s] = qty_i * eff_spot_prices_row[s]

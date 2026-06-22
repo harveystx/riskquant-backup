@@ -35,10 +35,8 @@ def price_spot_block(
         # OUTPUT
         out,
         # MARKET DATA
-        valuation_state.spot_prices,
-        valuation_state.fx_spots_effective,
+        valuation_state.effective_spot_prices,
         # BLOCK FIELDS
         block.qty,
-        block.spot_price_uix,
-        block.fx_spot_effective_uix,
+        block.effective_spot_price_uix,
     )

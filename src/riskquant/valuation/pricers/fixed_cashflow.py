@@ -30,13 +30,11 @@ def price_fixed_cashflow_block(
         # OUTPUT
         out,
         # MARKET DATA
-        valuation_state.discount_factors,
-        valuation_state.fx_spots_effective,
+        valuation_state.effective_discount_factors,
         # BLOCK FIELDS
         block.notional,
         block.accrual_factor,
         block.fixed_rate,
         block.pay_receive_mult,
-        block.discount_factor_uix,
-        block.fx_spot_effective_uix,
+        block.effective_discount_factor_uix,
     )

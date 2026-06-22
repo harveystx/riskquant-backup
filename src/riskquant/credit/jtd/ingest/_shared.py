@@ -52,7 +52,14 @@ def _i64(df: pd.DataFrame, col: str) -> npt.NDArray[np.int64]:
 
 
 def _f64(df: pd.DataFrame, col: str) -> npt.NDArray[np.float64]:
-    return np.ascontiguousarray(df[col].to_numpy(dtype=np.float64))
+    arr = np.ascontiguousarray(df[col].to_numpy(dtype=np.float64))
+    # `to_numpy` can hand back a read-only view of the column block, which
+    # `ascontiguousarray` passes through unchanged. Numba kernels are typed
+    # `float64[::1]` (writable) and reject `readonly` arrays, so guarantee a
+    # writable buffer; copy only when the view is actually read-only.
+    if not arr.flags.writeable:
+        arr = arr.copy()
+    return arr
 
 
 def _gaussian_thresholds(pd_arr: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:

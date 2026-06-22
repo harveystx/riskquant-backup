@@ -37,19 +37,20 @@ def price_vanilla_european_option_block(
         # OUTPUT
         out,
         # MARKET DATA
-        valuation_state.forward_prices,
+        valuation_state.forward_prices_strike_ccy,
+        valuation_state.option_log_forward_prices_strike_ccy,
         valuation_state.vols,
-        valuation_state.discount_factors,
-        valuation_state.fx_spots_effective,
+        valuation_state.effective_discount_factors,
         # BLOCK FIELDS (TRADE SPECIFICS)
         block.qty,
         block.strike,
+        block.log_strike,
         block.cp_mult,
         block.sqrt_tte,
         block.half_tte,
         # BLOCK FIELDS (LINKAGES / UIX)
-        block.forward_price_uix,
+        block.forward_price_strike_ccy_uix,
+        block.option_log_forward_price_strike_ccy_uix,
         block.vol_uix,
-        block.discount_factor_k_uix,
-        block.fx_spot_effective_k2s_uix,
+        block.effective_discount_factor_uix,
     )

@@ -82,7 +82,7 @@ MIN_EWMA_VARIANCE: float = 1e-12
 # ==============================================================================
 
 NO_PARENT_OBLIGOR: np.int64 = np.int64(-1)
-NO_RATING_ID: np.int8 = np.int8(0)
+NO_RATING_ID: np.int8 = np.int8(-1)
 NO_SECTOR_ID: np.int32 = np.int32(-1)
 NO_COUNTRY_ID: np.int32 = np.int32(-1)
 

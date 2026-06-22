@@ -56,7 +56,11 @@ def _kernel_lower_tail_var_es(
         for s in range(n_scenarios):
             row[s] = group_value_matrix[g, s]
 
-        row.partition(kth_index)
+        # In-place sort of the scratchpad row. Numba's nopython mode does not
+        # support the in-place ndarray.partition() method; a full sort gives the
+        # same kth order statistic (row[kth_index]) and the same worst-`tail_count`
+        # slice (row[:tail_count]) for the ES sum, since tail_count == kth_index+1.
+        row.sort()
 
         var_out[g] = row[kth_index]
 

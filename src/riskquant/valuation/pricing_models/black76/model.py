@@ -56,25 +56,46 @@ from riskquant.valuation.pricing_models.math import (
 # =======================
 
 
+# @inline_njit
+# def _black76_fv_with_kernel_hoists(
+#     fwd: float,
+#     log_fk: float,
+#     strike: float,
+#     sqrt_tte: float,
+#     half_tte: float,
+#     vol: float,
+#     cp_mult: int,
+# ) -> float:
+#     """Undiscounted Black 76 option price. Returns FV, not PV. Caller is responsible
+#     for multiplying by the discount factor to get PV."""
+
+#     std_dev = vol * sqrt_tte
+
+#     d1 = (log_fk + vol * vol * half_tte) / std_dev
+#     d2 = d1 - std_dev
+
+#     cdf_d1 = numba_norm_cdf_abrom_steg(cp_mult * d1)
+#     cdf_d2 = numba_norm_cdf_abrom_steg(cp_mult * d2)
+
+#     fv = cp_mult * (fwd * cdf_d1 - strike * cdf_d2)
+
+#     return fv
+
+
 @inline_njit
-def _black76_fv_with_kernel_hoists(
+def _black76_fv_kernel_primitive(
     fwd: float,
+    log_fk: float,
     strike: float,
-    log_strike: float,
-    sqrt_tte: float,
-    half_tte: float,
-    vol: float,
+    vol_sqrt_tte: float,
+    vol2_half_tte: float,
     cp_mult: int,
 ) -> float:
     """Undiscounted Black 76 option price. Returns FV, not PV. Caller is responsible
     for multiplying by the discount factor to get PV."""
 
-    log_fk = math.log(fwd) - log_strike
-
-    std_dev = vol * sqrt_tte
-
-    d1 = (log_fk + vol * vol * half_tte) / std_dev
-    d2 = d1 - std_dev
+    d1 = (log_fk + vol2_half_tte) / vol_sqrt_tte
+    d2 = d1 - vol_sqrt_tte
 
     cdf_d1 = numba_norm_cdf_abrom_steg(cp_mult * d1)
     cdf_d2 = numba_norm_cdf_abrom_steg(cp_mult * d2)
@@ -95,13 +116,20 @@ def _black76_fv(
 ) -> float:
     """Undiscounted Black 76 option price. Returns FV, not PV. Caller is responsible
     for multiplying by the discount factor to get PV."""
-    return _black76_fv_with_kernel_hoists(
+
+    log_fwd = math.log(fwd)
+    log_strike = math.log(strike)
+    log_fk = log_fwd - log_strike
+
+    vol_sqrt_tte = vol * sqrt_tte
+    vol2_half_tte = vol * vol * half_tte
+
+    return _black76_fv_kernel_primitive(
         fwd,
+        log_fk,
         strike,
-        math.log(strike),
-        sqrt_tte,
-        half_tte,
-        vol,
+        vol_sqrt_tte,
+        vol2_half_tte,
         cp_mult,
     )
 

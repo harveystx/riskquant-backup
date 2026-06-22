@@ -204,6 +204,7 @@ def main(profile: str | None = None):
             base_dir / "pnl" / "results.py",
         ],
         "valuation": [
+            base_dir / "market_data" / "state.py",
             base_dir / "utils",
             base_dir / "valuation",
             base_dir / "_arrays.py",
@@ -377,6 +378,7 @@ def main(profile: str | None = None):
             # base_dir / "valuation" / "pricers",
             # base_dir / "valuation" / "engine.py",
             # base_dir / "simlab",
+            base_dir / "solutions" / "credit_var",
             base_dir / "utils",
             base_dir / "scenario_metrics",
             base_dir / "_arrays.py",
@@ -387,6 +389,34 @@ def main(profile: str | None = None):
             # SCRIPTS
             base_dir_parent / "scripts" / "demos" / "credit" / "exposure",
             base_dir_parent / "scripts" / "demos" / "credit" / "jtd",
+            # # base_dir_parent / "scripts" / "reporting" / "credit_risk" / "stress_tests",
+        ],
+        "credit_reduced": [
+            # SOURCE CODE
+            base_dir / "credit",
+            # base_dir / "config",
+            # base_dir / "ingest_fixtures" / "credit",
+            # base_dir / "ingest_fixtures" / "as_of.py",
+            # base_dir / "ingest_fixtures" / "constants.py",
+            # base_dir / "ingest_fixtures" / "rng.py",
+            # base_dir / "ingest_fixtures" / "schemas.py",
+            # base_dir / "ingest_fixtures" / "utils.py",
+            # base_dir / "market_data",
+            # base_dir / "portfolio",
+            # base_dir / "valuation" / "pricers",
+            # base_dir / "valuation" / "engine.py",
+            # base_dir / "simlab",
+            base_dir / "solutions" / "credit_var",
+            # base_dir / "utils",
+            # base_dir / "scenario_metrics",
+            # base_dir / "_arrays.py",
+            # base_dir / "constants.py",
+            # base_dir / "exceptions.py",
+            # base_dir / "numba.py",
+            # base_dir / "universe.py",
+            # SCRIPTS
+            # base_dir_parent / "scripts" / "demos" / "credit" / "exposure",
+            # base_dir_parent / "scripts" / "demos" / "credit" / "jtd",
             # # base_dir_parent / "scripts" / "reporting" / "credit_risk" / "stress_tests",
         ],
         "credit_jtd": [
@@ -410,20 +440,6 @@ def main(profile: str | None = None):
             # SCRIPTS
             base_dir_parent / "scripts" / "demos" / "credit" / "exposure",
             base_dir_parent / "scripts" / "demos" / "credit" / "jtd",
-        ],
-        "credit_reduced": [
-            base_dir / "credit",
-            # base_dir / "config",
-            # base_dir / "ingest_fixtures",
-            base_dir / "market_data",
-            base_dir / "portfolio",
-            base_dir / "valuation",
-            base_dir / "simlab",
-            base_dir / "utils",
-            base_dir / "constants.py",
-            base_dir / "exceptions.py",
-            # base_dir_parent / "tests" / "credit" / "exposure",
-            # base_dir_parent / "scripts" / "reporting" / "credit_risk" / "stress_tests",
         ],
         "portfolio": [
             base_dir / "config",
@@ -488,6 +504,7 @@ def main(profile: str | None = None):
                 not any(part in exclude_dirs for part in subpath.parts)
                 and subpath not in valid_files
                 and not subpath.name.startswith(".")  # Exclude hidden files
+                and not subpath.parent.name.startswith("_deprecated")
             ):
                 valid_files.append(subpath)
 
@@ -623,11 +640,10 @@ if __name__ == "__main__":
     main(profile="market_data_calibrate")
     main(profile="credit")
     # main(profile="credit_jtd")
-    # main(profile="credit_reduced")
+    main(profile="credit_reduced")
     # main(profile="ingest_fixtures")
     # main(profile="ingest_fixtures_risk_static_config")
     # main(profile="ingest_fixtures_market_data")
     main(profile="portfolio")
-    main(profile="portfolio_blocks")
     # main(profile="pricer_kernels")
     main(profile="scenario_metrics")

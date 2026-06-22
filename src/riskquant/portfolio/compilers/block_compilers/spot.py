@@ -16,14 +16,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from riskquant.valuation.blocks.spot_block import SpotBlock
 from riskquant.portfolio.ingest.batch import IngestBatch
+from riskquant.valuation.blocks.spot_block import SpotBlock
 
 if TYPE_CHECKING:
     from riskquant.universe import UixMapper
 
 
-def compile_spot(
+def compile_spot_block(
     batch: IngestBatch,
     start: int,
     end: int,
@@ -45,6 +45,5 @@ def compile_spot(
     return SpotBlock(
         trade_uids=batch.uids[start:end],
         qty=batch.qty[start:end],
-        spot_price_uix=price_uix,
-        fx_spot_effective_uix=fx_spots_effective_uix,
+        effective_spot_price_uix=effective_spot_price_uix,
     )

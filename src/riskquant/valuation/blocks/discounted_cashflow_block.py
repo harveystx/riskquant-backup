@@ -27,12 +27,10 @@ class _DiscountedCashflowBlock(Block):
 
     # --- LINKAGES (UIX) ---
 
-    # Index into `ValuationState.discount_factors`. Discounts cashflow to t = 0.
-    discount_factor_uix: npt.NDArray[np.int32]
-
-    # Index into `ValuationState.fx_spots_effective`. Converts cashflow to the
-    # settlemnt currency at t = 0.
-    fx_spot_effective_uix: npt.NDArray[np.int32]
+    # Index into `ValuationState.effective_discount_factors`.
+    # Discounts cashflow to t = 0 and converts to settlement currency
+    # at t = 0 in one step.
+    effective_discount_factor_uix: npt.NDArray[np.int32]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -43,6 +41,8 @@ class PrincipalCashflowBlock(_DiscountedCashflowBlock):
     CashFlow(T) = Amount
 
     PV(0) = CashFlow(T) * DiscountFactor(0, T) * FxSpot(0)
+
+    PV(0) = CashFlow(T) * EffectiveDiscountFactor(0, T)
 
     Examples
     --------
@@ -68,6 +68,9 @@ class FixedCashflowBlock(_DiscountedCashflowBlock):
     CashFlow(T) = Notional * AccrualFactor * FixedRate * PayReceiveMult
 
     PV(0) = CashFlow(T) * DiscountFactor(0, T) * FxSpot(0)
+
+    PV(0) = CashFlow(T) * EffectiveDiscountFactor(0, T)
+
     """
 
     # --- BLOCK ID FOR DISPATCH ---

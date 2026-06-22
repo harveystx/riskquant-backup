@@ -35,8 +35,5 @@ class SpotBlock(Block):
 
     # --- LINKAGES (UIX) ---
 
-    # Index into `ValuationState.spot_prices` for this row.
-    spot_price_uix: npt.NDArray[np.int32]
-
-    # Index into `ValuationState.fx_spots_effective`.
-    fx_spot_effective_uix: npt.NDArray[np.int32]
+    # Index into `ValuationState.effective_spot_prices` for this row.
+    effective_spot_price_uix: npt.NDArray[np.int32]

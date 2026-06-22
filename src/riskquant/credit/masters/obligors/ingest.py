@@ -24,7 +24,12 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-from riskquant.constants import NO_PARENT_OBLIGOR
+from riskquant.constants import (
+    NO_COUNTRY_ID,
+    NO_PARENT_OBLIGOR,
+    NO_RATING_ID,
+    NO_SECTOR_ID,
+)
 from riskquant.credit.masters.obligors.compiled import CompiledObligorCredit
 from riskquant.credit.masters.obligors.validate import validate_obligor_master_arrays
 
@@ -32,10 +37,10 @@ _REQUIRED_COLS: tuple[str, ...] = (
     "uid",
     "pd",
     "lgd",
-    "rating_id",
-    "sector_id",
-    "country_id",
-    "parent_uid",
+    # "rating_id",
+    # "sector_id",
+    # "country_id",
+    # "parent_uid",
 )
 
 
@@ -66,8 +71,59 @@ def _i32(df: pd.DataFrame, col: str) -> npt.NDArray[np.int32]:
     return np.ascontiguousarray(df[col].to_numpy(dtype=np.int32))
 
 
+def _rating_id(df: pd.DataFrame) -> npt.NDArray[np.int8]:
+    """NA / None -> NO_RATING_ID; numeric values pass through as int8."""
+    if "rating_id" not in df.columns:
+        # Fill missing column with default value.
+        return np.full(len(df), NO_RATING_ID, dtype=np.int8)
+    filled = (
+        df["rating_id"]
+        .astype("Int8")  # pandas nullable integer
+        .fillna(NO_RATING_ID)
+    )
+    return cast(
+        npt.NDArray[np.int8],
+        np.ascontiguousarray(filled.to_numpy(dtype=np.int8)),
+    )
+
+
+def _sector_id(df: pd.DataFrame) -> npt.NDArray[np.int32]:
+    """NA / None -> NO_SECTOR_ID; numeric values pass through as int32."""
+    if "sector_id" not in df.columns:
+        # Fill missing column with default value.
+        return np.full(len(df), NO_SECTOR_ID, dtype=np.int32)
+    filled = (
+        df["sector_id"]
+        .astype("Int32")  # pandas nullable integer
+        .fillna(NO_SECTOR_ID)
+    )
+    return cast(
+        npt.NDArray[np.int32],
+        np.ascontiguousarray(filled.to_numpy(dtype=np.int32)),
+    )
+
+
+def _country_id(df: pd.DataFrame) -> npt.NDArray[np.int32]:
+    """NA / None -> NO_COUNTRY_ID; numeric values pass through as int32."""
+    if "country_id" not in df.columns:
+        # Fill missing column with default value.
+        return np.full(len(df), NO_COUNTRY_ID, dtype=np.int32)
+    filled = (
+        df["country_id"]
+        .astype("Int32")  # pandas nullable integer
+        .fillna(NO_COUNTRY_ID)
+    )
+    return cast(
+        npt.NDArray[np.int32],
+        np.ascontiguousarray(filled.to_numpy(dtype=np.int32)),
+    )
+
+
 def _parent_uid(df: pd.DataFrame) -> npt.NDArray[np.int64]:
     """NA / None -> NO_PARENT_OBLIGOR; numeric values pass through as int64."""
+    if "parent_uid" not in df.columns:
+        # Fill missing column with default value.
+        return np.full(len(df), NO_PARENT_OBLIGOR, dtype=np.int64)
     filled = (
         df["parent_uid"]
         .astype("Int64")  # pandas nullable integer
@@ -108,12 +164,15 @@ def compile_obligor_master(
     # the frame (not the arrays) keeps the parent_uid fillna semantics intact.
     df = obligor_df.sort_values("uid", kind="stable").reset_index(drop=True)
 
+    # Required columns are cast to strict dtypes and converted to C-contiguous arrays.
     uid = _i64(df, "uid")
     pd_ = _f64(df, "pd")
     lgd = _f64(df, "lgd")
-    rating_id = _i8(df, "rating_id")
-    sector_id = _i32(df, "sector_id")
-    country_id = _i32(df, "country_id")
+
+    # Optional columns are also cast to strict dtypes, but missing columns are filled with defaults.
+    rating_id = _rating_id(df)
+    sector_id = _sector_id(df)
+    country_id = _country_id(df)
     parent_uid = _parent_uid(df)
 
     validate_obligor_master_arrays(

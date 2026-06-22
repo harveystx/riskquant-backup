@@ -36,9 +36,7 @@ def price_principal_cashflow_block(
     """Principal cashflow pricer entrypoint. All arrays must be C-contiguous and dtype-stable."""
     _kernel_price_principal_cashflow(
         out,
-        valuation_state.discount_factors,
-        valuation_state.fx_spots_effective,
+        valuation_state.effective_discount_factors,
         block.amount,
-        block.discount_factor_uix,
-        block.fx_spot_effective_uix,
+        block.effective_discount_factor_uix,
     )

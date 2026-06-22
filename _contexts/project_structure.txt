@@ -4,7 +4,7 @@ Directory Structure for: riskquant
 riskquant/
 ├── scripts/                                       
 │   ├── demos/                                     
-│   │   ├── _old/                                  
+│   │   ├── _deprecated/                           
 │   │   │   ├── ce_jtd_risk_plots.png              
 │   │   │   ├── demo_rq.py                         
 │   │   │   ├── demo_rq_config_proxy_compile.py    
@@ -48,7 +48,9 @@ riskquant/
 │   │   │   │           └── rc_kernel_throughput.py   
 │   │   │   ├── jtd/                               
 │   │   │   │   ├── e2e/                           
-│   │   │   │   │   └── demo_e2e_full_jtd_portfolio.py   
+│   │   │   │   │   ├── demo_e2e_full_jtd_portfolio_core.py   
+│   │   │   │   │   ├── demo_e2e_full_jtd_portfolio_mf_chi.py   
+│   │   │   │   │   └── demo_e2e_full_jtd_portfolio_mf_chi_streaming.py   
 │   │   │   │   ├── evaluators/                    
 │   │   │   │   │   ├── demo_sf_copula_gaussian.py   
 │   │   │   │   │   └── demo_sf_copula_students_t.py   
@@ -115,7 +117,9 @@ riskquant/
 │   │       ├── vanilla_european_option_node_kernel_throughput.py   
 │   │       ├── vanilla_forward_curve_kernel_throughput.py   
 │   │       ├── vanilla_forward_node_kernel_throughput.py   
-│   │       └── verify_pricing_kernels.py          
+│   │       ├── verify_pricing_kernels.py          
+│   │       ├── xxx.py                             
+│   │       └── yyy.py                             
 │   ├── liquidity/                                 
 │   ├── misc/                                      
 │   ├── reporting/                                 
@@ -176,6 +180,11 @@ riskquant/
 │       │   │   │   │   └── replacement_cost.py    
 │       │   │   │   ├── __init__.py                
 │       │   │   │   └── replacement_cost.py        
+│       │   │   ├── obligor_ead/                   
+│       │   │   │   ├── __init__.py                
+│       │   │   │   ├── align.py                   
+│       │   │   │   ├── compiled.py                
+│       │   │   │   └── ingest.py                  
 │       │   │   ├── views/                         
 │       │   │   │   ├── __init__.py                
 │       │   │   │   ├── base.py                    
@@ -256,7 +265,8 @@ riskquant/
 │       │   │   ├── engine.py                      
 │       │   │   ├── models.py                      
 │       │   │   ├── registry.py                    
-│       │   │   └── results.py                     
+│       │   │   ├── results.py                     
+│       │   │   └── streaming.py                   
 │       │   ├── masters/                           
 │       │   │   ├── cross_master/                  
 │       │   │   │   ├── __init__.py                
@@ -362,6 +372,8 @@ riskquant/
 │       │   ├── schemas.py                         
 │       │   └── utils.py                           
 │       ├── market_data/                           
+│       │   ├── _deprecated_v2/                    
+│       │   │   └── state.py                       
 │       │   ├── builders/                          
 │       │   │   └── __init__.py                    
 │       │   ├── calibrate/                         
@@ -408,17 +420,21 @@ riskquant/
 │       │   ├── __init__.py                        
 │       │   ├── assemble.py                        
 │       │   ├── builder.py                         
-│       │   └── state.py                           
+│       │   ├── grid.py                            
+│       │   ├── state.py                           
+│       │   └── taxonomy.py                        
 │       ├── pnl/                                   
 │       │   ├── __init__.py                        
 │       │   └── results.py                         
 │       ├── portfolio/                             
 │       │   ├── compilers/                         
 │       │   │   ├── block_compilers/               
+│       │   │   │   ├── _deprecated_v2/            
+│       │   │   │   │   ├── spot.py                
+│       │   │   │   │   ├── vanilla_european_option.py   
+│       │   │   │   │   └── vanilla_forward.py     
 │       │   │   │   ├── __init__.py                
-│       │   │   │   ├── spot.py                    
-│       │   │   │   ├── vanilla_european_option.py   
-│       │   │   │   └── vanilla_forward.py         
+│       │   │   │   └── spot.py                    
 │       │   │   ├── __init__.py                    
 │       │   │   └── registry.py                    
 │       │   ├── ingest/                            
@@ -482,6 +498,15 @@ riskquant/
 │       │   │   └── shock_kernel.py                
 │       │   ├── __init__.py                        
 │       │   └── runner.py                          
+│       ├── solutions/                             
+│       │   ├── credit_var/                        
+│       │   │   ├── __init__.py                    
+│       │   │   ├── api.py                         
+│       │   │   ├── catalog.py                     
+│       │   │   ├── recipes.py                     
+│       │   │   ├── run.py                         
+│       │   │   └── schemas.py                     
+│       │   └── __init__.py                        
 │       ├── utils/                                 
 │       │   ├── __init__.py                        
 │       │   ├── dataframes.py                      
@@ -490,6 +515,13 @@ riskquant/
 │       │   └── tenors.py                          
 │       ├── valuation/                             
 │       │   ├── blocks/                            
+│       │   │   ├── _deprecated_v2/                
+│       │   │   │   ├── _base_block.py             
+│       │   │   │   ├── block_type.py              
+│       │   │   │   ├── discounted_cashflow_block.py   
+│       │   │   │   ├── spot_block.py              
+│       │   │   │   ├── vanilla_european_option_block.py   
+│       │   │   │   └── vanilla_forward_block.py   
 │       │   │   ├── __init__.py                    
 │       │   │   ├── _base_block.py                 
 │       │   │   ├── block_type.py                  
@@ -498,12 +530,19 @@ riskquant/
 │       │   │   ├── vanilla_european_option_block.py   
 │       │   │   └── vanilla_forward_block.py       
 │       │   ├── pricer_kernels/                    
-│       │   │   ├── _deprecated/                   
+│       │   │   ├── _deprecated_v1/                
 │       │   │   │   ├── _math_v1.py                
 │       │   │   │   ├── vanilla_european_option_curve_v1.py   
 │       │   │   │   ├── vanilla_european_option_node_v1.py   
 │       │   │   │   ├── vanilla_forward_curve_v1.py   
 │       │   │   │   └── vanilla_forward_node_v1.py   
+│       │   │   ├── _deprecated_v2/                
+│       │   │   │   ├── fixed_cashflow.py          
+│       │   │   │   ├── floating_cashflow.py       
+│       │   │   │   ├── principal_cashflow.py      
+│       │   │   │   ├── spot.py                    
+│       │   │   │   ├── vanilla_european_option.py   
+│       │   │   │   └── vanilla_forward.py         
 │       │   │   ├── __init__.py                    
 │       │   │   ├── fixed_cashflow.py              
 │       │   │   ├── floating_cashflow.py           

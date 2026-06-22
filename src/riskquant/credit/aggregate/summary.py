@@ -19,8 +19,10 @@ from __future__ import annotations
 __all__ = [
     "build_portfolio_loss_distribution",
     "summarize_jtd_loss",
+    "summarize_streaming_jtd_loss",
     "JtdRiskSummary",
     "model_tail_var_es",
+    "streaming_model_tail_var_es",
 ]
 
 from dataclasses import dataclass
@@ -36,7 +38,7 @@ from riskquant.credit.aggregate.loss_metrics import (
 )
 from riskquant.credit.jtd.compiled import CompiledJtdPortfolio
 from riskquant.credit.jtd.models import JtdModel
-from riskquant.credit.jtd.results import JtdLossResult
+from riskquant.credit.jtd.results import JtdLossResult, StreamingJtdResult
 
 _DEFAULT_ALPHAS: tuple[float, ...] = (0.9500, 0.9750, 0.9900, 0.9990)
 
@@ -134,6 +136,41 @@ def summarize_jtd_loss(
     )
 
 
+def summarize_streaming_jtd_loss(
+    *,
+    result: StreamingJtdResult,
+    alphas: tuple[float, ...] = _DEFAULT_ALPHAS,
+) -> JtdRiskSummary:
+    """
+    Headline risk summary for a streamed JTD loss.
+
+    Operates on the accumulated ``(S,)`` portfolio total directly (no per-obligor
+    matrix). Per-model expected-loss contributions are filled when the streaming
+    run collected the ``(n_models, S)`` breakdown (`collect_by_model=True`); they
+    remain additive (sum to the portfolio EL).
+    """
+    portfolio_loss = result.portfolio_loss
+    var: dict[float, float] = {}
+    es: dict[float, float] = {}
+    for a in alphas:
+        var[a], es[a] = loss_var_es(portfolio_loss, a)
+
+    by_model: dict[str, float] = {}
+    if result.model_loss is not None:
+        model_el = result.model_loss.mean(axis=1)
+        for row, model_id in enumerate(result.model_order):
+            name = JtdModel(model_id).name
+            by_model[name] = by_model.get(name, 0.0) + float(model_el[row])
+
+    return JtdRiskSummary(
+        n_scenarios=int(portfolio_loss.shape[0]),
+        expected_loss=expected_loss(portfolio_loss),
+        var=var,
+        es=es,
+        expected_loss_by_model=by_model,
+    )
+
+
 def model_tail_var_es(
     *,
     result: JtdLossResult,
@@ -147,3 +184,27 @@ def model_tail_var_es(
     names, stack = _model_loss_stack(result, jtd_portfolio)
     var, es = tail_var_es_by_group(stack, alpha)
     return {name: (float(var[i]), float(es[i])) for i, name in enumerate(names)}
+
+
+def streaming_model_tail_var_es(
+    *,
+    result: StreamingJtdResult,
+    alpha: float,
+) -> dict[str, tuple[float, float]]:
+    """Standalone per-model ``(VaR, ES)`` at ``alpha`` from a streamed run.
+
+    Requires the run to have collected the per-model breakdown
+    (`collect_by_model=True`); one parallel kernel pass over the ``(n_models, S)``
+    stack. As with the non-streaming variant these are each model's own tail and
+    do not sum to the portfolio's.
+    """
+    if result.model_loss is None:
+        raise ValueError(
+            "streaming_model_tail_var_es requires a run with collect_by_model=True "
+            "(result.model_loss is None)."
+        )
+    var, es = tail_var_es_by_group(result.model_loss, alpha)
+    return {
+        JtdModel(model_id).name: (float(var[i]), float(es[i]))
+        for i, model_id in enumerate(result.model_order)
+    }

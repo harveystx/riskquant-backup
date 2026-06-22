@@ -1,4 +1,4 @@
-# scripts/demos/credit/jtd/e2e/demo_e2e_full_jtd_portfolio.py
+# scripts/demos/credit/jtd/e2e/demo_e2e_full_jtd_portfolio_mf_chi.py
 """
 End-to-End Mixed JTD Credit Engine Demo.
 

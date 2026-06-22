@@ -38,7 +38,9 @@ When proposing code:
     │           │           └── rc_kernel_throughput.py
     │           └── jtd
     │               ├── e2e
-    │               │   └── demo_e2e_full_jtd_portfolio.py
+    │               │   ├── demo_e2e_full_jtd_portfolio_core.py
+    │               │   ├── demo_e2e_full_jtd_portfolio_mf_chi.py
+    │               │   └── demo_e2e_full_jtd_portfolio_mf_chi_streaming.py
     │               ├── evaluators
     │               │   ├── demo_sf_copula_gaussian.py
     │               │   └── demo_sf_copula_students_t.py
@@ -75,6 +77,11 @@ When proposing code:
             │   │   │   │   └── replacement_cost.py
             │   │   │   └── replacement_cost.py
             │   │   ├── models.py
+            │   │   ├── obligor_ead
+            │   │   │   ├── __init__.py
+            │   │   │   ├── align.py
+            │   │   │   ├── compiled.py
+            │   │   │   └── ingest.py
             │   │   ├── results.py
             │   │   └── views
             │   │       ├── __init__.py
@@ -150,7 +157,8 @@ When proposing code:
             │   │   │   └── stress_regime_bernoulli.py
             │   │   ├── models.py
             │   │   ├── registry.py
-            │   │   └── results.py
+            │   │   ├── results.py
+            │   │   └── streaming.py
             │   └── masters
             │       ├── __init__.py
             │       ├── cross_master
@@ -235,6 +243,14 @@ When proposing code:
             │   └── api
             │       ├── __init__.py
             │       └── var_es.py
+            ├── solutions
+            │   └── credit_var
+            │       ├── __init__.py
+            │       ├── api.py
+            │       ├── catalog.py
+            │       ├── recipes.py
+            │       ├── run.py
+            │       └── schemas.py
             ├── universe.py
             └── utils
                 ├── __init__.py
@@ -247,9 +263,15 @@ When proposing code:
 <symbol_index>
 <function name="_rng" file="riskquant\scripts\demos\credit\exposure\evaluators\kernels\rc_kernel_throughput.py" />
 <function name="run_benchmark" file="riskquant\scripts\demos\credit\exposure\evaluators\kernels\rc_kernel_throughput.py" />
-<function name="_plot_model_distributions" file="riskquant\scripts\demos\credit\jtd\e2e\demo_e2e_full_jtd_portfolio.py" />
-<function name="_plot_portfolio_losses" file="riskquant\scripts\demos\credit\jtd\e2e\demo_e2e_full_jtd_portfolio.py" />
-<function name="run_demo" file="riskquant\scripts\demos\credit\jtd\e2e\demo_e2e_full_jtd_portfolio.py" />
+<function name="_plot_model_distributions" file="riskquant\scripts\demos\credit\jtd\e2e\demo_e2e_full_jtd_portfolio_core.py" />
+<function name="_plot_portfolio_losses" file="riskquant\scripts\demos\credit\jtd\e2e\demo_e2e_full_jtd_portfolio_core.py" />
+<function name="run_demo" file="riskquant\scripts\demos\credit\jtd\e2e\demo_e2e_full_jtd_portfolio_core.py" />
+<function name="_plot_model_distributions" file="riskquant\scripts\demos\credit\jtd\e2e\demo_e2e_full_jtd_portfolio_mf_chi.py" />
+<function name="_plot_portfolio_losses" file="riskquant\scripts\demos\credit\jtd\e2e\demo_e2e_full_jtd_portfolio_mf_chi.py" />
+<function name="run_demo" file="riskquant\scripts\demos\credit\jtd\e2e\demo_e2e_full_jtd_portfolio_mf_chi.py" />
+<function name="_plot_model_distributions" file="riskquant\scripts\demos\credit\jtd\e2e\demo_e2e_full_jtd_portfolio_mf_chi_streaming.py" />
+<function name="_plot_portfolio_losses" file="riskquant\scripts\demos\credit\jtd\e2e\demo_e2e_full_jtd_portfolio_mf_chi_streaming.py" />
+<function name="run_demo" file="riskquant\scripts\demos\credit\jtd\e2e\demo_e2e_full_jtd_portfolio_mf_chi_streaming.py" />
 <class name="MockCreditFactorMatrix" file="riskquant\scripts\demos\credit\jtd\evaluators\demo_sf_copula_gaussian.py" />
 <function name="plot_copula_results" file="riskquant\scripts\demos\credit\jtd\evaluators\demo_sf_copula_gaussian.py" />
 <function name="run_demo" file="riskquant\scripts\demos\credit\jtd\evaluators\demo_sf_copula_gaussian.py" />
@@ -296,7 +318,9 @@ When proposing code:
 <function name="_model_loss_stack" file="riskquant\src\riskquant\credit\aggregate\summary.py" />
 <function name="build_portfolio_loss_distribution" file="riskquant\src\riskquant\credit\aggregate\summary.py" />
 <function name="model_tail_var_es" file="riskquant\src\riskquant\credit\aggregate\summary.py" />
+<function name="streaming_model_tail_var_es" file="riskquant\src\riskquant\credit\aggregate\summary.py" />
 <function name="summarize_jtd_loss" file="riskquant\src\riskquant\credit\aggregate\summary.py" />
+<function name="summarize_streaming_jtd_loss" file="riskquant\src\riskquant\credit\aggregate\summary.py" />
 <function name="_build_csr" file="riskquant\src\riskquant\credit\exposure\compile.py" />
 <function name="_project_netting_set_attributes" file="riskquant\src\riskquant\credit\exposure\compile.py" />
 <function name="_validate_inputs" file="riskquant\src\riskquant\credit\exposure\compile.py" />
@@ -310,6 +334,9 @@ When proposing code:
 <function name="_kernel_replacement_cost" file="riskquant\src\riskquant\credit\exposure\evaluators\kernels\replacement_cost.py" />
 <function name="evaluate_replacement_cost" file="riskquant\src\riskquant\credit\exposure\evaluators\replacement_cost.py" />
 <class name="ExposureModel" file="riskquant\src\riskquant\credit\exposure\models.py" />
+<function name="align_obligor_ead_to_portfolio" file="riskquant\src\riskquant\credit\exposure\obligor_ead\align.py" />
+<class name="CompiledObligorEad" file="riskquant\src\riskquant\credit\exposure\obligor_ead\compiled.py" />
+<function name="compile_obligor_ead" file="riskquant\src\riskquant\credit\exposure\obligor_ead\ingest.py" />
 <class name="NettingSetExposurePaths" file="riskquant\src\riskquant\credit\exposure\results.py" />
 <class name="_NettingSetView" file="riskquant\src\riskquant\credit\exposure\views\base.py" />
 <class name="RcNettingSetView" file="riskquant\src\riskquant\credit\exposure\views\replacement_cost.py" />
@@ -339,6 +366,7 @@ When proposing code:
 <function name="aggregate_ead_to_obligor" file="riskquant\src\riskquant\credit\jtd\bridge.py" />
 <class name="CompiledJtdPortfolio" file="riskquant\src\riskquant\credit\jtd\compiled.py" />
 <function name="run_jtd" file="riskquant\src\riskquant\credit\jtd\engine.py" />
+<function name="run_jtd_for_obligor_ead" file="riskquant\src\riskquant\credit\jtd\engine.py" />
 <class name="JtdEvaluator" file="riskquant\src\riskquant\credit\jtd\evaluators\base.py" />
 <function name="evaluate_beta_binomial_jtd" file="riskquant\src\riskquant\credit\jtd\evaluators\beta_binomial.py" />
 <function name="evaluate_forced_default_jtd" file="riskquant\src\riskquant\credit\jtd\evaluators\forced_default.py" />
@@ -406,6 +434,10 @@ When proposing code:
 <function name="model_contracts" file="riskquant\src\riskquant\credit\jtd\registry.py" />
 <function name="model_field_order" file="riskquant\src\riskquant\credit\jtd\registry.py" />
 <class name="JtdLossResult" file="riskquant\src\riskquant\credit\jtd\results.py" />
+<class name="StreamingJtdResult" file="riskquant\src\riskquant\credit\jtd\results.py" />
+<function name="constant_ead_provider" file="riskquant\src\riskquant\credit\jtd\streaming.py" />
+<function name="run_jtd_streaming" file="riskquant\src\riskquant\credit\jtd\streaming.py" />
+<function name="run_jtd_streaming_from_generator" file="riskquant\src\riskquant\credit\jtd\streaming.py" />
 <class name="CompiledCreditMasters" file="riskquant\src\riskquant\credit\masters\cross_master\compiled.py" />
 <function name="validate_cross_masters" file="riskquant\src\riskquant\credit\masters\cross_master\validate.py" />
 <function name="validate_netting_set_obligor_uids_on_master" file="riskquant\src\riskquant\credit\masters\cross_master\validate.py" />
@@ -439,11 +471,14 @@ When proposing code:
 <function name="validate_uid_sorted_unique" file="riskquant\src\riskquant\credit\masters\netting_set\validate.py" />
 <class name="CompiledObligorCredit" file="riskquant\src\riskquant\credit\masters\obligors\compiled.py" />
 <function name="_check_required_columns" file="riskquant\src\riskquant\credit\masters\obligors\ingest.py" />
+<function name="_country_id" file="riskquant\src\riskquant\credit\masters\obligors\ingest.py" />
 <function name="_f64" file="riskquant\src\riskquant\credit\masters\obligors\ingest.py" />
 <function name="_i32" file="riskquant\src\riskquant\credit\masters\obligors\ingest.py" />
 <function name="_i64" file="riskquant\src\riskquant\credit\masters\obligors\ingest.py" />
 <function name="_i8" file="riskquant\src\riskquant\credit\masters\obligors\ingest.py" />
 <function name="_parent_uid" file="riskquant\src\riskquant\credit\masters\obligors\ingest.py" />
+<function name="_rating_id" file="riskquant\src\riskquant\credit\masters\obligors\ingest.py" />
+<function name="_sector_id" file="riskquant\src\riskquant\credit\masters\obligors\ingest.py" />
 <function name="compile_obligor_master" file="riskquant\src\riskquant\credit\masters\obligors\ingest.py" />
 <function name="_bad_uids" file="riskquant\src\riskquant\credit\masters\obligors\validate.py" />
 <function name="validate_country_id" file="riskquant\src\riskquant\credit\masters\obligors\validate.py" />
@@ -539,6 +574,40 @@ When proposing code:
 <function name="_validate_confidence_level" file="riskquant\src\riskquant\scenario_metrics\_validate.py" />
 <function name="_validate_group_value_matrix" file="riskquant\src\riskquant\scenario_metrics\_validate.py" />
 <function name="compute_var_es" file="riskquant\src\riskquant\scenario_metrics\api\var_es.py" />
+<class name="ModelEntry" file="riskquant\src\riskquant\solutions\credit_var\catalog.py" />
+<class name="ParamSpec" file="riskquant\src\riskquant\solutions\credit_var\catalog.py" />
+<function name="model_entry" file="riskquant\src\riskquant\solutions\credit_var\catalog.py" />
+<function name="supported_model_keys" file="riskquant\src\riskquant\solutions\credit_var\catalog.py" />
+<class name="AssembledInputs" file="riskquant\src\riskquant\solutions\credit_var\recipes.py" />
+<class name="_FactorRow" file="riskquant\src\riskquant\solutions\credit_var\recipes.py" />
+<function name="_assemble_beta_binomial" file="riskquant\src\riskquant\solutions\credit_var\recipes.py" />
+<function name="_assemble_forced_default" file="riskquant\src\riskquant\solutions\credit_var\recipes.py" />
+<function name="_assemble_independent_bernoulli" file="riskquant\src\riskquant\solutions\credit_var\recipes.py" />
+<function name="_assemble_mf_gaussian" file="riskquant\src\riskquant\solutions\credit_var\recipes.py" />
+<function name="_assemble_mf_students_t" file="riskquant\src\riskquant\solutions\credit_var\recipes.py" />
+<function name="_assemble_sf_gaussian" file="riskquant\src\riskquant\solutions\credit_var\recipes.py" />
+<function name="_assemble_sf_students_t" file="riskquant\src\riskquant\solutions\credit_var\recipes.py" />
+<function name="_assemble_stress_regime_bernoulli" file="riskquant\src\riskquant\solutions\credit_var\recipes.py" />
+<function name="_ead" file="riskquant\src\riskquant\solutions\credit_var\recipes.py" />
+<function name="_masters" file="riskquant\src\riskquant\solutions\credit_var\recipes.py" />
+<function name="_mf_universe_and_bundle" file="riskquant\src\riskquant\solutions\credit_var\recipes.py" />
+<function name="_require" file="riskquant\src\riskquant\solutions\credit_var\recipes.py" />
+<function name="_uids" file="riskquant\src\riskquant\solutions\credit_var\recipes.py" />
+<function name="_universe" file="riskquant\src\riskquant\solutions\credit_var\recipes.py" />
+<function name="assemble_inputs" file="riskquant\src\riskquant\solutions\credit_var\recipes.py" />
+<function name="_alpha_key" file="riskquant\src\riskquant\solutions\credit_var\run.py" />
+<function name="_engine_version" file="riskquant\src\riskquant\solutions\credit_var\run.py" />
+<function name="_input_hash" file="riskquant\src\riskquant\solutions\credit_var\run.py" />
+<function name="_loadings_frame" file="riskquant\src\riskquant\solutions\credit_var\run.py" />
+<function name="_obligor_frame" file="riskquant\src\riskquant\solutions\credit_var\run.py" />
+<function name="run_credit_var" file="riskquant\src\riskquant\solutions\credit_var\run.py" />
+<class name="CreditVarRequest" file="riskquant\src\riskquant\solutions\credit_var\schemas.py" />
+<class name="CreditVarResult" file="riskquant\src\riskquant\solutions\credit_var\schemas.py" />
+<class name="LoadingRow" file="riskquant\src\riskquant\solutions\credit_var\schemas.py" />
+<class name="ModelTail" file="riskquant\src\riskquant\solutions\credit_var\schemas.py" />
+<class name="ObligorRow" file="riskquant\src\riskquant\solutions\credit_var\schemas.py" />
+<class name="RiskSummary" file="riskquant\src\riskquant\solutions\credit_var\schemas.py" />
+<class name="RunProvenance" file="riskquant\src\riskquant\solutions\credit_var\schemas.py" />
 <class name="UixMapper" file="riskquant\src\riskquant\universe.py" />
 <function name="validate_string_cols" file="riskquant\src\riskquant\utils\dataframes.py" />
 <function name="assert_date_str_is_iso_format" file="riskquant\src\riskquant\utils\dates.py" />
@@ -719,7 +788,7 @@ if __name__ == "__main__":
 </file>
 
 <file_summary>
-path: riskquant\scripts\demos\credit\jtd\e2e\demo_e2e_full_jtd_portfolio.py
+path: riskquant\scripts\demos\credit\jtd\e2e\demo_e2e_full_jtd_portfolio_core.py
 module_docstring: End-to-End Mixed JTD Credit Engine Demo.
 
 Exercises the full JTD model set in one portfolio (forced-default, independent...
@@ -738,9 +807,768 @@ imports:
 - riskquant.utils.printer
 </file_summary>
 
-<file path="riskquant\scripts\demos\credit\jtd\e2e\demo_e2e_full_jtd_portfolio.py">
+<file path="riskquant\scripts\demos\credit\jtd\e2e\demo_e2e_full_jtd_portfolio_core.py">
 ```python
-# scripts/demos/credit/jtd/e2e/demo_e2e_full_jtd_portfolio.py
+# scripts/demos/credit/jtd/e2e/demo_e2e_full_jtd_portfolio_core.py
+"""
+End-to-End Mixed JTD Credit Engine Demo.
+
+Exercises the full JTD model set in one portfolio (forced-default, independent
+and stress-regime Bernoulli, beta-binomial, single-factor Gaussian and Student-t
+copulas, and the multi-factor Gaussian and Student-t copulas) through the
+bundle ingest path:
+    Raw DataFrames -> JtdIngestBundle -> Compilation -> Matrix -> Engine -> Metrics
+
+"""
+
+from __future__ import annotations
+
+import time
+
+import numpy as np
+import pandas as pd
+
+from riskquant.constants import RNG_SEED
+from riskquant.credit.factors.simulate.base import build_credit_factor_matrix
+from riskquant.credit.factors.simulate.mixed import MixedCreditFactorGenerator
+from riskquant.credit.jtd.engine import run_jtd
+from riskquant.credit.jtd.ingest.bundle import JtdIngestBundle
+from riskquant.credit.jtd.ingest.compile import compile_jtd_portfolio
+from riskquant.credit.jtd.models import JtdModel
+from riskquant.credit.masters.cross_master.compiled import (
+    CompiledCreditMasters,
+)
+from riskquant.credit.masters.factor_universe.ingest import (
+    compile_credit_factor_universe,
+)
+from riskquant.credit.masters.obligors.ingest import compile_obligor_master
+from riskquant.utils.printer import print_calling_file, print_df, print_success_message
+
+# ============================================================
+# 1. SETUP & CONFIGURATION
+# ============================================================
+
+NUM_OBLIGORS = 1_000
+NUM_SCENARIOS = 100_000
+
+# Distribution of models
+N_FORCED_DEFAULT = int(0.05 * NUM_OBLIGORS)  # Forced Default
+_OBLIGORS_REMAINING = NUM_OBLIGORS - N_FORCED_DEFAULT
+
+# Distribute the remaining across 5 models
+_FACTOR = 1 / 7
+N_INDEPENDENT_BERNOULLI = int(_FACTOR * _OBLIGORS_REMAINING)  # Independent Bernoulli
+N_STRESS_REGIME_BERNOULLI = int(_FACTOR * _OBLIGORS_REMAINING)  # Stress Regime
+N_BETA_BINOMIAL = int(_FACTOR * _OBLIGORS_REMAINING)  # Beta Binomial
+N_GAUSS = int(_FACTOR * _OBLIGORS_REMAINING)  # SF Gaussian Copula
+N_T_COP = int(_FACTOR * _OBLIGORS_REMAINING)  # SF Student-t Copula
+N_MF_GAUSSIAN = int(_FACTOR * _OBLIGORS_REMAINING)  # Multi-Factor Gaussian Copula
+N_MF_STUDENTS_T = int(_FACTOR * _OBLIGORS_REMAINING)  # Multi-Factor Student's T Copula
+
+_ASSINGNED = (
+    N_FORCED_DEFAULT
+    + N_INDEPENDENT_BERNOULLI
+    + N_STRESS_REGIME_BERNOULLI
+    + N_BETA_BINOMIAL
+    + N_GAUSS
+    + N_T_COP
+    + N_MF_GAUSSIAN
+    + N_MF_STUDENTS_T
+)
+
+# Correct rounding remainders if any (not strictly needed for 1000, but good practice)
+if _ASSINGNED != NUM_OBLIGORS:
+    N_BETA_BINOMIAL += NUM_OBLIGORS - _ASSINGNED
+
+GLOBAL_T_COP_NU = 5.0  # Degrees of freedom for the common T-Copula chi-square factor
+
+# Systemic sector factors the multi-factor obligors load on (independent normals
+# in the universe; any cross-sector correlation is absorbed into the loadings).
+MF_SECTOR_FACTORS = ("SECTOR_ENERGY", "SECTOR_FINANCIALS", "SECTOR_TECH")
+
+
+def _plot_portfolio_losses(
+    portfolio_losses: np.ndarray,
+    expected_loss: float,
+    credit_var_99: float,
+    worst_loss: float,
+    credit_es_99: float,
+) -> None:
+    """Plots the aggregated portfolio loss distribution and risk metrics."""
+    import matplotlib.pyplot as plt
+    import matplotlib.ticker as ticker
+
+    plt.style.use("dark_background")
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    losses_m = portfolio_losses / 1e6
+    el_m = expected_loss / 1e6
+    credit_var_99_m = credit_var_99 / 1e6
+    worst_m = worst_loss / 1e6
+
+    ax.hist(
+        losses_m,
+        bins=150,
+        color="#3a7ca5",
+        edgecolor="#294d69",
+        alpha=0.8,
+        density=True,
+    )
+
+    ax.axvline(
+        el_m,
+        color="#2ca02c",
+        linestyle="dashed",
+        linewidth=2.5,
+        label=f"Expected Loss (EL): ${el_m:,.1f}M",
+    )
+    ax.axvline(
+        credit_var_99_m,
+        color="#d62728",
+        linestyle="solid",
+        linewidth=2.5,
+        label=f"99% Credit VaR: ${credit_var_99_m:,.1f}M",
+    )
+
+    ax.axvline(
+        credit_es_99 / 1e6,
+        color="orange",
+        linewidth=2.5,
+        label=f"99% Credit ES: ${credit_es_99 / 1e6:,.1f}M",
+    )
+
+    ax.set_title("E2E JTD Portfolio Loss Distribution", fontsize=14, pad=15)
+    ax.set_xlabel("Simulated Portfolio Loss ($ Millions)", fontsize=12)
+    ax.set_ylabel("Density", fontsize=12)
+
+    ax.xaxis.set_major_formatter(ticker.StrMethodFormatter("${x:,.0f}M"))
+    ax.grid(True, alpha=0.15)
+    ax.legend(loc="upper right", fontsize=11)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def _plot_model_distributions(model_losses: dict) -> None:
+    """Plots the loss distributions of the individual JTD models on separate axes."""
+    import matplotlib.pyplot as plt
+    import matplotlib.ticker as ticker
+
+    plt.style.use("dark_background")
+    # Grid sized to the model count (4 per row).
+    n_models = len(model_losses)
+    ncols = 4
+    nrows = (n_models + ncols - 1) // ncols
+    fig, axes = plt.subplots(
+        nrows=nrows, ncols=ncols, figsize=(6 * ncols, 5 * nrows), layout="constrained"
+    )
+    fig.suptitle("Component Loss Distributions by Model", fontsize=18)
+
+    axes = axes.flatten()
+    for ax in axes[n_models:]:
+        ax.set_visible(False)
+
+    for ax, (model_name, losses) in zip(axes, model_losses.items()):
+        losses_m = losses / 1e6
+
+        # Plot the histogram (gracefully handling zero-variance/no-loss edge cases)
+        ax.hist(
+            losses_m,
+            bins=100 if np.var(losses_m) > 0 else 10,
+            color="#3a7ca5",
+            edgecolor="#294d69",
+            alpha=0.8,
+            density=True,
+        )
+
+        # Calculate metrics for the lines
+        el_m = losses_m.mean()
+        var_99_m = np.quantile(losses_m, 0.99)
+        es_99_m = (
+            losses_m[losses_m >= var_99_m].mean()
+            if np.any(losses_m >= var_99_m)
+            else 0.0
+        )
+
+        # Draw risk metric lines
+        ax.axvline(
+            el_m,
+            color="#2ca02c",
+            linestyle="dashed",
+            linewidth=2.5,
+            label=f"EL: ${el_m:,.1f}M",
+        )
+        ax.axvline(
+            var_99_m,
+            color="#d62728",
+            linestyle="solid",
+            linewidth=2.5,
+            label=f"99% VaR: ${var_99_m:,.1f}M",
+        )
+        ax.axvline(
+            es_99_m,
+            color="orange",
+            linestyle="solid",
+            linewidth=2.5,
+            label=f"99% ES: ${es_99_m:,.1f}M",
+        )
+
+        ax.set_title(model_name, fontsize=14, pad=10)
+        ax.set_xlabel("Loss ($ Millions)", fontsize=10)
+        ax.set_ylabel("Density", fontsize=10)
+        ax.xaxis.set_major_formatter(ticker.StrMethodFormatter("${x:,.0f}M"))
+
+        ax.grid(True, alpha=0.15)
+        ax.legend(loc="upper right", fontsize=10)
+
+    # Call standard tight_layout first to handle the internal subplot labels
+    plt.tight_layout()
+
+    # Then explicitly carve out 10% of the top of the figure for the suptitle,
+    # and add a bit of breathing room between the rows/columns.
+    fig.subplots_adjust(top=0.90, hspace=0.3, wspace=0.2)
+
+    plt.show()
+
+
+def run_demo() -> None:
+    print_calling_file()
+    print("--- S-TIER COPULA JTD ENGINE E2E DEMO ---")
+    print(f"Obligors:  {NUM_OBLIGORS}")
+    print(f"Scenarios: {NUM_SCENARIOS:,}")
+    print(
+        f"Model Mix: \n"
+        f" - {N_FORCED_DEFAULT} Forced-Default \n"
+        f" - {N_INDEPENDENT_BERNOULLI} Independent Bernoulli \n"
+        f" - {N_STRESS_REGIME_BERNOULLI} Stress Regime Bernoulli \n"
+        f" - {N_BETA_BINOMIAL} Beta Binomial \n"
+        f" - {N_GAUSS} Single-Factor Gaussian \n"
+        f" - {N_T_COP} Single-Factor Student-t \n"
+        f" - {N_MF_GAUSSIAN} Multi-Factor Gaussian \n"
+        f" - {N_MF_STUDENTS_T} Multi-Factor Student's T"
+    )
+    print("-" * 41 + "\n")
+
+    rng = np.random.default_rng(seed=RNG_SEED)
+
+    # ============================================================
+    # 2. INGEST: OBLIGOR MASTER
+    # ============================================================
+    print("[1/5] Building & Compiling Obligor Master...")
+
+    obligor_uids = np.arange(1, NUM_OBLIGORS + 1, dtype=np.int64)
+    rng.shuffle(obligor_uids)  # Shuffle to prove the compiler sorts it
+
+    # Define models early so we can isolate the Non-Forced-Defaults
+    models = (
+        [JtdModel.COPULA_SF_GAUSSIAN.name] * N_GAUSS
+        + [JtdModel.COPULA_SF_STUDENTS_T.name] * N_T_COP
+        + [JtdModel.FORCED_DEFAULT.name] * N_FORCED_DEFAULT
+        + [JtdModel.INDEPENDENT_BERNOULLI.name] * N_INDEPENDENT_BERNOULLI
+        + [JtdModel.STRESS_REGIME_BERNOULLI.name] * N_STRESS_REGIME_BERNOULLI
+        + [JtdModel.BETA_BINOMIAL.name] * N_BETA_BINOMIAL
+        + [JtdModel.COPULA_MF_GAUSSIAN.name] * N_MF_GAUSSIAN
+        + [JtdModel.COPULA_MF_STUDENTS_T.name] * N_MF_STUDENTS_T
+    )
+    models_array = np.array(models)
+    non_fd_mask = models_array != JtdModel.FORCED_DEFAULT.name
+
+    # --- OBLIGOR PDS --- #
+
+    # Base PDs (Individual random generation, kept for forced defaults)
+    _obligor_pds = rng.lognormal(mean=np.log(0.02), sigma=10.0, size=NUM_OBLIGORS)
+    _obligor_pds = np.clip(_obligor_pds, 0.0001, 0.50)
+
+    # Define a concentration parameter.
+    kappa = 100.0
+
+    # Calculate vectorized alpha and beta arrays per obligor
+    _alphas = _obligor_pds * kappa
+    _betas = (1.0 - _obligor_pds) * kappa
+
+    # Draw completely smooth, continuously overdispersed probabilities
+    _obligor_pds = rng.beta(_alphas, _betas)
+
+    # --- OBLIGOR LGDS --- #
+    _obligor_lgds = rng.uniform(0.25, 0.75, NUM_OBLIGORS)
+
+    # --- APPLY HOMOGENEOUS NON-FORCED DEFAULT OVERRIDE --- #
+    # Generate exactly ONE safe, strictly positive random PD and LGD
+    shared_pd = rng.uniform(0.01, 0.05)  # e.g., a random PD between 1% and 5%
+    shared_lgd = rng.uniform(0.25, 0.75)
+
+    # Apply the single PD and LGD to everyone who is NOT a forced default
+    _obligor_pds[non_fd_mask] = shared_pd
+    _obligor_lgds[non_fd_mask] = shared_lgd
+
+    obligor_df = pd.DataFrame(
+        {
+            "uid": obligor_uids,
+            "pd": _obligor_pds,
+            "lgd": _obligor_lgds,
+            # "rating_id": 0,
+            # "sector_id": 0,
+            # "country_id": 0,
+            # "parent_uid": None,  # Ultimates
+        }
+    )
+
+    obligor_master = compile_obligor_master(obligor_df)
+
+    # ============================================================
+    # 3. INGEST: JTD PORTFOLIO
+    # ============================================================
+    print("[2/5] Building & Compiling JTD Portfolio...")
+
+    models = (
+        [JtdModel.COPULA_SF_GAUSSIAN.name] * N_GAUSS
+        + [JtdModel.COPULA_SF_STUDENTS_T.name] * N_T_COP
+        + [JtdModel.FORCED_DEFAULT.name] * N_FORCED_DEFAULT
+        + [JtdModel.INDEPENDENT_BERNOULLI.name] * N_INDEPENDENT_BERNOULLI
+        + [JtdModel.STRESS_REGIME_BERNOULLI.name] * N_STRESS_REGIME_BERNOULLI
+        + [JtdModel.BETA_BINOMIAL.name] * N_BETA_BINOMIAL
+        + [JtdModel.COPULA_MF_GAUSSIAN.name] * N_MF_GAUSSIAN
+        + [JtdModel.COPULA_MF_STUDENTS_T.name] * N_MF_STUDENTS_T
+    )
+
+    factor_names = (
+        ["GLOBAL_CREDIT"]
+        + [f"IDIO_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)]
+        + ["GLOBAL_CHI"]
+        + [f"U_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)]
+        + ["GLOBAL_STRESS_REGIME"]
+        + ["GLOBAL_BETA_PD"]
+        + list(MF_SECTOR_FACTORS)
+    )
+
+    # --- CALIBRATE THE BETA BINOMIAL PARAMETERS ---
+    _obligor_mean_pd = float(shared_pd)
+
+    # Guardrail 1: Define the absolute mathematical ceiling for variance
+    max_theoretical_var = _obligor_mean_pd * (1.0 - _obligor_mean_pd)
+
+    # Guardrail 2: Inject synthetic variance to prevent divide-by-zero.
+    # Because all non-forced PDs are identical, actual variance is 0.0.
+    # We set variance to 2% of the maximum limit to create moderate contagion.
+    _obligor_var_pd = 0.02 * max_theoretical_var
+
+    total = (max_theoretical_var / _obligor_var_pd) - 1
+    alpha_mom = _obligor_mean_pd * total
+    beta_mom = (1.0 - _obligor_mean_pd) * total
+
+    # Guardrail 3: Prevent alpha < 1.0 which causes unstable U-shaped density spikes
+    if alpha_mom < 1.0:
+        alpha_mom = 1.5
+        beta_mom = alpha_mom * ((1.0 - _obligor_mean_pd) / _obligor_mean_pd)
+
+    print(
+        f"\nCalibrated Beta-Binomial parameters to match shared obligor PD ({100 * _obligor_mean_pd:.2f}%):"
+        f"\n- alpha: {alpha_mom:>8.2f}"
+        f"\n- beta:  {beta_mom:>8.2f}"
+    )
+
+    factor_universe_df = pd.DataFrame(
+        {
+            "factor_id": range(len(factor_names)),
+            "factor_name": factor_names,
+            "factor_kind": [
+                "SYSTEMIC"
+                if (n == "GLOBAL_CREDIT" or n.startswith("SECTOR_"))
+                else "CHI"
+                if n == "GLOBAL_CHI"
+                else "UNIFORM"
+                if n.startswith("U_")
+                else "STRESS_INDICATOR"
+                if n == "GLOBAL_STRESS_REGIME"
+                else "BETA_PD"
+                if n == "GLOBAL_BETA_PD"
+                else "IDIOSYNCRATIC"
+                for n in factor_names
+            ],
+            "nu": [
+                GLOBAL_T_COP_NU if n == "GLOBAL_CHI" else None for n in factor_names
+            ],
+            # Use the new shape parameters we locked in earlier to avoid beta naming collision
+            "alpha": [
+                alpha_mom if n == "GLOBAL_BETA_PD" else None for n in factor_names
+            ],
+            "beta": [beta_mom if n == "GLOBAL_BETA_PD" else None for n in factor_names],
+        }
+    )
+    universe = compile_credit_factor_universe(factor_universe_df)
+
+    jtd_df = pd.DataFrame(
+        {
+            "uid": obligor_uids,  # Unsorted, matches the raw frame
+            "instrument": models,
+            "factor_loading": rng.uniform(0.1, 0.5, NUM_OBLIGORS),
+            "systemic_factor": "GLOBAL_CREDIT",  # Broadcast to all
+            "idiosyncratic_factor": [
+                f"IDIO_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)
+            ],
+            "uniform_factor": [f"U_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)],
+            "stress_regime_factor": "GLOBAL_STRESS_REGIME",
+            "stress_pd_multiplier": rng.uniform(1.25, 3.0, NUM_OBLIGORS),
+            "beta_factor": "GLOBAL_BETA_PD",  # Will broadcast. Non-Beta-Binomial builders safely ignore it.
+        }
+    )
+
+    # Add T-Copula specific columns
+    chi_factors = (
+        [None] * N_GAUSS
+        + ["GLOBAL_CHI"] * N_T_COP
+        + [None] * N_FORCED_DEFAULT
+        + [None] * N_INDEPENDENT_BERNOULLI
+        + [None] * N_STRESS_REGIME_BERNOULLI
+        + [None] * N_BETA_BINOMIAL
+        + [None] * N_MF_GAUSSIAN
+        + ["GLOBAL_CHI"] * N_MF_STUDENTS_T
+    )
+    nus = (
+        [None] * N_GAUSS
+        + [GLOBAL_T_COP_NU] * N_T_COP
+        + [None] * N_FORCED_DEFAULT
+        + [None] * N_INDEPENDENT_BERNOULLI
+        + [None] * N_STRESS_REGIME_BERNOULLI
+        + [None] * N_BETA_BINOMIAL
+        + [None] * N_MF_GAUSSIAN
+        + [GLOBAL_T_COP_NU] * N_MF_STUDENTS_T
+    )
+
+    jtd_df["chi_squared_factor"] = chi_factors
+    jtd_df["nu"] = nus
+
+    # --- MULTI-FACTOR LOADINGS (long format, one row per obligor x systemic) ---
+    # Every MF obligor loads on GLOBAL_CREDIT plus one sector; sum beta^2 < 1
+    # (room for the idiosyncratic residual), with the sector assigned round-robin.
+    mf_uids = jtd_df.loc[
+        jtd_df["instrument"] == JtdModel.COPULA_MF_GAUSSIAN.name, "uid"
+    ].to_numpy()
+    _n_mf = mf_uids.shape[0]
+    _global_betas = rng.uniform(0.20, 0.40, _n_mf)
+    _sector_betas = rng.uniform(0.30, 0.60, _n_mf)
+    _sectors = np.array(
+        [MF_SECTOR_FACTORS[i % len(MF_SECTOR_FACTORS)] for i in range(_n_mf)],
+        dtype=object,
+    )
+    mf_loadings_df = pd.DataFrame(
+        {
+            "obligor_uid": np.concatenate([mf_uids, mf_uids]),
+            "factor_name": np.concatenate(
+                [np.array(["GLOBAL_CREDIT"] * _n_mf, dtype=object), _sectors]
+            ),
+            "factor_loading": np.concatenate([_global_betas, _sector_betas]),
+        }
+    )
+
+    # Multi-factor Student-t obligors load the same way (GLOBAL_CREDIT + one
+    # sector); their sector here must match the one driving their chi factor.
+    _mft_sectors = [
+        MF_SECTOR_FACTORS[i % len(MF_SECTOR_FACTORS)] for i in range(N_MF_STUDENTS_T)
+    ]
+    mft_uids = jtd_df.loc[
+        jtd_df["instrument"] == JtdModel.COPULA_MF_STUDENTS_T.name, "uid"
+    ].to_numpy()
+    _n_mft = mft_uids.shape[0]
+    _mft_global_betas = rng.uniform(0.20, 0.40, _n_mft)
+    _mft_sector_betas = rng.uniform(0.30, 0.60, _n_mft)
+    _mft_sectors_arr = np.array(_mft_sectors, dtype=object)
+    mft_loadings_df = pd.DataFrame(
+        {
+            "obligor_uid": np.concatenate([mft_uids, mft_uids]),
+            "factor_name": np.concatenate(
+                [np.array(["GLOBAL_CREDIT"] * _n_mft, dtype=object), _mft_sectors_arr]
+            ),
+            "factor_loading": np.concatenate([_mft_global_betas, _mft_sector_betas]),
+        }
+    )
+    mf_loadings_df = pd.concat([mf_loadings_df, mft_loadings_df], ignore_index=True)
+
+    print_df(
+        jtd_df.head(n=10),
+        title="Sample (head) JTD Portfolio DataFrame (Unsorted)",
+    )
+    print_df(
+        jtd_df.tail(n=10),
+        title="Sample (tail) JTD Portfolio DataFrame (Unsorted)",
+    )
+
+    bundle = JtdIngestBundle.from_instrument_frame(
+        jtd_df, mf_loadings_df=mf_loadings_df
+    )
+    _masters = CompiledCreditMasters(
+        obligor_master=obligor_master,
+        factor_universe=universe,
+    )
+    compiled_portfolio = compile_jtd_portfolio(
+        bundle=bundle,
+        masters=_masters,
+    )
+
+    compiled_portfolio.summary()
+
+    # ============================================================
+    # 4. SYNTHESIZE EAD (ALIGNED TO COMPILED PORTFOLIO)
+    # ============================================================
+    print("[3/5] Generating Exposure Matrix...")
+
+    ead_by_obligor = np.empty(
+        (NUM_OBLIGORS, NUM_SCENARIOS), dtype=np.float64, order="C"
+    )
+
+    base_ead = rng.uniform(1e6, 10e6, (NUM_OBLIGORS, 1))
+    ead_by_obligor[:] = base_ead  # Broadcast across scenarios
+
+    ead_by_obligor *= rng.lognormal(
+        mean=0.0, sigma=0.1, size=(NUM_OBLIGORS, NUM_SCENARIOS)
+    )
+
+    # ============================================================
+    # 5. SYNTHESIZE FACTOR MATRIX
+    # ============================================================
+    print("[4/5] Generating Credit Factor Matrix...")
+
+    factor_generator = MixedCreditFactorGenerator.from_universe(
+        universe,
+        total_scenarios=NUM_SCENARIOS,
+        seed=RNG_SEED,
+        stress_p_by_uix={int(u): 0.05 for u in universe.stress_indicator_uix},
+    )
+    factor_matrix = build_credit_factor_matrix(
+        factor_generator.iter_batches(batch_size=min(NUM_SCENARIOS, 25_000)),
+        num_factors=universe.n_factors,
+        num_scenarios=NUM_SCENARIOS,
+    )
+
+    # ============================================================
+    # 6. ENGINE EXECUTION
+    # ============================================================
+    print("[5/5] Executing `run_jtd` Engine...")
+
+    start_time = time.perf_counter()
+
+    jtd_result = run_jtd(
+        jtd_portfolio=compiled_portfolio,
+        ead_by_obligor=ead_by_obligor,
+        credit_factors=factor_matrix,
+    )
+
+    elapsed = time.perf_counter() - start_time
+    print(
+        f"Engine completed {NUM_OBLIGORS * NUM_SCENARIOS:,} "
+        f"evaluations in {elapsed:.4f}s"
+    )
+
+    # ============================================================
+    # 7. METRICS & ANALYSIS
+    # ============================================================
+    print("\n--- Portfolio Credit Risk Metrics ---")
+
+    portfolio_losses = np.sum(jtd_result.loss, axis=0)
+
+    expected_loss = np.mean(portfolio_losses)
+    credit_var_99 = np.quantile(portfolio_losses, 0.99)
+    credit_es_99 = portfolio_losses[portfolio_losses >= credit_var_99].mean()
+
+    print(f"Expected Loss (EL):  ${expected_loss:,.2f}")
+    print(f"Credit VaR (99.0%):  ${credit_var_99:,.2f}")
+    print(f"Worst Scenario Loss: ${np.max(portfolio_losses):,.2f}")
+    print(f"Credit ES (99.0%): ${credit_es_99:,.2f}")
+
+    # 8. PLOTS
+    _plot_portfolio_losses(
+        portfolio_losses,
+        expected_loss,
+        credit_var_99,
+        np.max(portfolio_losses),
+        credit_es_99,
+    )
+
+    # ============================================================
+    # DEFAULT STATS
+    # ============================================================
+
+    default_indicators = jtd_result.loss > 0.0
+    defaults_per_scenario = default_indicators.sum(axis=0)
+
+    print("\n--- Default Statistics ---")
+    print(f"Average Defaults: {defaults_per_scenario.mean():.2f}")
+    print(f"99% Default Count: {np.quantile(defaults_per_scenario, 0.99):.0f}")
+    print(f"Max Defaults:      {defaults_per_scenario.max():.0f}")
+
+    print("\n--- Default Clustering Statistics ---")
+    print(f"Average Defaults:      {defaults_per_scenario.mean():.2f}")
+    print(f"95% Default Count:     {np.quantile(defaults_per_scenario, 0.95):.0f}")
+    print(f"99% Default Count:     {np.quantile(defaults_per_scenario, 0.99):.0f}")
+    print(f"99.9% Default Count:   {np.quantile(defaults_per_scenario, 0.999):.0f}")
+    print(f"Max Defaults:          {defaults_per_scenario.max():.0f}")
+
+    # ============================================================
+    # VaR Attribution
+    # ============================================================
+
+    var_idx = np.argmin(np.abs(portfolio_losses - credit_var_99))
+    obligor_contributions = jtd_result.loss[:, var_idx]
+    sorted_idx = np.argsort(obligor_contributions)[::-1]
+
+    top_n = 10
+    print(f"\n--- Top {top_n} Contributors to 99% Credit VaR ---")
+    for rank, idx in enumerate(sorted_idx[:top_n], start=1):
+        uid = compiled_portfolio.obligor_uids[idx]
+        contrib = obligor_contributions[idx]
+        print(f"{rank:2d}. Obligor {uid:<4d} Contribution: ${contrib:,.2f}")
+
+    print(f"\nTotal Portfolio Loss in VaR Scenario: ${portfolio_losses[var_idx]:,.2f}")
+
+    # ============================================================
+    # Expected Shortfall (99%) Attribution
+    # ============================================================
+
+    tail_mask = portfolio_losses >= credit_var_99
+    obligor_contributions = jtd_result.loss[:, tail_mask].mean(axis=1)
+    sorted_idx = np.argsort(obligor_contributions)[::-1]
+
+    top_n = 10
+    print(f"\n--- Top {top_n} Contributors to 99% Credit Expected Shortfall ---")
+    for rank, idx in enumerate(sorted_idx[:top_n], start=1):
+        uid = compiled_portfolio.obligor_uids[idx]
+        contrib = obligor_contributions[idx]
+        print(f"{rank:2d}. Obligor {uid:<4d} Contribution: ${contrib:,.2f}")
+
+    credit_es_99 = portfolio_losses[tail_mask].mean()
+    print(f"\n99% Credit Expected Shortfall: ${credit_es_99:,.2f}")
+
+    top10_share = (
+        obligor_contributions[sorted_idx[:10]].sum() / obligor_contributions.sum()
+    )
+    print(f"Top 10 names explain {100 * top10_share:.1f}% of Credit Expected Shortfall")
+
+    # ============================================================
+    # MODEL COMPARISON: FORCED-DEFAULT VS OTHERS
+    # ============================================================
+
+    model_series = jtd_df.set_index("uid")["instrument"]
+    aligned_models = model_series.loc[
+        compiled_portfolio.obligor_uids.tolist()
+    ].to_numpy()
+
+    forced_default_mask = aligned_models == JtdModel.FORCED_DEFAULT.name
+    independent_bernoulli_mask = aligned_models == JtdModel.INDEPENDENT_BERNOULLI.name
+    stress_regime_bernoulli_mask = (
+        aligned_models == JtdModel.STRESS_REGIME_BERNOULLI.name
+    )
+    beta_binomial_mask = aligned_models == JtdModel.BETA_BINOMIAL.name
+    gaussian_mask = aligned_models == JtdModel.COPULA_SF_GAUSSIAN.name
+    t_mask = aligned_models == JtdModel.COPULA_SF_STUDENTS_T.name
+    mf_gaussian_mask = aligned_models == JtdModel.COPULA_MF_GAUSSIAN.name
+    mf_students_t_mask = aligned_models == JtdModel.COPULA_MF_STUDENTS_T.name
+
+    forced_default_losses = jtd_result.loss[forced_default_mask].sum(axis=0)
+    independent_bernoulli_losses = jtd_result.loss[independent_bernoulli_mask].sum(
+        axis=0
+    )
+    stress_regime_bernoulli_losses = jtd_result.loss[stress_regime_bernoulli_mask].sum(
+        axis=0
+    )
+    beta_binomial_losses = jtd_result.loss[beta_binomial_mask].sum(axis=0)
+    gaussian_losses = jtd_result.loss[gaussian_mask].sum(axis=0)
+    t_losses = jtd_result.loss[t_mask].sum(axis=0)
+    mf_gaussian_losses = jtd_result.loss[mf_gaussian_mask].sum(axis=0)
+    mf_students_t_losses = jtd_result.loss[mf_students_t_mask].sum(axis=0)
+
+    def _calc_metrics(losses):
+        el = losses.mean()
+        var = np.quantile(losses, 0.99)
+        es = losses[losses >= var].mean()
+        return el, var, es
+
+    fd_el, fd_var, fd_es = _calc_metrics(forced_default_losses)
+    ib_el, ib_var, ib_es = _calc_metrics(independent_bernoulli_losses)
+    srb_el, srb_var, srb_es = _calc_metrics(stress_regime_bernoulli_losses)
+    bb_el, bb_var, bb_es = _calc_metrics(beta_binomial_losses)
+    gauss_el, gauss_var, gauss_es = _calc_metrics(gaussian_losses)
+    t_el, t_var, t_es = _calc_metrics(t_losses)
+    mfg_el, mfg_var, mfg_es = _calc_metrics(mf_gaussian_losses)
+    mft_el, mft_var, mft_es = _calc_metrics(mf_students_t_losses)
+
+    print("\n" + "=" * 91)
+    print(f"{'MODEL COMPARISON SUMMARY':^91}")
+    print("=" * 91)
+    print(
+        f"{'Model Type':<26} | {'Expected Loss (EL)':>18} | {'99% Credit VaR':>18} | {'99% Credit ES':>18}"
+    )
+    print("-" * 91)
+    print(
+        f"{'Forced-Default':<26} | ${fd_el:>17,.2f} | ${fd_var:>17,.2f} | ${fd_es:>17,.2f}"
+    )
+    print(
+        f"{'Independent Bernoulli':<26} | ${ib_el:>17,.2f} | ${ib_var:>17,.2f} | ${ib_es:>17,.2f}"
+    )
+    print(
+        f"{'Stress Regime Bernoulli':<26} | ${srb_el:>17,.2f} | ${srb_var:>17,.2f} | ${srb_es:>17,.2f}"
+    )
+    print(
+        f"{'Beta Binomial':<26} | ${bb_el:>17,.2f} | ${bb_var:>17,.2f} | ${bb_es:>17,.2f}"
+    )
+    print(
+        f"{'Gaussian Copula':<26} | ${gauss_el:>17,.2f} | ${gauss_var:>17,.2f} | ${gauss_es:>17,.2f}"
+    )
+    print(
+        f"{'Student-t Copula':<26} | ${t_el:>17,.2f} | ${t_var:>17,.2f} | ${t_es:>17,.2f}"
+    )
+    print(
+        f"{'Multi-Factor Gaussian':<26} | ${mfg_el:>17,.2f} | ${mfg_var:>17,.2f} | ${mfg_es:>17,.2f}"
+    )
+    print(
+        f"{'Multi-Factor Student-t':<26} | ${mft_el:>17,.2f} | ${mft_var:>17,.2f} | ${mft_es:>17,.2f}"
+    )
+
+    print("=" * 91)
+
+    # --- PLOT DISTRIBUTIONS PER MODEL ---
+    model_losses_dict = {
+        "Forced-Default": forced_default_losses,
+        "Independent Bernoulli": independent_bernoulli_losses,
+        "Stress Regime Bernoulli": stress_regime_bernoulli_losses,
+        "Beta Binomial": beta_binomial_losses,
+        "Gaussian Copula": gaussian_losses,
+        "Student-t Copula": t_losses,
+        "Multi-Factor Gaussian": mf_gaussian_losses,
+        "Multi-Factor Student-t": mf_students_t_losses,
+    }
+    _plot_model_distributions(model_losses_dict)
+
+    print_success_message()
+
+
+if __name__ == "__main__":
+    run_demo()
+```
+</file>
+
+<file_summary>
+path: riskquant\scripts\demos\credit\jtd\e2e\demo_e2e_full_jtd_portfolio_mf_chi.py
+module_docstring: End-to-End Mixed JTD Credit Engine Demo.
+
+Exercises the full JTD model set in one portfolio (forced-default, independent...
+functions: _plot_model_distributions, _plot_portfolio_losses, run_demo
+imports:
+- riskquant.constants
+- riskquant.credit.factors.simulate.base
+- riskquant.credit.factors.simulate.mixed
+- riskquant.credit.jtd.engine
+- riskquant.credit.jtd.ingest.bundle
+- riskquant.credit.jtd.ingest.compile
+- riskquant.credit.jtd.models
+- riskquant.credit.masters.cross_master.compiled
+- riskquant.credit.masters.factor_universe.ingest
+- riskquant.credit.masters.obligors.ingest
+- riskquant.utils.printer
+</file_summary>
+
+<file path="riskquant\scripts\demos\credit\jtd\e2e\demo_e2e_full_jtd_portfolio_mf_chi.py">
+```python
+# scripts/demos/credit/jtd/e2e/demo_e2e_full_jtd_portfolio_mf_chi.py
 """
 End-to-End Mixed JTD Credit Engine Demo.
 
@@ -1420,6 +2248,733 @@ def run_demo() -> None:
     t_losses = jtd_result.loss[t_mask].sum(axis=0)
     mf_gaussian_losses = jtd_result.loss[mf_gaussian_mask].sum(axis=0)
     mf_students_t_losses = jtd_result.loss[mf_students_t_mask].sum(axis=0)
+
+    def _calc_metrics(losses):
+        el = losses.mean()
+        var = np.quantile(losses, 0.99)
+        es = losses[losses >= var].mean()
+        return el, var, es
+
+    fd_el, fd_var, fd_es = _calc_metrics(forced_default_losses)
+    ib_el, ib_var, ib_es = _calc_metrics(independent_bernoulli_losses)
+    srb_el, srb_var, srb_es = _calc_metrics(stress_regime_bernoulli_losses)
+    bb_el, bb_var, bb_es = _calc_metrics(beta_binomial_losses)
+    gauss_el, gauss_var, gauss_es = _calc_metrics(gaussian_losses)
+    t_el, t_var, t_es = _calc_metrics(t_losses)
+    mfg_el, mfg_var, mfg_es = _calc_metrics(mf_gaussian_losses)
+    mft_el, mft_var, mft_es = _calc_metrics(mf_students_t_losses)
+
+    print("\n" + "=" * 91)
+    print(f"{'MODEL COMPARISON SUMMARY':^91}")
+    print("=" * 91)
+    print(
+        f"{'Model Type':<26} | {'Expected Loss (EL)':>18} | {'99% Credit VaR':>18} | {'99% Credit ES':>18}"
+    )
+    print("-" * 91)
+    print(
+        f"{'Forced-Default':<26} | ${fd_el:>17,.2f} | ${fd_var:>17,.2f} | ${fd_es:>17,.2f}"
+    )
+    print(
+        f"{'Independent Bernoulli':<26} | ${ib_el:>17,.2f} | ${ib_var:>17,.2f} | ${ib_es:>17,.2f}"
+    )
+    print(
+        f"{'Stress Regime Bernoulli':<26} | ${srb_el:>17,.2f} | ${srb_var:>17,.2f} | ${srb_es:>17,.2f}"
+    )
+    print(
+        f"{'Beta Binomial':<26} | ${bb_el:>17,.2f} | ${bb_var:>17,.2f} | ${bb_es:>17,.2f}"
+    )
+    print(
+        f"{'Gaussian Copula':<26} | ${gauss_el:>17,.2f} | ${gauss_var:>17,.2f} | ${gauss_es:>17,.2f}"
+    )
+    print(
+        f"{'Student-t Copula':<26} | ${t_el:>17,.2f} | ${t_var:>17,.2f} | ${t_es:>17,.2f}"
+    )
+    print(
+        f"{'Multi-Factor Gaussian':<26} | ${mfg_el:>17,.2f} | ${mfg_var:>17,.2f} | ${mfg_es:>17,.2f}"
+    )
+    print(
+        f"{'Multi-Factor Student-t':<26} | ${mft_el:>17,.2f} | ${mft_var:>17,.2f} | ${mft_es:>17,.2f}"
+    )
+
+    print("=" * 91)
+
+    # --- PLOT DISTRIBUTIONS PER MODEL ---
+    model_losses_dict = {
+        "Forced-Default": forced_default_losses,
+        "Independent Bernoulli": independent_bernoulli_losses,
+        "Stress Regime Bernoulli": stress_regime_bernoulli_losses,
+        "Beta Binomial": beta_binomial_losses,
+        "Gaussian Copula": gaussian_losses,
+        "Student-t Copula": t_losses,
+        "Multi-Factor Gaussian": mf_gaussian_losses,
+        "Multi-Factor Student-t": mf_students_t_losses,
+    }
+    _plot_model_distributions(model_losses_dict)
+
+    print_success_message()
+
+
+if __name__ == "__main__":
+    run_demo()
+```
+</file>
+
+<file_summary>
+path: riskquant\scripts\demos\credit\jtd\e2e\demo_e2e_full_jtd_portfolio_mf_chi_streaming.py
+module_docstring: End-to-End Mixed JTD Credit Engine Demo.
+
+Exercises the full JTD model set in one portfolio (forced-default, independent...
+functions: _plot_model_distributions, _plot_portfolio_losses, run_demo
+imports:
+- riskquant.constants
+- riskquant.credit.aggregate.summary
+- riskquant.credit.factors.simulate.mixed
+- riskquant.credit.jtd.ingest.bundle
+- riskquant.credit.jtd.ingest.compile
+- riskquant.credit.jtd.models
+- riskquant.credit.jtd.streaming
+- riskquant.credit.masters.cross_master.compiled
+- riskquant.credit.masters.factor_universe.ingest
+- riskquant.credit.masters.obligors.ingest
+- riskquant.utils.printer
+</file_summary>
+
+<file path="riskquant\scripts\demos\credit\jtd\e2e\demo_e2e_full_jtd_portfolio_mf_chi_streaming.py">
+```python
+# scripts/demos/credit/jtd/e2e/demo_e2e_full_jtd_portfolio_mf_chi_streaming.py
+"""
+End-to-End Mixed JTD Credit Engine Demo.
+
+Exercises the full JTD model set in one portfolio (forced-default, independent
+and stress-regime Bernoulli, beta-binomial, single-factor Gaussian and Student-t
+copulas, and the multi-factor Gaussian and Student-t copulas) through the
+bundle ingest path:
+    Raw DataFrames -> JtdIngestBundle -> Compilation -> Factor Generator
+    -> Streaming Engine (batched, no full (N, S)) -> Metrics
+
+"""
+
+from __future__ import annotations
+
+import time
+
+import numpy as np
+import pandas as pd
+
+from riskquant.constants import RNG_SEED
+from riskquant.credit.aggregate.summary import (
+    streaming_model_tail_var_es,
+    summarize_streaming_jtd_loss,
+)
+from riskquant.credit.factors.simulate.mixed import MixedCreditFactorGenerator
+from riskquant.credit.jtd.ingest.bundle import JtdIngestBundle
+from riskquant.credit.jtd.ingest.compile import compile_jtd_portfolio
+from riskquant.credit.jtd.models import JtdModel
+from riskquant.credit.jtd.streaming import run_jtd_streaming_from_generator
+from riskquant.credit.masters.cross_master.compiled import (
+    CompiledCreditMasters,
+)
+from riskquant.credit.masters.factor_universe.ingest import (
+    compile_credit_factor_universe,
+)
+from riskquant.credit.masters.obligors.ingest import compile_obligor_master
+from riskquant.utils.printer import print_calling_file, print_df, print_success_message
+
+# ============================================================
+# 1. SETUP & CONFIGURATION
+# ============================================================
+
+NUM_OBLIGORS = 1_000
+NUM_SCENARIOS = 100_000
+
+# Distribution of models
+N_FORCED_DEFAULT = int(0.05 * NUM_OBLIGORS)  # Forced Default
+_OBLIGORS_REMAINING = NUM_OBLIGORS - N_FORCED_DEFAULT
+
+# Distribute the remaining across 5 models
+_FACTOR = 1 / 7
+N_INDEPENDENT_BERNOULLI = int(_FACTOR * _OBLIGORS_REMAINING)  # Independent Bernoulli
+N_STRESS_REGIME_BERNOULLI = int(_FACTOR * _OBLIGORS_REMAINING)  # Stress Regime
+N_BETA_BINOMIAL = int(_FACTOR * _OBLIGORS_REMAINING)  # Beta Binomial
+N_GAUSS = int(_FACTOR * _OBLIGORS_REMAINING)  # SF Gaussian Copula
+N_T_COP = int(_FACTOR * _OBLIGORS_REMAINING)  # SF Student-t Copula
+N_MF_GAUSSIAN = int(_FACTOR * _OBLIGORS_REMAINING)  # Multi-Factor Gaussian Copula
+N_MF_STUDENTS_T = int(_FACTOR * _OBLIGORS_REMAINING)  # Multi-Factor Student's T Copula
+
+_ASSINGNED = (
+    N_FORCED_DEFAULT
+    + N_INDEPENDENT_BERNOULLI
+    + N_STRESS_REGIME_BERNOULLI
+    + N_BETA_BINOMIAL
+    + N_GAUSS
+    + N_T_COP
+    + N_MF_GAUSSIAN
+    + N_MF_STUDENTS_T
+)
+
+# Correct rounding remainders if any (not strictly needed for 1000, but good practice)
+if _ASSINGNED != NUM_OBLIGORS:
+    N_BETA_BINOMIAL += NUM_OBLIGORS - _ASSINGNED
+
+GLOBAL_T_COP_NU = 5.0  # Degrees of freedom for the common T-Copula chi-square factor
+
+# Systemic sector factors the multi-factor obligors load on (independent normals
+# in the universe; any cross-sector correlation is absorbed into the loadings).
+MF_SECTOR_FACTORS = ("SECTOR_ENERGY", "SECTOR_FINANCIALS", "SECTOR_TECH")
+
+MF_CHI_SECTOR_NUS = {
+    "CHI_SECTOR_ENERGY": 5.0,
+    "CHI_SECTOR_FINANCIALS": 5.0,
+    "CHI_SECTOR_TECH": 5.0,
+}
+
+
+def _plot_portfolio_losses(
+    portfolio_losses: np.ndarray,
+    expected_loss: float,
+    credit_var_99: float,
+    worst_loss: float,
+    credit_es_99: float,
+) -> None:
+    """Plots the aggregated portfolio loss distribution and risk metrics."""
+    import matplotlib.pyplot as plt
+    import matplotlib.ticker as ticker
+
+    plt.style.use("dark_background")
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    losses_m = portfolio_losses / 1e6
+    el_m = expected_loss / 1e6
+    credit_var_99_m = credit_var_99 / 1e6
+    worst_m = worst_loss / 1e6
+
+    ax.hist(
+        losses_m,
+        bins=150,
+        color="#3a7ca5",
+        edgecolor="#294d69",
+        alpha=0.8,
+        density=True,
+    )
+
+    ax.axvline(
+        el_m,
+        color="#2ca02c",
+        linestyle="dashed",
+        linewidth=2.5,
+        label=f"Expected Loss (EL): ${el_m:,.1f}M",
+    )
+    ax.axvline(
+        credit_var_99_m,
+        color="#d62728",
+        linestyle="solid",
+        linewidth=2.5,
+        label=f"99% Credit VaR: ${credit_var_99_m:,.1f}M",
+    )
+
+    ax.axvline(
+        credit_es_99 / 1e6,
+        color="orange",
+        linewidth=2.5,
+        label=f"99% Credit ES: ${credit_es_99 / 1e6:,.1f}M",
+    )
+
+    ax.set_title("E2E JTD Portfolio Loss Distribution", fontsize=14, pad=15)
+    ax.set_xlabel("Simulated Portfolio Loss ($ Millions)", fontsize=12)
+    ax.set_ylabel("Density", fontsize=12)
+
+    ax.xaxis.set_major_formatter(ticker.StrMethodFormatter("${x:,.0f}M"))
+    ax.grid(True, alpha=0.15)
+    ax.legend(loc="upper right", fontsize=11)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def _plot_model_distributions(model_losses: dict) -> None:
+    """Plots the loss distributions of the individual JTD models on separate axes."""
+    import matplotlib.pyplot as plt
+    import matplotlib.ticker as ticker
+
+    plt.style.use("dark_background")
+    # Grid sized to the model count (4 per row).
+    n_models = len(model_losses)
+    ncols = 4
+    nrows = (n_models + ncols - 1) // ncols
+    fig, axes = plt.subplots(
+        nrows=nrows, ncols=ncols, figsize=(6 * ncols, 5 * nrows), layout="constrained"
+    )
+    fig.suptitle("Component Loss Distributions by Model", fontsize=18)
+
+    axes = axes.flatten()
+    for ax in axes[n_models:]:
+        ax.set_visible(False)
+
+    for ax, (model_name, losses) in zip(axes, model_losses.items()):
+        losses_m = losses / 1e6
+
+        # Plot the histogram (gracefully handling zero-variance/no-loss edge cases)
+        ax.hist(
+            losses_m,
+            bins=100 if np.var(losses_m) > 0 else 10,
+            color="#3a7ca5",
+            edgecolor="#294d69",
+            alpha=0.8,
+            density=True,
+        )
+
+        # Calculate metrics for the lines
+        el_m = losses_m.mean()
+        var_99_m = np.quantile(losses_m, 0.99)
+        es_99_m = (
+            losses_m[losses_m >= var_99_m].mean()
+            if np.any(losses_m >= var_99_m)
+            else 0.0
+        )
+
+        # Draw risk metric lines
+        ax.axvline(
+            el_m,
+            color="#2ca02c",
+            linestyle="dashed",
+            linewidth=2.5,
+            label=f"EL: ${el_m:,.1f}M",
+        )
+        ax.axvline(
+            var_99_m,
+            color="#d62728",
+            linestyle="solid",
+            linewidth=2.5,
+            label=f"99% VaR: ${var_99_m:,.1f}M",
+        )
+        ax.axvline(
+            es_99_m,
+            color="orange",
+            linestyle="solid",
+            linewidth=2.5,
+            label=f"99% ES: ${es_99_m:,.1f}M",
+        )
+
+        ax.set_title(model_name, fontsize=14, pad=10)
+        ax.set_xlabel("Loss ($ Millions)", fontsize=10)
+        ax.set_ylabel("Density", fontsize=10)
+        ax.xaxis.set_major_formatter(ticker.StrMethodFormatter("${x:,.0f}M"))
+
+        ax.grid(True, alpha=0.15)
+        ax.legend(loc="upper right", fontsize=10)
+
+    # Call standard tight_layout first to handle the internal subplot labels
+    plt.tight_layout()
+
+    # Then explicitly carve out 10% of the top of the figure for the suptitle,
+    # and add a bit of breathing room between the rows/columns.
+    fig.subplots_adjust(top=0.90, hspace=0.3, wspace=0.2)
+
+    plt.show()
+
+
+def run_demo() -> None:
+    print_calling_file()
+    print("--- S-TIER COPULA JTD ENGINE E2E DEMO ---")
+    print(f"Obligors:  {NUM_OBLIGORS}")
+    print(f"Scenarios: {NUM_SCENARIOS:,}")
+    print(
+        f"Model Mix: \n"
+        f" - {N_FORCED_DEFAULT} Forced-Default \n"
+        f" - {N_INDEPENDENT_BERNOULLI} Independent Bernoulli \n"
+        f" - {N_STRESS_REGIME_BERNOULLI} Stress Regime Bernoulli \n"
+        f" - {N_BETA_BINOMIAL} Beta Binomial \n"
+        f" - {N_GAUSS} Single-Factor Gaussian \n"
+        f" - {N_T_COP} Single-Factor Student-t \n"
+        f" - {N_MF_GAUSSIAN} Multi-Factor Gaussian \n"
+        f" - {N_MF_STUDENTS_T} Multi-Factor Student's T"
+    )
+    print("-" * 41 + "\n")
+
+    rng = np.random.default_rng(seed=RNG_SEED)
+
+    # ============================================================
+    # 2. INGEST: OBLIGOR MASTER
+    # ============================================================
+    print("[1/5] Building & Compiling Obligor Master...")
+
+    obligor_uids = np.arange(1, NUM_OBLIGORS + 1, dtype=np.int64)
+    rng.shuffle(obligor_uids)  # Shuffle to prove the compiler sorts it
+
+    # Define models early so we can isolate the Non-Forced-Defaults
+    models = (
+        [JtdModel.COPULA_SF_GAUSSIAN.name] * N_GAUSS
+        + [JtdModel.COPULA_SF_STUDENTS_T.name] * N_T_COP
+        + [JtdModel.FORCED_DEFAULT.name] * N_FORCED_DEFAULT
+        + [JtdModel.INDEPENDENT_BERNOULLI.name] * N_INDEPENDENT_BERNOULLI
+        + [JtdModel.STRESS_REGIME_BERNOULLI.name] * N_STRESS_REGIME_BERNOULLI
+        + [JtdModel.BETA_BINOMIAL.name] * N_BETA_BINOMIAL
+        + [JtdModel.COPULA_MF_GAUSSIAN.name] * N_MF_GAUSSIAN
+        + [JtdModel.COPULA_MF_STUDENTS_T.name] * N_MF_STUDENTS_T
+    )
+    models_array = np.array(models)
+    non_fd_mask = models_array != JtdModel.FORCED_DEFAULT.name
+
+    # --- OBLIGOR PDS --- #
+
+    # Base PDs (Individual random generation, kept for forced defaults)
+    _obligor_pds = rng.lognormal(mean=np.log(0.02), sigma=10.0, size=NUM_OBLIGORS)
+    _obligor_pds = np.clip(_obligor_pds, 0.0001, 0.50)
+
+    # Define a concentration parameter.
+    kappa = 100.0
+
+    # Calculate vectorized alpha and beta arrays per obligor
+    _alphas = _obligor_pds * kappa
+    _betas = (1.0 - _obligor_pds) * kappa
+
+    # Draw completely smooth, continuously overdispersed probabilities
+    _obligor_pds = rng.beta(_alphas, _betas)
+
+    # --- OBLIGOR LGDS --- #
+    _obligor_lgds = rng.uniform(0.25, 0.75, NUM_OBLIGORS)
+
+    # --- APPLY HOMOGENEOUS NON-FORCED DEFAULT OVERRIDE --- #
+    # Generate exactly ONE safe, strictly positive random PD and LGD
+    shared_pd = rng.uniform(0.01, 0.05)  # e.g., a random PD between 1% and 5%
+    shared_lgd = rng.uniform(0.25, 0.75)
+
+    # Apply the single PD and LGD to everyone who is NOT a forced default
+    _obligor_pds[non_fd_mask] = shared_pd
+    _obligor_lgds[non_fd_mask] = shared_lgd
+
+    obligor_df = pd.DataFrame(
+        {
+            "uid": obligor_uids,
+            "pd": _obligor_pds,
+            "lgd": _obligor_lgds,
+            "rating_id": 0,
+            "sector_id": 0,
+            "country_id": 0,
+            "parent_uid": None,  # Ultimates
+        }
+    )
+
+    obligor_master = compile_obligor_master(obligor_df)
+
+    # ============================================================
+    # 3. INGEST: JTD PORTFOLIO
+    # ============================================================
+    print("[2/5] Building & Compiling JTD Portfolio...")
+
+    models = (
+        [JtdModel.COPULA_SF_GAUSSIAN.name] * N_GAUSS
+        + [JtdModel.COPULA_SF_STUDENTS_T.name] * N_T_COP
+        + [JtdModel.FORCED_DEFAULT.name] * N_FORCED_DEFAULT
+        + [JtdModel.INDEPENDENT_BERNOULLI.name] * N_INDEPENDENT_BERNOULLI
+        + [JtdModel.STRESS_REGIME_BERNOULLI.name] * N_STRESS_REGIME_BERNOULLI
+        + [JtdModel.BETA_BINOMIAL.name] * N_BETA_BINOMIAL
+        + [JtdModel.COPULA_MF_GAUSSIAN.name] * N_MF_GAUSSIAN
+        + [JtdModel.COPULA_MF_STUDENTS_T.name] * N_MF_STUDENTS_T
+    )
+
+    factor_names = (
+        ["GLOBAL_CREDIT"]
+        + [f"IDIO_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)]
+        + ["GLOBAL_CHI"]
+        + [f"U_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)]
+        + ["GLOBAL_STRESS_REGIME"]
+        + ["GLOBAL_BETA_PD"]
+        + list(MF_SECTOR_FACTORS)
+        + list(MF_CHI_SECTOR_NUS.keys())
+    )
+
+    # --- CALIBRATE THE BETA BINOMIAL PARAMETERS ---
+    _obligor_mean_pd = float(shared_pd)
+
+    # Guardrail 1: Define the absolute mathematical ceiling for variance
+    max_theoretical_var = _obligor_mean_pd * (1.0 - _obligor_mean_pd)
+
+    # Guardrail 2: Inject synthetic variance to prevent divide-by-zero.
+    # Because all non-forced PDs are identical, actual variance is 0.0.
+    # We set variance to 2% of the maximum limit to create moderate contagion.
+    _obligor_var_pd = 0.02 * max_theoretical_var
+
+    total = (max_theoretical_var / _obligor_var_pd) - 1
+    alpha_mom = _obligor_mean_pd * total
+    beta_mom = (1.0 - _obligor_mean_pd) * total
+
+    # Guardrail 3: Prevent alpha < 1.0 which causes unstable U-shaped density spikes
+    if alpha_mom < 1.0:
+        alpha_mom = 1.5
+        beta_mom = alpha_mom * ((1.0 - _obligor_mean_pd) / _obligor_mean_pd)
+
+    print(
+        f"\nCalibrated Beta-Binomial parameters to match shared obligor PD ({100 * _obligor_mean_pd:.2f}%):"
+        f"\n- alpha: {alpha_mom:>8.2f}"
+        f"\n- beta:  {beta_mom:>8.2f}"
+    )
+
+    factor_universe_df = pd.DataFrame(
+        {
+            "factor_id": range(len(factor_names)),
+            "factor_name": factor_names,
+            "factor_kind": [
+                "SYSTEMIC"
+                if (n == "GLOBAL_CREDIT" or n.startswith("SECTOR_"))
+                else "CHI"
+                if (n == "GLOBAL_CHI" or n.startswith("CHI_"))
+                else "UNIFORM"
+                if n.startswith("U_")
+                else "STRESS_INDICATOR"
+                if n == "GLOBAL_STRESS_REGIME"
+                else "BETA_PD"
+                if n == "GLOBAL_BETA_PD"
+                else "IDIOSYNCRATIC"
+                for n in factor_names
+            ],
+            "nu": [
+                GLOBAL_T_COP_NU if n == "GLOBAL_CHI" else MF_CHI_SECTOR_NUS.get(n)
+                for n in factor_names
+            ],
+            # Use the new shape parameters we locked in earlier to avoid beta naming collision
+            "alpha": [
+                alpha_mom if n == "GLOBAL_BETA_PD" else None for n in factor_names
+            ],
+            "beta": [beta_mom if n == "GLOBAL_BETA_PD" else None for n in factor_names],
+        }
+    )
+    universe = compile_credit_factor_universe(factor_universe_df)
+
+    jtd_df = pd.DataFrame(
+        {
+            "uid": obligor_uids,  # Unsorted, matches the raw frame
+            "instrument": models,
+            "factor_loading": rng.uniform(0.1, 0.5, NUM_OBLIGORS),
+            "systemic_factor": "GLOBAL_CREDIT",  # Broadcast to all
+            "idiosyncratic_factor": [
+                f"IDIO_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)
+            ],
+            "uniform_factor": [f"U_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)],
+            "stress_regime_factor": "GLOBAL_STRESS_REGIME",
+            "stress_pd_multiplier": rng.uniform(1.25, 3.0, NUM_OBLIGORS),
+            "beta_factor": "GLOBAL_BETA_PD",  # Will broadcast. Non-Beta-Binomial builders safely ignore it.
+        }
+    )
+
+    # Multi-factor Student-t obligors: each gets the sector chi-square factor for
+    # the sector it loads on (per-sector tail dependence), with nu reconciling to
+    # that chi factor's reference nu in the universe.
+    _mft_sectors = [
+        MF_SECTOR_FACTORS[i % len(MF_SECTOR_FACTORS)] for i in range(N_MF_STUDENTS_T)
+    ]
+    _mft_chi = ["CHI_" + sector for sector in _mft_sectors]
+    _mft_nu = [MF_CHI_SECTOR_NUS[chi] for chi in _mft_chi]
+
+    # Add T-Copula specific columns
+    chi_factors = (
+        [None] * N_GAUSS
+        + ["GLOBAL_CHI"] * N_T_COP
+        + [None] * N_FORCED_DEFAULT
+        + [None] * N_INDEPENDENT_BERNOULLI
+        + [None] * N_STRESS_REGIME_BERNOULLI
+        + [None] * N_BETA_BINOMIAL
+        + [None] * N_MF_GAUSSIAN
+        + _mft_chi
+    )
+    nus = (
+        [None] * N_GAUSS
+        + [GLOBAL_T_COP_NU] * N_T_COP
+        + [None] * N_FORCED_DEFAULT
+        + [None] * N_INDEPENDENT_BERNOULLI
+        + [None] * N_STRESS_REGIME_BERNOULLI
+        + [None] * N_BETA_BINOMIAL
+        + [None] * N_MF_GAUSSIAN
+        + _mft_nu
+    )
+
+    jtd_df["chi_squared_factor"] = chi_factors
+    jtd_df["nu"] = nus
+
+    # --- MULTI-FACTOR LOADINGS (long format, one row per obligor x systemic) ---
+    # Every MF obligor loads on GLOBAL_CREDIT plus one sector; sum beta^2 < 1
+    # (room for the idiosyncratic residual), with the sector assigned round-robin.
+    mf_uids = jtd_df.loc[
+        jtd_df["instrument"] == JtdModel.COPULA_MF_GAUSSIAN.name, "uid"
+    ].to_numpy()
+    _n_mf = mf_uids.shape[0]
+    _global_betas = rng.uniform(0.20, 0.40, _n_mf)
+    _sector_betas = rng.uniform(0.30, 0.60, _n_mf)
+    _sectors = np.array(
+        [MF_SECTOR_FACTORS[i % len(MF_SECTOR_FACTORS)] for i in range(_n_mf)],
+        dtype=object,
+    )
+    mf_loadings_df = pd.DataFrame(
+        {
+            "obligor_uid": np.concatenate([mf_uids, mf_uids]),
+            "factor_name": np.concatenate(
+                [np.array(["GLOBAL_CREDIT"] * _n_mf, dtype=object), _sectors]
+            ),
+            "factor_loading": np.concatenate([_global_betas, _sector_betas]),
+        }
+    )
+
+    # Multi-factor Student-t obligors load the same way (GLOBAL_CREDIT + one
+    # sector); their sector here must match the one driving their chi factor.
+    mft_uids = jtd_df.loc[
+        jtd_df["instrument"] == JtdModel.COPULA_MF_STUDENTS_T.name, "uid"
+    ].to_numpy()
+    _n_mft = mft_uids.shape[0]
+    _mft_global_betas = rng.uniform(0.20, 0.40, _n_mft)
+    _mft_sector_betas = rng.uniform(0.30, 0.60, _n_mft)
+    _mft_sectors_arr = np.array(_mft_sectors, dtype=object)
+    mft_loadings_df = pd.DataFrame(
+        {
+            "obligor_uid": np.concatenate([mft_uids, mft_uids]),
+            "factor_name": np.concatenate(
+                [np.array(["GLOBAL_CREDIT"] * _n_mft, dtype=object), _mft_sectors_arr]
+            ),
+            "factor_loading": np.concatenate([_mft_global_betas, _mft_sector_betas]),
+        }
+    )
+    mf_loadings_df = pd.concat([mf_loadings_df, mft_loadings_df], ignore_index=True)
+
+    print_df(
+        jtd_df.head(n=10),
+        title="Sample (head) JTD Portfolio DataFrame (Unsorted)",
+    )
+    print_df(
+        jtd_df.tail(n=10),
+        title="Sample (tail) JTD Portfolio DataFrame (Unsorted)",
+    )
+
+    bundle = JtdIngestBundle.from_instrument_frame(
+        jtd_df, mf_loadings_df=mf_loadings_df
+    )
+    _masters = CompiledCreditMasters(
+        obligor_master=obligor_master,
+        factor_universe=universe,
+    )
+    compiled_portfolio = compile_jtd_portfolio(
+        bundle=bundle,
+        masters=_masters,
+    )
+
+    compiled_portfolio.summary()
+
+    # ============================================================
+    # 4. EAD PROVIDER (STREAMED PER BATCH, ALIGNED TO COMPILED PORTFOLIO)
+    # ============================================================
+    print("[3/5] Preparing streamed Exposure provider...")
+
+    # Per-obligor base exposure is fixed; the scenario dispersion is drawn per
+    # batch so EAD never materialises as a full (N, S) matrix. The batch RNG is
+    # seeded from the scenario offset, keeping the run deterministic for a given
+    # batch size (each scenario is drawn exactly once — batches partition them).
+    base_ead = rng.uniform(1e6, 10e6, (NUM_OBLIGORS, 1))
+
+    def ead_provider(scenario_offset: int, batch_size: int) -> np.ndarray:
+        batch_rng = np.random.default_rng(RNG_SEED + 9_000_000 + scenario_offset)
+        noise = batch_rng.lognormal(
+            mean=0.0, sigma=0.1, size=(NUM_OBLIGORS, batch_size)
+        )
+        return base_ead * noise
+
+    # ============================================================
+    # 5. FACTOR GENERATOR (streamed; no full (F, S) matrix)
+    # ============================================================
+    print("[4/5] Building Credit Factor generator...")
+
+    factor_generator = MixedCreditFactorGenerator.from_universe(
+        universe,
+        total_scenarios=NUM_SCENARIOS,
+        seed=RNG_SEED,
+        stress_p_by_uix={int(u): 0.05 for u in universe.stress_indicator_uix},
+    )
+
+    # ============================================================
+    # 6. STREAMING ENGINE EXECUTION
+    # ============================================================
+    print("[5/5] Executing `run_jtd_streaming_from_generator`...")
+
+    start_time = time.perf_counter()
+
+    streaming_result = run_jtd_streaming_from_generator(
+        jtd_portfolio=compiled_portfolio,
+        factor_generator=factor_generator,
+        ead_provider=ead_provider,
+        batch_size=min(NUM_SCENARIOS, 25_000),
+        collect_by_model=True,
+    )
+
+    elapsed = time.perf_counter() - start_time
+    print(
+        f"Streaming engine accumulated {NUM_OBLIGORS * NUM_SCENARIOS:,} "
+        f"evaluations in {elapsed:.4f}s without materialising (N, S)"
+    )
+
+    # ============================================================
+    # 7. METRICS & ANALYSIS
+    # ============================================================
+    print("\n--- Portfolio Credit Risk Metrics ---")
+
+    portfolio_losses = streaming_result.portfolio_loss
+
+    summary = summarize_streaming_jtd_loss(result=streaming_result, alphas=(0.99,))
+    expected_loss = summary.expected_loss
+    credit_var_99 = summary.var[0.99]
+    credit_es_99 = summary.es[0.99]
+
+    print(f"Expected Loss (EL):  ${expected_loss:,.2f}")
+    print(f"Credit VaR (99.0%):  ${credit_var_99:,.2f}")
+    print(f"Worst Scenario Loss: ${np.max(portfolio_losses):,.2f}")
+    print(f"Credit ES (99.0%): ${credit_es_99:,.2f}")
+
+    # 8. PLOTS
+    _plot_portfolio_losses(
+        portfolio_losses,
+        expected_loss,
+        credit_var_99,
+        np.max(portfolio_losses),
+        credit_es_99,
+    )
+
+    # ============================================================
+    # ATTRIBUTION (streaming retains portfolio + per-model aggregates only)
+    # ============================================================
+    # Per-obligor attribution (top contributors) and default-count statistics
+    # need the full (N, S) loss matrix, which the streaming path deliberately
+    # never holds. Use `run_jtd` when obligor-level detail is required; here we
+    # attribute at the model level from the collected (n_models, S) breakdown.
+
+    print("\n--- Per-Model Tail Attribution (99%, standalone) ---")
+    per_model_tail = streaming_model_tail_var_es(result=streaming_result, alpha=0.99)
+    ranked = sorted(per_model_tail.items(), key=lambda kv: kv[1][1], reverse=True)
+    for rank, (model_name, (m_var, m_es)) in enumerate(ranked, start=1):
+        print(f"{rank:2d}. {model_name:<26} VaR: ${m_var:>15,.2f}  ES: ${m_es:>15,.2f}")
+    print(
+        "\n(Per-obligor VaR/ES attribution and default-count statistics require "
+        "the materialising `run_jtd` path — they are not available when streaming.)"
+    )
+
+    # ============================================================
+    # MODEL COMPARISON: FORCED-DEFAULT VS OTHERS
+    # ============================================================
+
+    # Per-model per-scenario loss comes straight from the streaming breakdown
+    # (rows aligned to streaming_result.model_order); no (N, S) masking needed.
+    _row_of = {mid: i for i, mid in enumerate(streaming_result.model_order)}
+    n_scen = portfolio_losses.shape[0]
+
+    def _model_losses(model: JtdModel) -> np.ndarray:
+        row = _row_of.get(int(model))
+        if row is None:
+            return np.zeros(n_scen)
+        return streaming_result.model_loss[row]
+
+    forced_default_losses = _model_losses(JtdModel.FORCED_DEFAULT)
+    independent_bernoulli_losses = _model_losses(JtdModel.INDEPENDENT_BERNOULLI)
+    stress_regime_bernoulli_losses = _model_losses(JtdModel.STRESS_REGIME_BERNOULLI)
+    beta_binomial_losses = _model_losses(JtdModel.BETA_BINOMIAL)
+    gaussian_losses = _model_losses(JtdModel.COPULA_SF_GAUSSIAN)
+    t_losses = _model_losses(JtdModel.COPULA_SF_STUDENTS_T)
+    mf_gaussian_losses = _model_losses(JtdModel.COPULA_MF_GAUSSIAN)
+    mf_students_t_losses = _model_losses(JtdModel.COPULA_MF_STUDENTS_T)
 
     def _calc_metrics(losses):
         el = losses.mean()
@@ -7277,7 +8832,7 @@ MIN_EWMA_VARIANCE: float = 1e-12
 # ==============================================================================
 
 NO_PARENT_OBLIGOR: np.int64 = np.int64(-1)
-NO_RATING_ID: np.int8 = np.int8(0)
+NO_RATING_ID: np.int8 = np.int8(-1)
 NO_SECTOR_ID: np.int32 = np.int32(-1)
 NO_COUNTRY_ID: np.int32 = np.int32(-1)
 
@@ -7490,7 +9045,7 @@ module_docstring: Resolve a JTD loss into the credit package's headline outputs.
 
 `build_portfolio_loss_distribution` collapses the per-ob...
 classes: JtdRiskSummary
-functions: _expected_loss_by_model, _model_loss_stack, build_portfolio_loss_distribution, model_tail_var_es, summarize_jtd_loss
+functions: _expected_loss_by_model, _model_loss_stack, build_portfolio_loss_distribution, model_tail_var_es, streaming_model_tail_var_es, summarize_jtd_loss, summarize_streaming_jtd_loss
 imports:
 - riskquant.credit.aggregate.loss_metrics
 - riskquant.credit.jtd.compiled
@@ -7521,8 +9076,10 @@ from __future__ import annotations
 __all__ = [
     "build_portfolio_loss_distribution",
     "summarize_jtd_loss",
+    "summarize_streaming_jtd_loss",
     "JtdRiskSummary",
     "model_tail_var_es",
+    "streaming_model_tail_var_es",
 ]
 
 from dataclasses import dataclass
@@ -7538,7 +9095,7 @@ from riskquant.credit.aggregate.loss_metrics import (
 )
 from riskquant.credit.jtd.compiled import CompiledJtdPortfolio
 from riskquant.credit.jtd.models import JtdModel
-from riskquant.credit.jtd.results import JtdLossResult
+from riskquant.credit.jtd.results import JtdLossResult, StreamingJtdResult
 
 _DEFAULT_ALPHAS: tuple[float, ...] = (0.9500, 0.9750, 0.9900, 0.9990)
 
@@ -7636,6 +9193,41 @@ def summarize_jtd_loss(
     )
 
 
+def summarize_streaming_jtd_loss(
+    *,
+    result: StreamingJtdResult,
+    alphas: tuple[float, ...] = _DEFAULT_ALPHAS,
+) -> JtdRiskSummary:
+    """
+    Headline risk summary for a streamed JTD loss.
+
+    Operates on the accumulated ``(S,)`` portfolio total directly (no per-obligor
+    matrix). Per-model expected-loss contributions are filled when the streaming
+    run collected the ``(n_models, S)`` breakdown (`collect_by_model=True`); they
+    remain additive (sum to the portfolio EL).
+    """
+    portfolio_loss = result.portfolio_loss
+    var: dict[float, float] = {}
+    es: dict[float, float] = {}
+    for a in alphas:
+        var[a], es[a] = loss_var_es(portfolio_loss, a)
+
+    by_model: dict[str, float] = {}
+    if result.model_loss is not None:
+        model_el = result.model_loss.mean(axis=1)
+        for row, model_id in enumerate(result.model_order):
+            name = JtdModel(model_id).name
+            by_model[name] = by_model.get(name, 0.0) + float(model_el[row])
+
+    return JtdRiskSummary(
+        n_scenarios=int(portfolio_loss.shape[0]),
+        expected_loss=expected_loss(portfolio_loss),
+        var=var,
+        es=es,
+        expected_loss_by_model=by_model,
+    )
+
+
 def model_tail_var_es(
     *,
     result: JtdLossResult,
@@ -7649,6 +9241,30 @@ def model_tail_var_es(
     names, stack = _model_loss_stack(result, jtd_portfolio)
     var, es = tail_var_es_by_group(stack, alpha)
     return {name: (float(var[i]), float(es[i])) for i, name in enumerate(names)}
+
+
+def streaming_model_tail_var_es(
+    *,
+    result: StreamingJtdResult,
+    alpha: float,
+) -> dict[str, tuple[float, float]]:
+    """Standalone per-model ``(VaR, ES)`` at ``alpha`` from a streamed run.
+
+    Requires the run to have collected the per-model breakdown
+    (`collect_by_model=True`); one parallel kernel pass over the ``(n_models, S)``
+    stack. As with the non-streaming variant these are each model's own tail and
+    do not sum to the portfolio's.
+    """
+    if result.model_loss is None:
+        raise ValueError(
+            "streaming_model_tail_var_es requires a run with collect_by_model=True "
+            "(result.model_loss is None)."
+        )
+    var, es = tail_var_es_by_group(result.model_loss, alpha)
+    return {
+        JtdModel(model_id).name: (float(var[i]), float(es[i]))
+        for i, model_id in enumerate(result.model_order)
+    }
 ```
 </file>
 
@@ -8335,6 +9951,260 @@ class ExposureModel(IntEnum):
 NUM_EXPOSURE_MODELS: Final[int] = len(ExposureModel)
 
 REPLACEMENT_COST_ID: Final[int] = ExposureModel.REPLACEMENT_COST.value
+```
+</file>
+
+<file_summary>
+path: riskquant\src\riskquant\credit\exposure\obligor_ead\__init__.py
+</file_summary>
+
+<file_summary>
+path: riskquant\src\riskquant\credit\exposure\obligor_ead\align.py
+module_docstring: Obligor-EAD -> JTD portfolio alignment.
+
+The obligor-grain analogue of `jtd.bridge.aggregate_ead_to_obligor`: that bridg...
+functions: align_obligor_ead_to_portfolio
+imports:
+- riskquant._arrays
+- riskquant.credit.exposure.obligor_ead.compiled
+</file_summary>
+
+<file path="riskquant\src\riskquant\credit\exposure\obligor_ead\align.py">
+```python
+# src/riskquant/credit/exposure/obligor_ead/align.py
+"""
+Obligor-EAD -> JTD portfolio alignment.
+
+The obligor-grain analogue of `jtd.bridge.aggregate_ead_to_obligor`: that bridge
+reindexes netting-set EAD onto a JTD portfolio's band order; this reindexes EAD
+that is already at obligor grain. Same join tool (`searchsorted_or_raise`), same
+target order (`jtd_portfolio.obligor_uids`, which is band order — an internal
+compaction artifact, not the caller's order).
+
+The semantics here are STRICT in the opposite direction to the bridge: every
+obligor the JTD portfolio models must have an EAD row (a modelled obligor with no
+exposure is a gap in the inputs, not something to silently zero). Obligors
+present in the EAD but absent from the portfolio are simply unused.
+"""
+
+from __future__ import annotations
+
+__all__ = [
+    "align_obligor_ead_to_portfolio",
+]
+
+import numpy as np
+import numpy.typing as npt
+
+from riskquant._arrays import searchsorted_or_raise
+from riskquant.credit.exposure.obligor_ead.compiled import CompiledObligorEad
+
+
+def align_obligor_ead_to_portfolio(
+    *,
+    obligor_ead: CompiledObligorEad,
+    obligor_uids_target: npt.NDArray[np.int64],
+) -> npt.NDArray[np.float64]:
+    """
+    Reindex obligor EAD onto a target obligor-uid order (band order).
+
+    Parameters
+    ----------
+    obligor_ead
+        Validated, uid-sorted obligor EAD; `ead` is ``(N,)`` or ``(N, S)``.
+    obligor_uids_target
+        Target obligor-uid order — typically `jtd_portfolio.obligor_uids`.
+
+    Returns
+    -------
+    The EAD reindexed onto `obligor_uids_target`: ``(n_target,)`` for scalar EAD,
+    ``(n_target, S)`` for scenario-varying. C-contiguous, ready to feed (after any
+    broadcast) the bare-array engine core.
+
+    Raises
+    ------
+    ValueError
+        If any target obligor has no EAD row (`searchsorted_or_raise`).
+    """
+    pos = searchsorted_or_raise(
+        universe=obligor_ead.uid,
+        raw=obligor_uids_target,
+        ctx="align_obligor_ead_to_portfolio: obligor uid(s)",
+    )
+    return np.ascontiguousarray(obligor_ead.ead[pos])
+```
+</file>
+
+<file_summary>
+path: riskquant\src\riskquant\credit\exposure\obligor_ead\compiled.py
+module_docstring: Obligor-grain exposure-at-default, keyed by uid.
+
+`CompiledObligorEad` is the obligor-level analogue of the exposure eng...
+classes: CompiledObligorEad
+imports:
+</file_summary>
+
+<file path="riskquant\src\riskquant\credit\exposure\obligor_ead\compiled.py">
+```python
+# src/riskquant/credit/exposure/obligor_ead/compiled.py
+"""
+Obligor-grain exposure-at-default, keyed by uid.
+
+`CompiledObligorEad` is the obligor-level analogue of the exposure engine's
+netting-set EAD: exposure that already lives at obligor grain — a vendor feed, or
+a desk's direct input — carrying its own uid key. That key is what lets it be
+reindexed onto a JTD portfolio's band order by uid (a `searchsorted` join) rather
+than by the positional convention a bare ``(N, S)`` array would force on the
+caller. `uid` is ascending-sorted and unique: the structural invariant the join
+relies on.
+"""
+
+from __future__ import annotations
+
+__all__ = [
+    "CompiledObligorEad",
+]
+
+from dataclasses import dataclass
+
+import numpy as np
+import numpy.typing as npt
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CompiledObligorEad:
+    """
+    Per-obligor EAD with its uid join key.
+
+    `ead` is either per-obligor scalar ``(N,)`` (scenario-independent, e.g. a desk
+    popping in one exposure per name) or scenario-varying ``(N, S)`` (e.g. a
+    vendor exposure feed); its rows align to `uid`. `uid` is ascending-sorted and
+    unique. Validation of dtypes and values lives in `compile_obligor_ead`; this
+    container enforces only the structural invariants the uid-join depends on.
+    """
+
+    uid: npt.NDArray[np.int64]  # (N,) ascending sorted, unique — the join key
+    ead: npt.NDArray[np.float64]  # (N,) or (N, S); rows aligned to uid
+
+    def __post_init__(self) -> None:
+        if self.uid.ndim != 1:
+            raise ValueError(
+                f"CompiledObligorEad: uid must be 1-D, got {self.uid.ndim}-D."
+            )
+        if self.ead.ndim not in (1, 2):
+            raise ValueError(
+                f"CompiledObligorEad: ead must be 1-D (N,) or 2-D (N, S), got "
+                f"{self.ead.ndim}-D."
+            )
+        if self.ead.shape[0] != self.uid.shape[0]:
+            raise ValueError(
+                f"CompiledObligorEad: ead rows {self.ead.shape[0]} != uid count "
+                f"{self.uid.shape[0]}."
+            )
+        if self.uid.shape[0] > 1 and not bool((np.diff(self.uid) > 0).all()):
+            raise ValueError(
+                "CompiledObligorEad: uid must be ascending-sorted and unique "
+                "(the searchsorted join key)."
+            )
+
+    @property
+    def num_obligors(self) -> int:
+        return self.uid.shape[0]
+
+    @property
+    def is_scenario_varying(self) -> bool:
+        return self.ead.ndim == 2
+```
+</file>
+
+<file_summary>
+path: riskquant\src\riskquant\credit\exposure\obligor_ead\ingest.py
+module_docstring: Obligor-EAD ingest (the edge).
+
+`compile_obligor_ead` is the perimeter where a human- or vendor-authored EAD
+table becom...
+functions: compile_obligor_ead
+imports:
+- riskquant.credit.exposure.obligor_ead.compiled
+</file_summary>
+
+<file path="riskquant\src\riskquant\credit\exposure\obligor_ead\ingest.py">
+```python
+# src/riskquant/credit/exposure/obligor_ead/ingest.py
+"""
+Obligor-EAD ingest (the edge).
+
+`compile_obligor_ead` is the perimeter where a human- or vendor-authored EAD
+table becomes a validated, uid-sorted SoA container. It takes only the uid + EAD
+columns, so the same single sheet a desk authors (uid, ead, pd, lgd, ...) can be
+fed here for exposure and to `compile_obligor_master` for credit, each picking
+the columns it owns. Fail-fast on anything that would corrupt the downstream
+uid-join or the loss identity: missing columns, non-finite EAD, negative EAD,
+duplicate uids.
+"""
+
+from __future__ import annotations
+
+__all__ = [
+    "compile_obligor_ead",
+]
+
+import numpy as np
+import pandas as pd
+
+from riskquant.credit.exposure.obligor_ead.compiled import CompiledObligorEad
+
+
+def compile_obligor_ead(
+    df: pd.DataFrame,
+    *,
+    uid_col: str = "uid",
+    ead_col: str = "ead",
+) -> CompiledObligorEad:
+    """
+    Compile a uid + EAD table into a validated `CompiledObligorEad`.
+
+    Parameters
+    ----------
+    df
+        Table carrying at least `uid_col` and `ead_col`; other columns are
+        ignored, so the same sheet can also feed `compile_obligor_master`.
+    uid_col, ead_col
+        Column names for the obligor uid and its per-obligor exposure.
+
+    Notes
+    -----
+    The rows are sorted by uid here, so callers need not pre-sort. Scenario-
+    varying EAD is not authored through this scalar-table edge; build a
+    `CompiledObligorEad` with an ``(N, S)`` `ead` directly for that.
+    """
+    for col in (uid_col, ead_col):
+        if col not in df.columns:
+            raise ValueError(f"compile_obligor_ead: missing required column '{col}'.")
+
+    uid = np.ascontiguousarray(df[uid_col].to_numpy(dtype=np.int64))
+
+    ead_raw = df[ead_col].to_numpy(dtype=np.float64)
+    if not np.isfinite(ead_raw).all():
+        raise ValueError(
+            f"compile_obligor_ead: non-finite value in EAD column '{ead_col}'."
+        )
+    if (ead_raw < 0.0).any():
+        raise ValueError(
+            f"compile_obligor_ead: negative EAD in column '{ead_col}' "
+            "(exposure-at-default must be >= 0)."
+        )
+
+    if uid.shape[0] != np.unique(uid).shape[0]:
+        raise ValueError("compile_obligor_ead: duplicate obligor uid(s).")
+
+    # Sort by uid so the container's join-key invariant holds regardless of the
+    # authoring order.
+    order = np.argsort(uid, kind="stable")
+    uid_sorted = np.ascontiguousarray(uid[order])
+    ead_sorted = np.ascontiguousarray(ead_raw[order])
+
+    return CompiledObligorEad(uid=uid_sorted, ead=ead_sorted)
 ```
 </file>
 
@@ -10629,8 +12499,10 @@ path: riskquant\src\riskquant\credit\jtd\engine.py
 module_docstring: JTD engine: model-id -> evaluator dispatch and the loss-resolution loop.
 
 The dispatch table is now owned by the registr...
-functions: run_jtd
+functions: run_jtd, run_jtd_for_obligor_ead
 imports:
+- riskquant.credit.exposure.obligor_ead.align
+- riskquant.credit.exposure.obligor_ead.compiled
 - riskquant.credit.factors.state
 - riskquant.credit.jtd.compiled
 - riskquant.credit.jtd.evaluators.base
@@ -10658,6 +12530,7 @@ from __future__ import annotations
 
 __all__ = [
     "run_jtd",
+    "run_jtd_for_obligor_ead",
 ]
 
 from typing import Any, Final
@@ -10665,6 +12538,10 @@ from typing import Any, Final
 import numpy as np
 import numpy.typing as npt
 
+from riskquant.credit.exposure.obligor_ead.align import (
+    align_obligor_ead_to_portfolio,
+)
+from riskquant.credit.exposure.obligor_ead.compiled import CompiledObligorEad
 from riskquant.credit.factors.state import CreditFactorMatrix
 from riskquant.credit.jtd.compiled import CompiledJtdPortfolio
 from riskquant.credit.jtd.evaluators.base import JtdEvaluator
@@ -10725,6 +12602,52 @@ def run_jtd(
         )
 
     return JtdLossResult(uid=jtd_portfolio.obligor_uids, loss=loss)
+
+
+def run_jtd_for_obligor_ead(
+    *,
+    jtd_portfolio: CompiledJtdPortfolio,
+    obligor_ead: CompiledObligorEad,
+    credit_factors: CreditFactorMatrix,
+) -> JtdLossResult:
+    """
+    uid-safe entry point: resolve JTD loss from EAD keyed by obligor uid.
+
+    The safe outer tier over `run_jtd`. `run_jtd` takes a bare ``(N, S)`` array
+    that must already be in the portfolio's band order — correct for the in-
+    pipeline caller (the exposure stage feeds it aligned), but a silent-miscalc
+    footgun for an external caller who has EAD keyed by uid and no reason to know
+    band order. This entry closes that gap: it reindexes `obligor_ead` onto
+    `jtd_portfolio.obligor_uids` by uid with a fail-fast join (every modelled
+    obligor must have an EAD row), then runs the core. Scalar ``(N,)`` EAD is
+    broadcast across the scenario axis; scenario-varying ``(N, S)`` EAD must match
+    `credit_factors.num_scenarios`.
+    """
+    aligned = align_obligor_ead_to_portfolio(
+        obligor_ead=obligor_ead,
+        obligor_uids_target=jtd_portfolio.obligor_uids,
+    )
+    n_scenarios = credit_factors.num_scenarios
+
+    if aligned.ndim == 1:
+        # Scalar per-obligor EAD -> materialise (N, S) for the bare-array core.
+        ead_by_obligor = np.ascontiguousarray(
+            np.broadcast_to(aligned[:, None], (aligned.shape[0], n_scenarios))
+        )
+    else:
+        if aligned.shape[1] != n_scenarios:
+            raise ValueError(
+                f"run_jtd_for_obligor_ead: scenario-varying EAD has "
+                f"{aligned.shape[1]} scenarios, but credit_factors has "
+                f"{n_scenarios}."
+            )
+        ead_by_obligor = aligned
+
+    return run_jtd(
+        jtd_portfolio=jtd_portfolio,
+        ead_by_obligor=ead_by_obligor,
+        credit_factors=credit_factors,
+    )
 ```
 </file>
 
@@ -11242,7 +13165,14 @@ def _i64(df: pd.DataFrame, col: str) -> npt.NDArray[np.int64]:
 
 
 def _f64(df: pd.DataFrame, col: str) -> npt.NDArray[np.float64]:
-    return np.ascontiguousarray(df[col].to_numpy(dtype=np.float64))
+    arr = np.ascontiguousarray(df[col].to_numpy(dtype=np.float64))
+    # `to_numpy` can hand back a read-only view of the column block, which
+    # `ascontiguousarray` passes through unchanged. Numba kernels are typed
+    # `float64[::1]` (writable) and reject `readonly` arrays, so guarantee a
+    # writable buffer; copy only when the view is actually read-only.
+    if not arr.flags.writeable:
+        arr = arr.copy()
+    return arr
 
 
 def _gaussian_thresholds(pd_arr: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
@@ -14494,7 +16424,7 @@ def model_contracts() -> MappingProxyType[JtdModel, JtdModelContract]:
 <file_summary>
 path: riskquant\src\riskquant\credit\jtd\results.py
 module_docstring: Resolved JTD-loss result container....
-classes: JtdLossResult
+classes: JtdLossResult, StreamingJtdResult
 imports:
 </file_summary>
 
@@ -14507,6 +16437,7 @@ from __future__ import annotations
 
 __all__ = [
     "JtdLossResult",
+    "StreamingJtdResult",
 ]
 
 from dataclasses import dataclass
@@ -14525,6 +16456,247 @@ class JtdLossResult:
 
     uid: npt.NDArray[np.int64]  # (N,)    obligor identifier
     loss: npt.NDArray[np.float64]  # (N, S)  default loss per obligor, per scenario
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StreamingJtdResult:
+    """
+    Accumulated JTD loss from a streaming run — the per-scenario PORTFOLIO total,
+    never the per-obligor ``(N, S)`` matrix.
+
+    `portfolio_loss` is the ``(S,)`` total the aggregation layer consumes
+    directly. `model_loss`, when collected, is ``(n_models, S)`` with rows in
+    `model_order` (JtdModel ids); each row is that model's per-scenario loss, and
+    the rows sum to `portfolio_loss`. Per-obligor attribution is intentionally not
+    retained — that is the memory trade the streaming path makes.
+    """
+
+    portfolio_loss: npt.NDArray[np.float64]  # (S,)
+    total_obligors: int
+    n_scenarios: int
+    model_loss: npt.NDArray[np.float64] | None = None  # (n_models, S) | None
+    model_order: tuple[int, ...] = ()  # JtdModel ids aligned to model_loss rows
+```
+</file>
+
+<file_summary>
+path: riskquant\src\riskquant\credit\jtd\streaming.py
+module_docstring: Streaming (batched) JTD execution.
+
+`run_jtd` materialises the full per-obligor ``(N, S)`` loss; at institutional
+obligo...
+functions: constant_ead_provider, run_jtd_streaming, run_jtd_streaming_from_generator
+imports:
+- riskquant.credit.factors.simulate.base
+- riskquant.credit.factors.state
+- riskquant.credit.jtd.compiled
+- riskquant.credit.jtd.evaluators.base
+- riskquant.credit.jtd.registry
+- riskquant.credit.jtd.results
+</file_summary>
+
+<file path="riskquant\src\riskquant\credit\jtd\streaming.py">
+```python
+# src/riskquant/credit/jtd/streaming.py
+"""
+Streaming (batched) JTD execution.
+
+`run_jtd` materialises the full per-obligor ``(N, S)`` loss; at institutional
+obligor x scenario counts that — and the full ``(F, S)`` factor matrix feeding it
+— is the memory ceiling. `run_jtd_streaming` removes both: it drives the loop off
+the factor generator's scenario batches and, per batch, runs the SAME evaluator
+dispatch into one reused ``(N, batch)`` scratch buffer, then collapses that batch
+to its per-scenario totals. The only state that persists across batches is the
+``(S,)`` portfolio loss vector (plus, optionally, an ``(n_models, S)`` per-model
+breakdown) — never ``(N, S)`` or ``(F, S)``.
+
+That ``(S,)`` total is exactly what `riskquant.credit.aggregate` was built to
+consume, so the streaming path produces a `StreamingJtdResult` that the
+aggregation layer turns into the loss distribution and risk metrics.
+
+The per-scenario *portfolio* vector is the largest object kept (S floats), which
+is cheap even at very large S; what streaming gives up is per-obligor attribution
+(e.g. top contributors in the VaR scenario), since obligor-level loss is never
+retained. Use `run_jtd` when that attribution is needed and the portfolio fits.
+"""
+
+from __future__ import annotations
+
+__all__ = [
+    "run_jtd_streaming",
+    "run_jtd_streaming_from_generator",
+    "constant_ead_provider",
+]
+
+from collections.abc import Callable, Iterable
+from typing import Any, Final
+
+import numpy as np
+import numpy.typing as npt
+
+from riskquant.credit.factors.simulate.base import (
+    CreditFactorBatch,
+    CreditFactorGenerator,
+)
+from riskquant.credit.factors.state import CreditFactorMatrix
+from riskquant.credit.jtd.compiled import CompiledJtdPortfolio
+from riskquant.credit.jtd.evaluators.base import JtdEvaluator
+from riskquant.credit.jtd.registry import evaluator_table
+from riskquant.credit.jtd.results import StreamingJtdResult
+
+JTD_EVALUATORS: Final[tuple[JtdEvaluator[Any], ...]] = evaluator_table()
+
+# (scenario_offset, batch_size) -> (n_obligors, batch_size) EAD, rows aligned to
+# jtd_portfolio.obligor_uids. The caller owns EAD generation so it, too, streams
+# per batch rather than materialising (N, S).
+EadProvider = Callable[[int, int], npt.NDArray[np.float64]]
+
+
+def run_jtd_streaming(
+    *,
+    jtd_portfolio: CompiledJtdPortfolio,
+    factor_batches: Iterable[CreditFactorBatch],
+    ead_provider: EadProvider,
+    total_scenarios: int,
+    collect_by_model: bool = False,
+) -> StreamingJtdResult:
+    """
+    Resolve JTD loss over scenario batches, accumulating the portfolio total.
+
+    Parameters
+    ----------
+    jtd_portfolio
+        Compiled obligor blocks; band order / `obligor_uids` defines the EAD row
+        order the `ead_provider` must match.
+    factor_batches
+        Scenario batches from a credit-factor generator
+        (`generator.iter_batches(batch_size=...)`). Each batch carries
+        ``(batch, F)`` scenario-major latent draws and its scenario offset; the
+        batches must partition ``[0, total_scenarios)``.
+    ead_provider
+        ``(scenario_offset, batch_size) -> (n_obligors, batch_size)`` EAD for that
+        scenario slice, rows aligned to `jtd_portfolio.obligor_uids`.
+    total_scenarios
+        Total scenario count S; sizes the persistent accumulator(s).
+    collect_by_model
+        If True, also accumulate an ``(n_models, S)`` per-model breakdown (rows
+        sum to the portfolio total). Costs one ``(S,)`` row per distinct model.
+    """
+    n_obligors = jtd_portfolio.total_obligors
+    blocks = jtd_portfolio.blocks
+    offsets = jtd_portfolio.block_offsets
+    n_blocks = jtd_portfolio.total_blocks
+    evaluators_table = JTD_EVALUATORS
+
+    # Persistent accumulators: (S,) portfolio total, written once per scenario as
+    # the batches partition the scenario axis.
+    portfolio_loss: npt.NDArray[np.float64] = np.empty(total_scenarios, np.float64)
+
+    model_loss: npt.NDArray[np.float64] | None = None
+    model_order: tuple[int, ...] = ()
+    block_model_row: list[int] = []
+    if collect_by_model:
+        # One row per block (one block per model in band order).
+        model_order = tuple(int(blocks[i].JTD_MODEL_ID) for i in range(n_blocks))
+        block_model_row = list(range(n_blocks))
+        model_loss = np.empty((n_blocks, total_scenarios), np.float64)
+
+    scratch: npt.NDArray[np.float64] | None = None  # (N, batch) reused across batches
+
+    for batch in factor_batches:
+        offset = batch.scenario_offset
+        batch_size = batch.latent_factors.shape[0]
+        end_s = offset + batch_size
+
+        # (batch, F) scenario-major -> (F, batch) factor-major for the kernels.
+        factors = CreditFactorMatrix(
+            latent_factors=np.ascontiguousarray(batch.latent_factors.T)
+        )
+        ead = ead_provider(offset, batch_size)
+        if ead.shape != (n_obligors, batch_size):
+            raise ValueError(
+                f"ead_provider returned {ead.shape}, expected "
+                f"{(n_obligors, batch_size)} at scenario offset {offset}."
+            )
+        # Kernels are typed for C-contiguous EAD (float64[:, ::1]); a provider
+        # returning a strided view (e.g. a column slice) would otherwise fail
+        # kernel dispatch. No-op when the provider already returns C-contiguous.
+        ead = np.ascontiguousarray(ead)
+
+        if scratch is None or scratch.shape[1] != batch_size:
+            scratch = np.empty((n_obligors, batch_size), dtype=np.float64, order="C")
+
+        for i in range(n_blocks):
+            block = blocks[i]
+            start = int(offsets[i])
+            stop = start + block.num_obligors
+            evaluators_table[block.JTD_MODEL_ID](
+                block=block,
+                ead=ead[start:stop, :],
+                credit_factors=factors,
+                out=scratch[start:stop, :],
+            )
+
+        # Collapse this batch to per-scenario totals into the persistent (S,).
+        portfolio_loss[offset:end_s] = scratch.sum(axis=0)
+        if model_loss is not None:
+            for i in range(n_blocks):
+                start = int(offsets[i])
+                stop = start + blocks[i].num_obligors
+                model_loss[block_model_row[i], offset:end_s] = scratch[
+                    start:stop, :
+                ].sum(axis=0)
+
+    return StreamingJtdResult(
+        portfolio_loss=portfolio_loss,
+        total_obligors=n_obligors,
+        n_scenarios=total_scenarios,
+        model_loss=model_loss,
+        model_order=model_order,
+    )
+
+
+def run_jtd_streaming_from_generator(
+    *,
+    jtd_portfolio: CompiledJtdPortfolio,
+    factor_generator: CreditFactorGenerator,
+    ead_provider: EadProvider,
+    batch_size: int,
+    collect_by_model: bool = False,
+) -> StreamingJtdResult:
+    """Drive `run_jtd_streaming` straight off a credit-factor generator.
+
+    Derives the scenario batches (`generator.iter_batches(batch_size=...)`) and the
+    total scenario count from the generator, so the caller supplies only the
+    portfolio, an EAD provider, and a batch size — no hand-wiring of the batch
+    stream or `total_scenarios`.
+    """
+    return run_jtd_streaming(
+        jtd_portfolio=jtd_portfolio,
+        factor_batches=factor_generator.iter_batches(batch_size=batch_size),
+        ead_provider=ead_provider,
+        total_scenarios=factor_generator.total_scenarios,
+        collect_by_model=collect_by_model,
+    )
+
+
+def constant_ead_provider(
+    ead_by_obligor: npt.NDArray[np.float64],
+) -> EadProvider:
+    """Build an `EadProvider` for scenario-INDEPENDENT EAD.
+
+    `ead_by_obligor` is the ``(N,)`` per-obligor exposure (rows aligned to
+    `jtd_portfolio.obligor_uids`); the returned provider broadcasts it across each
+    batch's scenarios as a read-only ``(N, batch)`` view — zero per-batch
+    allocation. Use this when EAD does not vary by scenario; supply your own
+    provider when it does (e.g. exposure simulated jointly with the factors).
+    """
+    base = np.ascontiguousarray(ead_by_obligor, dtype=np.float64).reshape(-1, 1)
+
+    def _provider(scenario_offset: int, batch_size: int) -> npt.NDArray[np.float64]:
+        return np.broadcast_to(base, (base.shape[0], batch_size))
+
+    return _provider
 ```
 </file>
 
@@ -15782,7 +17954,7 @@ path: riskquant\src\riskquant\credit\masters\obligors\ingest.py
 module_docstring: Obligor master DataFrame -> `CompiledObligorCredit`.
 
 The obligor edge: a human-facing master frame is cast to strict dt...
-functions: _check_required_columns, _f64, _i32, _i64, _i8, _parent_uid, compile_obligor_master
+functions: _check_required_columns, _country_id, _f64, _i32, _i64, _i8, _parent_uid, _rating_id, _sector_id, compile_obligor_master
 imports:
 - riskquant.constants
 - riskquant.credit.masters.obligors.compiled
@@ -15817,7 +17989,12 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-from riskquant.constants import NO_PARENT_OBLIGOR
+from riskquant.constants import (
+    NO_COUNTRY_ID,
+    NO_PARENT_OBLIGOR,
+    NO_RATING_ID,
+    NO_SECTOR_ID,
+)
 from riskquant.credit.masters.obligors.compiled import CompiledObligorCredit
 from riskquant.credit.masters.obligors.validate import validate_obligor_master_arrays
 
@@ -15825,10 +18002,10 @@ _REQUIRED_COLS: tuple[str, ...] = (
     "uid",
     "pd",
     "lgd",
-    "rating_id",
-    "sector_id",
-    "country_id",
-    "parent_uid",
+    # "rating_id",
+    # "sector_id",
+    # "country_id",
+    # "parent_uid",
 )
 
 
@@ -15859,8 +18036,59 @@ def _i32(df: pd.DataFrame, col: str) -> npt.NDArray[np.int32]:
     return np.ascontiguousarray(df[col].to_numpy(dtype=np.int32))
 
 
+def _rating_id(df: pd.DataFrame) -> npt.NDArray[np.int8]:
+    """NA / None -> NO_RATING_ID; numeric values pass through as int8."""
+    if "rating_id" not in df.columns:
+        # Fill missing column with default value.
+        return np.full(len(df), NO_RATING_ID, dtype=np.int8)
+    filled = (
+        df["rating_id"]
+        .astype("Int8")  # pandas nullable integer
+        .fillna(NO_RATING_ID)
+    )
+    return cast(
+        npt.NDArray[np.int8],
+        np.ascontiguousarray(filled.to_numpy(dtype=np.int8)),
+    )
+
+
+def _sector_id(df: pd.DataFrame) -> npt.NDArray[np.int32]:
+    """NA / None -> NO_SECTOR_ID; numeric values pass through as int32."""
+    if "sector_id" not in df.columns:
+        # Fill missing column with default value.
+        return np.full(len(df), NO_SECTOR_ID, dtype=np.int32)
+    filled = (
+        df["sector_id"]
+        .astype("Int32")  # pandas nullable integer
+        .fillna(NO_SECTOR_ID)
+    )
+    return cast(
+        npt.NDArray[np.int32],
+        np.ascontiguousarray(filled.to_numpy(dtype=np.int32)),
+    )
+
+
+def _country_id(df: pd.DataFrame) -> npt.NDArray[np.int32]:
+    """NA / None -> NO_COUNTRY_ID; numeric values pass through as int32."""
+    if "country_id" not in df.columns:
+        # Fill missing column with default value.
+        return np.full(len(df), NO_COUNTRY_ID, dtype=np.int32)
+    filled = (
+        df["country_id"]
+        .astype("Int32")  # pandas nullable integer
+        .fillna(NO_COUNTRY_ID)
+    )
+    return cast(
+        npt.NDArray[np.int32],
+        np.ascontiguousarray(filled.to_numpy(dtype=np.int32)),
+    )
+
+
 def _parent_uid(df: pd.DataFrame) -> npt.NDArray[np.int64]:
     """NA / None -> NO_PARENT_OBLIGOR; numeric values pass through as int64."""
+    if "parent_uid" not in df.columns:
+        # Fill missing column with default value.
+        return np.full(len(df), NO_PARENT_OBLIGOR, dtype=np.int64)
     filled = (
         df["parent_uid"]
         .astype("Int64")  # pandas nullable integer
@@ -15901,12 +18129,15 @@ def compile_obligor_master(
     # the frame (not the arrays) keeps the parent_uid fillna semantics intact.
     df = obligor_df.sort_values("uid", kind="stable").reset_index(drop=True)
 
+    # Required columns are cast to strict dtypes and converted to C-contiguous arrays.
     uid = _i64(df, "uid")
     pd_ = _f64(df, "pd")
     lgd = _f64(df, "lgd")
-    rating_id = _i8(df, "rating_id")
-    sector_id = _i32(df, "sector_id")
-    country_id = _i32(df, "country_id")
+
+    # Optional columns are also cast to strict dtypes, but missing columns are filled with defaults.
+    rating_id = _rating_id(df)
+    sector_id = _sector_id(df)
+    country_id = _country_id(df)
     parent_uid = _parent_uid(df)
 
     validate_obligor_master_arrays(
@@ -16027,7 +18258,7 @@ def validate_rating_id(
     is promoted to an IntEnum and a canonical {AAA..D} -> int8 mapping
     lands.
     """
-    bad = rating_id < np.int8(0)
+    bad = (rating_id < np.int8(0)) & (rating_id != NO_RATING_ID)
     if bad.any():
         raise ValueError(
             f"obligor master: rating_id < 0 (must be NO_RATING_ID={NO_RATING_ID} "
@@ -19469,7 +21700,11 @@ def _kernel_lower_tail_var_es(
         for s in range(n_scenarios):
             row[s] = group_value_matrix[g, s]
 
-        row.partition(kth_index)
+        # In-place sort of the scratchpad row. Numba's nopython mode does not
+        # support the in-place ndarray.partition() method; a full sort gives the
+        # same kth order statistic (row[kth_index]) and the same worst-`tail_count`
+        # slice (row[:tail_count]) for the ES sum, since tail_count == kth_index+1.
+        row.sort()
 
         var_out[g] = row[kth_index]
 
@@ -19631,6 +21866,1247 @@ def compute_var_es(
         kth_index=kth_index,
         tail_count=tail_count,
     )
+```
+</file>
+
+<file_summary>
+path: riskquant\src\riskquant\solutions\credit_var\__init__.py
+</file_summary>
+
+<file_summary>
+path: riskquant\src\riskquant\solutions\credit_var\api.py
+module_docstring: Public API for the credit-VaR solution.
+
+This module is THE entry surface for the solution: every symbol a consumer
+(not...
+imports:
+- riskquant.solutions.credit_var.catalog
+- riskquant.solutions.credit_var.run
+- riskquant.solutions.credit_var.schemas
+</file_summary>
+
+<file path="riskquant\src\riskquant\solutions\credit_var\api.py">
+```python
+# src/riskquant/solutions/credit_var/api.py
+"""
+Public API for the credit-VaR solution.
+
+This module is THE entry surface for the solution: every symbol a consumer
+(notebook, Emissary, the xlwings tool) is meant to use is re-exported here, and
+nothing else in `riskquant.solutions.credit_var.*` should be imported from
+outside the package. The other modules (`run`, `schemas`, `catalog`, `recipes`)
+are supportive internals — they may change shape freely as long as this surface
+holds.
+
+Why a module and not the package `__init__`: in `src/riskquant`, every
+`__init__.py` is empty, without exception. A solution that wants a single import
+line gets it from a named `api` module instead, so the "one stable surface" need
+is met without weakening the empty-init rule.
+
+Import as::
+
+    from riskquant.solutions.credit_var.api import run_credit_var, CreditVarRequest
+"""
+
+from __future__ import annotations
+
+__all__ = [
+    # entry point
+    "run_credit_var",
+    # request / result contract
+    "CreditVarRequest",
+    "CreditVarResult",
+    "ObligorRow",
+    "LoadingRow",
+    "RiskSummary",
+    "ModelTail",
+    "RunProvenance",
+    # model catalog (the front-end menu + param specs)
+    "MODEL_CATALOG",
+    "ModelEntry",
+    "ParamSpec",
+    "model_entry",
+    "supported_model_keys",
+]
+
+from riskquant.solutions.credit_var.catalog import (
+    MODEL_CATALOG,
+    ModelEntry,
+    ParamSpec,
+    model_entry,
+    supported_model_keys,
+)
+from riskquant.solutions.credit_var.run import run_credit_var
+from riskquant.solutions.credit_var.schemas import (
+    CreditVarRequest,
+    CreditVarResult,
+    LoadingRow,
+    ModelTail,
+    ObligorRow,
+    RiskSummary,
+    RunProvenance,
+)
+```
+</file>
+
+<file_summary>
+path: riskquant\src\riskquant\solutions\credit_var\catalog.py
+module_docstring: Credit-VaR model catalog (solution-tier).
+
+The menu the front-end renders and the source of per-model parameter rules th...
+classes: ModelEntry, ParamSpec
+functions: model_entry, supported_model_keys
+imports:
+- riskquant.solutions.credit_var.recipes
+</file_summary>
+
+<file path="riskquant\src\riskquant\solutions\credit_var\catalog.py">
+```python
+# src/riskquant/solutions/credit_var/catalog.py
+"""
+Credit-VaR model catalog (solution-tier).
+
+The menu the front-end renders and the source of per-model parameter rules the
+request schema validates against. This is deliberately solution-side: it carries
+human display labels and the authoring contract, which the core engine has no
+business knowing. It lists only models this solution can run; the underlying
+construction lives in `riskquant.solutions.credit_var.recipe`.
+"""
+
+from __future__ import annotations
+
+__all__ = [
+    "ParamSpec",
+    "ModelEntry",
+    "MODEL_CATALOG",
+    "supported_model_keys",
+    "model_entry",
+]
+
+from dataclasses import dataclass, field
+
+from riskquant.solutions.credit_var.recipes import SUPPORTED_RECIPES
+
+
+@dataclass(frozen=True, slots=True)
+class ParamSpec:
+    """One scalar knob a model exposes to the author."""
+
+    key: str
+    label: str
+    default: float
+    min_value: float
+    max_value: float
+    min_inclusive: bool = True
+    max_inclusive: bool = False
+
+    def contains(self, value: float) -> bool:
+        lo = value >= self.min_value if self.min_inclusive else value > self.min_value
+        hi = value <= self.max_value if self.max_inclusive else value < self.max_value
+        return bool(lo and hi)
+
+    @property
+    def interval_repr(self) -> str:
+        lb = "[" if self.min_inclusive else "("
+        rb = "]" if self.max_inclusive else ")"
+        return f"{lb}{self.min_value}, {self.max_value}{rb}"
+
+
+@dataclass(frozen=True, slots=True)
+class ModelEntry:
+    key: str
+    display_name: str
+    description: str
+    params: tuple[ParamSpec, ...] = field(default_factory=tuple)
+    requires_loadings: bool = False  # multi-factor: needs a systemic-loadings sheet
+
+
+_RHO = ParamSpec(
+    key="rho",
+    label="Asset correlation (rho)",
+    default=0.15,
+    min_value=0.0,
+    max_value=1.0,
+    min_inclusive=True,
+    max_inclusive=False,
+)
+_NU = ParamSpec(
+    key="nu",
+    label="Degrees of freedom (nu)",
+    default=8.0,
+    min_value=2.0,
+    max_value=250.0,
+    min_inclusive=True,
+    max_inclusive=True,
+)
+_BETA_ALPHA = ParamSpec(
+    key="alpha",
+    label="Beta shape alpha",
+    default=1.0,
+    min_value=0.0,
+    max_value=1000.0,
+    min_inclusive=False,
+    max_inclusive=True,
+)
+_BETA_BETA = ParamSpec(
+    key="beta",
+    label="Beta shape beta",
+    default=24.0,
+    min_value=0.0,
+    max_value=1000.0,
+    min_inclusive=False,
+    max_inclusive=True,
+)
+_STRESS_PROB = ParamSpec(
+    key="stress_prob",
+    label="Stress-regime probability",
+    default=0.05,
+    min_value=0.0,
+    max_value=1.0,
+    min_inclusive=True,
+    max_inclusive=True,
+)
+_STRESS_MULT = ParamSpec(
+    key="stress_pd_multiplier",
+    label="Stressed PD multiplier",
+    default=3.0,
+    min_value=1.0,
+    max_value=50.0,
+    min_inclusive=True,
+    max_inclusive=True,
+)
+
+
+MODEL_CATALOG: dict[str, ModelEntry] = {
+    "forced_default": ModelEntry(
+        key="forced_default",
+        display_name="Forced Default",
+        description="Every obligor defaults in every scenario; loss = EAD x LGD. "
+        "A deterministic worst-case bound (PD is ignored).",
+        params=(),
+    ),
+    "beta_binomial": ModelEntry(
+        key="beta_binomial",
+        display_name="Beta-Binomial",
+        description="Conditionally-independent defaults driven by a shared per-"
+        "scenario PD drawn from Beta(alpha, beta). Mean PD = alpha/(alpha+beta); "
+        "the obligor PD column is not used.",
+        params=(_BETA_ALPHA, _BETA_BETA),
+    ),
+    "stress_regime_bernoulli": ModelEntry(
+        key="stress_regime_bernoulli",
+        display_name="Stress-Regime Bernoulli",
+        description="Independent-Bernoulli defaults with a shared stress regime "
+        "that fires with probability stress_prob and multiplies every PD by "
+        "stress_pd_multiplier (capped at 1).",
+        params=(_STRESS_PROB, _STRESS_MULT),
+    ),
+    "sf_gaussian": ModelEntry(
+        key="sf_gaussian",
+        display_name="Single-Factor Gaussian Copula",
+        description="One systemic factor with asset correlation rho (Vasicek / "
+        "Basel ASRF). The standard desk credit-VaR model.",
+        params=(_RHO,),
+    ),
+    "independent_bernoulli": ModelEntry(
+        key="independent_bernoulli",
+        display_name="Independent Bernoulli",
+        description="Each obligor defaults independently with probability PD. "
+        "No correlation; the diversified baseline.",
+        params=(),
+    ),
+    "sf_students_t": ModelEntry(
+        key="sf_students_t",
+        display_name="Single-Factor Student-t Copula",
+        description="Single systemic factor with asset correlation rho plus a "
+        "shared chi-square mixing variable at nu degrees of freedom (tail "
+        "dependence / fatter joint tails than Gaussian at the same rho).",
+        params=(_RHO, _NU),
+    ),
+    "mf_gaussian": ModelEntry(
+        key="mf_gaussian",
+        display_name="Multi-Factor Gaussian Copula",
+        description="Per-obligor systemic loadings across several factors (e.g. a "
+        "global factor plus sector factors), supplied as a loadings sheet. "
+        "Idiosyncratic weight is the residual sqrt(1 - sum beta^2).",
+        params=(),
+        requires_loadings=True,
+    ),
+    "mf_students_t": ModelEntry(
+        key="mf_students_t",
+        display_name="Multi-Factor Student-t Copula",
+        description="Multi-factor Gaussian loadings plus a shared chi-square "
+        "mixing variable at nu degrees of freedom (multi-factor structure with "
+        "tail dependence). Needs a loadings sheet.",
+        params=(_NU,),
+        requires_loadings=True,
+    ),
+}
+
+# No-drift guard: the catalog must not advertise a model the core can't assemble.
+_missing = set(MODEL_CATALOG) - set(SUPPORTED_RECIPES)
+if _missing:
+    raise RuntimeError(
+        f"credit_var.catalog advertises model(s) with no core recipe: {sorted(_missing)}."
+    )
+
+
+def supported_model_keys() -> tuple[str, ...]:
+    return tuple(MODEL_CATALOG)
+
+
+def model_entry(key: str) -> ModelEntry:
+    entry = MODEL_CATALOG.get(key)
+    if entry is None:
+        raise KeyError(f"unknown model '{key}'. Supported: {sorted(MODEL_CATALOG)}.")
+    return entry
+```
+</file>
+
+<file_summary>
+path: riskquant\src\riskquant\solutions\credit_var\recipes.py
+module_docstring: Model recipes: flat obligor table + scalar params -> compiled engine inputs.
+
+The authoring layer of the credit-VaR solu...
+classes: AssembledInputs, _FactorRow
+functions: _assemble_beta_binomial, _assemble_forced_default, _assemble_independent_bernoulli, _assemble_mf_gaussian, _assemble_mf_students_t, _assemble_sf_gaussian, _assemble_sf_students_t, _assemble_stress_regime_bernoulli, _ead, _masters, _mf_universe_and_bundle, _require, _uids, _universe, assemble_inputs
+imports:
+- riskquant.credit.exposure.obligor_ead.compiled
+- riskquant.credit.exposure.obligor_ead.ingest
+- riskquant.credit.jtd.ingest.bundle
+- riskquant.credit.jtd.models
+- riskquant.credit.masters.cross_master.compiled
+- riskquant.credit.masters.factor_universe.compiled
+- riskquant.credit.masters.factor_universe.ingest
+- riskquant.credit.masters.obligors.ingest
+</file_summary>
+
+<file path="riskquant\src\riskquant\solutions\credit_var\recipes.py">
+```python
+# src/riskquant/solutions/credit_var/recipes.py
+"""
+Model recipes: flat obligor table + scalar params -> compiled engine inputs.
+
+The authoring layer of the credit-VaR solution: it turns a desk's flat sheet plus
+a handful of scalar knobs into the factor universe + per-model JTD frame the engine
+needs, which the author never sees. Single-factor Gaussian: rho becomes a systemic
+factor, per-obligor idiosyncratic factors, and a sqrt(rho) loading. Beta-binomial:
+(alpha, beta) become a shared BETA_PD factor. Student-t: adds a shared CHI factor
+at nu. Stress-regime: a shared STRESS_INDICATOR plus a per-run stress probability.
+
+This is solution-tier, not core: the core engine takes a fully-authored universe +
+bundle; "construct them from a flat table" is presentation/authoring sugar that
+belongs with the solution. Plain DataFrame + params in, engine objects out,
+fail-fast. Adding a flat-sheet model is one assembler here plus a catalog entry.
+
+Multi-factor copulas are deliberately absent: their systemic loadings are a
+relational input (a loadings sheet), not a scalar, and are handled by a separate
+relational recipe path.
+"""
+
+from __future__ import annotations
+
+__all__ = [
+    "AssembledInputs",
+    "SUPPORTED_RECIPES",
+    "assemble_inputs",
+]
+
+import math
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+
+import numpy as np
+import pandas as pd
+
+from riskquant.credit.exposure.obligor_ead.compiled import CompiledObligorEad
+from riskquant.credit.exposure.obligor_ead.ingest import compile_obligor_ead
+from riskquant.credit.jtd.ingest.bundle import JtdIngestBundle
+from riskquant.credit.jtd.models import JtdModel
+from riskquant.credit.masters.cross_master.compiled import CompiledCreditMasters
+from riskquant.credit.masters.factor_universe.compiled import (
+    CompiledCreditFactorUniverse,
+)
+from riskquant.credit.masters.factor_universe.ingest import (
+    compile_credit_factor_universe,
+)
+from riskquant.credit.masters.obligors.ingest import compile_obligor_master
+
+_SYSTEMIC_GLOBAL = "SYSTEMIC_GLOBAL"
+_BETA_PD_GLOBAL = "BETA_PD_GLOBAL"
+_STRESS_GLOBAL = "STRESS_GLOBAL"
+_CHI_GLOBAL = "CHI_GLOBAL"
+_FORCED_DUMMY = (
+    "FORCED_DUMMY"  # forced-default reads no factor; the generator needs >=1
+)
+
+_DEFAULT_RHO = 0.15
+_DEFAULT_NU = 8.0
+_DEFAULT_BETA_ALPHA = 1.0
+_DEFAULT_BETA_BETA = 24.0  # mean PD = alpha/(alpha+beta) = 0.04
+_DEFAULT_STRESS_PROB = 0.05
+_DEFAULT_STRESS_MULT = 3.0
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AssembledInputs:
+    """Compiled engine inputs for one run.
+
+    `stress_p_by_uix` carries the per-run STRESS_INDICATOR probabilities the
+    generator needs (the one knob kept off the static universe); empty for models
+    with no stress factor.
+    """
+
+    masters: CompiledCreditMasters
+    bundle: JtdIngestBundle
+    obligor_ead: CompiledObligorEad
+    stress_p_by_uix: dict[int, float] = field(default_factory=dict)
+
+
+# A universe row: factor name + kind, with optional marginal params the kind needs
+# (nu for CHI, alpha/beta for BETA_PD).
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _FactorRow:
+    name: str
+    kind: str
+    nu: float | None = None
+    alpha: float | None = None
+    beta: float | None = None
+
+
+def _uids(obligor_table: pd.DataFrame) -> np.ndarray:
+    return np.ascontiguousarray(obligor_table["uid"].to_numpy(dtype=np.int64))
+
+
+def _universe(rows: list[_FactorRow]) -> CompiledCreditFactorUniverse:
+    """Compile factor rows into a universe, emitting the nu / alpha / beta columns
+    only when a kind that needs them is present (the ingest maps NaN elsewhere to
+    its sentinels)."""
+    data: dict[str, object] = {
+        "factor_id": np.arange(len(rows), dtype=np.int64),
+        "factor_name": [r.name for r in rows],
+        "factor_kind": [r.kind for r in rows],
+    }
+    if any(r.nu is not None for r in rows):
+        data["nu"] = [r.nu if r.nu is not None else np.nan for r in rows]
+    if any(r.alpha is not None for r in rows):
+        data["alpha"] = [r.alpha if r.alpha is not None else np.nan for r in rows]
+    if any(r.beta is not None for r in rows):
+        data["beta"] = [r.beta if r.beta is not None else np.nan for r in rows]
+    return compile_credit_factor_universe(pd.DataFrame(data))
+
+
+def _masters(
+    obligor_table: pd.DataFrame, universe: CompiledCreditFactorUniverse
+) -> CompiledCreditMasters:
+    # compile_obligor_master reads uid/pd/lgd and ignores the rest (e.g. ead).
+    return CompiledCreditMasters(
+        obligor_master=compile_obligor_master(obligor_table),
+        factor_universe=universe,
+    )
+
+
+def _ead(obligor_table: pd.DataFrame) -> CompiledObligorEad:
+    return compile_obligor_ead(obligor_table)
+
+
+def _require(params: Mapping[str, float], key: str, default: float) -> float:
+    return float(params.get(key, default))
+
+
+# --------------------------------------------------------------------------
+# Per-model assemblers
+# --------------------------------------------------------------------------
+
+
+def _assemble_forced_default(
+    obligor_table: pd.DataFrame,
+    params: Mapping[str, float],
+    loadings_table: pd.DataFrame | None = None,
+) -> AssembledInputs:
+    uids = _uids(obligor_table)
+    # Forced default reads no factor, but the generator needs a non-empty universe.
+    universe = _universe([_FactorRow(name=_FORCED_DUMMY, kind="UNIFORM")])
+    frame = pd.DataFrame({"uid": uids, "instrument": JtdModel.FORCED_DEFAULT.name})
+    return AssembledInputs(
+        masters=_masters(obligor_table, universe),
+        bundle=JtdIngestBundle.from_instrument_frame(frame),
+        obligor_ead=_ead(obligor_table),
+    )
+
+
+def _assemble_independent_bernoulli(
+    obligor_table: pd.DataFrame,
+    params: Mapping[str, float],
+    loadings_table: pd.DataFrame | None = None,
+) -> AssembledInputs:
+    uids = _uids(obligor_table)
+    uniform_names = [f"U_{int(u)}" for u in uids]
+    universe = _universe([_FactorRow(name=n, kind="UNIFORM") for n in uniform_names])
+    frame = pd.DataFrame(
+        {
+            "uid": uids,
+            "instrument": JtdModel.INDEPENDENT_BERNOULLI.name,
+            "uniform_factor": uniform_names,
+        }
+    )
+    return AssembledInputs(
+        masters=_masters(obligor_table, universe),
+        bundle=JtdIngestBundle.from_instrument_frame(frame),
+        obligor_ead=_ead(obligor_table),
+    )
+
+
+def _assemble_beta_binomial(
+    obligor_table: pd.DataFrame,
+    params: Mapping[str, float],
+    loadings_table: pd.DataFrame | None = None,
+) -> AssembledInputs:
+    uids = _uids(obligor_table)
+    alpha = _require(params, "alpha", _DEFAULT_BETA_ALPHA)
+    beta = _require(params, "beta", _DEFAULT_BETA_BETA)
+    if alpha <= 0.0 or beta <= 0.0:
+        raise ValueError(f"beta_binomial: alpha={alpha}, beta={beta} must be > 0.")
+
+    uniform_names = [f"U_{int(u)}" for u in uids]
+    universe = _universe(
+        [_FactorRow(name=n, kind="UNIFORM") for n in uniform_names]
+        + [_FactorRow(name=_BETA_PD_GLOBAL, kind="BETA_PD", alpha=alpha, beta=beta)]
+    )
+    frame = pd.DataFrame(
+        {
+            "uid": uids,
+            "instrument": JtdModel.BETA_BINOMIAL.name,
+            "uniform_factor": uniform_names,
+            "beta_factor": _BETA_PD_GLOBAL,
+        }
+    )
+    return AssembledInputs(
+        masters=_masters(obligor_table, universe),
+        bundle=JtdIngestBundle.from_instrument_frame(frame),
+        obligor_ead=_ead(obligor_table),
+    )
+
+
+def _assemble_stress_regime_bernoulli(
+    obligor_table: pd.DataFrame,
+    params: Mapping[str, float],
+    loadings_table: pd.DataFrame | None = None,
+) -> AssembledInputs:
+    uids = _uids(obligor_table)
+    stress_prob = _require(params, "stress_prob", _DEFAULT_STRESS_PROB)
+    stress_mult = _require(params, "stress_pd_multiplier", _DEFAULT_STRESS_MULT)
+    if not (0.0 <= stress_prob <= 1.0):
+        raise ValueError(f"stress_regime: stress_prob={stress_prob} must be in [0, 1].")
+    if stress_mult < 1.0:
+        raise ValueError(
+            f"stress_regime: stress_pd_multiplier={stress_mult} must be >= 1."
+        )
+
+    uniform_names = [f"U_{int(u)}" for u in uids]
+    universe = _universe(
+        [_FactorRow(name=n, kind="UNIFORM") for n in uniform_names]
+        + [_FactorRow(name=_STRESS_GLOBAL, kind="STRESS_INDICATOR")]
+    )
+    frame = pd.DataFrame(
+        {
+            "uid": uids,
+            "instrument": JtdModel.STRESS_REGIME_BERNOULLI.name,
+            "uniform_factor": uniform_names,
+            "stress_regime_factor": _STRESS_GLOBAL,
+            "stress_pd_multiplier": np.full(uids.shape[0], stress_mult, np.float64),
+        }
+    )
+    stress_p_by_uix = {int(u): stress_prob for u in universe.stress_indicator_uix}
+    return AssembledInputs(
+        masters=_masters(obligor_table, universe),
+        bundle=JtdIngestBundle.from_instrument_frame(frame),
+        obligor_ead=_ead(obligor_table),
+        stress_p_by_uix=stress_p_by_uix,
+    )
+
+
+def _assemble_sf_gaussian(
+    obligor_table: pd.DataFrame,
+    params: Mapping[str, float],
+    loadings_table: pd.DataFrame | None = None,
+) -> AssembledInputs:
+    uids = _uids(obligor_table)
+    rho = _require(params, "rho", _DEFAULT_RHO)
+    if not (0.0 <= rho < 1.0):
+        raise ValueError(f"sf_gaussian: rho={rho} must be in [0, 1).")
+    beta = math.sqrt(rho)  # systemic loading; idiosyncratic weight = sqrt(1 - rho)
+
+    idio_names = [f"IDIO_{int(u)}" for u in uids]
+    universe = _universe(
+        [_FactorRow(name=_SYSTEMIC_GLOBAL, kind="SYSTEMIC")]
+        + [_FactorRow(name=n, kind="IDIOSYNCRATIC") for n in idio_names]
+    )
+    frame = pd.DataFrame(
+        {
+            "uid": uids,
+            "instrument": JtdModel.COPULA_SF_GAUSSIAN.name,
+            "factor_loading": np.full(uids.shape[0], beta, dtype=np.float64),
+            "systemic_factor": _SYSTEMIC_GLOBAL,
+            "idiosyncratic_factor": idio_names,
+        }
+    )
+    return AssembledInputs(
+        masters=_masters(obligor_table, universe),
+        bundle=JtdIngestBundle.from_instrument_frame(frame),
+        obligor_ead=_ead(obligor_table),
+    )
+
+
+def _assemble_sf_students_t(
+    obligor_table: pd.DataFrame,
+    params: Mapping[str, float],
+    loadings_table: pd.DataFrame | None = None,
+) -> AssembledInputs:
+    uids = _uids(obligor_table)
+    rho = _require(params, "rho", _DEFAULT_RHO)
+    nu = _require(params, "nu", _DEFAULT_NU)
+    if not (0.0 <= rho < 1.0):
+        raise ValueError(f"sf_students_t: rho={rho} must be in [0, 1).")
+    if nu <= 0.0:
+        raise ValueError(f"sf_students_t: nu={nu} must be > 0.")
+    beta = math.sqrt(rho)
+
+    idio_names = [f"IDIO_{int(u)}" for u in uids]
+    universe = _universe(
+        [_FactorRow(name=_SYSTEMIC_GLOBAL, kind="SYSTEMIC")]
+        + [_FactorRow(name=n, kind="IDIOSYNCRATIC") for n in idio_names]
+        + [_FactorRow(name=_CHI_GLOBAL, kind="CHI", nu=nu)]
+    )
+    frame = pd.DataFrame(
+        {
+            "uid": uids,
+            "instrument": JtdModel.COPULA_SF_STUDENTS_T.name,
+            "factor_loading": np.full(uids.shape[0], beta, dtype=np.float64),
+            "systemic_factor": _SYSTEMIC_GLOBAL,
+            "idiosyncratic_factor": idio_names,
+            "chi_squared_factor": _CHI_GLOBAL,
+            # nu on the frame must match the chi factor's nu (engine invariant).
+            "nu": np.full(uids.shape[0], nu, dtype=np.float64),
+        }
+    )
+    return AssembledInputs(
+        masters=_masters(obligor_table, universe),
+        bundle=JtdIngestBundle.from_instrument_frame(frame),
+        obligor_ead=_ead(obligor_table),
+    )
+
+
+def _mf_universe_and_bundle(
+    obligor_table: pd.DataFrame,
+    loadings_table: pd.DataFrame | None,
+    *,
+    instrument: str,
+    with_chi: bool,
+    nu: float | None = None,
+) -> tuple[CompiledCreditFactorUniverse, JtdIngestBundle]:
+    """Shared MF build: distinct systemic factors from the loadings relation,
+    per-obligor idiosyncratic factors, an optional shared CHI factor, the engine
+    long-format loadings frame, and the per-obligor dispatch frame.
+
+    Numeric validation (coverage, no-duplicate, sum-beta^2 <= 1, loading range,
+    chi/nu reconciliation) is the engine's at compile; this only shapes inputs.
+    """
+    if loadings_table is None or len(loadings_table) == 0:
+        raise ValueError(
+            f"{instrument}: a multi-factor model requires a non-empty loadings table."
+        )
+    uids = _uids(obligor_table)
+    idio_names = [f"IDIO_{int(u)}" for u in uids]
+    # Distinct systemic factors, authoring order preserved.
+    systemic_names = list(dict.fromkeys(loadings_table["factor"].astype(str)))
+
+    rows = [_FactorRow(name=s, kind="SYSTEMIC") for s in systemic_names]
+    rows += [_FactorRow(name=n, kind="IDIOSYNCRATIC") for n in idio_names]
+    if with_chi:
+        rows.append(_FactorRow(name=_CHI_GLOBAL, kind="CHI", nu=nu))
+    universe = _universe(rows)
+
+    mf_loadings_df = pd.DataFrame(
+        {
+            "obligor_uid": loadings_table["uid"].to_numpy(dtype=np.int64),
+            "factor_name": loadings_table["factor"].astype(str).to_numpy(),
+            "factor_loading": loadings_table["loading"].to_numpy(dtype=np.float64),
+        }
+    )
+
+    frame_data: dict[str, object] = {
+        "uid": uids,
+        "instrument": instrument,
+        "idiosyncratic_factor": idio_names,
+    }
+    if with_chi:
+        frame_data["chi_squared_factor"] = _CHI_GLOBAL
+        # frame nu must match the chi factor's nu (engine reconciliation).
+        frame_data["nu"] = np.full(uids.shape[0], nu, dtype=np.float64)
+    bundle = JtdIngestBundle.from_instrument_frame(
+        pd.DataFrame(frame_data), mf_loadings_df=mf_loadings_df
+    )
+    return universe, bundle
+
+
+def _assemble_mf_gaussian(
+    obligor_table: pd.DataFrame,
+    params: Mapping[str, float],
+    loadings_table: pd.DataFrame | None = None,
+) -> AssembledInputs:
+    universe, bundle = _mf_universe_and_bundle(
+        obligor_table,
+        loadings_table,
+        instrument=JtdModel.COPULA_MF_GAUSSIAN.name,
+        with_chi=False,
+    )
+    return AssembledInputs(
+        masters=_masters(obligor_table, universe),
+        bundle=bundle,
+        obligor_ead=_ead(obligor_table),
+    )
+
+
+def _assemble_mf_students_t(
+    obligor_table: pd.DataFrame,
+    params: Mapping[str, float],
+    loadings_table: pd.DataFrame | None = None,
+) -> AssembledInputs:
+    nu = _require(params, "nu", _DEFAULT_NU)
+    if nu <= 0.0:
+        raise ValueError(f"mf_students_t: nu={nu} must be > 0.")
+    universe, bundle = _mf_universe_and_bundle(
+        obligor_table,
+        loadings_table,
+        instrument=JtdModel.COPULA_MF_STUDENTS_T.name,
+        with_chi=True,
+        nu=nu,
+    )
+    return AssembledInputs(
+        masters=_masters(obligor_table, universe),
+        bundle=bundle,
+        obligor_ead=_ead(obligor_table),
+    )
+
+
+# Recipe key -> assembler. The key is the stable model identifier the solution
+# dispatches on; the catalog mirrors it (no-drift guard).
+SUPPORTED_RECIPES: dict[str, object] = {
+    "forced_default": _assemble_forced_default,
+    "independent_bernoulli": _assemble_independent_bernoulli,
+    "beta_binomial": _assemble_beta_binomial,
+    "stress_regime_bernoulli": _assemble_stress_regime_bernoulli,
+    "sf_gaussian": _assemble_sf_gaussian,
+    "sf_students_t": _assemble_sf_students_t,
+    "mf_gaussian": _assemble_mf_gaussian,
+    "mf_students_t": _assemble_mf_students_t,
+}
+
+
+def assemble_inputs(
+    *,
+    model_key: str,
+    obligor_table: pd.DataFrame,
+    params: Mapping[str, float] | None = None,
+    loadings_table: pd.DataFrame | None = None,
+) -> AssembledInputs:
+    """Build compiled engine inputs for `model_key` from the obligor table + params.
+
+    Raises ValueError on an unknown/unsupported recipe; each assembler fail-fast
+    validates its own params, and the obligor columns flow through the master / EAD
+    compilers' validation.
+    """
+    assembler = SUPPORTED_RECIPES.get(model_key)
+    if assembler is None:
+        raise ValueError(
+            f"assemble_inputs: no recipe for model '{model_key}'. "
+            f"Supported: {sorted(SUPPORTED_RECIPES)}."
+        )
+    return assembler(obligor_table, params or {}, loadings_table)  # type: ignore[operator]
+```
+</file>
+
+<file_summary>
+path: riskquant\src\riskquant\solutions\credit_var\run.py
+module_docstring: `run_credit_var` — the credit-VaR solution entry point.
+
+JSON/Pydantic in, JSON/Pydantic out; the core engine in between...
+functions: _alpha_key, _engine_version, _input_hash, _loadings_frame, _obligor_frame, run_credit_var
+imports:
+- riskquant.credit.aggregate.summary
+- riskquant.credit.factors.simulate.base
+- riskquant.credit.factors.simulate.mixed
+- riskquant.credit.jtd.engine
+- riskquant.credit.jtd.ingest.compile
+- riskquant.solutions.credit_var.recipes
+- riskquant.solutions.credit_var.schemas
+</file_summary>
+
+<file path="riskquant\src\riskquant\solutions\credit_var\run.py">
+```python
+# src/riskquant/solutions/credit_var/run.py
+"""
+`run_credit_var` — the credit-VaR solution entry point.
+
+JSON/Pydantic in, JSON/Pydantic out; the core engine in between. This is the
+notebook-facing convenience today and Emissary's integration target tomorrow:
+the same call serves both because the contract is a validated payload, not a set
+of engine objects. The function depends only on the frozen core API
+(the solution recipe + the engine), never the other way round.
+
+Notebook ergonomics: pass a `CreditVarRequest`, a plain ``dict`` (it is validated
+into one), or keyword the request fields via `CreditVarRequest(...)`. The result
+is a `CreditVarResult` whose `.model_dump()` / `.model_dump_json()` is wire-ready.
+"""
+
+from __future__ import annotations
+
+__all__ = [
+    "run_credit_var",
+]
+
+import hashlib
+import json
+from datetime import datetime, timezone
+
+import numpy as np
+import pandas as pd
+
+from riskquant.credit.aggregate.summary import (
+    model_tail_var_es,
+    summarize_jtd_loss,
+)
+from riskquant.credit.factors.simulate.base import build_credit_factor_matrix
+from riskquant.credit.factors.simulate.mixed import MixedCreditFactorGenerator
+from riskquant.credit.jtd.engine import run_jtd_for_obligor_ead
+from riskquant.credit.jtd.ingest.compile import compile_jtd_portfolio
+from riskquant.solutions.credit_var.recipes import assemble_inputs
+from riskquant.solutions.credit_var.schemas import (
+    CreditVarRequest,
+    CreditVarResult,
+    ModelTail,
+    RiskSummary,
+    RunProvenance,
+)
+
+_PERCENTILE_GRID: tuple[float, ...] = (
+    0.1,
+    1.0,
+    2.5,
+    5.0,
+    25.0,
+    50.0,
+    75.0,
+    90.0,
+    95.0,
+    97.5,
+    99.0,
+    99.9,
+)
+_FACTOR_BATCH = 25_000
+
+
+def _engine_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("riskquant")
+    except Exception:
+        return "0+unknown"
+
+
+def _obligor_frame(request: CreditVarRequest) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "uid": [o.uid for o in request.obligors],
+            "ead": [o.ead for o in request.obligors],
+            "pd": [o.pd for o in request.obligors],
+            "lgd": [o.lgd for o in request.obligors],
+        }
+    )
+
+
+def _loadings_frame(request: CreditVarRequest) -> pd.DataFrame | None:
+    if not request.loadings:
+        return None
+    return pd.DataFrame(
+        {
+            "uid": [lo.uid for lo in request.loadings],
+            "factor": [lo.factor for lo in request.loadings],
+            "loading": [lo.loading for lo in request.loadings],
+        }
+    )
+
+
+def _input_hash(request: CreditVarRequest) -> str:
+    payload = json.dumps(request.model_dump(mode="json"), sort_keys=True).encode()
+    return hashlib.sha256(payload).hexdigest()[:16]
+
+
+def _alpha_key(alpha: float) -> str:
+    # Stable, JSON-friendly key (no trailing-zero noise): 0.99 -> "0.99".
+    return repr(float(alpha))
+
+
+def run_credit_var(request: CreditVarRequest | dict) -> CreditVarResult:
+    """Run one credit-VaR request end to end.
+
+    Parameters
+    ----------
+    request
+        A `CreditVarRequest`, or a dict validated into one (Pydantic raises
+        `ValidationError` with cell-addressable `loc` on bad input).
+    """
+    req = (
+        request
+        if isinstance(request, CreditVarRequest)
+        else CreditVarRequest.model_validate(request)
+    )
+
+    obligor_df = _obligor_frame(req)
+    loadings_df = _loadings_frame(req)
+    inputs = assemble_inputs(
+        model_key=req.model,
+        obligor_table=obligor_df,
+        params=req.params,
+        loadings_table=loadings_df,
+    )
+    portfolio = compile_jtd_portfolio(bundle=inputs.bundle, masters=inputs.masters)
+
+    universe = inputs.masters.factor_universe
+    generator = MixedCreditFactorGenerator.from_universe(
+        universe,
+        total_scenarios=req.n_scenarios,
+        seed=req.seed,
+        stress_p_by_uix=inputs.stress_p_by_uix,
+    )
+    credit_factors = build_credit_factor_matrix(
+        generator.iter_batches(batch_size=min(req.n_scenarios, _FACTOR_BATCH)),
+        num_factors=universe.n_factors,
+        num_scenarios=req.n_scenarios,
+    )
+
+    result = run_jtd_for_obligor_ead(
+        jtd_portfolio=portfolio,
+        obligor_ead=inputs.obligor_ead,
+        credit_factors=credit_factors,
+    )
+
+    alphas = tuple(req.alphas)
+    summary = summarize_jtd_loss(result=result, jtd_portfolio=portfolio, alphas=alphas)
+    headline_alpha = max(alphas)
+    per_model = model_tail_var_es(
+        result=result, jtd_portfolio=portfolio, alpha=headline_alpha
+    )
+
+    portfolio_losses = result.loss.sum(axis=0)
+    pct = np.percentile(portfolio_losses, _PERCENTILE_GRID)
+
+    return CreditVarResult(
+        model=req.model,
+        headline_alpha=headline_alpha,
+        summary=RiskSummary(
+            expected_loss=float(summary.expected_loss),
+            var={_alpha_key(a): float(summary.var[a]) for a in alphas},
+            es={_alpha_key(a): float(summary.es[a]) for a in alphas},
+            expected_loss_by_model={
+                k: float(v) for k, v in summary.expected_loss_by_model.items()
+            },
+        ),
+        per_model_tail={
+            name: ModelTail(var=float(v), es=float(e))
+            for name, (v, e) in per_model.items()
+        },
+        loss_percentiles={
+            repr(float(p)): float(v) for p, v in zip(_PERCENTILE_GRID, pct, strict=True)
+        },
+        provenance=RunProvenance(
+            engine_version=_engine_version(),
+            model=req.model,
+            params=dict(req.params),
+            n_obligors=int(portfolio.total_obligors),
+            n_scenarios=req.n_scenarios,
+            seed=req.seed,
+            alphas=list(req.alphas),
+            input_hash=_input_hash(req),
+            generated_at=datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+```
+</file>
+
+<file_summary>
+path: riskquant\src\riskquant\solutions\credit_var\schemas.py
+module_docstring: Pydantic schemas for the credit-VaR solution.
+
+The wire contract for Emissary (and any JSON client): a request payload i...
+classes: CreditVarRequest, CreditVarResult, LoadingRow, ModelTail, ObligorRow, RiskSummary, RunProvenance
+imports:
+- riskquant.solutions.credit_var.catalog
+</file_summary>
+
+<file path="riskquant\src\riskquant\solutions\credit_var\schemas.py">
+```python
+# src/riskquant/solutions/credit_var/schemas.py
+"""
+Pydantic schemas for the credit-VaR solution.
+
+The wire contract for Emissary (and any JSON client): a request payload in, a
+result payload out, both validated and JSON-native. Pydantic does the field- and
+cross-field validation; its `ValidationError.errors()` already carries `loc`
+paths (e.g. ``("obligors", 2, "ead")``) that a front-end maps straight to a cell,
+so this doubles as the structured, cell-addressable validation layer.
+
+Dict-keyed-by-confidence fields (`var`, `es`, `loss_percentiles`) use STRING keys
+because JSON object keys are strings — e.g. ``{"0.99": 1234.5}`` — so the result
+round-trips through JSON without surprise float-key coercion.
+"""
+
+from __future__ import annotations
+
+import pandas as pd
+
+__all__ = [
+    "ObligorRow",
+    "LoadingRow",
+    "CreditVarRequest",
+    "RiskSummary",
+    "ModelTail",
+    "RunProvenance",
+    "CreditVarResult",
+]
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
+
+from riskquant.solutions.credit_var.catalog import MODEL_CATALOG, model_entry
+
+_STRICT = ConfigDict(extra="forbid", protected_namespaces=())
+
+
+class ObligorRow(BaseModel):
+    """One obligor: the flat desk row."""
+
+    model_config = _STRICT
+
+    uid: int
+    ead: float = Field(ge=0.0, description="Exposure at default (>= 0).")
+    pd: float = Field(ge=0.0, le=1.0, description="Probability of default in [0, 1].")
+    lgd: float = Field(ge=0.0, le=1.0, description="Loss given default in [0, 1].")
+
+
+class LoadingRow(BaseModel):
+    """One systemic-factor loading for a multi-factor model: obligor `uid` loads
+    on systemic `factor` with `loading`. The set of distinct `factor` values
+    defines the model's systemic factors; per-obligor idiosyncratic weight is the
+    engine residual sqrt(1 - sum loading^2)."""
+
+    model_config = _STRICT
+
+    uid: int
+    factor: str = Field(min_length=1)
+    loading: float = Field(ge=-1.0, le=1.0)
+
+
+class CreditVarRequest(BaseModel):
+    """A single credit-VaR run, as a JSON payload."""
+
+    model_config = _STRICT
+
+    model: str = Field(description="Model key, e.g. 'sf_gaussian'.")
+    obligors: list[ObligorRow] = Field(min_length=1)
+    params: dict[str, float] = Field(default_factory=dict)
+    loadings: list[LoadingRow] | None = Field(
+        default=None,
+        description="Systemic loadings for multi-factor models; omit otherwise.",
+    )
+    n_scenarios: int = Field(default=100_000, gt=0)
+    alphas: list[float] = Field(default_factory=lambda: [0.95, 0.99, 0.999])
+    seed: int = 12345
+
+    @field_validator("alphas")
+    @classmethod
+    def _alphas_unit_interval(cls, v: list[float]) -> list[float]:
+        if not v:
+            raise ValueError("at least one confidence level is required.")
+        for a in v:
+            if not (0.0 < a < 1.0):
+                raise ValueError(f"confidence level {a} must be in (0, 1).")
+        return v
+
+    @model_validator(mode="after")
+    def _validate_model_and_params(self) -> CreditVarRequest:
+        if self.model not in MODEL_CATALOG:
+            raise ValueError(
+                f"unknown model '{self.model}'. Supported: {sorted(MODEL_CATALOG)}."
+            )
+        entry = model_entry(self.model)
+        known = {p.key for p in entry.params}
+        unknown = set(self.params) - known
+        if unknown:
+            raise ValueError(
+                f"model '{self.model}' does not accept param(s) {sorted(unknown)}. "
+                f"Accepted: {sorted(known)}."
+            )
+        for p in entry.params:
+            if p.key in self.params and not p.contains(self.params[p.key]):
+                raise ValueError(
+                    f"param '{p.key}' = {self.params[p.key]} out of range "
+                    f"{p.interval_repr}."
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _unique_uids(self) -> CreditVarRequest:
+        uids = [o.uid for o in self.obligors]
+        if len(uids) != len(set(uids)):
+            raise ValueError("duplicate obligor uid(s).")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_loadings(self) -> CreditVarRequest:
+        if self.model not in MODEL_CATALOG:
+            return self  # unknown model already reported
+        requires = model_entry(self.model).requires_loadings
+        if not requires:
+            if self.loadings:
+                raise ValueError(f"model '{self.model}' does not use a loadings table.")
+            return self
+        if not self.loadings:
+            raise ValueError(
+                f"model '{self.model}' requires a non-empty 'loadings' table "
+                "(one row per obligor x systemic factor)."
+            )
+        obligor_uids = {o.uid for o in self.obligors}
+        stray = sorted({lo.uid for lo in self.loadings} - obligor_uids)
+        if stray:
+            raise ValueError(f"loadings reference uid(s) not in obligors: {stray}.")
+        uncovered = sorted(obligor_uids - {lo.uid for lo in self.loadings})
+        if uncovered:
+            raise ValueError(f"obligor(s) have no systemic loadings: {uncovered}.")
+        return self
+
+    @classmethod
+    def from_dataframe(
+        cls,
+        obligor_table: pd.DataFrame,
+        *,
+        model: str,
+        loadings_table: pd.DataFrame | None = None,
+        n_scenarios: int = 100_000,
+        alphas: list[float] | None = None,
+        seed: int = 12345,
+        **params: float,
+    ) -> CreditVarRequest:
+        """Build a request from a flat obligor DataFrame (notebook ergonomics).
+
+        The DataFrame needs `uid, ead, pd, lgd`; extra columns are ignored. Model
+        params are passed as keywords, e.g.::
+
+            CreditVarRequest.from_dataframe(df, model="sf_gaussian", rho=0.15)
+
+        For multi-factor models, pass `loadings_table` with `uid, factor, loading`::
+
+            CreditVarRequest.from_dataframe(df, model="mf_gaussian", loadings_table=ld)
+
+        Validation is identical to the dict/JSON path — a bad cell still raises a
+        `ValidationError` with a `loc` into `obligors` / `loadings`.
+        """
+        required = ("uid", "ead", "pd", "lgd")
+        missing = [c for c in required if c not in obligor_table.columns]
+        if missing:
+            raise ValueError(
+                f"from_dataframe: obligor_table missing column(s) {missing}."
+            )
+        obligors = [
+            ObligorRow(
+                uid=int(rec["uid"]),
+                ead=float(rec["ead"]),
+                pd=float(rec["pd"]),
+                lgd=float(rec["lgd"]),
+            )
+            for rec in obligor_table.loc[:, list(required)].to_dict("records")
+        ]
+        kwargs: dict[str, object] = {
+            "model": model,
+            "obligors": obligors,
+            "params": dict(params),
+            "n_scenarios": n_scenarios,
+            "seed": seed,
+        }
+        if loadings_table is not None:
+            lcols = ("uid", "factor", "loading")
+            lmissing = [c for c in lcols if c not in loadings_table.columns]
+            if lmissing:
+                raise ValueError(
+                    f"from_dataframe: loadings_table missing column(s) {lmissing}."
+                )
+            kwargs["loadings"] = [
+                LoadingRow(
+                    uid=int(rec["uid"]),
+                    factor=str(rec["factor"]),
+                    loading=float(rec["loading"]),
+                )
+                for rec in loadings_table.loc[:, list(lcols)].to_dict("records")
+            ]
+        if alphas is not None:
+            kwargs["alphas"] = list(alphas)
+        return cls(**kwargs)
+
+
+class RiskSummary(BaseModel):
+    """Headline portfolio risk metrics."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_loss: float
+    var: dict[str, float]  # confidence (as string) -> VaR
+    es: dict[str, float]  # confidence (as string) -> ES
+    expected_loss_by_model: dict[str, float]
+
+
+class ModelTail(BaseModel):
+    """Standalone tail risk for one model at the headline confidence level."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    var: float
+    es: float
+
+
+class RunProvenance(BaseModel):
+    """Audit stamp: enough to reproduce a number."""
+
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+    engine_version: str
+    model: str
+    params: dict[str, float]
+    n_obligors: int
+    n_scenarios: int
+    seed: int
+    alphas: list[float]
+    input_hash: str
+    generated_at: str
+
+
+class CreditVarResult(BaseModel):
+    """A completed credit-VaR run, JSON-native."""
+
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+    model: str
+    headline_alpha: float
+    summary: RiskSummary
+    per_model_tail: dict[str, ModelTail]
+    loss_percentiles: dict[str, float]  # percentile (as string) -> loss
+    provenance: RunProvenance
 ```
 </file>
 

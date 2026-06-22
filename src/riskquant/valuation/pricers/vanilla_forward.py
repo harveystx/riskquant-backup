@@ -37,15 +37,11 @@ def price_vanilla_forward_block(
         # OUTPUT
         out,
         # MARKET DATA
-        valuation_state.forward_prices,
-        valuation_state.discount_factors,
-        valuation_state.fx_spots_effective,
+        valuation_state.effective_forward_prices,
+        valuation_state.effective_discount_factors,
         # BLOCK FIELDS
         block.qty,
         block.strike,
-        block.forward_price_uix,
-        block.discount_factor_u_uix,
-        block.discount_factor_k_uix,
-        block.fx_spot_effective_u2s_uix,
-        block.fx_spot_effective_k2s_uix,
+        block.effective_forward_price_uix,
+        block.effective_discount_factor_uix,
     )

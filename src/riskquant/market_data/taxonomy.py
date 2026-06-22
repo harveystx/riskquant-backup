@@ -1,0 +1,51 @@
+# src/riskquant/market_data/taxonomy.py
+
+from enum import IntEnum
+
+
+class MarketObservableType(IntEnum):
+    # TODO: NOT SURE ABOUT THIS BUT WE NEED A DISTINCTION BETWEEN THINGS WE OBSERVE IN
+    # THE MARKET (SPOT, FORWARD, VOL, RATE) AND THINGS WE DERIVE FROM THEM
+    # (DISCOUNT FACTORS, IMPLIED FORWARDS). SIMPLE EXAMPLE IS WE MAY OBSERVE OPTION
+    # PRICES IN THE MARKET AND HAVE TO DERIVE IMPLIED VOLATILITIES FROM THEM.
+    SPOT_PRICE = 1
+
+    FORWARD_PRICE = 2
+
+    OPTION_PRICE = 3
+
+    RATE = 4
+
+    VOL = 5
+
+    DISCOUNT_FACTOR = 6
+
+    FX_RATE = 7
+
+
+class PrimitiveFactorType(IntEnum):
+    SPOT_PRICE = 1
+
+    FORWARD_PRICE = 2
+
+    FORWARD_RATE = 3
+
+    VOL = 4
+
+    DISCOUNT_FACTOR = 5
+
+    FX_EFFECTIVE = 6
+
+
+class EffectiveFactorType(IntEnum):
+    EFFECTIVE_DISCOUNT_FACTOR = 1
+
+    EFFECTIVE_FORWARD_PRICE = 2
+
+    EFFECTIVE_SPOT_PRICE = 3
+
+    FORWARD_PRICE_STRIKE_CCY = 4
+
+
+class DerivedEffectiveFactorType(IntEnum):
+    OPTION_LOG_FORWARD_PRICE_STRIKE_CCY = 1
