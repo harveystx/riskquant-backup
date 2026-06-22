@@ -34,7 +34,7 @@ data/dev/*.xlsx
 
 # Files.
 _generate_project_structure.py
-src/riskquant/_create_master_context_txt.py
+_create_master_context_txt.py
 
 
 
