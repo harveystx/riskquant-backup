@@ -43,20 +43,27 @@ from riskquant.solutions.credit_var.schemas import (
     RunProvenance,
 )
 
+# NEW (16 points: body fill 10.0 + tail density 99.5/99.95/99.99)
 _PERCENTILE_GRID: tuple[float, ...] = (
-    0.1,
-    1.0,
-    2.5,
-    5.0,
-    25.0,
-    50.0,
-    75.0,
-    90.0,
-    95.0,
-    97.5,
-    99.0,
-    99.9,
+    00.10,
+    01.00,
+    02.50,
+    05.00,
+    10.00,
+    25.00,
+    50.00,
+    75.00,
+    90.00,
+    95.00,
+    97.50,
+    99.00,
+    99.50,
+    99.90,
+    99.95,
+    99.99,
 )
+
+
 _FACTOR_BATCH = 25_000
 
 
