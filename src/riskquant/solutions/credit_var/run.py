@@ -34,11 +34,17 @@ from riskquant.credit.factors.simulate.base import build_credit_factor_matrix
 from riskquant.credit.factors.simulate.mixed import MixedCreditFactorGenerator
 from riskquant.credit.jtd.engine import run_jtd_for_obligor_ead
 from riskquant.credit.jtd.ingest.compile import compile_jtd_portfolio
+from riskquant.solutions.credit_var._attribution import (
+    loss_histogram,
+    obligor_tail_attribution,
+)
 from riskquant.solutions.credit_var.recipes import assemble_inputs
 from riskquant.solutions.credit_var.schemas import (
     CreditVarRequest,
     CreditVarResult,
+    LossHistogram,
     ModelTail,
+    ObligorContribution,
     RiskSummary,
     RunProvenance,
 )
@@ -105,8 +111,15 @@ def _input_hash(request: CreditVarRequest) -> str:
 
 
 def _alpha_key(alpha: float) -> str:
-    # Stable, JSON-friendly key (no trailing-zero noise): 0.99 -> "0.99".
-    return repr(float(alpha))
+    x = float(alpha) * 100
+    x = f"{x:.2f}%"
+    return x
+
+
+def _percentile_key(p: float) -> str:
+    x = float(p)
+    x = f"{x:>5.2f}%"
+    return x
 
 
 def run_credit_var(request: CreditVarRequest | dict) -> CreditVarResult:
@@ -163,6 +176,29 @@ def run_credit_var(request: CreditVarRequest | dict) -> CreditVarResult:
     portfolio_losses = result.loss.sum(axis=0)
     pct = np.percentile(portfolio_losses, _PERCENTILE_GRID)
 
+    attribution = obligor_tail_attribution(
+        obligor_loss=result.loss,
+        portfolio_losses=portfolio_losses,
+        confidence_level=headline_alpha,
+    )
+    ead_by_uid = {int(o.uid): float(o.ead) for o in req.obligors}
+    es_total = attribution.es_total
+    contributions = [
+        ObligorContribution(
+            uid=int(uid),
+            ead=ead_by_uid.get(int(uid), float("nan")),
+            expected_loss=float(attribution.expected_loss[i]),
+            es_contribution=float(attribution.es_contribution[i]),
+            es_pct=(
+                float(attribution.es_contribution[i] / es_total) if es_total else 0.0
+            ),
+            incremental_var=float(attribution.incremental_var[i]),
+            incremental_es=float(attribution.incremental_es[i]),
+        )
+        for i, uid in enumerate(result.uid)
+    ]
+    hist_edges, hist_counts = loss_histogram(portfolio_losses)
+
     return CreditVarResult(
         model=req.model,
         headline_alpha=headline_alpha,
@@ -179,8 +215,11 @@ def run_credit_var(request: CreditVarRequest | dict) -> CreditVarResult:
             for name, (v, e) in per_model.items()
         },
         loss_percentiles={
-            repr(float(p)): float(v) for p, v in zip(_PERCENTILE_GRID, pct, strict=True)
+            _percentile_key(p): float(v)
+            for p, v in zip(_PERCENTILE_GRID, pct, strict=True)
         },
+        obligor_contributions=contributions,
+        loss_histogram=LossHistogram(bin_edges=hist_edges, counts=hist_counts),
         provenance=RunProvenance(
             engine_version=_engine_version(),
             model=req.model,

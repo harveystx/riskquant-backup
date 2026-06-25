@@ -32,6 +32,8 @@ __all__ = [
     "RiskSummary",
     "ModelTail",
     "RunProvenance",
+    "ObligorContribution",
+    "LossHistogram",
     # model catalog (the front-end menu + param specs)
     "MODEL_CATALOG",
     "ModelEntry",
@@ -52,7 +54,9 @@ from riskquant.solutions.credit_var.schemas import (
     CreditVarRequest,
     CreditVarResult,
     LoadingRow,
+    LossHistogram,
     ModelTail,
+    ObligorContribution,
     ObligorRow,
     RiskSummary,
     RunProvenance,

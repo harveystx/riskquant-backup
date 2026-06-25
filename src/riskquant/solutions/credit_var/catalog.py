@@ -59,7 +59,7 @@ class ModelEntry:
 
 _RHO = ParamSpec(
     key="rho",
-    label="Asset correlation (rho)",
+    label="Asset Correlation (rho)",
     default=0.15,
     min_value=0.0,
     max_value=1.0,
@@ -68,7 +68,7 @@ _RHO = ParamSpec(
 )
 _NU = ParamSpec(
     key="nu",
-    label="Degrees of freedom (nu)",
+    label="Degrees of Freedom (nu)",
     default=8.0,
     min_value=2.0,
     max_value=250.0,
@@ -77,7 +77,7 @@ _NU = ParamSpec(
 )
 _BETA_ALPHA = ParamSpec(
     key="alpha",
-    label="Beta shape alpha",
+    label="Beta Shape - Alpha",
     default=1.0,
     min_value=0.0,
     max_value=1000.0,
@@ -86,7 +86,7 @@ _BETA_ALPHA = ParamSpec(
 )
 _BETA_BETA = ParamSpec(
     key="beta",
-    label="Beta shape beta",
+    label="Beta Shape - Beta",
     default=24.0,
     min_value=0.0,
     max_value=1000.0,
@@ -95,7 +95,7 @@ _BETA_BETA = ParamSpec(
 )
 _STRESS_PROB = ParamSpec(
     key="stress_prob",
-    label="Stress-regime probability",
+    label="Stress-Regime Probability",
     default=0.05,
     min_value=0.0,
     max_value=1.0,
@@ -104,7 +104,7 @@ _STRESS_PROB = ParamSpec(
 )
 _STRESS_MULT = ParamSpec(
     key="stress_pd_multiplier",
-    label="Stressed PD multiplier",
+    label="Stress-Regime PD Multiplier",
     default=3.0,
     min_value=1.0,
     max_value=50.0,

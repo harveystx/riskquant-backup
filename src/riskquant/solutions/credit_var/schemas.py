@@ -207,7 +207,8 @@ class CreditVarRequest(BaseModel):
             ]
         if alphas is not None:
             kwargs["alphas"] = list(alphas)
-        return cls(**kwargs)
+        # return cls(**kwargs)
+        return cls.model_validate(kwargs)
 
 
 class RiskSummary(BaseModel):
@@ -246,6 +247,29 @@ class RunProvenance(BaseModel):
     generated_at: str
 
 
+class ObligorContribution(BaseModel):
+    """One obligor's share of portfolio risk, at the headline confidence level."""
+
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+    uid: int
+    ead: float
+    expected_loss: float
+    es_contribution: float  # Euler ES contribution; sums to portfolio ES
+    es_pct: float  # share of portfolio ES (the contributions sum to 1.0)
+    incremental_var: float  # VaR(L) - VaR(L - L_i): VaR drop if obligor removed
+    incremental_es: float  # ES(L) - ES(L - L_i): ES drop if obligor removed
+
+
+class LossHistogram(BaseModel):
+    """Binned portfolio loss for a distribution plot."""
+
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+    bin_edges: list[float]  # length nbins + 1
+    counts: list[int]  # length nbins; last bin folds in the > p99.9 overflow
+
+
 class CreditVarResult(BaseModel):
     """A completed credit-VaR run, JSON-native."""
 
@@ -256,4 +280,6 @@ class CreditVarResult(BaseModel):
     summary: RiskSummary
     per_model_tail: dict[str, ModelTail]
     loss_percentiles: dict[str, float]  # percentile (as string) -> loss
+    obligor_contributions: list[ObligorContribution]
+    loss_histogram: LossHistogram
     provenance: RunProvenance
