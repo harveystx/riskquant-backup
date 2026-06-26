@@ -40,6 +40,7 @@ from riskquant.credit.aggregate.loss_metrics import (
 )
 
 _F64 = npt.NDArray[np.float64]
+_I64 = npt.NDArray[np.int64]
 
 # Cap the leave-one-out working set to ~50M float64 (~400 MB incl. the kernel's
 # own scratchpad copy) per chunk.
@@ -101,17 +102,52 @@ def obligor_tail_attribution(
     )
 
 
+# def loss_histogram(
+#     portfolio_losses: _F64, *, nbins: int = 50
+# ) -> tuple[list[float], list[int]]:
+#     """Bin portfolio loss over ``[0, p99.9]`` (overflow folded into the last bin)
+#     so the distribution chart isn't flattened by a handful of extreme scenarios.
+#     Returns (bin_edges length nbins+1, counts length nbins)."""
+#     upper = float(np.percentile(portfolio_losses, 99.9))
+#     if upper <= 0.0:
+#         upper = float(portfolio_losses.max())
+#     if upper <= 0.0:
+#         upper = 1.0
+#     edges = np.linspace(0.0, upper, nbins + 1)
+#     counts, _ = np.histogram(np.clip(portfolio_losses, 0.0, upper), bins=edges)
+#     return [float(e) for e in edges], [int(c) for c in counts]
+
+
 def loss_histogram(
-    portfolio_losses: _F64, *, nbins: int = 50
+    portfolio_losses: _F64,
+    *,
+    nbins: int = 50,
+    display_percentile: float = 99.9,
 ) -> tuple[list[float], list[int]]:
-    """Bin portfolio loss over ``[0, p99.9]`` (overflow folded into the last bin)
-    so the distribution chart isn't flattened by a handful of extreme scenarios.
-    Returns (bin_edges length nbins+1, counts length nbins)."""
-    upper = float(np.percentile(portfolio_losses, 99.9))
-    if upper <= 0.0:
-        upper = float(portfolio_losses.max())
-    if upper <= 0.0:
-        upper = 1.0
-    edges = np.linspace(0.0, upper, nbins + 1)
-    counts, _ = np.histogram(np.clip(portfolio_losses, 0.0, upper), bins=edges)
+    """
+    Build a histogram suitable for plotting portfolio losses.
+
+    The histogram spans [0, display_percentile]. Losses above the chosen
+    percentile are accumulated into the final bin so that extreme tail events
+    do not dominate the x-axis.
+    """
+    losses = np.asarray(portfolio_losses, dtype=np.float64)
+
+    if losses.size == 0:
+        raise ValueError("portfolio_losses must not be empty")
+
+    xmax = float(np.percentile(losses, display_percentile))
+    xmax = max(xmax, float(losses.max()), 1.0)
+
+    edges = np.linspace(0.0, xmax, nbins + 1)
+
+    counts, _ = np.histogram(
+        losses,
+        bins=edges,
+    )
+
+    overflow = losses > xmax
+    if overflow.any():
+        counts[-1] += int(overflow.sum())
+
     return [float(e) for e in edges], [int(c) for c in counts]

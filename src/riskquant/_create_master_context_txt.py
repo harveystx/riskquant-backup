@@ -255,20 +255,20 @@ def main(profile: str | None = None):
             base_dir / "pnl",
             base_dir / "portfolio",
             base_dir / "proxy_resolver",
+            base_dir / "scenario_metrics",
             base_dir / "simlab",
             base_dir / "utils",
             base_dir / "valuation",
-            base_dir / "scenario_metrics",
             base_dir / "_arrays.py",
-            base_dir / "numba.py",
             base_dir / "constants.py",
             base_dir / "exceptions.py",
+            base_dir / "numba.py",
             # base_dir / "synthetic_level_generators.py",
             base_dir / "universe.py",
             # SCRIPTS
-            base_dir_parent / "scripts" / "demos" / "config",
+            # base_dir_parent / "scripts" / "demos" / "config",
             # base_dir_parent / "scripts" / "demos" / "credit",
-            base_dir_parent / "scripts" / "demos" / "e2e",
+            # base_dir_parent / "scripts" / "demos" / "e2e",
             # base_dir_parent / "scripts" / "demos" / "market_data",
             # base_dir_parent / "scripts" / "demos" / "misc",
             # base_dir_parent / "scripts" / "demos" / "simlab",
@@ -626,7 +626,7 @@ if __name__ == "__main__":
     # main(profile="config")
     # main(profile="config_static")
     # main(profile="config_proxy")
-    main(profile="valuation")
+    # main(profile="valuation")
     # main(profile="simlab")
     # main(profile="simlab_reduced")
     # main(profile="simlab_extended")
@@ -635,15 +635,15 @@ if __name__ == "__main__":
     # main(profile="risk_quant")
     # main(profile="risk_quant_adhoc")
     # main(profile="pricers")
-    main(profile="market_data")
+    # main(profile="market_data")
     # main(profile="market_data_reduced")
-    main(profile="market_data_calibrate")
+    # main(profile="market_data_calibrate")
     main(profile="credit")
     # main(profile="credit_jtd")
-    main(profile="credit_reduced")
+    # main(profile="credit_reduced")
     # main(profile="ingest_fixtures")
     # main(profile="ingest_fixtures_risk_static_config")
     # main(profile="ingest_fixtures_market_data")
-    main(profile="portfolio")
+    # main(profile="portfolio")
     # main(profile="pricer_kernels")
-    main(profile="scenario_metrics")
+    # main(profile="scenario_metrics")
