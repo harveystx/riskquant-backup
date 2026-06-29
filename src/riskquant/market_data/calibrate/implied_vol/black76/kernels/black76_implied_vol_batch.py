@@ -14,7 +14,7 @@ import numpy as np
 from riskquant.market_data.calibrate.implied_vol.black76.kernels.black76_implied_vol_scalar import (
     _solver_black76_iv_from_undiscounted_call_prices_brent,
 )
-from riskquant.numba import _F64_1D, parallel_njit
+from riskquant.jit import _F64_1D, parallel_njit
 from riskquant.valuation.pricing_models.black76.model import _black76_fv_vega
 
 

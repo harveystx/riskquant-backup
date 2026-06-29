@@ -1,12 +1,11 @@
 # src/riskquant/credit/jtd/ingest/builders/stress_regime_bernoulli.py
 """Per-model JTD block builder. Input is assumed structurally and semantically
 valid (validated upstream in `validate.py`); builders only resolve and construct.
-The single-global-stress invariant is asserted in the semantic pass, so taking
-stress_uix[0] here is safe."""
+The stress-regime indicator is resolved per obligor: obligors may name distinct
+stress factors (block-diagonal regimes) or share one (the global-stress case)."""
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 from riskquant.credit.jtd.blocks.stress_regime_bernoulli import (
@@ -28,11 +27,7 @@ def build_stress_regime_bernoulli_block(
 ) -> StressRegimeBernoulliJtdBlock:
     obligor_uids = _i64(df, "uid")
     pd_arr, lgd_arr = _join_pd_lgd_from_master(obligor_uids, obligor_master)
-    stress_uix = _resolve_factor_uix(
-        df["stress_regime_factor"].to_numpy(copy=False),
-        factor_name_to_uix,
-        ctx="stress_regime_factor",
-    )
+
     return StressRegimeBernoulliJtdBlock(
         obligor_uids=obligor_uids,
         lgd=lgd_arr,
@@ -42,6 +37,10 @@ def build_stress_regime_bernoulli_block(
             factor_name_to_uix,
             ctx="uniform_factor",
         ),
-        stress_regime_indicator_uix=np.int32(stress_uix[0]),
+        stress_regime_indicator_uix=_resolve_factor_uix(
+            df["stress_regime_factor"].to_numpy(copy=False),
+            factor_name_to_uix,
+            ctx="stress_regime_factor",
+        ),
         stress_pd_multiplier=_f64(df, "stress_pd_multiplier"),
     )

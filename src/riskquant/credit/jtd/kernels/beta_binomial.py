@@ -5,7 +5,7 @@ import numba as nb
 import numpy as np
 import numpy.typing as npt
 
-from riskquant.numba import (
+from riskquant.jit import (
     _F64_1D,
     _F64_2D,
     _I32_1D,

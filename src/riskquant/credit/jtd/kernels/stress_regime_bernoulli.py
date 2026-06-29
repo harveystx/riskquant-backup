@@ -7,7 +7,7 @@ import numba as nb  # type: ignore
 import numpy as np
 import numpy.typing as npt
 
-from riskquant.numba import (
+from riskquant.jit import (
     _F64_1D,
     _F64_2D,
     _I32_1D,
@@ -18,25 +18,23 @@ from riskquant.numba import (
 @parallel_njit(
     nb.void(
         _F64_2D,  # out (N, S)
-        _F64_2D,  # latent_factors (N, S)
-        _F64_1D,  # stress_regime_indicator (S,) * (stress regime indicator for each scenario s - 1 if stressed, 0 if not)
-        _F64_2D,  # ead  (N, S)
+        _F64_2D,  # latent_factors (F, S)
+        _F64_2D,  # ead (N, S)
         _F64_1D,  # lgd (N,)
         _F64_1D,  # pd (N,)
         _I32_1D,  # uniform_uix (N,)
+        _I32_1D,  # stress_regime_uix (N,) - per-obligor stress-indicator factor
         _F64_1D,  # stress_pd_multiplier (N,)
     )
 )
 def kernel_stress_regime_bernoulli_jtd(
     out: npt.NDArray[np.float64],  # (N, S)
-    latent_factors: npt.NDArray[np.float64],  # (N, S)
-    stress_regime_indicator: npt.NDArray[
-        np.float64
-    ],  # (S,) stress_regime_indicator ∈ {0, 1}
+    latent_factors: npt.NDArray[np.float64],  # (F, S)
     ead: npt.NDArray[np.float64],  # (N, S)
     lgd: npt.NDArray[np.float64],  # (N,)
     pd: npt.NDArray[np.float64],  # (N,)
     uniform_uix: npt.NDArray[np.int32],  # (N,)
+    stress_regime_uix: npt.NDArray[np.int32],  # (N,)
     stress_pd_multiplier: npt.NDArray[np.float64],  # (N,)
 ):
     m_, s_scenarios = out.shape
@@ -48,13 +46,19 @@ def kernel_stress_regime_bernoulli_jtd(
 
         u_row = latent_factors[uniform_uix[i]]
 
+        # Each obligor reads its own stress-regime indicator row. Obligors sharing
+        # a uix share a regime (correlated); distinct uix -> independent
+        # stress regimes. All same index -> global stress regime (all obligors share
+        # the same regime).
+        stress_row = latent_factors[stress_regime_uix[i]]
+
         ead_row = ead[i]
         out_row = out[i]
 
         stressed_pd_i = min(pd_i * stress_pd_mult_i, 1.0)
 
         for s in range(s_scenarios):  # scenarios
-            effective_pd = stressed_pd_i if stress_regime_indicator[s] > 0.5 else pd_i
+            effective_pd = stressed_pd_i if stress_row[s] > 0.5 else pd_i
 
             defaulted = u_row[s] < effective_pd  # Bernoulli draw against effective PD
 

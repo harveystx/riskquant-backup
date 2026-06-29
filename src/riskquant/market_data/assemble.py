@@ -410,7 +410,7 @@ def extract_levels_from_snapshot(
     idx = searchsorted_or_raise(
         universe=snapshot.factor_ids,
         raw=required_ids,
-        label="risk factors required by the compiled portfolio but missing "
+        ctx="risk factors required by the compiled portfolio but missing "
         "from the snapshot",
     )
     return np.ascontiguousarray(snapshot.factor_levels[idx]).astype(

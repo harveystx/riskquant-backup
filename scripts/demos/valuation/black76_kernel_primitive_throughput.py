@@ -1,8 +1,11 @@
+# scripts/demos/valuation/yyy.py
+
 import time
 
 import numba as nb
 import numpy as np
 
+from riskquant.utils.printer import print_calling_file, print_success_message
 from riskquant.valuation.pricing_models.black76.model import (
     _black76_fv_kernel_primitive,
 )
@@ -14,7 +17,7 @@ from riskquant.valuation.pricing_models.black76.model import (
 
 @nb.njit(
     parallel=True,
-    fastmath={"contract", "reassoc", "nsz"},
+    fastmath=True,
     boundscheck=False,
     nogil=True,
 )
@@ -43,23 +46,27 @@ def _run_benchmark_loop(
 
 
 def run(num_runs=5):
-    N_EVALS = 250_000_000
-    print(f"Allocating data for {N_EVALS:,} evaluations...")
+    print_calling_file()
+
+    n_evals = 25_000_000
+    print(f"Allocating data for {n_evals:,} evaluations...")
+
+    rng = np.random.default_rng(seed=42)
 
     # Allocate C-contiguous arrays
-    fwd = np.random.uniform(90.0, 110.0, size=N_EVALS).astype(np.float64)
-    strike = np.random.uniform(90.0, 110.0, size=N_EVALS).astype(np.float64)
+    fwd = rng.uniform(90.0, 110.0, size=n_evals).astype(np.float64)
+    strike = rng.uniform(90.0, 110.0, size=n_evals).astype(np.float64)
     log_fk = np.log(fwd / strike).astype(np.float64)
 
-    vol = np.random.uniform(0.1, 0.4, size=N_EVALS).astype(np.float64)
-    tte = np.random.uniform(0.1, 5.0, size=N_EVALS).astype(np.float64)
+    vol = rng.uniform(0.1, 0.4, size=n_evals).astype(np.float64)
+    tte = rng.uniform(0.1, 5.0, size=n_evals).astype(np.float64)
 
     vol_sqrt_tte = (vol * np.sqrt(tte)).astype(np.float64)
     vol2_half_tte = (vol * vol * 0.5 * tte).astype(np.float64)
 
-    cp_mult = np.random.choice(np.array([1, -1], dtype=np.int8), size=N_EVALS)
+    cp_mult = rng.choice(np.array([1, -1], dtype=np.int8), size=n_evals)
 
-    out = np.zeros(N_EVALS, dtype=np.float64)
+    out = np.zeros(n_evals, dtype=np.float64)
 
     print("Warming up JIT compiler...")
     # Compile with tiny subset
@@ -73,7 +80,7 @@ def run(num_runs=5):
         cp_mult[:10],
     )
 
-    print(f"Running benchmark {num_runs} times...")
+    print(f"\nRunning benchmark {num_runs} times...")
 
     times = np.zeros(num_runs, dtype=np.float64)
 
@@ -92,35 +99,51 @@ def run(num_runs=5):
 
         elapsed = t1 - t0
         times[r] = elapsed
-        print(f"  Run {r + 1}/{num_runs} elapsed: {elapsed:.4f} seconds")
+        print(f"  Run {r + 1:>2.0f}/{num_runs} elapsed: {elapsed:.4f} seconds")
 
     # Compute Statistics
-    min_time = np.min(times)
-    max_time = np.max(times)
     avg_time = np.mean(times)
+    mdn_time = np.median(times)
+    std_time = np.std(times)
+    q75_time = np.percentile(times, 75)
+    q90_time = np.percentile(times, 90)
+    q95_time = np.percentile(times, 95)
+    q99_time = np.percentile(times, 99)
 
     # Note: Minimum time yields Maximum throughput
-    max_tpt = N_EVALS / min_time
-    min_tpt = N_EVALS / max_time
-    avg_tpt = N_EVALS / avg_time
+    avg_tpt = n_evals / avg_time
+    mdn_tpt = n_evals / mdn_time
+    q75_tpt = n_evals / q75_time
+    q90_tpt = n_evals / q90_time
+    q95_tpt = n_evals / q95_time
+    q99_tpt = n_evals / q99_time
 
     print("\n=========================================")
-    print("  BLACK-76 PRIMITIVE BENCHMARK")
+    print("  BLACK-76 KERNEL PRIMITIVE BENCHMARK")
     print("=========================================")
-    print(f"  Evaluations per run : {N_EVALS:,}")
+    print(f"  Evaluations per run : {n_evals:,}")
     print(f"  Total runs          : {num_runs}")
     print("-----------------------------------------")
     print("  Execution Time (Seconds):")
-    print(f"    Min : {min_time:.4f}")
-    print(f"    Max : {max_time:.4f}")
     print(f"    Avg : {avg_time:.4f}")
+    print(f"    Mdn : {mdn_time:.4f}")
+    print(f"    Std : {std_time:.4f}")
+    print(f"    75% : {q75_time:.4f}")
+    print(f"    90% : {q90_time:.4f}")
+    print(f"    95% : {q95_time:.4f}")
+    print(f"    99% : {q99_time:.4f}")
     print("-----------------------------------------")
     print("  Throughput (Million PVs/sec):")
-    print(f"    Max : {max_tpt / 1e6:.2f}")
-    print(f"    Min : {min_tpt / 1e6:.2f}")
     print(f"    Avg : {avg_tpt / 1e6:.2f}")
-    print("=========================================\n")
+    print(f"    Mdn : {mdn_tpt / 1e6:.2f}")
+    print(f"    75% : {q75_tpt / 1e6:.2f}")
+    print(f"    90% : {q90_tpt / 1e6:.2f}")
+    print(f"    95% : {q95_tpt / 1e6:.2f}")
+    print(f"    99% : {q99_tpt / 1e6:.2f}")
+    print("=========================================")
+
+    print_success_message("Benchmark completed successfully.")
 
 
 if __name__ == "__main__":
-    run(num_runs=5)
+    run(num_runs=20)

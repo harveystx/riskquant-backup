@@ -19,7 +19,7 @@ import numba as nb  # type: ignore
 import numpy as np
 import numpy.typing as npt
 
-from riskquant.numba import parallel_njit
+from riskquant.jit import parallel_njit
 
 _F64_2D = nb.float64[:, ::1]
 _F64_1D = nb.float64[::1]

@@ -545,17 +545,6 @@ def _semantic_sf_students_t(
     )
 
 
-def _semantic_stress(
-    frame, *, factor_name_to_uix, factor_kind, chi_nu_by_uix, bundle, ctx
-):
-    stress_uix = _resolve(frame, "stress_regime_factor", factor_name_to_uix, ctx=ctx)
-    if not np.all(stress_uix == stress_uix[0]):
-        raise ValueError(
-            f"{ctx}: stress_regime_factor must be a single global factor "
-            "(all obligors share one stress indicator)."
-        )
-
-
 def _semantic_mf_gaussian(
     frame, *, factor_name_to_uix, factor_kind, chi_nu_by_uix, bundle, ctx
 ):
@@ -660,8 +649,8 @@ def validate_ingest_bundle_semantics(bundle, factor_universe) -> None:
 
     Resolves factor-name columns to UIX and asserts: every role resolves to its
     required kind, Bernoulli-family uniforms are distinct, loadings lie in
-    range, Student-t nu is positive and chi-consistent with the generator, the
-    stress indicator is global, and multi-factor loadings are covered, unique,
+    range, Student-t nu is positive and chi-consistent with the generator, and
+    multi-factor loadings are covered, unique,
     and satisfy sum-beta^2 <= 1. Fails fast on the first violation.
     """
     fmap = factor_universe.factor_name_to_uix

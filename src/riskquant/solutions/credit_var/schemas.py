@@ -20,6 +20,7 @@ import pandas as pd
 __all__ = [
     "ObligorRow",
     "LoadingRow",
+    "GroupRow",
     "CreditVarRequest",
     "RiskSummary",
     "ModelTail",
@@ -49,6 +50,23 @@ class ObligorRow(BaseModel):
     ead: float = Field(ge=0.0, description="Exposure at default (>= 0).")
     pd: float = Field(ge=0.0, le=1.0, description="Probability of default in [0, 1].")
     lgd: float = Field(ge=0.0, le=1.0, description="Loss given default in [0, 1].")
+    in_stress_test: bool = Field(
+        default=False,
+        description="Include in the standalone hard-default stress test (does not "
+        "affect the simulation).",
+    )
+    force_default: bool = Field(
+        default=False,
+        description="Force this obligor to default inside the simulation; the "
+        "selected model runs on the rest. Ignored when the model is forced_default.",
+    )
+    group: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Pool/regime label for grouped models (beta_binomial_grouped, "
+        "stress_regime_bernoulli_grouped): obligors sharing a group share that "
+        "group's factor. Omit for non-grouped models.",
+    )
 
 
 class LoadingRow(BaseModel):
@@ -64,6 +82,20 @@ class LoadingRow(BaseModel):
     loading: float = Field(ge=-1.0, le=1.0)
 
 
+class GroupRow(BaseModel):
+    """One pool/regime for a grouped model: a named group with its own factor
+    parameters. For `beta_binomial_grouped`, `params` carries `alpha`, `beta`;
+    for `stress_regime_bernoulli_grouped`, `stress_prob`, `stress_pd_multiplier`.
+    Obligors are assigned to a group via `ObligorRow.group`; each group becomes one
+    BETA_PD / STRESS_INDICATOR factor, so defaults correlate within a group and are
+    independent across groups."""
+
+    model_config = _STRICT
+
+    name: str = Field(min_length=1)
+    params: dict[str, float] = Field(default_factory=dict)
+
+
 class CreditVarRequest(BaseModel):
     """A single credit-VaR run, as a JSON payload."""
 
@@ -75,6 +107,10 @@ class CreditVarRequest(BaseModel):
     loadings: list[LoadingRow] | None = Field(
         default=None,
         description="Systemic loadings for multi-factor models; omit otherwise.",
+    )
+    groups: list[GroupRow] | None = Field(
+        default=None,
+        description="Per-group factor parameters for grouped models; omit otherwise.",
     )
     n_scenarios: int = Field(default=100_000, gt=0)
     alphas: list[float] = Field(default_factory=lambda: [0.95, 0.99, 0.999])
@@ -142,6 +178,65 @@ class CreditVarRequest(BaseModel):
             raise ValueError(f"obligor(s) have no systemic loadings: {uncovered}.")
         return self
 
+    @model_validator(mode="after")
+    def _validate_groups(self) -> CreditVarRequest:
+        if self.model not in MODEL_CATALOG:
+            return self  # unknown model already reported
+        requires = model_entry(self.model).requires_groups
+        has_obligor_groups = any(o.group is not None for o in self.obligors)
+        if not requires:
+            if self.groups:
+                raise ValueError(f"model '{self.model}' does not use obligor groups.")
+            if has_obligor_groups:
+                raise ValueError(
+                    f"model '{self.model}' does not use obligor groups; remove the "
+                    "'group' column."
+                )
+            return self
+        # Grouped model: per-group params live in 'groups', not request-level params.
+        if self.params:
+            raise ValueError(
+                f"model '{self.model}' takes per-group params (in 'groups'), not "
+                "request-level 'params'."
+            )
+        if not self.groups:
+            raise ValueError(
+                f"model '{self.model}' requires a non-empty 'groups' table "
+                "(one row per pool/regime with its parameters)."
+            )
+        ungrouped = sorted(o.uid for o in self.obligors if o.group is None)
+        if ungrouped:
+            raise ValueError(f"obligor(s) have no group: {ungrouped}.")
+        names = [g.name for g in self.groups]
+        if len(names) != len(set(names)):
+            raise ValueError("duplicate group name(s) in 'groups'.")
+        defined = set(names)
+        used = {o.group for o in self.obligors}
+        undefined = sorted(used - defined)
+        if undefined:
+            raise ValueError(f"obligor group(s) not defined in 'groups': {undefined}.")
+        # Validate each group's params against the model's per-group spec.
+        entry = model_entry(self.model)
+        spec_keys = {p.key for p in entry.params}
+        for g in self.groups:
+            unknown = set(g.params) - spec_keys
+            if unknown:
+                raise ValueError(
+                    f"group '{g.name}' has unknown param(s) {sorted(unknown)}. "
+                    f"Accepted: {sorted(spec_keys)}."
+                )
+            for p in entry.params:
+                if p.key not in g.params:
+                    raise ValueError(
+                        f"group '{g.name}' is missing required param '{p.key}'."
+                    )
+                if not p.contains(g.params[p.key]):
+                    raise ValueError(
+                        f"group '{g.name}' param '{p.key}' = {g.params[p.key]} out of "
+                        f"range {p.interval_repr}."
+                    )
+        return self
+
     @classmethod
     def from_dataframe(
         cls,
@@ -149,6 +244,7 @@ class CreditVarRequest(BaseModel):
         *,
         model: str,
         loadings_table: pd.DataFrame | None = None,
+        group_params: dict[str, dict[str, float]] | None = None,
         n_scenarios: int = 100_000,
         alphas: list[float] | None = None,
         seed: int = 12345,
@@ -156,17 +252,25 @@ class CreditVarRequest(BaseModel):
     ) -> CreditVarRequest:
         """Build a request from a flat obligor DataFrame (notebook ergonomics).
 
-        The DataFrame needs `uid, ead, pd, lgd`; extra columns are ignored. Model
-        params are passed as keywords, e.g.::
+        The DataFrame needs `uid, ead, pd, lgd`; extra columns are ignored except
+        an optional `group` column (used by grouped models). Model params are
+        passed as keywords, e.g.::
 
-            CreditVarRequest.from_dataframe(df, model="sf_gaussian", rho=0.15)
+            CreditVarRequest.from_dataframe(df, model="sf_gaussian", rho=0.20)
 
         For multi-factor models, pass `loadings_table` with `uid, factor, loading`::
 
             CreditVarRequest.from_dataframe(df, model="mf_gaussian", loadings_table=ld)
 
+        For grouped models, put a `group` column on `df` and pass per-group params::
+
+            CreditVarRequest.from_dataframe(
+                df, model="beta_binomial_grouped",
+                group_params={"IG": {"alpha": 1.0, "beta": 80.0},
+                              "HY": {"alpha": 2.0, "beta": 18.0}})
+
         Validation is identical to the dict/JSON path — a bad cell still raises a
-        `ValidationError` with a `loc` into `obligors` / `loadings`.
+        `ValidationError` with a `loc` into `obligors` / `loadings` / `groups`.
         """
         required = ("uid", "ead", "pd", "lgd")
         missing = [c for c in required if c not in obligor_table.columns]
@@ -174,14 +278,21 @@ class CreditVarRequest(BaseModel):
             raise ValueError(
                 f"from_dataframe: obligor_table missing column(s) {missing}."
             )
+        has_group = "group" in obligor_table.columns
+        read_cols = list(required) + (["group"] if has_group else [])
         obligors = [
             ObligorRow(
                 uid=int(rec["uid"]),
                 ead=float(rec["ead"]),
                 pd=float(rec["pd"]),
                 lgd=float(rec["lgd"]),
+                **(
+                    {"group": str(rec["group"])}
+                    if has_group and pd.notna(rec["group"])
+                    else {}
+                ),
             )
-            for rec in obligor_table.loc[:, list(required)].to_dict("records")
+            for rec in obligor_table.loc[:, read_cols].to_dict("records")
         ]
         kwargs: dict[str, object] = {
             "model": model,
@@ -190,6 +301,11 @@ class CreditVarRequest(BaseModel):
             "n_scenarios": n_scenarios,
             "seed": seed,
         }
+        if group_params is not None:
+            kwargs["groups"] = [
+                GroupRow(name=str(name), params={k: float(v) for k, v in gp.items()})
+                for name, gp in group_params.items()
+            ]
         if loadings_table is not None:
             lcols = ("uid", "factor", "loading")
             lmissing = [c for c in lcols if c not in loadings_table.columns]
@@ -207,8 +323,7 @@ class CreditVarRequest(BaseModel):
             ]
         if alphas is not None:
             kwargs["alphas"] = list(alphas)
-        # return cls(**kwargs)
-        return cls.model_validate(kwargs)
+        return cls(**kwargs)
 
 
 class RiskSummary(BaseModel):
@@ -270,6 +385,32 @@ class LossHistogram(BaseModel):
     counts: list[int]  # length nbins; last bin folds in the > p99.9 overflow
 
 
+class StressTestObligor(BaseModel):
+    """One name in the standalone hard-default stress test."""
+
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+    uid: int
+    ead: float
+    lgd: float
+    loss: float  # EAD * LGD — the certain loss if this name defaults
+
+
+class StressTestResult(BaseModel):
+    """Deterministic 'what if these names all default' result.
+
+    Independent of the chosen model and of the simulation — the answer to the
+    flagged obligors (`in_stress_test`) defaulting together. Present only when at
+    least one obligor is flagged.
+    """
+
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+    n_obligors: int
+    total_loss: float  # sum of EAD * LGD over the flagged names
+    obligors: list[StressTestObligor]
+
+
 class CreditVarResult(BaseModel):
     """A completed credit-VaR run, JSON-native."""
 
@@ -282,4 +423,5 @@ class CreditVarResult(BaseModel):
     loss_percentiles: dict[str, float]  # percentile (as string) -> loss
     obligor_contributions: list[ObligorContribution]
     loss_histogram: LossHistogram
+    stress_test: StressTestResult | None = None
     provenance: RunProvenance

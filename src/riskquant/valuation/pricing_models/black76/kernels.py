@@ -50,7 +50,7 @@ import math
 
 import numba as nb  # type: ignore[import-untyped]
 
-from riskquant.numba import (
+from riskquant.jit import (
     _F64_1D,
     _F64_2D,
     _I8_1D,
@@ -120,7 +120,6 @@ def _kernel_black76_fv_batch(
         Half of the time to expiry for each trade.
     cp_mult : np.ndarray, shape (m,)
         Call/put multiplier for each trade.
-
     """
 
     m_trades, s_scenarios = out.shape
@@ -144,15 +143,15 @@ def _kernel_black76_fv_batch(
             fwd_s = forwards_row[s]
             vol_s = vols_row[s]
 
-            fv_s = _black76_fv_kernel_primitive(
+            log_fk_s = math.log(fwd_s) - log_strike_i
+            vol_sqrt_tte_s = vol_s * sqrt_tte_i
+            vol2_half_tte_s = vol_s * vol_s * half_tte_i
+
+            out[i, s] = _black76_fv_kernel_primitive(
                 fwd_s,
-                log_fwd_s,
+                log_fk_s,
                 strike_i,
-                log_strike_i,
-                sqrt_tte_i,
-                half_tte_i,
-                vol_s,
+                vol_sqrt_tte_s,
+                vol2_half_tte_s,
                 cp_mult_i,
             )
-
-            out[i, s] = fv_s

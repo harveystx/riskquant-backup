@@ -6,15 +6,19 @@ import time
 
 import numba as nb
 
-from riskquant.valuation.pricer_kernels._deprecated._math_v1 import (
+from riskquant.utils.printer import print_calling_file, print_success_message
+from riskquant.valuation.pricing_models.math import (
     numba_norm_cdf,
     numba_norm_cdf_abrom_steg,
 )
 
+# ------------------------------------------------------------
+# JIT KERNELS
+# ------------------------------------------------------------
 
-@nb.njit(cache=True)
+
+@nb.njit(cache=True, fastmath=True)
 def bench_exact(n: int) -> float:
-
     acc = 0.0
 
     for i in range(n):
@@ -24,9 +28,8 @@ def bench_exact(n: int) -> float:
     return acc
 
 
-@nb.njit(cache=True)
+@nb.njit(cache=True, fastmath=True)
 def bench_abrom(n: int) -> float:
-
     acc = 0.0
 
     for i in range(n):
@@ -36,12 +39,40 @@ def bench_abrom(n: int) -> float:
     return acc
 
 
-def benchmark(name, fn, n):
+# ------------------------------------------------------------
+# WARMUP (CRITICAL)
+# ------------------------------------------------------------
 
-    print(f"\n{name}")
+
+def warmup() -> None:
+    """
+    Fully warms Numba compilation + branch paths + CPU cache.
+    Must be called BEFORE benchmarking.
+    """
+    print("Warming up JIT kernels...")
+
+    # compile + exercise both kernels
+    bench_exact(10_000)
+    bench_abrom(10_000)
+
+    # extra pass to stabilize instruction cache + branch predictor
+    bench_exact(50_000)
+    bench_abrom(50_000)
+
+    print("Warmup complete.\n")
+
+
+# ------------------------------------------------------------
+# BENCHMARK DRIVER
+# ------------------------------------------------------------
+
+
+def benchmark(name: str, fn, n: int) -> float:
+    print(f"{name}")
     print("-" * 60)
 
-    fn(1)
+    # ensure CPU is not in first-call state (already compiled)
+    _ = fn(1_000)
 
     t0 = time.perf_counter()
     result = fn(n)
@@ -49,31 +80,41 @@ def benchmark(name, fn, n):
 
     elapsed = t1 - t0
 
-    print(f"Time:        {elapsed:.4f} sec")
+    print(f"Time:        {elapsed:.6f} sec")
     print(f"Evaluations: {n:,}")
     print(f"Throughput:  {n / elapsed / 1e9:.3f} Billion evals/sec")
     print(f"Checksum:    {result:.6f}")
+    print()
 
     return elapsed
 
 
+# ------------------------------------------------------------
+# MAIN
+# ------------------------------------------------------------
+
 if __name__ == "__main__":
+    print_calling_file()
+
     n = 1_000_000_000
 
+    # CRITICAL: isolate compile/warmup phase
+    warmup()
+
     exact = benchmark(
-        "Exact ERF CDF",
+        "Exact ERF CDF (numba_norm_cdf)",
         bench_exact,
         n,
     )
 
     approx = benchmark(
-        "Abramowitz-Stegun",
+        "Abramowitz-Stegun approximation",
         bench_abrom,
         n,
     )
 
-    print("\nSummary")
+    print("Summary")
     print("-" * 60)
     print(f"Speedup: {exact / approx:.3f}x")
-    print("-" * 60)
-    print("-" * 60)
+
+    print_success_message("Benchmark completed successfully.")

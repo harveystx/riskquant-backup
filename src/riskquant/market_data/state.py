@@ -1,6 +1,33 @@
 # src/riskquant/market_data/state.py
 """
-TODO: WRITE DOCSTRING
+Market-data execution containers.
+
+RiskQuant separates raw market data from valuation-ready factors across two
+frozen SoA tiers, both defined here:
+
+    Raw market data
+        |
+        v
+    MarketDataMatrix     <-- raw tier: universe-aligned interpolated grids,
+        |                    FX-effective spots, calibrated surfaces. One row
+        |                    per *raw factor*, shared across many trades.
+        v
+    assemble_valuation_state (the fold)
+        |
+        v
+    ValuationState       <-- terminus: pre-multiplied EFFECTIVE factors. One
+        |                    row per *effective combination*. Kernels gather
+        v                    a single row and multiply -- no branching, no
+    Valuation Engine         inversion, no interpolation in the hot path.
+        |
+        v
+    Pricing Kernels
+
+`MarketDataMatrix` is the producer-side output of `build_market_data_matrix`.
+`ValuationState` is what every block pricer ingests. Neither validates or
+sanitizes market data -- the compiler upstream guarantees validity. The
+`MarketDataMatrix` post-init is an O(1) *structural* wiring guard only (dtype,
+rank, axis agreement); it scans no data.
 """
 
 from __future__ import annotations
@@ -11,8 +38,10 @@ import numpy as np
 from numpy.typing import NDArray
 
 _F64 = np.float64
+_I8 = np.int8
 
 _NDArrayF64 = NDArray[_F64]
+_NDArrayI8 = NDArray[_I8]
 
 
 def _mtx_f64_2d() -> _NDArrayF64:
@@ -187,3 +216,209 @@ class ValuationState:
     option_log_forward_prices_strike_ccy: _NDArrayF64 = field(
         default_factory=_mtx_f64_2d
     )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MarketDataMatrix:
+    """
+    Raw, universe-aligned market-data grids: the input tier to the effective-
+    factor fold (`assemble_valuation_state`).
+
+    One row per *raw factor*, shared across every trade that references it.
+    Nothing here is FX-folded, discounted, or strike-resolved yet -- that is
+    the fold's job. The sole producer is `build_market_data_matrix`; all
+    eleven fields are always supplied (no defaults), so a half-built matrix
+    is a construction-time error rather than a silent gather of garbage.
+
+    Axis-alignment contract (load-bearing -- the fold relies on it)
+    --------------------------------------------------------------
+    Two distinct universes key the grids, and they are NOT interchangeable:
+
+        market_id_universe       -> prices / forward_nodes / vol_nodes
+                                    (axis 0) and price_curve_grid (axis 0)
+        discount_curve_universe  -> discount_factor_grid (axis 0)
+
+    `prices`, `forward_nodes`, and `vol_nodes` are the SAME backing array
+    (Option A1): the price / forward-node / vol-node id classes are disjoint,
+    so each pricer reads only its own rows. They are exposed under three names
+    because the compilers stamp three distinct `_uix` classes against them.
+
+    Scenario-axis position is NOT uniform:
+
+        fx_spots_effective       (K_fx,  S)        scenario axis = 1
+        prices/forward/vol_nodes (N_mkt, S)        scenario axis = 1
+        discount_factor_grid     (C_df,  D, S)     scenario axis = 2
+        price_curve_grid         (N_mkt, D, S)     scenario axis = 2
+        vol_surfaces             (C_surf, D, S, K) scenario axis = 2  <-- not last
+        tte_grid                 (D,)               -- no scenario axis
+        vol_surface_strikes      (C_surf, K)        -- no scenario axis
+        surface_y_axis_type_ids  (C_surf,)          -- no scenario axis
+
+    where D = len(date_ord32_universe), N_mkt = len(market_id_universe),
+    C_df = len(discount_curve_universe), C_surf = number of vol surfaces,
+    K = calibrated moneyness pillars, S = num_scenarios.
+
+    This container does NOT validate or sanitize market data. `__post_init__`
+    is an O(1) structural wiring guard (dtype, rank, axis agreement) that scans
+    no data; it exists to catch the universe-misalignment bug class this tier
+    is prone to, not to police values.
+    """
+
+    # ==================================================================================
+    # BATCH PROPERTIES
+    # ==================================================================================
+
+    num_scenarios: int
+
+    # ==================================================================================
+    # FX
+    # ==================================================================================
+
+    # (K_fx, S) -- effective FX spots, already inverted where needed. Keyed by
+    # `UixMapper.fx_effective_pairs` row. The fold and pricers do zero inversion.
+    fx_spots_effective: _NDArrayF64
+
+    # ==================================================================================
+    # SCALAR NODE LEVELS (market_id_universe-aligned; A1 single backing array)
+    # ==================================================================================
+
+    # (N_mkt, S) -- spot / node price levels. Keyed by market_id_universe uix.
+    prices: _NDArrayF64
+
+    # (N_mkt, S) -- forward-node levels. Alias of `prices` (disjoint id class).
+    forward_nodes: _NDArrayF64
+
+    # (N_mkt, S) -- vol-node levels. Alias of `prices` (disjoint id class).
+    vol_nodes: _NDArrayF64
+
+    # ==================================================================================
+    # CURVE GRIDS (interpolated onto the unique-date axis D)
+    # ==================================================================================
+
+    # (C_df, D, S) -- discount factors. Keyed by DISCOUNT-CURVE uix (axis 0) and
+    # date uix (axis 1). NOT market_id_universe-aligned -- distinct universe.
+    discount_factor_grid: _NDArrayF64
+
+    # (N_mkt, D, S) -- forward price curves. Keyed by MARKET-ID uix (axis 0) and
+    # delivery-date uix (axis 1). Curve-sourced forwards read here; node-sourced
+    # forwards read `prices`. (Source kind is a compile-time tag in the
+    # effective-forward universe, not a separate block type.)
+    price_curve_grid: _NDArrayF64
+
+    # ==================================================================================
+    # TIME
+    # ==================================================================================
+
+    # (D,) -- act/365.25 time-to-expiry per unique portfolio date.
+    tte_grid: _NDArrayF64
+
+    # ==================================================================================
+    # VOL SURFACES (post DELTA->MONEYNESS_FWD calibration)
+    # ==================================================================================
+
+    # (C_surf, K) -- calibrated moneyness pillars per surface (expiry/scenario
+    # independent). The strike axis the surface kernel interpolates over.
+    vol_surface_strikes: _NDArrayF64
+
+    # (C_surf, D, S, K) -- kernel-facing layout [surface, expiry, scenario, pillar],
+    # C-contiguous. Scenario axis is position 2.
+    vol_surfaces: _NDArrayF64
+
+    # (C_surf,) int8 -- post-calibration per-surface y-axis kind (DELTA rows
+    # rewritten to MONEYNESS_FWD).
+    surface_y_axis_type_ids: _NDArrayI8
+
+    def __post_init__(self) -> None:
+        # ---- dtype ----
+        for name in (
+            "fx_spots_effective",
+            "prices",
+            "forward_nodes",
+            "vol_nodes",
+            "discount_factor_grid",
+            "price_curve_grid",
+            "tte_grid",
+            "vol_surface_strikes",
+            "vol_surfaces",
+        ):
+            arr = getattr(self, name)
+            if arr.dtype != _F64:
+                raise TypeError(f"{name} must be float64; got {arr.dtype}")
+        if self.surface_y_axis_type_ids.dtype != _I8:
+            raise TypeError(
+                "surface_y_axis_type_ids must be int8; "
+                f"got {self.surface_y_axis_type_ids.dtype}"
+            )
+
+        # ---- rank ----
+        for name, ndim in (
+            ("fx_spots_effective", 2),
+            ("prices", 2),
+            ("forward_nodes", 2),
+            ("vol_nodes", 2),
+            ("discount_factor_grid", 3),
+            ("price_curve_grid", 3),
+            ("tte_grid", 1),
+            ("vol_surface_strikes", 2),
+            ("vol_surfaces", 4),
+            ("surface_y_axis_type_ids", 1),
+        ):
+            arr = getattr(self, name)
+            if arr.ndim != ndim:
+                raise ValueError(f"{name} must be {ndim}D; got shape {arr.shape}")
+
+        # ---- date axis D (anchored on tte_grid) ----
+        d_dates = self.tte_grid.shape[0]
+        for name, axis in (
+            ("discount_factor_grid", 1),
+            ("price_curve_grid", 1),
+            ("vol_surfaces", 1),
+        ):
+            arr = getattr(self, name)
+            if arr.shape[axis] != d_dates:
+                raise ValueError(
+                    f"{name} date axis ({arr.shape[axis]}) != len(tte_grid) ({d_dates})"
+                )
+
+        # ---- market-id axis N (anchored on prices) ----
+        n_mkt = self.prices.shape[0]
+        for name in ("forward_nodes", "vol_nodes", "price_curve_grid"):
+            arr = getattr(self, name)
+            if arr.shape[0] != n_mkt:
+                raise ValueError(
+                    f"{name} market-id axis ({arr.shape[0]}) != prices rows ({n_mkt})"
+                )
+
+        # ---- surface axis C_surf (anchored on vol_surfaces) ----
+        c_surf = self.vol_surfaces.shape[0]
+        if self.vol_surface_strikes.shape[0] != c_surf:
+            raise ValueError(
+                f"vol_surface_strikes surfaces ({self.vol_surface_strikes.shape[0]}) "
+                f"!= vol_surfaces surfaces ({c_surf})"
+            )
+        if self.surface_y_axis_type_ids.shape[0] != c_surf:
+            raise ValueError(
+                f"surface_y_axis_type_ids surfaces "
+                f"({self.surface_y_axis_type_ids.shape[0]}) "
+                f"!= vol_surfaces surfaces ({c_surf})"
+            )
+        if self.vol_surfaces.shape[3] != self.vol_surface_strikes.shape[1]:
+            raise ValueError(
+                f"vol_surfaces pillar axis ({self.vol_surfaces.shape[3]}) != "
+                f"vol_surface_strikes pillars ({self.vol_surface_strikes.shape[1]})"
+            )
+
+        # ---- scenario axis S (anchored on num_scenarios) ----
+        s = self.num_scenarios
+        for name, axis in (
+            ("fx_spots_effective", 1),
+            ("prices", 1),
+            ("discount_factor_grid", 2),
+            ("price_curve_grid", 2),
+            ("vol_surfaces", 2),
+        ):
+            arr = getattr(self, name)
+            if arr.shape[axis] != s:
+                raise ValueError(
+                    f"{name} scenario axis ({arr.shape[axis]}) != num_scenarios ({s})"
+                )

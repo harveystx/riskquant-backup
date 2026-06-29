@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 
 from riskquant.constants import IV_SOLVER_FAILED_SENTINEL
-from riskquant.numba import inline_njit
+from riskquant.jit import inline_njit
 from riskquant.valuation.pricing_models.black76.model import _black76_fv_call
 
 _EPSILON = np.finfo(np.float64).eps

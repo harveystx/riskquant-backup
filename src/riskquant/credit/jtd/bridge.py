@@ -26,7 +26,7 @@ from riskquant._arrays import (
     searchsorted_or_raise,
     searchsorted_soft_join,
 )
-from riskquant.numba import (
+from riskquant.jit import (
     _F64_2D,
     _I32_1D,
     _I64_1D,

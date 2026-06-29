@@ -209,3 +209,110 @@ def searchsorted_or_propagate_sentinel_int32(
     uix = np.searchsorted(universe, raw).astype(np.int32, copy=False)
     uix[raw < 0] = sentinel
     return uix
+
+
+def _structured_row_view(rows: npt.NDArray[np.int32]) -> npt.NDArray:
+    """
+    View an `(M, N)` C-contiguous int32 array as `(M,)` structured scalars so
+    rows can be compared lexicographically by `np.searchsorted` / `np.sort`.
+
+    Field-wise structured comparison is numeric per column, matching the order
+    `np.unique(axis=0)` produces — so a table built with `np.unique(axis=0)`
+    and probed with `searchsorted` on this view agree exactly, for any column
+    count and any int32 values (sentinels included). No bit-packing, no width
+    budget.
+    """
+    rows = np.ascontiguousarray(rows, dtype=np.int32)
+    if rows.ndim != 2:
+        raise ValueError(f"row view requires a 2-D (M, N) array; got {rows.shape}")
+    n_cols = rows.shape[1]
+    dt = np.dtype([(f"c{i}", np.int32) for i in range(n_cols)])
+    return rows.view(dt).reshape(-1)
+
+
+def dedup_effective_tuples(
+    columns: tuple[npt.NDArray[np.int32], ...],
+) -> npt.NDArray[np.int32]:
+    """
+    Build a deduplicated effective-factor tuple table from `N` parallel int32
+    UIX columns.
+
+    Each column is a per-trade coordinate (a `_uix` into some universe, or a
+    sentinel such as `INVALID_UIX`). Returns the sorted-unique `(K, N)` table in
+    `np.unique(axis=0)` numeric-lexicographic order — the order the lookup
+    relies on. This is the build half of an effective-factor universe (the
+    generalization of `fx_effective_pairs` / `spot_effective_pairs` to any
+    arity); pair it with `map_tuples_to_effective_uix`.
+
+    All columns must be 1-D and equal length. Empty input (no columns, or
+    length-0 columns) yields an empty `(0, N)` table.
+    """
+    if len(columns) == 0:
+        return np.empty((0, 0), dtype=np.int32)
+
+    n_rows = columns[0].shape[0]
+    for c in columns:
+        if c.ndim != 1:
+            raise ValueError(f"each column must be 1-D; got shape {c.shape}")
+        if c.shape[0] != n_rows:
+            raise ValueError("all columns must have equal length")
+
+    stacked = np.ascontiguousarray(np.stack(columns, axis=1).astype(np.int32))
+    if n_rows == 0:
+        return stacked
+    return np.ascontiguousarray(np.unique(stacked, axis=0))
+
+
+def map_tuples_to_effective_uix(
+    *,
+    table: npt.NDArray[np.int32],
+    columns: tuple[npt.NDArray[np.int32], ...],
+) -> npt.NDArray[np.int32]:
+    """
+    Translate per-trade tuples into row indices of a `dedup_effective_tuples`
+    table (the effective `_uix` a block carries).
+
+    `columns` is the per-trade `N`-tuple stream (same `N` and column meaning as
+    the table). Lookup is a single vectorized structured-view `searchsorted`.
+    Every tuple MUST exist in `table` (it was deduplicated from exactly these
+    tuples); a miss raises `RuntimeError` to fail loud on contract drift — e.g.
+    a table built from a different batch than the one being stamped.
+
+    Returns `(M,) int32` row indices. Empty trade stream returns an empty array.
+    """
+    if len(columns) == 0:
+        return np.empty(0, dtype=np.int32)
+
+    n_rows = columns[0].shape[0]
+    for c in columns:
+        if c.shape[0] != n_rows:
+            raise ValueError("all columns must have equal length")
+
+    if n_rows == 0:
+        return np.empty(0, dtype=np.int32)
+
+    if table.ndim != 2 or table.shape[1] != len(columns):
+        raise ValueError(f"table must be (K, {len(columns)}); got {table.shape}")
+    if table.shape[0] == 0:
+        raise RuntimeError(
+            "effective-tuple lookup against an empty table: trades reference "
+            "tuples that were never deduplicated. Mapper/table built from a "
+            "different batch than this one."
+        )
+
+    query = np.ascontiguousarray(np.stack(columns, axis=1).astype(np.int32))
+    table_view = _structured_row_view(table)
+    idx = np.searchsorted(table_view, _structured_row_view(query))
+
+    # Validate every probe landed on an exact row (searchsorted gives an
+    # insertion point, not a membership test).
+    safe = np.where(idx >= table_view.size, 0, idx)
+    miss = (idx >= table_view.size) | np.any(table[safe] != query, axis=1)
+    if miss.any():
+        raise RuntimeError(
+            "effective-tuple dedup contract violated: per-trade tuple not "
+            "found in the table. Mapper was built from a different batch than "
+            "this one."
+        )
+
+    return idx.astype(np.int32, copy=False)

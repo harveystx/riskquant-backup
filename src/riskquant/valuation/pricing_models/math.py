@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import math
 
-from riskquant.numba import inline_njit
+from riskquant.jit import inline_njit
 
 # 1 / sqrt(2). Lifted so the kernel never recomputes it.
 _INV_SQRT_2: float = 0.7071067811865476

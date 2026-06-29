@@ -129,6 +129,7 @@ class TCopulaGenerator(CreditFactorGenerator):
 
         # Main buffer: C-order so [:bs, :] is C-contiguous for any bs.
         buffer = np.empty((batch_size, n_factors), dtype=np.float64, order="C")
+
         # 1D scratch: contiguous, used as `out=` for the chi gamma draw.
         chi_scratch = np.empty(batch_size, dtype=np.float64)
 
@@ -154,9 +155,10 @@ class TCopulaGenerator(CreditFactorGenerator):
 
                 # =====================================================================
                 # MATHEMATICAL INVARIANT: PRECOMPUTED INVERSE SQUARE ROOT
-                # We apply the 1/sqrt(W) transform in-place before writing to the
-                # C-contiguous buffer. This ensures the downstream JTD kernel receives
-                # the optimized factor and avoids calculating square roots in the hot path.
+                # We apply the 1/sqrt(W) transform in-place before writing
+                # to the C-contiguous buffer. This ensures the downstream
+                # JTD kernel receives the optimized factor and avoids
+                # calculating square roots in the hot path.
                 # =====================================================================
                 np.reciprocal(np.sqrt(chi_view), out=chi_view)
 

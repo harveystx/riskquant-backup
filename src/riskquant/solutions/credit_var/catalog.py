@@ -55,12 +55,13 @@ class ModelEntry:
     description: str
     params: tuple[ParamSpec, ...] = field(default_factory=tuple)
     requires_loadings: bool = False  # multi-factor: needs a systemic-loadings sheet
+    requires_groups: bool = False  # grouped: needs per-group params + obligor groups
 
 
 _RHO = ParamSpec(
     key="rho",
     label="Asset Correlation (rho)",
-    default=0.15,
+    default=0.20,
     min_value=0.0,
     max_value=1.0,
     min_inclusive=True,
@@ -78,7 +79,7 @@ _NU = ParamSpec(
 _BETA_ALPHA = ParamSpec(
     key="alpha",
     label="Beta Shape - Alpha",
-    default=1.0,
+    default=1.5,
     min_value=0.0,
     max_value=1000.0,
     min_inclusive=False,
@@ -87,7 +88,7 @@ _BETA_ALPHA = ParamSpec(
 _BETA_BETA = ParamSpec(
     key="beta",
     label="Beta Shape - Beta",
-    default=24.0,
+    default=6.0,
     min_value=0.0,
     max_value=1000.0,
     min_inclusive=False,
@@ -96,7 +97,7 @@ _BETA_BETA = ParamSpec(
 _STRESS_PROB = ParamSpec(
     key="stress_prob",
     label="Stress-Regime Probability",
-    default=0.05,
+    default=0.10,
     min_value=0.0,
     max_value=1.0,
     min_inclusive=True,
@@ -136,6 +137,26 @@ MODEL_CATALOG: dict[str, ModelEntry] = {
         "that fires with probability stress_prob and multiplies every PD by "
         "stress_pd_multiplier (capped at 1).",
         params=(_STRESS_PROB, _STRESS_MULT),
+    ),
+    "beta_binomial_grouped": ModelEntry(
+        key="beta_binomial_grouped",
+        display_name="Beta-Binomial (Grouped Pools)",
+        description="Segmented beta-binomial: each obligor belongs to a pool, and "
+        "each pool draws its own per-scenario PD from Beta(alpha, beta). Defaults "
+        "correlate within a pool and are independent across pools. The obligor PD "
+        "column is not used; alpha/beta are supplied per pool via 'groups'.",
+        params=(_BETA_ALPHA, _BETA_BETA),
+        requires_groups=True,
+    ),
+    "stress_regime_bernoulli_grouped": ModelEntry(
+        key="stress_regime_bernoulli_grouped",
+        display_name="Stress-Regime Bernoulli (Grouped Regimes)",
+        description="Segmented stress regime: each obligor belongs to a regime that "
+        "fires with its own stress_prob and multiplies that group's PDs by its own "
+        "stress_pd_multiplier. Regimes are independent across groups (block-diagonal "
+        "correlation); parameters are supplied per group via 'groups'.",
+        params=(_STRESS_PROB, _STRESS_MULT),
+        requires_groups=True,
     ),
     "sf_gaussian": ModelEntry(
         key="sf_gaussian",

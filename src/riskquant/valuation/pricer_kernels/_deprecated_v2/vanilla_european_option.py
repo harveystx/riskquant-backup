@@ -7,7 +7,7 @@ import math
 
 import numba as nb  # type: ignore[import-untyped]
 
-from riskquant.numba import (
+from riskquant.jit import (
     _F64_1D,
     _F64_2D,
     _I8_1D,

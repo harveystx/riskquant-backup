@@ -21,6 +21,8 @@ __all__ = [
 
 import hashlib
 import json
+import math
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import numpy as np
@@ -47,6 +49,8 @@ from riskquant.solutions.credit_var.schemas import (
     ObligorContribution,
     RiskSummary,
     RunProvenance,
+    StressTestObligor,
+    StressTestResult,
 )
 
 # NEW (16 points: body fill 10.0 + tail density 99.5/99.95/99.99)
@@ -82,25 +86,40 @@ def _engine_version() -> str:
         return "0+unknown"
 
 
-def _obligor_frame(request: CreditVarRequest) -> pd.DataFrame:
+def _obligor_frame(obligors: list) -> pd.DataFrame:
     return pd.DataFrame(
         {
-            "uid": [o.uid for o in request.obligors],
-            "ead": [o.ead for o in request.obligors],
-            "pd": [o.pd for o in request.obligors],
-            "lgd": [o.lgd for o in request.obligors],
+            "uid": [o.uid for o in obligors],
+            "ead": [o.ead for o in obligors],
+            "pd": [o.pd for o in obligors],
+            "lgd": [o.lgd for o in obligors],
+            "group": [o.group for o in obligors],
         }
     )
 
 
-def _loadings_frame(request: CreditVarRequest) -> pd.DataFrame | None:
+def _group_params(
+    request: CreditVarRequest,
+) -> dict[str, dict[str, float]] | None:
+    if not request.groups:
+        return None
+    return {g.name: dict(g.params) for g in request.groups}
+
+
+def _loadings_frame(
+    request: CreditVarRequest, keep_uids: set[int]
+) -> pd.DataFrame | None:
+    # Only loadings for modeled obligors; forced-default names bypass the model.
     if not request.loadings:
+        return None
+    rows = [lo for lo in request.loadings if lo.uid in keep_uids]
+    if not rows:
         return None
     return pd.DataFrame(
         {
-            "uid": [lo.uid for lo in request.loadings],
-            "factor": [lo.factor for lo in request.loadings],
-            "loading": [lo.loading for lo in request.loadings],
+            "uid": [lo.uid for lo in rows],
+            "factor": [lo.factor for lo in rows],
+            "loading": [lo.loading for lo in rows],
         }
     )
 
@@ -111,25 +130,137 @@ def _input_hash(request: CreditVarRequest) -> str:
 
 
 def _alpha_key(alpha: float) -> str:
-    x = float(alpha) * 100
-    x = f"{x:.2f}%"
-    return x
+    """S-tier with integer arithmetic - 10x faster than Decimal."""
+    if not math.isfinite(alpha) or alpha <= 0:
+        return "0.00%"
+    if alpha >= 1:
+        return "100.00%"
+
+    # Scale to basis points (1/10000)
+    cents = int(round(alpha * 10000))
+
+    # Clamp
+    if cents < 0:
+        cents = 0
+    elif cents > 10000:
+        cents = 10000
+
+    # Format: 99.99%
+    return f"{cents // 100:02d}.{cents % 100:02d}%"
 
 
 def _percentile_key(p: float) -> str:
-    x = float(p)
-    x = f"{x:>5.2f}%"
-    return x
+    """S-tier with integer arithmetic."""
+    if not math.isfinite(p) or p <= 0:
+        return "0.00%"
+    if p >= 100:
+        return "100.00%"
+
+    # Scale to basis points (direct since already percentage)
+    cents = int(round(p * 100))
+
+    if cents < 0:
+        cents = 0
+    elif cents > 10000:
+        cents = 10000
+
+    return f"{cents // 100:02d}.{cents % 100:02d}%"
+
+
+def _stress_test_result(request: CreditVarRequest) -> StressTestResult | None:
+    """The standalone hard-default stress over the `in_stress_test` names."""
+    flagged = [o for o in request.obligors if o.in_stress_test]
+    if not flagged:
+        return None
+    items = [
+        StressTestObligor(
+            uid=int(o.uid),
+            ead=float(o.ead),
+            lgd=float(o.lgd),
+            loss=float(o.ead) * float(o.lgd),
+        )
+        for o in flagged
+    ]
+    return StressTestResult(
+        n_obligors=len(items),
+        total_loss=float(sum(i.loss for i in items)),
+        obligors=items,
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Simulated:
+    loss: np.ndarray  # (m, S)
+    uids: np.ndarray  # (m,)
+    expected_loss: float
+    var: dict  # alpha -> VaR
+    es: dict  # alpha -> ES
+    expected_loss_by_model: dict
+    per_model_tail: dict  # name -> (var, es)
+
+
+def _simulate(request: CreditVarRequest, obligors: list) -> _Simulated:
+    """Run the selected model over `obligors` (the unflagged subset)."""
+    keep = {o.uid for o in obligors}
+    inputs = assemble_inputs(
+        model_key=request.model,
+        obligor_table=_obligor_frame(obligors),
+        params=request.params,
+        loadings_table=_loadings_frame(request, keep),
+        group_params=_group_params(request),
+    )
+    portfolio = compile_jtd_portfolio(bundle=inputs.bundle, masters=inputs.masters)
+
+    universe = inputs.masters.factor_universe
+    generator = MixedCreditFactorGenerator.from_universe(
+        universe,
+        total_scenarios=request.n_scenarios,
+        seed=request.seed,
+        stress_p_by_uix=inputs.stress_p_by_uix,
+    )
+    credit_factors = build_credit_factor_matrix(
+        generator.iter_batches(batch_size=min(request.n_scenarios, _FACTOR_BATCH)),
+        num_factors=universe.n_factors,
+        num_scenarios=request.n_scenarios,
+    )
+    result = run_jtd_for_obligor_ead(
+        jtd_portfolio=portfolio,
+        obligor_ead=inputs.obligor_ead,
+        credit_factors=credit_factors,
+    )
+    alphas = tuple(request.alphas)
+    summary = summarize_jtd_loss(result=result, jtd_portfolio=portfolio, alphas=alphas)
+    per_model = model_tail_var_es(
+        result=result, jtd_portfolio=portfolio, alpha=max(alphas)
+    )
+    return _Simulated(
+        loss=result.loss,
+        uids=result.uid,
+        expected_loss=float(summary.expected_loss),
+        var={a: float(summary.var[a]) for a in alphas},
+        es={a: float(summary.es[a]) for a in alphas},
+        expected_loss_by_model={
+            k: float(v) for k, v in summary.expected_loss_by_model.items()
+        },
+        per_model_tail={
+            name: (float(v), float(e)) for name, (v, e) in per_model.items()
+        },
+    )
 
 
 def run_credit_var(request: CreditVarRequest | dict) -> CreditVarResult:
     """Run one credit-VaR request end to end.
 
-    Parameters
-    ----------
-    request
-        A `CreditVarRequest`, or a dict validated into one (Pydantic raises
-        `ValidationError` with cell-addressable `loc` on bad input).
+    Two orthogonal obligor flags drive what happens:
+
+    * ``in_stress_test`` -> a standalone deterministic hard-default stress
+      (Sum EAD*LGD over the flagged names), reported on `result.stress_test`,
+      independent of the model and the simulation.
+    * ``force_default`` -> those names default with certainty INSIDE the
+      simulation while the selected model runs on the rest. A forced default is a
+      constant addition to every scenario's portfolio loss, so the engine runs on
+      the unflagged subset and the constant is stacked on. (No-op when the model is
+      already ``forced_default``.)
     """
     req = (
         request
@@ -137,47 +268,67 @@ def run_credit_var(request: CreditVarRequest | dict) -> CreditVarResult:
         else CreditVarRequest.model_validate(request)
     )
 
-    obligor_df = _obligor_frame(req)
-    loadings_df = _loadings_frame(req)
-    inputs = assemble_inputs(
-        model_key=req.model,
-        obligor_table=obligor_df,
-        params=req.params,
-        loadings_table=loadings_df,
-    )
-    portfolio = compile_jtd_portfolio(bundle=inputs.bundle, masters=inputs.masters)
-
-    universe = inputs.masters.factor_universe
-    generator = MixedCreditFactorGenerator.from_universe(
-        universe,
-        total_scenarios=req.n_scenarios,
-        seed=req.seed,
-        stress_p_by_uix=inputs.stress_p_by_uix,
-    )
-    credit_factors = build_credit_factor_matrix(
-        generator.iter_batches(batch_size=min(req.n_scenarios, _FACTOR_BATCH)),
-        num_factors=universe.n_factors,
-        num_scenarios=req.n_scenarios,
-    )
-
-    result = run_jtd_for_obligor_ead(
-        jtd_portfolio=portfolio,
-        obligor_ead=inputs.obligor_ead,
-        credit_factors=credit_factors,
-    )
-
     alphas = tuple(req.alphas)
-    summary = summarize_jtd_loss(result=result, jtd_portfolio=portfolio, alphas=alphas)
     headline_alpha = max(alphas)
-    per_model = model_tail_var_es(
-        result=result, jtd_portfolio=portfolio, alpha=headline_alpha
-    )
 
-    portfolio_losses = result.loss.sum(axis=0)
+    stress_test = _stress_test_result(req)
+
+    forced = (
+        []
+        if req.model == "forced_default"
+        else [o for o in req.obligors if o.force_default]
+    )
+    forced_uids = {o.uid for o in forced}
+    modeled = [o for o in req.obligors if o.uid not in forced_uids]
+
+    if modeled:
+        sim = _simulate(req, modeled)
+        modeled_loss, modeled_uids = sim.loss, sim.uids
+        scenarios = int(modeled_loss.shape[1])
+        base_el = sim.expected_loss
+        base_var = dict(sim.var)
+        base_es = dict(sim.es)
+        el_by_model = dict(sim.expected_loss_by_model)
+        per_model = dict(sim.per_model_tail)
+    else:  # everything forced (and not the forced_default model) -> deterministic
+        scenarios = req.n_scenarios
+        modeled_loss = np.empty((0, scenarios), dtype=np.float64)
+        modeled_uids = np.empty(0, dtype=np.int64)
+        base_el = 0.0
+        base_var = {a: 0.0 for a in alphas}
+        base_es = {a: 0.0 for a in alphas}
+        el_by_model = {}
+        per_model = {}
+
+    forced_total = float(sum(float(o.ead) * float(o.lgd) for o in forced))
+    if forced:
+        forced_rows = np.empty((len(forced), scenarios), dtype=np.float64)
+        for i, o in enumerate(forced):
+            forced_rows[i, :] = float(o.ead) * float(o.lgd)
+        forced_uid_arr = np.array([int(o.uid) for o in forced], dtype=np.int64)
+        if modeled_uids.size:
+            loss = np.vstack([modeled_loss, forced_rows])
+            uids = np.concatenate([modeled_uids.astype(np.int64), forced_uid_arr])
+        else:
+            loss = forced_rows
+            uids = forced_uid_arr
+        per_model = {**per_model, "forced_default": (forced_total, forced_total)}
+        el_by_model = {**el_by_model, "forced_default": forced_total}
+    else:
+        loss = modeled_loss
+        uids = modeled_uids
+
+    portfolio_losses = loss.sum(axis=0)
     pct = np.percentile(portfolio_losses, _PERCENTILE_GRID)
 
+    # Forced default shifts every scenario by a constant, so the modeled VaR/ES
+    # shift by that constant (order statistics translate).
+    expected_loss = base_el + forced_total
+    var = {a: base_var[a] + forced_total for a in alphas}
+    es = {a: base_es[a] + forced_total for a in alphas}
+
     attribution = obligor_tail_attribution(
-        obligor_loss=result.loss,
+        obligor_loss=loss,
         portfolio_losses=portfolio_losses,
         confidence_level=headline_alpha,
     )
@@ -195,7 +346,7 @@ def run_credit_var(request: CreditVarRequest | dict) -> CreditVarResult:
             incremental_var=float(attribution.incremental_var[i]),
             incremental_es=float(attribution.incremental_es[i]),
         )
-        for i, uid in enumerate(result.uid)
+        for i, uid in enumerate(uids)
     ]
     hist_edges, hist_counts = loss_histogram(portfolio_losses)
 
@@ -203,12 +354,10 @@ def run_credit_var(request: CreditVarRequest | dict) -> CreditVarResult:
         model=req.model,
         headline_alpha=headline_alpha,
         summary=RiskSummary(
-            expected_loss=float(summary.expected_loss),
-            var={_alpha_key(a): float(summary.var[a]) for a in alphas},
-            es={_alpha_key(a): float(summary.es[a]) for a in alphas},
-            expected_loss_by_model={
-                k: float(v) for k, v in summary.expected_loss_by_model.items()
-            },
+            expected_loss=float(expected_loss),
+            var={_alpha_key(a): float(var[a]) for a in alphas},
+            es={_alpha_key(a): float(es[a]) for a in alphas},
+            expected_loss_by_model={k: float(v) for k, v in el_by_model.items()},
         ),
         per_model_tail={
             name: ModelTail(var=float(v), es=float(e))
@@ -220,11 +369,12 @@ def run_credit_var(request: CreditVarRequest | dict) -> CreditVarResult:
         },
         obligor_contributions=contributions,
         loss_histogram=LossHistogram(bin_edges=hist_edges, counts=hist_counts),
+        stress_test=stress_test,
         provenance=RunProvenance(
             engine_version=_engine_version(),
             model=req.model,
             params=dict(req.params),
-            n_obligors=int(portfolio.total_obligors),
+            n_obligors=len(req.obligors),
             n_scenarios=req.n_scenarios,
             seed=req.seed,
             alphas=list(req.alphas),

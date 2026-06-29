@@ -1,15 +1,19 @@
-# src/riskquant/portfolio/compilers/instruments/spot.py
+# src/riskquant/portfolio/compilers/block_compilers/spot.py
 """
 Spot block compiler.
 
 Translates the spot-instrument sub-range of an `IngestBatch` (global IDs) into
-a `SpotBlock` (execution UIXs) via the run's `UixMapper`. The only fields
-that need translation are:
-  - `price_uix`            : underlying_ids        -> market_id_universe
-  - `fx_spots_effective_uix`: (fx_u2s_ids, fx_u2s_inv) -> fx_effective_pairs
+a `SpotBlock` (execution UIXs) via the run's `UixMapper`. The only field that
+needs translation is the single effective-spot coordinate:
 
-`qty` and `trade_uids` are pure economics — no translation needed; slicing
-returns NumPy views (zero copy).
+    underlying_ids                 -> price_uix      (market_id_universe)
+    (fx_u2s_ids, fx_u2s_inv)       -> fx_eff_uix     (fx_spots_effective row)
+    (price_uix, fx_eff_uix)        -> effective_spot_price_uix
+                                      (ValuationState.effective_spot_prices row)
+
+The kernel then gathers one pre-folded `effective_spot_prices` row and
+multiplies by `qty` -- no FX inversion, no branching. `qty` and `trade_uids`
+are pure economics, no translation needed; slicing returns NumPy views.
 """
 
 from __future__ import annotations
@@ -36,10 +40,16 @@ def compile_spot_block(
     # Underlying price IDs -> market-universe UIXs.
     price_uix = uix_mapper.map_market_ids_to_uix(batch.underlying_ids[start:end])
 
-    # FX leg (only the under->settle leg matters for spot).
-    fx_spots_effective_uix = uix_mapper.map_fx_legs_to_effective_uix(
+    # Under->settle FX leg -> fx_spots_effective row (INVALID_UIX for identity).
+    fx_eff_uix = uix_mapper.map_fx_legs_to_effective_uix(
         raw_fx_ids=batch.fx_u2s_ids[start:end],
         raw_fx_inv=batch.fx_u2s_inv[start:end],
+    )
+
+    # Fold the (price, fx) pair into the single effective-spot coordinate.
+    effective_spot_price_uix = uix_mapper.map_spot_to_effective_uix(
+        price_uix=price_uix,
+        fx_eff_uix=fx_eff_uix,
     )
 
     return SpotBlock(

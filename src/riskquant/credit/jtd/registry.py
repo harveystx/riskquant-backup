@@ -159,7 +159,6 @@ JTD_MODEL_SPECS: Final[tuple[JtdModelSpec, ...]] = (
         bundle_field="stress_regime_bernoulli_df",
         needs_factor_uix=True,
         needs_mf_loadings=False,
-        semantic_validator_attr="_semantic_stress",
     ),
     JtdModelSpec(
         model=JtdModel.COPULA_SF_GAUSSIAN,

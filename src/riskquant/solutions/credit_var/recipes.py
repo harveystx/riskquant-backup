@@ -46,21 +46,28 @@ from riskquant.credit.masters.factor_universe.ingest import (
     compile_credit_factor_universe,
 )
 from riskquant.credit.masters.obligors.ingest import compile_obligor_master
+from riskquant.solutions.credit_var.constants import (
+    SF_BETA_BINOMIAL_ALPHA,
+    SF_BETA_BINOMIAL_BETA,
+    SF_NU,
+    SF_RHO,
+    SF_STRESS_REGIME_MULT,
+    SF_STRESS_REGIME_PROB,
+)
 
 _SYSTEMIC_GLOBAL = "SYSTEMIC_GLOBAL"
 _BETA_PD_GLOBAL = "BETA_PD_GLOBAL"
 _STRESS_GLOBAL = "STRESS_GLOBAL"
 _CHI_GLOBAL = "CHI_GLOBAL"
-_FORCED_DUMMY = (
-    "FORCED_DUMMY"  # forced-default reads no factor; the generator needs >=1
-)
+# forced-default reads no factor; the generator needs >=1
+_FORCED_DUMMY = "FORCED_DUMMY"
 
-_DEFAULT_RHO = 0.15
-_DEFAULT_NU = 8.0
-_DEFAULT_BETA_ALPHA = 1.0
-_DEFAULT_BETA_BETA = 24.0  # mean PD = alpha/(alpha+beta) = 0.04
-_DEFAULT_STRESS_PROB = 0.05
-_DEFAULT_STRESS_MULT = 3.0
+_DEFAULT_RHO = SF_RHO
+_DEFAULT_NU = SF_NU
+_DEFAULT_BETA_ALPHA = SF_BETA_BINOMIAL_ALPHA
+_DEFAULT_BETA_BETA = SF_BETA_BINOMIAL_BETA
+_DEFAULT_STRESS_PROB = SF_STRESS_REGIME_PROB
+_DEFAULT_STRESS_MULT = SF_STRESS_REGIME_MULT
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -138,6 +145,7 @@ def _assemble_forced_default(
     obligor_table: pd.DataFrame,
     params: Mapping[str, float],
     loadings_table: pd.DataFrame | None = None,
+    group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     uids = _uids(obligor_table)
     # Forced default reads no factor, but the generator needs a non-empty universe.
@@ -154,6 +162,7 @@ def _assemble_independent_bernoulli(
     obligor_table: pd.DataFrame,
     params: Mapping[str, float],
     loadings_table: pd.DataFrame | None = None,
+    group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     uids = _uids(obligor_table)
     uniform_names = [f"U_{int(u)}" for u in uids]
@@ -176,6 +185,7 @@ def _assemble_beta_binomial(
     obligor_table: pd.DataFrame,
     params: Mapping[str, float],
     loadings_table: pd.DataFrame | None = None,
+    group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     uids = _uids(obligor_table)
     alpha = _require(params, "alpha", _DEFAULT_BETA_ALPHA)
@@ -207,6 +217,7 @@ def _assemble_stress_regime_bernoulli(
     obligor_table: pd.DataFrame,
     params: Mapping[str, float],
     loadings_table: pd.DataFrame | None = None,
+    group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     uids = _uids(obligor_table)
     stress_prob = _require(params, "stress_prob", _DEFAULT_STRESS_PROB)
@@ -245,6 +256,7 @@ def _assemble_sf_gaussian(
     obligor_table: pd.DataFrame,
     params: Mapping[str, float],
     loadings_table: pd.DataFrame | None = None,
+    group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     uids = _uids(obligor_table)
     rho = _require(params, "rho", _DEFAULT_RHO)
@@ -277,6 +289,7 @@ def _assemble_sf_students_t(
     obligor_table: pd.DataFrame,
     params: Mapping[str, float],
     loadings_table: pd.DataFrame | None = None,
+    group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     uids = _uids(obligor_table)
     rho = _require(params, "rho", _DEFAULT_RHO)
@@ -369,6 +382,7 @@ def _assemble_mf_gaussian(
     obligor_table: pd.DataFrame,
     params: Mapping[str, float],
     loadings_table: pd.DataFrame | None = None,
+    group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     universe, bundle = _mf_universe_and_bundle(
         obligor_table,
@@ -387,6 +401,7 @@ def _assemble_mf_students_t(
     obligor_table: pd.DataFrame,
     params: Mapping[str, float],
     loadings_table: pd.DataFrame | None = None,
+    group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     nu = _require(params, "nu", _DEFAULT_NU)
     if nu <= 0.0:
@@ -405,6 +420,128 @@ def _assemble_mf_students_t(
     )
 
 
+def _assemble_beta_binomial_grouped(
+    obligor_table: pd.DataFrame,
+    params: Mapping[str, float],
+    loadings_table: pd.DataFrame | None = None,
+    group_params: Mapping[str, Mapping[str, float]] | None = None,
+) -> AssembledInputs:
+    """Segmented beta-binomial: one BETA_PD factor per obligor group, each with its
+    own (alpha, beta). Obligors point at their group's factor (correlated within a
+    group, independent across groups)."""
+    if "group" not in obligor_table.columns:
+        raise ValueError("beta_binomial_grouped: obligor_table needs a 'group' column.")
+    if not group_params:
+        raise ValueError("beta_binomial_grouped: per-group params are required.")
+    uids = _uids(obligor_table)
+    groups = obligor_table["group"].astype(str).to_numpy()
+    distinct = list(dict.fromkeys(groups.tolist()))  # authoring order
+
+    uniform_names = [f"U_{int(u)}" for u in uids]
+    beta_factor = {g: f"BETA_PD::{g}" for g in distinct}
+    rows = [_FactorRow(name=n, kind="UNIFORM") for n in uniform_names]
+    for g in distinct:
+        gp = group_params.get(g)
+        if gp is None:
+            raise ValueError(f"beta_binomial_grouped: no params for group '{g}'.")
+        alpha = float(gp["alpha"])
+        beta = float(gp["beta"])
+        if alpha <= 0.0 or beta <= 0.0:
+            raise ValueError(
+                f"beta_binomial_grouped: group '{g}' alpha={alpha}, beta={beta} "
+                "must be > 0."
+            )
+        rows.append(
+            _FactorRow(name=beta_factor[g], kind="BETA_PD", alpha=alpha, beta=beta)
+        )
+    universe = _universe(rows)
+    frame = pd.DataFrame(
+        {
+            "uid": uids,
+            "instrument": JtdModel.BETA_BINOMIAL.name,
+            "uniform_factor": uniform_names,
+            "beta_factor": [beta_factor[g] for g in groups],
+        }
+    )
+    return AssembledInputs(
+        masters=_masters(obligor_table, universe),
+        bundle=JtdIngestBundle.from_instrument_frame(frame),
+        obligor_ead=_ead(obligor_table),
+    )
+
+
+def _assemble_stress_regime_bernoulli_grouped(
+    obligor_table: pd.DataFrame,
+    params: Mapping[str, float],
+    loadings_table: pd.DataFrame | None = None,
+    group_params: Mapping[str, Mapping[str, float]] | None = None,
+) -> AssembledInputs:
+    """Segmented stress regime: one STRESS_INDICATOR factor per obligor group, each
+    with its own stress_prob and stress_pd_multiplier. Regimes are independent
+    across groups (block-diagonal); the multiplier is per group, applied to every
+    obligor in it."""
+    if "group" not in obligor_table.columns:
+        raise ValueError(
+            "stress_regime_bernoulli_grouped: obligor_table needs a 'group' column."
+        )
+    if not group_params:
+        raise ValueError(
+            "stress_regime_bernoulli_grouped: per-group params are required."
+        )
+    uids = _uids(obligor_table)
+    groups = obligor_table["group"].astype(str).to_numpy()
+    distinct = list(dict.fromkeys(groups.tolist()))
+
+    uniform_names = [f"U_{int(u)}" for u in uids]
+    stress_factor = {g: f"STRESS::{g}" for g in distinct}
+    prob_by_group: dict[str, float] = {}
+    mult_by_group: dict[str, float] = {}
+    rows = [_FactorRow(name=n, kind="UNIFORM") for n in uniform_names]
+    for g in distinct:
+        gp = group_params.get(g)
+        if gp is None:
+            raise ValueError(
+                f"stress_regime_bernoulli_grouped: no params for group '{g}'."
+            )
+        prob = float(gp["stress_prob"])
+        mult = float(gp["stress_pd_multiplier"])
+        if not (0.0 <= prob <= 1.0):
+            raise ValueError(
+                f"stress_regime_bernoulli_grouped: group '{g}' stress_prob={prob} "
+                "must be in [0, 1]."
+            )
+        if mult < 1.0:
+            raise ValueError(
+                f"stress_regime_bernoulli_grouped: group '{g}' "
+                f"stress_pd_multiplier={mult} must be >= 1."
+            )
+        prob_by_group[g] = prob
+        mult_by_group[g] = mult
+        rows.append(_FactorRow(name=stress_factor[g], kind="STRESS_INDICATOR"))
+    universe = _universe(rows)
+    frame = pd.DataFrame(
+        {
+            "uid": uids,
+            "instrument": JtdModel.STRESS_REGIME_BERNOULLI.name,
+            "uniform_factor": uniform_names,
+            "stress_regime_factor": [stress_factor[g] for g in groups],
+            "stress_pd_multiplier": np.array(
+                [mult_by_group[g] for g in groups], dtype=np.float64
+            ),
+        }
+    )
+    name_to_uix = universe.factor_name_to_uix
+    stress_p_by_uix = {
+        int(name_to_uix[stress_factor[g]]): prob_by_group[g] for g in distinct
+    }
+    return AssembledInputs(
+        masters=_masters(obligor_table, universe),
+        bundle=JtdIngestBundle.from_instrument_frame(frame),
+        obligor_ead=_ead(obligor_table),
+        stress_p_by_uix=stress_p_by_uix,
+    )
+
+
 # Recipe key -> assembler. The key is the stable model identifier the solution
 # dispatches on; the catalog mirrors it (no-drift guard).
 SUPPORTED_RECIPES: dict[str, object] = {
@@ -412,6 +549,8 @@ SUPPORTED_RECIPES: dict[str, object] = {
     "independent_bernoulli": _assemble_independent_bernoulli,
     "beta_binomial": _assemble_beta_binomial,
     "stress_regime_bernoulli": _assemble_stress_regime_bernoulli,
+    "beta_binomial_grouped": _assemble_beta_binomial_grouped,
+    "stress_regime_bernoulli_grouped": _assemble_stress_regime_bernoulli_grouped,
     "sf_gaussian": _assemble_sf_gaussian,
     "sf_students_t": _assemble_sf_students_t,
     "mf_gaussian": _assemble_mf_gaussian,
@@ -425,6 +564,7 @@ def assemble_inputs(
     obligor_table: pd.DataFrame,
     params: Mapping[str, float] | None = None,
     loadings_table: pd.DataFrame | None = None,
+    group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     """Build compiled engine inputs for `model_key` from the obligor table + params.
 
@@ -438,4 +578,6 @@ def assemble_inputs(
             f"assemble_inputs: no recipe for model '{model_key}'. "
             f"Supported: {sorted(SUPPORTED_RECIPES)}."
         )
-    return assembler(obligor_table, params or {}, loadings_table)  # type: ignore[operator]
+    return assembler(  # type: ignore[operator]
+        obligor_table, params or {}, loadings_table, group_params
+    )

@@ -9,21 +9,22 @@ metadata the engine needs to walk them — and nothing from the valuation layer.
 
 Layering
 --------
-This module imports only `portfolio.blocks`. It deliberately does NOT import
-pricers, risk evaluators, or the `Evaluator` protocol. Evaluator resolution is
+This module imports only `valuation.blocks` (the flat block dataclasses). It
+deliberately does NOT import pricers or evaluator tables. Pricer resolution is
 the valuation engine's responsibility: it dispatches on each block's
-`INSTRUMENT_ID` class constant via its own `BLOCK_EVALUATORS` table.
+`BLOCK_TYPE_ID` class constant via its own pricer table.
 
 The dependency therefore points one way only:
 
     valuation  ──▶  portfolio        (allowed)
     portfolio  ──▶  valuation        (never)
 
-The previous design bound pricer callables into `_evaluators` inside
-`__post_init__`, which made a data container reach up into the valuation layer
-and created the `compiled <-> valuation.engine` import cycle. Removing those
-references eliminates the cycle by construction — there is no edge left to
-break, deferred-import trick or otherwise.
+Block taxonomy
+--------------
+Blocks are flat. Node-vs-curve is an instrument/ingest distinction resolved at
+compile time into the effective-factor universe, not a block type. So there is
+one `vanilla_forward` slot and one `vanilla_european_option` slot, each holding
+a single flat block regardless of forward source.
 """
 
 from __future__ import annotations
@@ -37,30 +38,18 @@ import numpy.typing as npt
 
 from riskquant.valuation.blocks.spot_block import SpotBlock
 from riskquant.valuation.blocks.vanilla_european_option_block import (
-    VanillaEuropeanOptionCurveBlock,
-    VanillaEuropeanOptionNodeBlock,
+    VanillaEuropeanOptionBlock,
 )
-from riskquant.valuation.blocks.vanilla_forward_block import (
-    VanillaForwardCurveBlock,
-    VanillaForwardNodeBlock,
-)
+from riskquant.valuation.blocks.vanilla_forward_block import VanillaForwardBlock
 
-BlockT: TypeAlias = (
-    SpotBlock
-    | VanillaForwardNodeBlock
-    | VanillaForwardCurveBlock
-    | VanillaEuropeanOptionNodeBlock
-    | VanillaEuropeanOptionCurveBlock
-)
+BlockT: TypeAlias = SpotBlock | VanillaForwardBlock | VanillaEuropeanOptionBlock
 
 
 class CompiledPortfolioFields(TypedDict, total=False):
     unique_dates_ord32: npt.NDArray[np.int32]
     spot: SpotBlock | None
-    vanilla_forward_node: VanillaForwardNodeBlock | None
-    vanilla_forward_curve: VanillaForwardCurveBlock | None
-    vanilla_european_option_node: VanillaEuropeanOptionNodeBlock | None
-    vanilla_european_option_curve: VanillaEuropeanOptionCurveBlock | None
+    vanilla_forward: VanillaForwardBlock | None
+    vanilla_european_option: VanillaEuropeanOptionBlock | None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -81,12 +70,12 @@ class CompiledPortfolio:
         default_factory=lambda: np.empty(0, dtype=np.int32)
     )
 
-    # Instrument blocks (SoA arrays); None blocks are compacted in __post_init__.
+    # Flat instrument blocks (SoA arrays); None blocks are compacted in
+    # __post_init__. Construction order here defines block ordering and
+    # therefore output-matrix bands.
     spot: SpotBlock | None = None
-    vanilla_forward_node: VanillaForwardNodeBlock | None = None
-    vanilla_forward_curve: VanillaForwardCurveBlock | None = None
-    vanilla_european_option_node: VanillaEuropeanOptionNodeBlock | None = None
-    vanilla_european_option_curve: VanillaEuropeanOptionCurveBlock | None = None
+    vanilla_forward: VanillaForwardBlock | None = None
+    vanilla_european_option: VanillaEuropeanOptionBlock | None = None
 
     # Derived, set in __post_init__.
     _blocks: tuple[BlockT, ...] = field(init=False, repr=False)
@@ -100,10 +89,8 @@ class CompiledPortfolio:
         # tuple order defines block ordering and therefore output-matrix bands.
         ordered: tuple[BlockT | None, ...] = (
             self.spot,
-            self.vanilla_forward_node,
-            self.vanilla_forward_curve,
-            self.vanilla_european_option_node,
-            self.vanilla_european_option_curve,
+            self.vanilla_forward,
+            self.vanilla_european_option,
         )
         blocks: tuple[BlockT, ...] = tuple(b for b in ordered if b is not None)
         total_blocks: int = len(blocks)
@@ -111,7 +98,7 @@ class CompiledPortfolio:
         # Offsets via exclusive prefix-sum of per-block trade counts.
         block_offsets = np.zeros(total_blocks, dtype=np.int64)
         trade_counts = np.fromiter(
-            (b.num_trades for b in blocks), dtype=np.int64, count=total_blocks
+            (b.size for b in blocks), dtype=np.int64, count=total_blocks
         )
         total_trades = int(trade_counts.sum())
         if total_blocks > 1:
@@ -121,7 +108,7 @@ class CompiledPortfolio:
         trade_uids = np.empty(total_trades, dtype=np.int64)
         offset = 0
         for block in blocks:
-            n = block.num_trades
+            n = block.size
             trade_uids[offset : offset + n] = block.trade_uids
             offset += n
 
@@ -180,7 +167,7 @@ class CompiledPortfolio:
             for i, block in enumerate(self._blocks):
                 print(
                     f"{type(block).__name__:<32} | "
-                    f"{block.num_trades:<10,} | {self._block_offsets[i]}"
+                    f"{block.size:<10,} | {self._block_offsets[i]}"
                 )
         print("=" * 90 + "\n")
 

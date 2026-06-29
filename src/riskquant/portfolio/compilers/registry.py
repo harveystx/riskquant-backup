@@ -9,6 +9,20 @@ the compiler for each run by direct integer indexing into `COMPILERS`.
 
 The mapper is passed positionally as the fourth argument so the engine
 loop stays branch-light and the call sites are uniform.
+
+Instrument vs block taxonomy
+----------------------------
+`InstrumentType` keeps the node/curve distinction (a real ingest-spec input:
+node level vs interpolated curve point). The *block* taxonomy is flat -- both
+forward instruments compile to one `VanillaForwardBlock`, both option
+instruments to one `VanillaEuropeanOptionBlock`. Node-vs-curve becomes a
+compile-time forward-source tag inside the effective-forward universe, never a
+block type.
+
+Registration is partial during buildout: only instruments whose flat compiler
+exists are registered here. Unregistered instruments are recorded in
+`UNREGISTERED_INSTRUMENT_IDS` for diagnostics; the engine fails loud if a batch
+actually contains a run of one of them (it never silently drops trades).
 """
 
 from __future__ import annotations
@@ -16,33 +30,16 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Final, TypeAlias
 
-from riskquant.valuation.blocks._base_block import Block
-from riskquant.portfolio.compilers.block_compilers.spot import compile_spot
-from riskquant.portfolio.compilers.block_compilers.vanilla_european_option import (
-    compile_vanilla_euro_option_curve,
-    compile_vanilla_euro_option_node,
-)
-from riskquant.portfolio.compilers.block_compilers.vanilla_forward import (
-    compile_vanilla_forward_curve,
-    compile_vanilla_forward_node,
-)
+from riskquant.portfolio.compilers.block_compilers.spot import compile_spot_block
 from riskquant.portfolio.ingest.batch import IngestBatch
 from riskquant.portfolio.instruments import (
     NUM_INSTRUMENTS,
     SPOT_ID,
-    VANILLA_EUROPEAN_OPTION_CURVE_ID,
-    VANILLA_EUROPEAN_OPTION_NODE_ID,
-    VANILLA_FORWARD_CURVE_ID,
-    VANILLA_FORWARD_NODE_ID,
 )
+from riskquant.valuation.blocks._base_block import Block
 
 if TYPE_CHECKING:
     from riskquant.universe import UixMapper
-
-
-# ==============================================================================
-# Block Name aliases
-# ==============================================================================
 
 
 CompilerFn: TypeAlias = Callable[
@@ -74,38 +71,19 @@ def _register(instrument_id: int, field_name: str, fn: CompilerFn) -> None:
 _register(
     int(SPOT_ID),
     "spot",
-    compile_spot,
+    compile_spot_block,
 )
 
-# --- VANILLA FORWARD ---
-_register(
-    int(VANILLA_FORWARD_NODE_ID),
-    "vanilla_forward_node",
-    compile_vanilla_forward_node,
-)
-_register(
-    int(VANILLA_FORWARD_CURVE_ID),
-    "vanilla_forward_curve",
-    compile_vanilla_forward_curve,
-)
+# --- PENDING (flat compilers not yet authored) ---------------------------------
+# VANILLA_FORWARD_{NODE,CURVE}_ID        -> field "vanilla_forward"
+# VANILLA_EUROPEAN_OPTION_{NODE,CURVE}_ID-> field "vanilla_european_option"
+# VANILLA_IRS_ID                          -> decomposes into cashflow blocks
+# Both node and curve instrument IDs will register to the SAME flat compiler /
+# field once it lands; the compiler reads the forward-source tag. Until then
+# they stay unregistered and the engine fails loud on encounter.
 
-# --- VANILLA EUROPEAN OPTION ---
-_register(
-    int(VANILLA_EUROPEAN_OPTION_NODE_ID),
-    "vanilla_european_option_node",
-    compile_vanilla_euro_option_node,
+# Diagnostics only -- no import-time hard fail (partial registration is the
+# intended buildout state).
+UNREGISTERED_INSTRUMENT_IDS: Final[tuple[int, ...]] = tuple(
+    i for i, fn in enumerate(COMPILERS) if fn is None
 )
-_register(
-    int(VANILLA_EUROPEAN_OPTION_CURVE_ID),
-    "vanilla_european_option_curve",
-    compile_vanilla_euro_option_curve,
-)
-
-
-# Fail loud on missing registrations at import time.
-_unregistered = [i for i, fn in enumerate(COMPILERS) if fn is None]
-if _unregistered:
-    raise RuntimeError(
-        f"No compiler registered for instrument IDs: {_unregistered}. "
-        f"Register them in compilers.registry."
-    )

@@ -21,19 +21,13 @@ def evaluate_stress_regime_bernoulli_jtd(
     out: npt.NDArray[np.float64],
 ) -> None:
 
-    # Extract the stress regime indicator (1 for stressed, 0 for not stressed) for
-    # each scenario from the credit factors using the provided index from the block.
-    stress_regime_indicator = credit_factors.latent_factors[
-        block.stress_regime_indicator_uix
-    ]
-
     kernel_stress_regime_bernoulli_jtd(
         out=out,
         latent_factors=credit_factors.latent_factors,
-        stress_regime_indicator=stress_regime_indicator,
         ead=ead,
         lgd=block.lgd,
         pd=block.pd,
         uniform_uix=block.uniform_uix,
+        stress_regime_uix=block.stress_regime_indicator_uix,
         stress_pd_multiplier=block.stress_pd_multiplier,
     )

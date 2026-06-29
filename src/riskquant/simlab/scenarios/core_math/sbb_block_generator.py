@@ -25,7 +25,7 @@ from __future__ import annotations
 import numba as nb  # type: ignore[import-untyped]
 import numpy as np
 
-from riskquant.numba import parallel_njit
+from riskquant.jit import parallel_njit
 
 _I32_1D = nb.int32[::1]
 _I32_2D_C = nb.int32[:, ::1]

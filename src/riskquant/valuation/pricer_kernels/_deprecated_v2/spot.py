@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import numba as nb  # type: ignore[import-untyped]
 
-from riskquant.numba import parallel_njit
+from riskquant.jit import parallel_njit
 
 # ==============================================================================
 # Numba layout-pinned aliases — force C-contiguous strides at compile time so

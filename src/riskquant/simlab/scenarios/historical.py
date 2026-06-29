@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 import numba as nb  # type: ignore[import-untyped]
 import numpy as np
 
-from riskquant.numba import parallel_njit
+from riskquant.jit import parallel_njit
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.market_data.risk_factors.shift_types import (
     SHIFT_DIFFERENCE_ID,

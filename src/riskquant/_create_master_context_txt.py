@@ -210,7 +210,7 @@ def main(profile: str | None = None):
             base_dir / "_arrays.py",
             base_dir / "constants.py",
             base_dir / "exceptions.py",
-            base_dir / "numba.py",
+            base_dir / "jit.py",
         ],
         "pricers": [
             base_dir / "valuation",
@@ -262,7 +262,7 @@ def main(profile: str | None = None):
             base_dir / "_arrays.py",
             base_dir / "constants.py",
             base_dir / "exceptions.py",
-            base_dir / "numba.py",
+            base_dir / "jit.py",
             # base_dir / "synthetic_level_generators.py",
             base_dir / "universe.py",
             # SCRIPTS
@@ -325,21 +325,36 @@ def main(profile: str | None = None):
         #     base_dir / "valuation" / "pricers",
         #     base_dir / "valuation" / "engine.py",
         # ],
-        "market_data": [
-            base_dir / "config",
-            base_dir / "ingest_fixtures",
+        "market_data_only": [
+            # base_dir / "config",
+            # base_dir / "ingest_fixtures",
             base_dir / "market_data",
-            base_dir / "utils",
-            base_dir / "valuation",
-            base_dir / "_arrays.py",
-            base_dir / "constants.py",
-            base_dir / "exceptions.py",
-            base_dir / "numba.py",
-            base_dir / "universe.py",
-            # SCRIPTS
-            base_dir_parent / "scripts" / "demos" / "market_data",
-            # TESTS
-            base_dir_parent / "tests" / "market_data",
+            # base_dir / "utils",
+            # base_dir / "valuation",
+            # base_dir / "_arrays.py",
+            # base_dir / "constants.py",
+            # base_dir / "exceptions.py",
+            # base_dir / "jit.py",
+            # base_dir / "universe.py",
+            # # SCRIPTS
+            # base_dir_parent / "scripts" / "demos" / "market_data",
+            # # TESTS
+            # base_dir_parent / "tests" / "market_data",
+        ],
+        "portfolio_only": [
+            # base_dir / "config",
+            base_dir / "portfolio",
+            # base_dir / "utils",
+            # base_dir / "valuation",
+            # base_dir / "_arrays.py",
+            # base_dir / "jit.py",
+            # base_dir / "constants.py",
+            # base_dir / "exceptions.py",
+            # base_dir / "universe.py",
+        ],
+        "solutions_credit_var": [
+            base_dir / "solutions" / "credit_var",
+            base_dir_parent / "scripts" / "credit_var",
         ],
         "market_data_reduced": [
             base_dir / "market_data",
@@ -348,7 +363,7 @@ def main(profile: str | None = None):
             base_dir / "valuation" / "kernels" / "_math.py",
             base_dir / "utils",
             base_dir / "_arrays.py",
-            base_dir / "numba.py",
+            base_dir / "jit.py",
             base_dir / "constants.py",
             base_dir / "exceptions.py",
             base_dir / "universe.py",
@@ -356,7 +371,7 @@ def main(profile: str | None = None):
         "market_data_calibrate": [
             base_dir / "market_data" / "calibrate",
             base_dir / "ingest_fixtures",
-            base_dir / "numba.py",
+            base_dir / "jit.py",
             base_dir / "constants.py",
             # SCRIPTS
             base_dir_parent / "scripts" / "demos" / "market_data" / "calibrate",
@@ -384,12 +399,17 @@ def main(profile: str | None = None):
             base_dir / "_arrays.py",
             base_dir / "constants.py",
             base_dir / "exceptions.py",
-            base_dir / "numba.py",
+            base_dir / "jit.py",
             base_dir / "universe.py",
             # SCRIPTS
             base_dir_parent / "scripts" / "demos" / "credit" / "exposure",
             base_dir_parent / "scripts" / "demos" / "credit" / "jtd",
             # # base_dir_parent / "scripts" / "reporting" / "credit_risk" / "stress_tests",
+        ],
+        "credit_jtd_kernels": [
+            base_dir / "credit" / "jtd" / "blocks",
+            base_dir / "credit" / "jtd" / "kernels",
+            base_dir / "credit" / "jtd" / "evaluators",
         ],
         "credit_reduced": [
             # SOURCE CODE
@@ -412,7 +432,7 @@ def main(profile: str | None = None):
             # base_dir / "_arrays.py",
             # base_dir / "constants.py",
             # base_dir / "exceptions.py",
-            # base_dir / "numba.py",
+            # base_dir / "jit.py",
             # base_dir / "universe.py",
             # SCRIPTS
             # base_dir_parent / "scripts" / "demos" / "credit" / "exposure",
@@ -433,7 +453,7 @@ def main(profile: str | None = None):
             base_dir / "ingest_fixtures" / "utils.py",
             base_dir / "utils",
             base_dir / "_arrays.py",
-            base_dir / "numba.py",
+            base_dir / "jit.py",
             base_dir / "constants.py",
             base_dir / "exceptions.py",
             base_dir / "universe.py",
@@ -447,14 +467,14 @@ def main(profile: str | None = None):
             base_dir / "utils",
             base_dir / "valuation",
             base_dir / "_arrays.py",
-            base_dir / "numba.py",
+            base_dir / "jit.py",
             base_dir / "constants.py",
             base_dir / "exceptions.py",
             base_dir / "universe.py",
         ],
         "scenario_metrics": [
             base_dir / "scenario_metrics",
-            base_dir / "numba.py",
+            base_dir / "jit.py",
         ],
     }
 
@@ -631,6 +651,10 @@ if __name__ == "__main__":
     # main(profile="simlab_reduced")
     # main(profile="simlab_extended")
     main(profile="ingest")
+    main(profile="market_data_only")
+    main(profile="portfolio_only")
+    main(profile="solutions_credit_var")
+    main(profile="credit_jtd_kernels")
     # main(profile="ce_jtd")
     # main(profile="risk_quant")
     # main(profile="risk_quant_adhoc")
@@ -644,6 +668,5 @@ if __name__ == "__main__":
     # main(profile="ingest_fixtures")
     # main(profile="ingest_fixtures_risk_static_config")
     # main(profile="ingest_fixtures_market_data")
-    # main(profile="portfolio")
     # main(profile="pricer_kernels")
     # main(profile="scenario_metrics")

@@ -13,7 +13,7 @@ import numba as nb  # type: ignore
 import numpy as np
 import numpy.typing as npt
 
-from riskquant.numba import _F64_1D, _F64_2D, parallel_njit
+from riskquant.jit import _F64_1D, _F64_2D, parallel_njit
 
 
 @parallel_njit(

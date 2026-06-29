@@ -39,11 +39,14 @@ class StressRegimeBernoulliJtdBlock(_JtdBlock):
 
     uniform_uix: npt.NDArray[np.int32]  # (N,)
 
-    # regime_indicator_uix: (scalar) index into the latent factor matrix to
-    # determine which factor is the stress regime indicator. The stress regime
-    # indicator is a binary variable that indicates whether a given scenario is
-    # in the stressed regime (1) or not (0).
-    stress_regime_indicator_uix: np.int32  # (scalar)
+    # stress_regime_indicator_uix: (N,) per-obligor index into the latent factor
+    # matrix naming each obligor's stress-regime indicator factor. The indicator
+    # is binary per scenario (1 if that obligor's regime is stressed, else 0).
+    # Obligors sharing an index share a regime (correlated); obligors on distinct
+    # indicators have independent regimes (block-diagonal correlation). All equal
+    # -> the single global-stress case (all obligors share the same regime - default
+    # correlation is global).
+    stress_regime_indicator_uix: npt.NDArray[np.int32]  # (N,)
 
     # stress_pd_multiplier: (N,) multiplier to apply to the PD in stressed scenarios,
     # e.g. 2.0 means PD doubles in stressed scenarios. Each obligor can have a different

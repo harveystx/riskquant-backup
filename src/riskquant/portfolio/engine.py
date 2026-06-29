@@ -11,10 +11,11 @@ Pipeline
 --------
 1. `build_uix_mapper(ingest_batches)`
       Discovers the global universe touched by the run (market IDs,
-      discount-curve IDs, dates) AND deduplicates every distinct
-      `(fx_rf_uix, invert)` pair across all FX legs of every trade. The
-      result, a `UixMapper`, is the single source of truth for ID->UIX
-      translation downstream.
+      discount-curve IDs, dates) AND deduplicates every distinct effective-
+      factor tuple across all trades: the `(fx_rf_uix, invert)` FX pairs and
+      the `(price_uix, fx_eff_uix)` effective-spot pairs. The result, a
+      `UixMapper`, is the single source of truth for ID->UIX translation
+      downstream.
 
 2. (Caller fetches market data using the discovered universes.)
 
@@ -29,11 +30,10 @@ Design invariants
 - `UixMapper` is immutable. Its `_universe` arrays are sorted, unique, and
   validated once at construction; runtime `map_*` calls trust the contract
   and use `np.searchsorted` for O(log N) vectorized lookup.
-- `fx_effective_pairs` is built in the same pass as the market universe so
-  the FX-effective UIX space is part of the global contract. Pricers will
-  index a `(K, S)` `fx_spots_effective` matrix built by the market-data
-  builder; `INVALID_UIX` (< 0) signals "no FX conversion required" and is
-  the only branch in the pricer hot path.
+- The effective-factor pair tables are built in the same pass as the market
+  universe so the effective UIX spaces are part of the global contract.
+  Pricers index dense `(K, S)` effective matrices built/folded by the
+  market-data layer; `INVALID_UIX` (< 0) signals "no FX conversion required".
 - Compilers take `(batch, start, end, mapper)`. They are the ONLY place
   global IDs are translated to UIXs; blocks never see global IDs.
 """
@@ -53,7 +53,7 @@ from riskquant.portfolio.compiled import (
 )
 from riskquant.portfolio.compilers.registry import COMPILERS, FIELD_NAMES
 from riskquant.portfolio.ingest.batch import IngestBatch
-from riskquant.universe import UixMapper
+from riskquant.universe import UixMapper, lookup_fx_effective_uix
 
 # `UixMapper` (the run's UIX universe contract type) was relocated to the leaf
 # module `riskquant.universe` (item C2) so market_data can import it at runtime
@@ -92,8 +92,8 @@ def _dedup_fx_effective_pairs(
     Returned shape is `(K, 2) int32`. The two columns are
     `(fx_uix_in_market_universe, invert_flag)`. The table is sorted
     lexicographically by `(fx_uix, invert)`, which is critical for the
-    `np.searchsorted` lookup that `map_fx_legs_to_effective_uix` performs
-    via the packed `key = (uix << 1) | inv` trick.
+    `np.searchsorted` lookup that `lookup_fx_effective_uix` performs via the
+    packed `key = (uix << 1) | inv` trick.
     """
     if len(raw_fx_id_arrays) != len(raw_fx_inv_arrays):
         raise ValueError(
@@ -128,6 +128,60 @@ def _dedup_fx_effective_pairs(
     return np.ascontiguousarray(unique_pairs.astype(np.int32, copy=False))
 
 
+def _dedup_spot_effective_pairs(
+    *,
+    market_id_universe: npt.NDArray[np.int32],
+    fx_effective_pairs: npt.NDArray[np.int32],
+    raw_underlying_id_arrays: tuple[npt.NDArray[np.int32], ...],
+    raw_fx_u2s_id_arrays: tuple[npt.NDArray[np.int32], ...],
+    raw_fx_u2s_inv_arrays: tuple[npt.NDArray[np.int8], ...],
+) -> npt.NDArray[np.int32]:
+    """
+    Build the deduplicated `(price_uix, fx_eff_uix)` effective-spot table.
+
+    For every trade's spot leg (underlying price + its under->settle FX),
+    resolve `price_uix` (into `market_id_universe`) and `fx_eff_uix` (an
+    `fx_effective_pairs` row, or `INVALID_UIX` for identity FX), then
+    `np.unique(axis=0)`. Built as a global superset over ALL trades' underlying
+    legs -- exactly mirroring `_dedup_fx_effective_pairs`; rows referenced by no
+    spot block are simply never gathered (and are bounded by distinct
+    underlying x FX combinations).
+
+    Resolution uses `lookup_fx_effective_uix` against the already-built
+    `fx_effective_pairs`, guaranteeing the `fx_eff_uix` here is byte-identical
+    to the one the spot compiler stamps via `map_fx_legs_to_effective_uix`.
+
+    Returned shape is `(K, 2) int32`, sorted lexicographically by
+    `(price_uix, fx_eff_uix)` -- the order the packed-key searchsorted in
+    `map_spot_to_effective_uix` relies on.
+    """
+    if not raw_underlying_id_arrays:
+        return np.empty((0, 2), dtype=np.int32)
+
+    underlying_ids = np.concatenate(raw_underlying_id_arrays)
+    if underlying_ids.size == 0:
+        return np.empty((0, 2), dtype=np.int32)
+
+    fx_ids = np.concatenate(raw_fx_u2s_id_arrays)
+    fx_inv = np.concatenate(raw_fx_u2s_inv_arrays)
+
+    # Underlyings are always present (never sentinel), so a plain searchsorted
+    # matches `map_market_ids_to_uix` for these rows.
+    price_uix = np.searchsorted(market_id_universe, underlying_ids).astype(
+        np.int32, copy=False
+    )
+    fx_eff_uix = lookup_fx_effective_uix(
+        market_id_universe=market_id_universe,
+        fx_effective_pairs=fx_effective_pairs,
+        raw_fx_ids=fx_ids,
+        raw_fx_inv=fx_inv,
+    )
+
+    pairs = np.stack((price_uix, fx_eff_uix), axis=1)
+    unique_pairs = np.unique(pairs, axis=0)
+    return np.ascontiguousarray(unique_pairs.astype(np.int32, copy=False))
+
+
 # ==============================================================================
 # ORCHESTRATOR PHASE (UNIVERSE DISCOVERY)
 # ==============================================================================
@@ -141,10 +195,11 @@ def build_uix_mapper(ingest_batches: Sequence[IngestBatch]) -> UixMapper:
       - the union of every market ID (underlyings, vols, FX spots)
       - the union of every discount curve ID
       - the union of every trade-relevant date ordinal
-      - the deduplicated `(fx_uix, invert)` pair table
+      - the deduplicated `(fx_uix, invert)` FX-effective table
+      - the deduplicated `(price_uix, fx_eff_uix)` effective-spot table
 
     Returns a frozen `UixMapper` that downstream consumers (block compilers,
-    market-data builder, validation) use as the single source of truth for
+    market-data builder/fold, validation) use as the single source of truth for
     UIX <-> global-ID translation.
     """
     if not ingest_batches:
@@ -199,11 +254,21 @@ def build_uix_mapper(ingest_batches: Sequence[IngestBatch]) -> UixMapper:
         raw_fx_inv_arrays=raw_fx_inv_arrays,
     )
 
+    # ---- SPOT EFFECTIVE PAIRS (built on top of fx_effective_pairs) ----
+    spot_effective_pairs = _dedup_spot_effective_pairs(
+        market_id_universe=market_id_universe,
+        fx_effective_pairs=fx_effective_pairs,
+        raw_underlying_id_arrays=tuple(b.underlying_ids for b in ingest_batches),
+        raw_fx_u2s_id_arrays=tuple(b.fx_u2s_ids for b in ingest_batches),
+        raw_fx_u2s_inv_arrays=tuple(b.fx_u2s_inv for b in ingest_batches),
+    )
+
     return UixMapper(
         market_id_universe=market_id_universe,
         discount_curve_id_universe=discount_curve_id_universe,
         date_ord32_universe=date_ord32_universe,
         fx_effective_pairs=fx_effective_pairs,
+        spot_effective_pairs=spot_effective_pairs,
     )
 
 
@@ -254,7 +319,14 @@ def compile_portfolio_from_ingest_batch(
 
         compiler = compilers[instrument_id]
         if compiler is None:
-            continue
+            # Fail loud rather than silently drop trades. During buildout some
+            # instruments have no compiler yet; a batch that actually contains
+            # one must not vanish from the compiled portfolio.
+            raise RuntimeError(
+                f"No compiler registered for instrument_id={instrument_id} "
+                f"(run [{start}:{end}], {end - start} trade(s)). Register it in "
+                "compilers.registry before compiling portfolios that use it."
+            )
 
         field_name = field_names[instrument_id]
         if field_name is None:

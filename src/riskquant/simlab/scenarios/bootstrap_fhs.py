@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 import numba as nb  # type: ignore[import-untyped]
 import numpy as np
 
-from riskquant.numba import parallel_njit
+from riskquant.jit import parallel_njit
 from riskquant.constants import EWMA_DECAY_FACTOR, MAX_EWMA_VOL_RATIO
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.market_data.risk_factors.shift_types import (

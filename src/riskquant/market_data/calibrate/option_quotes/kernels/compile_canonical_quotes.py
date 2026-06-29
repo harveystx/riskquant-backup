@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numba as nb
 
-from riskquant.numba import _F64_1D, _I8_1D, parallel_njit
+from riskquant.jit import _F64_1D, _I8_1D, parallel_njit
 
 
 @parallel_njit(

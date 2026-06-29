@@ -56,7 +56,7 @@ from riskquant.market_data.surfaces.y_axes_types import (
     SURFACE_Y_AXIS_TYPE_MONEYNESS_SPOT,
     SURFACE_Y_AXIS_TYPE_STRIKE,
 )
-from riskquant.numba import parallel_njit
+from riskquant.jit import parallel_njit
 from riskquant.valuation.pricer_kernels._deprecated._math_v1 import (
     linear_interp_scalar,
     numba_norm_cdf_abrom_steg,

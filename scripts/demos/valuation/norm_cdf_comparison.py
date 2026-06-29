@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numba as nb
 import numpy as np
 
-from riskquant.valuation.pricer_kernels._deprecated._math_v1 import (
+from riskquant.valuation.pricing_models.math import (
     numba_norm_cdf,
     numba_norm_cdf_abrom_steg,
 )

@@ -29,11 +29,14 @@ __all__ = [
     "CreditVarResult",
     "ObligorRow",
     "LoadingRow",
+    "GroupRow",
     "RiskSummary",
     "ModelTail",
     "RunProvenance",
     "ObligorContribution",
     "LossHistogram",
+    "StressTestResult",
+    "StressTestObligor",
     # model catalog (the front-end menu + param specs)
     "MODEL_CATALOG",
     "ModelEntry",
@@ -53,6 +56,7 @@ from riskquant.solutions.credit_var.run import run_credit_var
 from riskquant.solutions.credit_var.schemas import (
     CreditVarRequest,
     CreditVarResult,
+    GroupRow,
     LoadingRow,
     LossHistogram,
     ModelTail,
@@ -60,4 +64,6 @@ from riskquant.solutions.credit_var.schemas import (
     ObligorRow,
     RiskSummary,
     RunProvenance,
+    StressTestObligor,
+    StressTestResult,
 )

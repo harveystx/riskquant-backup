@@ -418,7 +418,7 @@ def resolve_required_factor_ids_to_market_data_factor_ids(
         slots = searchsorted_or_raise(
             universe=static_config.container_ids,
             raw=child_parent_ids,
-            label="parent container_id",
+            ctx="parent container_id",
         )
         container_proxy_id[is_container_child] = proxy_topology.container_proxy_id[
             slots

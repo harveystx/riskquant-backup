@@ -45,7 +45,7 @@ from __future__ import annotations
 
 import math
 
-from riskquant.numba import inline_njit
+from riskquant.jit import inline_njit
 from riskquant.valuation.pricing_models.math import (
     numba_norm_cdf_abrom_steg,
     numba_norm_pdf,
@@ -54,32 +54,6 @@ from riskquant.valuation.pricing_models.math import (
 # =======================
 # PRICING
 # =======================
-
-
-# @inline_njit
-# def _black76_fv_with_kernel_hoists(
-#     fwd: float,
-#     log_fk: float,
-#     strike: float,
-#     sqrt_tte: float,
-#     half_tte: float,
-#     vol: float,
-#     cp_mult: int,
-# ) -> float:
-#     """Undiscounted Black 76 option price. Returns FV, not PV. Caller is responsible
-#     for multiplying by the discount factor to get PV."""
-
-#     std_dev = vol * sqrt_tte
-
-#     d1 = (log_fk + vol * vol * half_tte) / std_dev
-#     d2 = d1 - std_dev
-
-#     cdf_d1 = numba_norm_cdf_abrom_steg(cp_mult * d1)
-#     cdf_d2 = numba_norm_cdf_abrom_steg(cp_mult * d2)
-
-#     fv = cp_mult * (fwd * cdf_d1 - strike * cdf_d2)
-
-#     return fv
 
 
 @inline_njit
@@ -117,9 +91,7 @@ def _black76_fv(
     """Undiscounted Black 76 option price. Returns FV, not PV. Caller is responsible
     for multiplying by the discount factor to get PV."""
 
-    log_fwd = math.log(fwd)
-    log_strike = math.log(strike)
-    log_fk = log_fwd - log_strike
+    log_fk = math.log(fwd / strike)
 
     vol_sqrt_tte = vol * sqrt_tte
     vol2_half_tte = vol * vol * half_tte
@@ -176,6 +148,19 @@ def _black76_fv_put(
 
 
 @inline_njit
+def _black76_fv_vega_kernel_primitive(
+    fwd: float,
+    log_fk: float,
+    sqrt_tte: float,
+    vol_sqrt_tte: float,
+    vol2_half_tte: float,
+) -> float:
+
+    d1 = (log_fk + vol2_half_tte) / vol_sqrt_tte
+    return fwd * numba_norm_pdf(d1) * sqrt_tte
+
+
+@inline_njit
 def _black76_fv_vega(
     fwd: float,
     strike: float,
@@ -192,15 +177,24 @@ def _black76_fv_vega(
     (deep ITM/OTM, ultra-short tenors) where the IV is under-determined, and
     large where the inversion is well-conditioned.
     """
-    if vol <= 0.0 or sqrt_tte <= 0.0:
-        return 0.0
+    # ==================================================================================
+    # log_fk = math.log(fwd / strike)
+    # std_dev = vol * sqrt_tte
+    # d1 = (log_fk + vol * vol * half_tte) / std_dev
+    # pdf_d1 = numba_norm_pdf(d1)
+    # return fwd * pdf_d1 * sqrt_tte
+    # ==================================================================================
 
-    log_fk = math.log(fwd) - math.log(strike)
+    log_fk = math.log(fwd / strike)
 
-    std_dev = vol * sqrt_tte
+    vol_sqrt_tte = vol * sqrt_tte
 
-    d1 = (log_fk + vol * vol * half_tte) / std_dev
+    vol2_half_tte = vol * vol * half_tte
 
-    pdf_d1 = numba_norm_pdf(d1)
-
-    return fwd * pdf_d1 * sqrt_tte
+    return _black76_fv_vega_kernel_primitive(
+        fwd,
+        log_fk,
+        sqrt_tte,
+        vol_sqrt_tte,
+        vol2_half_tte,
+    )
