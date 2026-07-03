@@ -15,6 +15,8 @@ round-trips through JSON without surprise float-key coercion.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
 
 __all__ = [
@@ -67,6 +69,13 @@ class ObligorRow(BaseModel):
         "stress_regime_bernoulli_grouped): obligors sharing a group share that "
         "group's factor. Omit for non-grouped models.",
     )
+    rho: float | None = Field(
+        default=None,
+        ge=0.0,
+        lt=1.0,
+        description="Bespoke per-obligor asset correlation for single-factor "
+        "copulas; overrides the global/regulatory fill. Omit to use the fill.",
+    )
 
 
 class LoadingRow(BaseModel):
@@ -115,6 +124,10 @@ class CreditVarRequest(BaseModel):
     n_scenarios: int = Field(default=100_000, gt=0)
     alphas: list[float] = Field(default_factory=lambda: [0.95, 0.99, 0.999])
     seed: int = 12345
+
+    @property
+    def n_obligors(self) -> int:
+        return len(self.obligors)
 
     @field_validator("alphas")
     @classmethod
@@ -212,7 +225,7 @@ class CreditVarRequest(BaseModel):
             raise ValueError("duplicate group name(s) in 'groups'.")
         defined = set(names)
         used = {o.group for o in self.obligors}
-        undefined = sorted(used - defined)
+        undefined = used - defined
         if undefined:
             raise ValueError(f"obligor group(s) not defined in 'groups': {undefined}.")
         # Validate each group's params against the model's per-group spec.
@@ -235,6 +248,16 @@ class CreditVarRequest(BaseModel):
                         f"group '{g.name}' param '{p.key}' = {g.params[p.key]} out of "
                         f"range {p.interval_repr}."
                     )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_obligor_rho(self) -> CreditVarRequest:
+        if self.model not in MODEL_CATALOG:
+            return self
+        if not model_entry(self.model).accepts_obligor_rho and any(
+            o.rho is not None for o in self.obligors
+        ):
+            raise ValueError(f"model '{self.model}' does not use a per-obligor 'rho'.")
         return self
 
     @classmethod
@@ -279,22 +302,26 @@ class CreditVarRequest(BaseModel):
                 f"from_dataframe: obligor_table missing column(s) {missing}."
             )
         has_group = "group" in obligor_table.columns
-        read_cols = list(required) + (["group"] if has_group else [])
+        has_rho = "rho" in obligor_table.columns
+        read_cols = (
+            list(required)
+            + (["group"] if has_group else [])
+            + (["rho"] if has_rho else [])
+        )
         obligors = [
             ObligorRow(
                 uid=int(rec["uid"]),
                 ead=float(rec["ead"]),
                 pd=float(rec["pd"]),
                 lgd=float(rec["lgd"]),
-                **(
-                    {"group": str(rec["group"])}
-                    if has_group and pd.notna(rec["group"])
-                    else {}
+                group=(
+                    str(rec["group"]) if has_group and pd.notna(rec["group"]) else None
                 ),
+                rho=(float(rec["rho"]) if has_rho and pd.notna(rec["rho"]) else None),
             )
             for rec in obligor_table.loc[:, read_cols].to_dict("records")
         ]
-        kwargs: dict[str, object] = {
+        kwargs: dict[str, Any] = {
             "model": model,
             "obligors": obligors,
             "params": dict(params),
@@ -327,14 +354,97 @@ class CreditVarRequest(BaseModel):
 
 
 class RiskSummary(BaseModel):
-    """Headline portfolio risk metrics."""
+    """
+    Summary statistics of the simulated portfolio loss distribution.
+
+    All metrics are computed from the simulated loss distribution. Losses are
+    assumed to be positive quantities, where larger values correspond to worse
+    portfolio outcomes.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    expected_loss: float
-    var: dict[str, float]  # confidence (as string) -> VaR
-    es: dict[str, float]  # confidence (as string) -> ES
+    # ------------------------------------------------------------------
+    # Distribution moments
+    # ------------------------------------------------------------------
+
+    loss_mean: float  # mean of portfolio loss (Expected Loss)
+    loss_std_dev: float  # standard deviation of portfolio loss
+    loss_skewness: float  # right-skew of the loss distribution
+    loss_excess_kurtosis: float  # excess kurtosis (fat-tailedness)
+
+    # ------------------------------------------------------------------
+    # Distribution characteristics
+    # ------------------------------------------------------------------
+
+    loss_probability: float  # fraction of scenarios with any loss
+    loss_min: float  # best simulated scenario loss
+    loss_max: float  # worst simulated scenario loss
+    coefficient_of_variation: float  # loss_std_dev / loss_mean (0 if loss_mean=0)
+
+    # ------------------------------------------------------------------
+    # Tail risk
+    # ------------------------------------------------------------------
+
+    var: dict[str, float]
+    es: dict[str, float]
+
+    # ------------------------------------------------------------------
+    # Economic capital
+    # ------------------------------------------------------------------
+
+    economic_capital_var: dict[str, float]
+    economic_capital_es: dict[str, float]
+
+    # ------------------------------------------------------------------
+    # Attribution
+    # ------------------------------------------------------------------
+
     expected_loss_by_model: dict[str, float]
+
+    @property
+    def es_to_var_ratio(self) -> dict[str, float]:
+        """The ratio of ES to VaR at each confidence level."""
+        return {
+            alpha: self.es.get(alpha, float("nan")) / self.var.get(alpha, float("nan"))
+            for alpha in self.var
+        }
+
+    @property
+    def max_alpha(self) -> float:
+        """The highest confidence level requested in the run."""
+        return max(float(a) for a in self.var)
+
+    def get_var(self, alpha: float) -> float:
+        """Get the Value-at-Risk at a given confidence level."""
+        alpha_pct = round(alpha * 100, 2)
+        alpha_pct = f"{alpha_pct:.2f}%"
+        if alpha_pct not in self.var:
+            raise ValueError(
+                f"confidence level '{alpha_pct}' not in run; available: {sorted(self.var)}"
+            )
+        return self.var.get(alpha_pct, float("nan"))
+
+    def get_es(self, alpha: float) -> float:
+        """Get the Expected Shortfall at a given confidence level."""
+        alpha_pct = round(alpha * 100, 2)
+        alpha_pct = f"{alpha_pct:.2f}%"
+        if alpha_pct not in self.es:
+            raise ValueError(
+                f"confidence level '{alpha_pct}' not in run; available: {sorted(self.es)}"
+            )
+        return self.es.get(alpha_pct, float("nan"))
+
+    def get_es_to_var_ratio(self, alpha: float) -> float:
+        """Get the ES/VaR ratio at a given confidence level."""
+        alpha_pct = round(alpha * 100, 2)
+        alpha_pct = f"{alpha_pct:.2f}%"
+        es_to_var_map = self.es_to_var_ratio
+        if alpha_pct not in es_to_var_map:
+            raise ValueError(
+                f"confidence level '{alpha_pct}' not in run; available: {sorted(es_to_var_map)}"
+            )
+        return es_to_var_map.get(alpha_pct, float("nan"))
 
 
 class ModelTail(BaseModel):
@@ -374,6 +484,8 @@ class ObligorContribution(BaseModel):
     es_pct: float  # share of portfolio ES (the contributions sum to 1.0)
     incremental_var: float  # VaR(L) - VaR(L - L_i): VaR drop if obligor removed
     incremental_es: float  # ES(L) - ES(L - L_i): ES drop if obligor removed
+    ul_contribution: float  # Cov(L_i, L) / sigma_L; sums to portfolio UL
+    ul_pct: float  # share of portfolio UL (the contributions sum to 1.0)
 
 
 class LossHistogram(BaseModel):
@@ -383,6 +495,14 @@ class LossHistogram(BaseModel):
 
     bin_edges: list[float]  # length nbins + 1
     counts: list[int]  # length nbins; last bin folds in the > p99.9 overflow
+
+
+class KernelDistribution(BaseModel):
+    """Fitted kernel density estimate for portfolio loss distribution."""
+
+    x_values: list[float]
+    density: list[float]
+    bandwidth: float
 
 
 class StressTestObligor(BaseModel):

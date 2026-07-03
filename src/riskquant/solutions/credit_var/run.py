@@ -94,6 +94,7 @@ def _obligor_frame(obligors: list) -> pd.DataFrame:
             "pd": [o.pd for o in obligors],
             "lgd": [o.lgd for o in obligors],
             "group": [o.group for o in obligors],
+            "rho": [o.rho for o in obligors],
         }
     )
 
@@ -104,6 +105,34 @@ def _group_params(
     if not request.groups:
         return None
     return {g.name: dict(g.params) for g in request.groups}
+
+
+def _distribution_metrics(losses: np.ndarray, expected_loss: float) -> dict[str, float]:
+    """Shape metrics of the portfolio-loss distribution (cheap, from the S-vector).
+
+    A forced-default overlay only shifts losses by a constant, so dispersion/shape
+    here are unaffected; the constant lands in expected_loss/VaR/ES only.
+    """
+    n = int(losses.size)
+    mean = float(losses.mean())
+    std = float(losses.std(ddof=1)) if n > 1 else 0.0
+    if std > 0.0:
+        z = (losses - mean) / std
+        skewness = float((z**3).mean())
+        kurtosis = float((z**4).mean() - 3.0)  # excess kurtosis (Gaussian = 0)
+    else:
+        skewness = 0.0
+        kurtosis = 0.0
+    return {
+        "loss_mean": mean,
+        "loss_std_dev": std,
+        "coefficient_of_variation": (std / expected_loss) if expected_loss > 0 else 0.0,
+        "loss_skewness": skewness,
+        "loss_excess_kurtosis": kurtosis,
+        "loss_probability": float((losses > 0.0).mean()),
+        "loss_min": float(losses.min()),
+        "loss_max": float(losses.max()),
+    }
 
 
 def _loadings_frame(
@@ -231,7 +260,9 @@ def _simulate(request: CreditVarRequest, obligors: list) -> _Simulated:
     alphas = tuple(request.alphas)
     summary = summarize_jtd_loss(result=result, jtd_portfolio=portfolio, alphas=alphas)
     per_model = model_tail_var_es(
-        result=result, jtd_portfolio=portfolio, alpha=max(alphas)
+        result=result,
+        jtd_portfolio=portfolio,
+        alpha=max(alphas),
     )
     return _Simulated(
         loss=result.loss,
@@ -246,6 +277,108 @@ def _simulate(request: CreditVarRequest, obligors: list) -> _Simulated:
             name: (float(v), float(e)) for name, (v, e) in per_model.items()
         },
     )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _LossMatrix:
+    """The combined obligor loss matrix (modelled rows + forced-default rows) plus
+    the model-level summary scaffolding the overlay produces. Single source of the
+    simulation product, shared by run_credit_var and simulate_portfolio_losses."""
+
+    loss: np.ndarray  # (N, S)
+    uids: np.ndarray  # (N,)
+    base_el: float
+    base_var: dict
+    base_es: dict
+    el_by_model: dict
+    per_model: dict
+    forced_total: float
+
+
+def _build_loss_matrix(request: CreditVarRequest, alphas: tuple) -> _LossMatrix:
+    """Run the selected model on the unflagged names and stack the forced-default
+    constant rows (a forced default is a constant added to every scenario)."""
+    forced = (
+        []
+        if request.model == "forced_default"
+        else [o for o in request.obligors if o.force_default]
+    )
+    forced_uids = {o.uid for o in forced}
+    modeled = [o for o in request.obligors if o.uid not in forced_uids]
+
+    if modeled:
+        sim = _simulate(request, modeled)
+        modeled_loss, modeled_uids = sim.loss, sim.uids
+        scenarios = int(modeled_loss.shape[1])
+        base_el = sim.expected_loss
+        base_var = dict(sim.var)
+        base_es = dict(sim.es)
+        el_by_model = dict(sim.expected_loss_by_model)
+        per_model = dict(sim.per_model_tail)
+    else:  # everything forced (and not the forced_default model) -> deterministic
+        scenarios = request.n_scenarios
+        modeled_loss = np.empty((0, scenarios), dtype=np.float64)
+        modeled_uids = np.empty(0, dtype=np.int64)
+        base_el = 0.0
+        base_var = {a: 0.0 for a in alphas}
+        base_es = {a: 0.0 for a in alphas}
+        el_by_model = {}
+        per_model = {}
+
+    forced_total = float(sum(float(o.ead) * float(o.lgd) for o in forced))
+    if forced:
+        forced_rows = np.empty((len(forced), scenarios), dtype=np.float64)
+        for i, o in enumerate(forced):
+            forced_rows[i, :] = float(o.ead) * float(o.lgd)
+        forced_uid_arr = np.array([int(o.uid) for o in forced], dtype=np.int64)
+        if modeled_uids.size:
+            loss = np.vstack([modeled_loss, forced_rows])
+            uids = np.concatenate([modeled_uids.astype(np.int64), forced_uid_arr])
+        else:
+            loss = forced_rows
+            uids = forced_uid_arr
+        per_model = {**per_model, "forced_default": (forced_total, forced_total)}
+        el_by_model = {**el_by_model, "forced_default": forced_total}
+    else:
+        loss = modeled_loss
+        uids = modeled_uids
+
+    return _LossMatrix(
+        loss=loss,
+        uids=uids,
+        base_el=base_el,
+        base_var=base_var,
+        base_es=base_es,
+        el_by_model=el_by_model,
+        per_model=per_model,
+        forced_total=forced_total,
+    )
+
+
+def simulate_portfolio_losses(
+    request: CreditVarRequest | dict,
+    *,
+    max_samples: int | None = 100_000,
+) -> np.ndarray:
+
+    req = (
+        request
+        if isinstance(request, CreditVarRequest)
+        else CreditVarRequest.model_validate(request)
+    )
+
+    portfolio_losses = _build_loss_matrix(req, tuple(req.alphas)).loss.sum(axis=0)
+    portfolio_losses = np.ascontiguousarray(portfolio_losses, dtype=np.float64)
+
+    n = portfolio_losses.shape[0]
+    if max_samples is None or n <= max_samples:
+        return portfolio_losses
+
+    rng = np.random.default_rng(req.seed)
+
+    # Uniform random sampling without replacement
+    idx = rng.choice(n, size=max_samples, replace=False)
+    return portfolio_losses[idx]
 
 
 def run_credit_var(request: CreditVarRequest | dict) -> CreditVarResult:
@@ -273,51 +406,12 @@ def run_credit_var(request: CreditVarRequest | dict) -> CreditVarResult:
 
     stress_test = _stress_test_result(req)
 
-    forced = (
-        []
-        if req.model == "forced_default"
-        else [o for o in req.obligors if o.force_default]
-    )
-    forced_uids = {o.uid for o in forced}
-    modeled = [o for o in req.obligors if o.uid not in forced_uids]
+    lm = _build_loss_matrix(req, alphas)
+    loss, uids = lm.loss, lm.uids
+    base_el, base_var, base_es = lm.base_el, lm.base_var, lm.base_es
+    el_by_model, per_model, forced_total = lm.el_by_model, lm.per_model, lm.forced_total
 
-    if modeled:
-        sim = _simulate(req, modeled)
-        modeled_loss, modeled_uids = sim.loss, sim.uids
-        scenarios = int(modeled_loss.shape[1])
-        base_el = sim.expected_loss
-        base_var = dict(sim.var)
-        base_es = dict(sim.es)
-        el_by_model = dict(sim.expected_loss_by_model)
-        per_model = dict(sim.per_model_tail)
-    else:  # everything forced (and not the forced_default model) -> deterministic
-        scenarios = req.n_scenarios
-        modeled_loss = np.empty((0, scenarios), dtype=np.float64)
-        modeled_uids = np.empty(0, dtype=np.int64)
-        base_el = 0.0
-        base_var = {a: 0.0 for a in alphas}
-        base_es = {a: 0.0 for a in alphas}
-        el_by_model = {}
-        per_model = {}
-
-    forced_total = float(sum(float(o.ead) * float(o.lgd) for o in forced))
-    if forced:
-        forced_rows = np.empty((len(forced), scenarios), dtype=np.float64)
-        for i, o in enumerate(forced):
-            forced_rows[i, :] = float(o.ead) * float(o.lgd)
-        forced_uid_arr = np.array([int(o.uid) for o in forced], dtype=np.int64)
-        if modeled_uids.size:
-            loss = np.vstack([modeled_loss, forced_rows])
-            uids = np.concatenate([modeled_uids.astype(np.int64), forced_uid_arr])
-        else:
-            loss = forced_rows
-            uids = forced_uid_arr
-        per_model = {**per_model, "forced_default": (forced_total, forced_total)}
-        el_by_model = {**el_by_model, "forced_default": forced_total}
-    else:
-        loss = modeled_loss
-        uids = modeled_uids
-
+    # Sum across obligors to get total portfolio loss per scenario
     portfolio_losses = loss.sum(axis=0)
     pct = np.percentile(portfolio_losses, _PERCENTILE_GRID)
 
@@ -334,6 +428,7 @@ def run_credit_var(request: CreditVarRequest | dict) -> CreditVarResult:
     )
     ead_by_uid = {int(o.uid): float(o.ead) for o in req.obligors}
     es_total = attribution.es_total
+    ul_total = attribution.ul_total
     contributions = [
         ObligorContribution(
             uid=int(uid),
@@ -345,19 +440,30 @@ def run_credit_var(request: CreditVarRequest | dict) -> CreditVarResult:
             ),
             incremental_var=float(attribution.incremental_var[i]),
             incremental_es=float(attribution.incremental_es[i]),
+            ul_contribution=float(attribution.ul_contribution[i]),
+            ul_pct=(
+                float(attribution.ul_contribution[i] / ul_total) if ul_total else 0.0
+            ),
         )
         for i, uid in enumerate(uids)
     ]
+
     hist_edges, hist_counts = loss_histogram(portfolio_losses)
 
     return CreditVarResult(
         model=req.model,
         headline_alpha=headline_alpha,
         summary=RiskSummary(
-            expected_loss=float(expected_loss),
             var={_alpha_key(a): float(var[a]) for a in alphas},
             es={_alpha_key(a): float(es[a]) for a in alphas},
+            economic_capital_var={
+                _alpha_key(a): float(var[a] - expected_loss) for a in alphas
+            },
+            economic_capital_es={
+                _alpha_key(a): float(es[a] - expected_loss) for a in alphas
+            },
             expected_loss_by_model={k: float(v) for k, v in el_by_model.items()},
+            **_distribution_metrics(portfolio_losses, float(expected_loss)),
         ),
         per_model_tail={
             name: ModelTail(var=float(v), es=float(e))

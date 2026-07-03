@@ -5,10 +5,10 @@ from __future__ import annotations
 
 # Default correlation for single-factor Gaussian copula and single-factor Student-t
 # copula.
-SF_RHO = 0.20
+SF_RHO = 0.15
 
 # Degrees of freedom for Student-t copula
-SF_NU = 8.0
+SF_NU = 7.0
 
 # Beta-Binomial PD parameters (for the global PD factor)
 SF_BETA_BINOMIAL_ALPHA = 1.5

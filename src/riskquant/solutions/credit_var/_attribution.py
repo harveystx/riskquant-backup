@@ -26,6 +26,7 @@ from __future__ import annotations
 __all__ = [
     "ObligorAttribution",
     "obligor_tail_attribution",
+    "obligor_ul_contribution",
     "loss_histogram",
 ]
 
@@ -55,8 +56,42 @@ class ObligorAttribution:
     es_contribution: _F64  # (N,)  Euler ES contribution; sums to es_total
     incremental_var: _F64  # (N,)  VaR(L) - VaR(L - L_i), leave-one-out
     incremental_es: _F64  # (N,)  ES(L)  - ES(L - L_i),  leave-one-out
+    ul_contribution: _F64  # (N,)  Cov(L_i, L) / sigma_L; sums to ul_total
     es_total: float  # portfolio ES at the headline level (foots es_contribution)
     var_total: float  # portfolio VaR at the headline level
+    ul_total: float  # portfolio UL (std dev of loss); foots ul_contribution
+
+
+def obligor_ul_contribution(
+    obligor_loss: _F64,
+    portfolio_losses: _F64,
+) -> tuple[_F64, float]:
+    """Per-obligor contribution to portfolio Unexpected Loss (the std-dev / Euler
+    risk-contribution decomposition).
+
+    RC_i = Cov(L_i, L) / sigma_L, which sums to sigma_L exactly (since
+    Sum_i Cov(L_i, L) = Var(L)). Unlike the ES contribution this is a
+    distribution-wide measure, not a tail one: it answers "how much of the
+    portfolio's loss volatility does obligor i drive", net of diversification.
+
+    Uses the half-centred form ``L_i . (L - mean(L))`` — no (N, S) copy, and stable
+    (no large mean*mean cancellation). A certain (constant) loss — e.g. a
+    forced-default name — has zero covariance and so contributes 0, which is
+    correct: it adds to expected loss, not to unexpected loss. ``ddof = 1`` matches
+    the reported ``unexpected_loss`` so the column foots.
+
+    Returns ``(ul_contribution (N,), ul_total)``.
+    """
+    scenarios = int(portfolio_losses.shape[0])
+    obligors = int(obligor_loss.shape[0])
+    if scenarios < 2:
+        return np.zeros(obligors, np.float64), 0.0
+    pf_centered = portfolio_losses - portfolio_losses.mean()
+    sigma = float(np.sqrt((pf_centered @ pf_centered) / (scenarios - 1)))
+    if sigma <= 0.0:  # deterministic portfolio (e.g. forced_default): no UL to split
+        return np.zeros(obligors, np.float64), 0.0
+    cov = (obligor_loss @ pf_centered) / (scenarios - 1)  # (N,)
+    return np.ascontiguousarray(cov / sigma), sigma
 
 
 def obligor_tail_attribution(
@@ -81,6 +116,9 @@ def obligor_tail_attribution(
     es_contribution = obligor_loss[:, tail_idx].mean(axis=1)
     expected_loss = obligor_loss.mean(axis=1)
 
+    # Distribution-wide UL (std-dev) contribution — foots to portfolio UL.
+    ul_contribution, ul_total = obligor_ul_contribution(obligor_loss, portfolio_losses)
+
     # Incremental (leave-one-out), chunked over obligors.
     incremental_var = np.empty(obligors, np.float64)
     incremental_es = np.empty(obligors, np.float64)
@@ -97,25 +135,11 @@ def obligor_tail_attribution(
         es_contribution=np.ascontiguousarray(es_contribution),
         incremental_var=incremental_var,
         incremental_es=incremental_es,
+        ul_contribution=ul_contribution,
         es_total=float(es_total),
         var_total=float(var_total),
+        ul_total=float(ul_total),
     )
-
-
-# def loss_histogram(
-#     portfolio_losses: _F64, *, nbins: int = 50
-# ) -> tuple[list[float], list[int]]:
-#     """Bin portfolio loss over ``[0, p99.9]`` (overflow folded into the last bin)
-#     so the distribution chart isn't flattened by a handful of extreme scenarios.
-#     Returns (bin_edges length nbins+1, counts length nbins)."""
-#     upper = float(np.percentile(portfolio_losses, 99.9))
-#     if upper <= 0.0:
-#         upper = float(portfolio_losses.max())
-#     if upper <= 0.0:
-#         upper = 1.0
-#     edges = np.linspace(0.0, upper, nbins + 1)
-#     counts, _ = np.histogram(np.clip(portfolio_losses, 0.0, upper), bins=edges)
-#     return [float(e) for e in edges], [int(c) for c in counts]
 
 
 def loss_histogram(

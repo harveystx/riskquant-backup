@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>CREDIT_VAR_MODEL_REVIEW.md</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+<style>
+/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+	font-size: var(--vscode-markdown-font-size, 14px);
+	padding: 0 26px;
+	line-height: var(--vscode-markdown-line-height, 22px);
+	word-wrap: break-word;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+h1, h2, h3 {
+	font-weight: normal;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left-width: 5px;
+	border-left-style: solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 1em;
+	line-height: 1.357em;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+pre code {
+	color: var(--vscode-editor-foreground);
+	tab-size: 4;
+}
+
+/** Theming */
+
+.vscode-light pre {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+</style>
+
+<style>
+/* Tomorrow Theme */
+/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+/* Tomorrow Comment */
+.hljs-comment,
+.hljs-quote {
+	color: #8e908c;
+}
+
+/* Tomorrow Red */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+	color: #c82829;
+}
+
+/* Tomorrow Orange */
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+	color: #f5871f;
+}
+
+/* Tomorrow Yellow */
+.hljs-attribute {
+	color: #eab700;
+}
+
+/* Tomorrow Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+	color: #718c00;
+}
+
+/* Tomorrow Blue */
+.hljs-title,
+.hljs-section {
+	color: #4271ae;
+}
+
+/* Tomorrow Purple */
+.hljs-keyword,
+.hljs-selector-tag {
+	color: #8959a8;
+}
+
+.hljs {
+	display: block;
+	overflow-x: auto;
+	color: #4d4d4c;
+	padding: 0.5em;
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: bold;
+}
+</style>
+
+<style>
+/*
+ * Markdown PDF CSS
+ */
+
+ body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+	padding: 0 12px;
+}
+
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+code {
+	font-size: 14px;
+	line-height: 19px;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> or <div class="page"></div> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+</style>
+
+<script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast')
+          ? 'dark'
+          : 'default'
+    });
+  </script>
+<h1 id="riskquant-credit-var--model-suite-review">RiskQuant Credit VaR — Model Suite Review</h1>
+<p>Default-mode (jump-to-default) credit loss models, one engine, one input set.</p>
+<hr>
+<h2 id="business-question--and-its-boundaries">Business Question — And its Boundaries</h2>
+<p><strong>What these models help us answer:</strong></p>
+<ul>
+<li><strong>How much capital</strong> should we hold against credit default losses? (economic capital = VaR/ES − EL)</li>
+<li><strong>What loss should we expect</strong> over the horizon? (provisioning / planning input)</li>
+<li><strong>How bad is the tail</strong> at 97.5 / 99%? (risk appetite, stress)</li>
+<li><strong>Where is the risk concentrated</strong> — which names and sectors drive the tail? (attribution, limits)</li>
+<li><strong>Support for pricing / RAROC</strong> and concentration-limit setting.</li>
+</ul>
+<p><strong>What they do <em>not</em> solve or model:</strong></p>
+<ul>
+<li><strong>Not market risk</strong> — default-mode only; no credit-spread / mark-to-market P&amp;L.</li>
+<li><strong>Not rating migration or IFRS 9 lifetime</strong> — single default horizon, not multi-period staging.</li>
+<li><strong>Not liquidity, operational, legal, or model risk.</strong></li>
+<li><strong>Not PD / LGD / EAD estimation</strong> — they <strong>consume</strong> these as inputs, they don't produce them.</li>
+<li><strong>No default timing, no multi-year paths, no contagion</strong> (no &quot;A defaults ⇒ B defaults&quot; cascade).</li>
+<li><strong>They don't predict <em>which</em> scenario occurs</strong> — they characterise the <strong>distribution</strong> of outcomes.</li>
+<li><strong>They don't consider wrong-way risk</strong> — PDs do not scale with exposure.</li>
+</ul>
+<p><strong>Bottom line:</strong> these size and attribute <strong>credit default loss over one time horizon</strong> — not a market-risk, migration, or PD/LGD-estimation tool.</p>
+<hr>
+<h2 id="how-to-read-this-deck">How to Read this Deck</h2>
+<ul>
+<li><strong>One framework, many models.</strong> Every model answers the same question — <em>how big can credit losses get?</em> — and differs in <strong>one thing only: how defaults move together</strong>.</li>
+<li><strong>Expected Loss is the same for all of them.</strong> Correlation does not change the average loss; it changes the <strong>tail</strong> (the 97.5th / 99th percentile). That is the entire reason we have more than one model.</li>
+<li>Each model slide is laid out the same way: <strong>type → inputs → maths → correlation → calibration → risks → relationships → bottom line.</strong></li>
+</ul>
+<p><strong>Bottom line:</strong> the model choice is a choice about <em>the tail</em>, not the average.</p>
+<hr>
+<h2 id="the-core-idea-the-only-formula-that-matters">The Core Idea (The Only Formula That Matters)</h2>
+<ul>
+<li>Each obligor <em>i</em> has three numbers: <strong>EAD</strong> (exposure), <strong>PD</strong> (1-yr default probability), <strong>LGD</strong> (loss given default).</li>
+<li>Default is binary: <strong>Dᵢ ∈ {0, 1}</strong>. Loss if it defaults: <strong>Lossᵢ = Dᵢ × EADᵢ × LGDᵢ</strong>.</li>
+<li>Portfolio loss in a scenario: <strong>L = Σᵢ Lossᵢ</strong>. We simulate many scenarios → a <strong>loss distribution</strong>.</li>
+<li>From that distribution we read: <strong>EL</strong> (mean), <strong>UL</strong> (std-dev), <strong>VaR</strong> and <strong>ES</strong> at 95 / 97.5 / 99%, <strong>economic capital</strong> (VaR − EL).</li>
+</ul>
+<blockquote>
+<p><strong>Expected Loss ≈ Σ PDᵢ × LGDᵢ × EADᵢ — independent of the model.</strong>
+Models differ only in the <strong>dependence structure</strong> between the Dᵢ, which sets the tail.</p>
+</blockquote>
+<p><strong>Bottom line:</strong> all our numbers come from one simulated loss distribution; the models just reshape its tail.</p>
+<hr>
+<h2 id="model-assumptions">Model Assumptions</h2>
+<p><strong>Shared by every model (state these on every output):</strong></p>
+<ul>
+<li><strong>Default mode (jump-to-default)</strong> — loss only on outright default in the horizon; no rating-migration / mark-to-market loss.</li>
+<li><strong>Single period</strong> — one horizon, set by the PD; no timing of default within it, no multi-year path.</li>
+<li><strong>Deterministic LGD</strong> — recovery is a fixed fraction; no LGD volatility and no PD–LGD (downturn-LGD) link.</li>
+<li><strong>Inputs are exogenous and exact</strong> — every figure is <strong>conditional</strong> on PD / LGD / EAD (garbage in, garbage out).</li>
+<li><strong>Dependence via shared factors only</strong> — correlation comes from common factors / regimes / pools; <strong>no direct contagion</strong>.</li>
+<li><strong>Static book</strong> — the portfolio is fixed over the horizon (no new business, amortisation, or hedging).</li>
+<li><strong>Monte-Carlo estimates</strong> — tail figures carry simulation error; the deep tail needs enough scenarios to be stable.</li>
+</ul>
+<p><strong>Model-specific assumptions to flag:</strong> pool <strong>homogeneity</strong> (Beta-Binomial ignores per-name PD); <strong>binary</strong> regime (Stress-Regime); <strong>Gaussian tail-independence</strong> (Gaussian copulas); correlation is a <strong>regulatory prescription, not fitted</strong> (Basel variants).</p>
+<p><strong>Bottom line:</strong> point-in-time, default-only, static-book, conditional-on-inputs — read every number through these.</p>
+<hr>
+<h2 id="required-input-data">Required Input Data</h2>
+<p><strong>Per obligor — mandatory (the three numbers that drive everything):</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+<th>Type</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>uid</code></td>
+<td>obligor identifier</td>
+<td>id</td>
+<td>exposure / reference systems</td>
+</tr>
+<tr>
+<td><code>EAD</code></td>
+<td>exposure at default</td>
+<td>currency</td>
+<td>exposure / limits systems</td>
+</tr>
+<tr>
+<td><code>PD</code></td>
+<td>1-yr default probability, [0, 1)</td>
+<td>rate</td>
+<td>rating / scoring models</td>
+</tr>
+<tr>
+<td><code>LGD</code></td>
+<td>loss given default, [0, 1]</td>
+<td>rate</td>
+<td>recovery / collateral models</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Per obligor — optional, model-dependent:</strong> <code>group</code> label (grouped models) · <strong>factor loadings</strong> <code>(uid, factor, loading)</code> (multi-factor) · per-name <code>rho</code> override (SF copulas) · overlay flags <code>force_default</code>, <code>in_stress_test</code>.</p>
+<p><strong>Model parameters:</strong> ρ (SF Gaussian) · ν (Student-t) · α, β (Beta-Binomial) · stress prob &amp; PD multiplier (Stress-Regime) · loadings (MF). <strong>Basel variants derive ρ from PD — no ρ input.</strong></p>
+<p><strong>Run controls:</strong> scenario count · confidence levels · random seed (for reproducibility).</p>
+<p><strong>Data-quality dependencies:</strong> results are <strong>most sensitive to PD and LGD accuracy</strong>; then EAD completeness, consistent obligor IDs, and (for MF / grouped) the quality of sector / group mapping.</p>
+<p><strong>Bottom line:</strong> three numbers per name drive the result; the correlation inputs are few but set the tail — <strong>PD/LGD accuracy is the binding constraint.</strong></p>
+<hr>
+<h2 id="the-model-ladder-taxonomy">The Model Ladder (Taxonomy)</h2>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Type</th>
+<th>Correlation Mechanism</th>
+<th>Tail</th>
+<th>Calibrate</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Forced Default</td>
+<td>Deterministic stress</td>
+<td>n/a (certainty)</td>
+<td>—</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Independent Bernoulli</td>
+<td>JTD, independent</td>
+<td><strong>none</strong></td>
+<td>thinnest</td>
+<td>PDs</td>
+</tr>
+<tr>
+<td>Beta-Binomial</td>
+<td>JTD, common rate</td>
+<td>shared random default rate</td>
+<td>moderate</td>
+<td>α, β</td>
+</tr>
+<tr>
+<td>Beta-Binomial (Grouped)</td>
+<td>JTD, segmented</td>
+<td>shared rate <strong>within pool</strong></td>
+<td>moderate</td>
+<td>α, β per pool</td>
+</tr>
+<tr>
+<td>Stress-Regime Bernoulli</td>
+<td>JTD, regime mixture</td>
+<td>shared on/off regime</td>
+<td>moderate–fat</td>
+<td>prob, multiplier</td>
+</tr>
+<tr>
+<td>Stress-Regime (Grouped)</td>
+<td>JTD, segmented</td>
+<td>shared regime <strong>within group</strong></td>
+<td>moderate–fat</td>
+<td>prob, mult per group</td>
+</tr>
+<tr>
+<td>SF Gaussian Copula</td>
+<td>JTD, 1-factor copula</td>
+<td>one systemic factor, ρ</td>
+<td>fat</td>
+<td>ρ</td>
+</tr>
+<tr>
+<td>SF Gaussian (Basel ρ)</td>
+<td>JTD, 1-factor copula</td>
+<td>ρ = R(PD) regulatory</td>
+<td>fat</td>
+<td>none (from PD)</td>
+</tr>
+<tr>
+<td>SF Student-t Copula</td>
+<td>JTD, 1-factor + heavy tail</td>
+<td>factor ρ <strong>+ tail dependence</strong></td>
+<td>fatter</td>
+<td>ρ, ν</td>
+</tr>
+<tr>
+<td>SF Student-t (Basel ρ)</td>
+<td>JTD, 1-factor + heavy tail</td>
+<td>R(PD) + tail dependence</td>
+<td>fatter</td>
+<td>ν</td>
+</tr>
+<tr>
+<td>MF Gaussian Copula</td>
+<td>JTD, multi-factor copula</td>
+<td><strong>multiple</strong> sector factors</td>
+<td>fat, sector-aware</td>
+<td>loadings</td>
+</tr>
+<tr>
+<td>MF Student-t Copula</td>
+<td>JTD, multi-factor + heavy tail</td>
+<td>sectors + tail dependence</td>
+<td>fattest</td>
+<td>loadings, ν</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Bottom line:</strong> read top-to-bottom as increasing realism of <em>how defaults cluster</em> — and increasing calibration burden.</p>
+<hr>
+<h2 id="forced-default">Forced Default</h2>
+<p><strong>Type:</strong> deterministic stress (degenerate JTD) · <strong>Correlation:</strong> n/a · <strong>Calibrate:</strong> none · <strong>Tail:</strong> point mass</p>
+<ul>
+<li><strong>Models:</strong> the pure consequence of a chosen set of names all defaulting. PD is ignored.</li>
+<li><strong>Inputs:</strong> EAD, LGD (PD unused).</li>
+<li><strong>Maths:</strong> Dᵢ = 1 for all <em>i</em> → <strong>L = Σ EADᵢ × LGDᵢ</strong> (one outcome; VaR = ES = EL).</li>
+<li><strong>Correlation:</strong> none needed — everything defaults together by assumption.</li>
+<li><strong>Calibration:</strong> none.</li>
+<li><strong>Model risks:</strong> not a probability statement (says nothing about <em>likelihood</em>); absurdly conservative if applied to the whole book; the stressed set is chosen judgmentally.</li>
+<li><strong>Relationships:</strong> the deterministic limit of every other model; same engine, run with certainty.</li>
+<li><strong>Bottom line:</strong> the assumption-light &quot;if these names go, we lose $X&quot; — a clean floor, not a forecast.</li>
+</ul>
+<hr>
+<h2 id="independent-bernoulli">Independent Bernoulli</h2>
+<p><strong>Type:</strong> JTD, independent defaults · <strong>Correlation:</strong> none · <strong>Calibrate:</strong> PDs only · <strong>Tail:</strong> thinnest</p>
+<ul>
+<li><strong>Models:</strong> each name defaults on its own coin-flip at its own PD, with <strong>no linkage</strong>.</li>
+<li><strong>Inputs:</strong> EAD, PD, LGD.</li>
+<li><strong>Maths:</strong> <strong>Dᵢ ~ Bernoulli(PDᵢ)</strong>, mutually independent. EL = Σ PDᵢ·LGDᵢ·EADᵢ.</li>
+<li><strong>Correlation:</strong> explicitly <strong>zero</strong>.</li>
+<li><strong>Calibration:</strong> none beyond the PD inputs.</li>
+<li><strong>Model risks:</strong> <strong>understates the tail whenever defaults are correlated</strong> — i.e. always, in a downturn. Overstates diversification; the 99th-percentile comes out too low.</li>
+<li><strong>Relationships:</strong> the <strong>lower bound</strong> for every correlated model — real correlation only makes the tail worse.</li>
+<li><strong>Bottom line:</strong> great for Expected Loss and a tail <em>floor</em>; never quote its 99% as the firm's tail risk.</li>
+</ul>
+<hr>
+<h2 id="beta-binomial">Beta-Binomial</h2>
+<p><strong>Type:</strong> JTD, common stochastic default rate (mixture) · <strong>Correlation:</strong> shared random rate · <strong>Calibrate:</strong> α, β · <strong>Tail:</strong> moderate</p>
+<ul>
+<li><strong>Models:</strong> &quot;good years / bad years&quot; — a single <strong>random</strong> default rate is shared by the pool, so defaults cluster.</li>
+<li><strong>Inputs:</strong> EAD, LGD, and pool α, β. <strong>Note: per-obligor PD is <em>not</em> used</strong> — the pool default rate is α / (α + β).</li>
+<li><strong>Maths:</strong> draw <strong>p ~ Beta(α, β)</strong> per scenario; each obligor defaults at that common p. EL = (α / (α+β)) × Σ LGDᵢ·EADᵢ.</li>
+<li><strong>Correlation:</strong> induced by the <strong>shared</strong> p — high-p scenarios default many names at once.</li>
+<li><strong>Calibration:</strong> α, β set the <strong>mean</strong> default rate (α/(α+β)) and its <strong>volatility</strong> (dispersion), from historical pool default-rate data.</li>
+<li><strong>Model risks:</strong> <strong>homogeneity</strong> — ignores PD differences between names; single driver; suits a uniform pool, not a book of distinct large credits.</li>
+<li><strong>Relationships:</strong> the simplest step up from Independent Bernoulli (adds one common factor); homogeneous-pool cousin of the copula models.</li>
+<li><strong>Bottom line:</strong> a quick correlated-pool tail for <em>similar</em> credits (retail / SME), not for a lumpy corporate book.</li>
+</ul>
+<hr>
+<h2 id="beta-binomial--grouped-segmented-pools">Beta-Binomial — Grouped (Segmented Pools)</h2>
+<p><strong>Type:</strong> JTD, segmented common-rate · <strong>Correlation:</strong> shared rate <strong>within a pool</strong>, independent across · <strong>Calibrate:</strong> α, β per pool · <strong>Tail:</strong> moderate</p>
+<ul>
+<li><strong>Models:</strong> the Beta-Binomial, but the book is split into <strong>pools</strong> (e.g. by rating band or sector); each pool has its <strong>own</strong> random default rate.</li>
+<li><strong>Inputs:</strong> EAD, LGD, a <strong>pool label</strong> per obligor, and (α, β) <strong>per pool</strong>.</li>
+<li><strong>Maths:</strong> one <strong>pⱼ ~ Beta(αⱼ, βⱼ)</strong> per pool <em>j</em>; names in pool <em>j</em> default at pⱼ. <strong>Block-diagonal</strong> correlation (within-pool correlated, across-pool independent).</li>
+<li><strong>Correlation:</strong> within a pool only — there is <strong>no</strong> cross-pool linkage.</li>
+<li><strong>Calibration:</strong> (α, β) per pool, each to that segment's mean rate and volatility.</li>
+<li><strong>Model risks:</strong> as Beta-Binomial, per pool (homogeneity <em>within</em> a pool); assumes pools are independent (no shared macro factor across pools).</li>
+<li><strong>Relationships:</strong> Beta-Binomial generalised to <em>segments</em>; the &quot;grouped&quot; (not multi-factor) family — each name sits in <strong>one</strong> pool.</li>
+<li><strong>Bottom line:</strong> lets us differentiate IG vs HY (or sector pools) while keeping the model simple.</li>
+</ul>
+<hr>
+<h2 id="stress-regime-bernoulli">Stress-Regime Bernoulli</h2>
+<p><strong>Type:</strong> JTD, two-state regime mixture · <strong>Correlation:</strong> shared on/off regime · <strong>Calibrate:</strong> stress prob, PD multiplier · <strong>Tail:</strong> moderate–fat</p>
+<ul>
+<li><strong>Models:</strong> an explicit <strong>downturn switch</strong> — with some probability the economy is &quot;stressed&quot; and everyone's PD jumps.</li>
+<li><strong>Inputs:</strong> EAD, PD, LGD, stress probability q, PD multiplier m. <strong>Per-obligor PD <em>is</em> used</strong> (unlike Beta-Binomial).</li>
+<li><strong>Maths:</strong> regime <strong>R ~ Bernoulli(q)</strong>; effective PDᵢ = PDᵢ in normal, <strong>min(PDᵢ × m, 1)</strong> in stress; then <strong>Dᵢ ~ Bernoulli(effective PDᵢ)</strong>.</li>
+<li><strong>Correlation:</strong> the <strong>shared regime</strong> — in a stress scenario all PDs rise together, clustering defaults.</li>
+<li><strong>Calibration:</strong> <strong>q</strong> from historical downturn frequency (~1-in-7 to 1-in-10 yrs); <strong>m</strong> from PD uplift in downturns (~2–4×). Both are committee-friendly, transparent levers.</li>
+<li><strong>Model risks:</strong> the binary regime is coarse; conditional independence <em>within</em> a regime understates within-regime clustering; q and m are judgmental.</li>
+<li><strong>Relationships:</strong> a <em>probabilistic</em> version of the Forced-Default stress; bridges stress testing and simulation.</li>
+<li><strong>Bottom line:</strong> the model when you want a tail driven by a <strong>describable</strong> event (a recession), not an abstract correlation number.</li>
+</ul>
+<hr>
+<h2 id="stress-regime-bernoulli--grouped-segmented-regimes">Stress-Regime Bernoulli — Grouped (Segmented Regimes)</h2>
+<p><strong>Type:</strong> JTD, segmented regime mixture · <strong>Correlation:</strong> shared regime <strong>within a group</strong> · <strong>Calibrate:</strong> prob, multiplier per group · <strong>Tail:</strong> moderate–fat</p>
+<ul>
+<li><strong>Models:</strong> the stress regime, but each <strong>group</strong> has its own regime (e.g. an energy-sector shock independent of a rates shock).</li>
+<li><strong>Inputs:</strong> EAD, PD, LGD, a <strong>group label</strong> per obligor, and (stress prob, multiplier) <strong>per group</strong>.</li>
+<li><strong>Maths:</strong> one regime <strong>Rⱼ ~ Bernoulli(qⱼ)</strong> per group <em>j</em>; in-group PDs scale by mⱼ when Rⱼ fires. <strong>Block-diagonal</strong> (regimes independent across groups).</li>
+<li><strong>Correlation:</strong> within a group via its shared regime; independent across groups.</li>
+<li><strong>Calibration:</strong> per group — each segment's downturn frequency and severity.</li>
+<li><strong>Model risks:</strong> as Stress-Regime, per group; assumes group regimes are independent (no common macro switch).</li>
+<li><strong>Relationships:</strong> Stress-Regime generalised to segments; &quot;grouped&quot; family (each name in <strong>one</strong> regime).</li>
+<li><strong>Bottom line:</strong> model sector-specific downturns hitting different sub-portfolios at different times.</li>
+</ul>
+<hr>
+<h2 id="single-factor-gaussian-copula">Single-Factor Gaussian Copula</h2>
+<p><strong>Type:</strong> JTD, one-factor copula (Vasicek / Basel ASRF / CreditMetrics) · <strong>Correlation:</strong> one systemic factor, ρ · <strong>Calibrate:</strong> ρ · <strong>Tail:</strong> fat</p>
+<ul>
+<li><strong>Models:</strong> systematic clustering through a single &quot;state of the economy&quot; factor, while keeping each name's own PD.</li>
+<li><strong>Inputs:</strong> EAD, PD, LGD, asset correlation <strong>ρ</strong> (global, with optional per-obligor override).</li>
+<li><strong>Maths:</strong> latent <strong>Aᵢ = √ρ · M + √(1−ρ) · εᵢ</strong>, with M ~ N(0,1) systemic, εᵢ ~ N(0,1) idiosyncratic. <strong>Default if Aᵢ ≤ Φ⁻¹(PDᵢ).</strong></li>
+<li><strong>Correlation:</strong> the <strong>shared M</strong>; ρ is the asset (latent) correlation — one intuitive dial.</li>
+<li><strong>Calibration:</strong> ρ from the Basel prescription (~0.12–0.24) or estimated from default-rate / equity correlations. <strong>The tail is highly sensitive to ρ.</strong></li>
+<li><strong>Model risks:</strong> ρ misspecification (small errors move the tail a lot); <strong>Gaussian copula has weak tail dependence</strong> — can under-state many-names-default-together crises (the 2008 critique); single factor (no sectors).</li>
+<li><strong>Relationships:</strong> the <strong>industry / regulatory standard</strong> (basis of Basel IRB); single-factor special case of the multi-factor copula.</li>
+<li><strong>Bottom line:</strong> the default model for a credible 97.5 / 99% number — what we put next to the stress test.</li>
+</ul>
+<hr>
+<h2 id="sf-gaussian--basel-ρ-variant">SF Gaussian — Basel ρ Variant</h2>
+<p><strong>Type:</strong> as SF Gaussian, regulatory correlation · <strong>Correlation:</strong> ρ = R(PD) per obligor · <strong>Calibrate:</strong> none (from PD) · <strong>Tail:</strong> fat</p>
+<ul>
+<li><strong>Delta vs base:</strong> instead of one global ρ, each obligor's correlation is the <strong>Basel II/III IRB corporate weighting</strong>.</li>
+<li><strong>Maths:</strong> <strong>R(PD) = 0.12·w + 0.24·(1−w)</strong>, with <strong>w = (1 − e^(−50·PD)) / (1 − e^(−50))</strong> → <strong>0.24 at PD→0, 0.12 at PD→1</strong> (better credits are <em>more</em> systematic). Used as ρᵢ in the SF Gaussian latent equation.</li>
+<li><strong>Correlation:</strong> per-name, PD-driven; a bespoke per-obligor ρ still overrides where supplied.</li>
+<li><strong>Calibration:</strong> <strong>none</strong> — ρ is a deterministic function of PD (regulatory).</li>
+<li><strong>Model risks:</strong> the regulatory curve is a <em>prescription</em>, not estimated from our book (may not fit our portfolio); corporate curve only (SME-size / retail variants not applied).</li>
+<li><strong>Relationships:</strong> SF Gaussian with the rho-sourcing swapped to the Basel formula; the most defensible-to-regulators correlation choice.</li>
+<li><strong>Bottom line:</strong> the regulator-aligned SF Gaussian — no ρ to argue about, it comes from PD.</li>
+</ul>
+<hr>
+<h2 id="single-factor-student-t-copula">Single-Factor Student-t Copula</h2>
+<p><strong>Type:</strong> JTD, one-factor copula with heavy tails · <strong>Correlation:</strong> factor ρ + <strong>tail dependence</strong> · <strong>Calibrate:</strong> ρ, ν · <strong>Tail:</strong> fatter</p>
+<ul>
+<li><strong>Models:</strong> the SF Gaussian <strong>plus</strong> a built-in tendency for many names to default <em>together</em> in extremes.</li>
+<li><strong>Inputs:</strong> EAD, PD, LGD, ρ, degrees of freedom <strong>ν</strong>.</li>
+<li><strong>Maths:</strong> as SF Gaussian but the latent variables share a common <strong>chi-square / Student-t mixing at ν</strong>; low ν ⇒ fat joint tails, ν → ∞ ⇒ Gaussian.</li>
+<li><strong>Correlation:</strong> systematic factor ρ <strong>and tail dependence</strong> (joint extremes), which the Gaussian misses.</li>
+<li><strong>Calibration:</strong> ρ as before; <strong>ν</strong> from tail-dependence estimates or expert judgment (≈ 5–10 typical). Tail is sensitive to ν.</li>
+<li><strong>Model risks:</strong> <strong>ν is genuinely hard to calibrate</strong>; risk of double-counting conservatism (low ν <em>and</em> high ρ); still single factor.</li>
+<li><strong>Relationships:</strong> SF Gaussian + tail dependence; the post-2008 &quot;stress-aware&quot; upgrade.</li>
+<li><strong>Bottom line:</strong> a more conservative tail than Gaussian at the same ρ — use when crisis co-movement is the worry.</li>
+</ul>
+<hr>
+<h2 id="sf-student-t--basel-ρ-variant">SF Student-t — Basel ρ Variant</h2>
+<p><strong>Type:</strong> as SF Student-t, regulatory correlation · <strong>Correlation:</strong> R(PD) + tail dependence · <strong>Calibrate:</strong> ν · <strong>Tail:</strong> fatter</p>
+<ul>
+<li><strong>Delta:</strong> SF Student-t with ρ supplied by the <strong>Basel R(PD)</strong> curve (only ν remains a free parameter).</li>
+<li><strong>Correlation:</strong> PD-driven per-name ρ <strong>and</strong> tail dependence at ν; per-name ρ still overrides.</li>
+<li><strong>Calibration:</strong> ν only; ρ from PD.</li>
+<li><strong>Model risks:</strong> combines the t-copula's ν-calibration difficulty with the prescription-not-fit risk of the regulatory curve.</li>
+<li><strong>Relationships:</strong> the regulator-aligned, crisis-aware single-factor model.</li>
+<li><strong>Bottom line:</strong> Basel correlation with a fat tail — the conservative regulator-aligned option.</li>
+</ul>
+<hr>
+<h2 id="multi-factor-gaussian-copula">Multi-Factor Gaussian Copula</h2>
+<p><strong>Type:</strong> JTD, multi-factor copula · <strong>Correlation:</strong> several sector/region factors, per-obligor loadings · <strong>Calibrate:</strong> loadings · <strong>Tail:</strong> fat, sector-aware</p>
+<ul>
+<li><strong>Models:</strong> default dependence with <strong>sector / region structure</strong> — names in the same sector correlate more, so <strong>concentration shows up</strong>.</li>
+<li><strong>Inputs:</strong> EAD, PD, LGD, and per-obligor <strong>factor loadings</strong> (which systemic factors a name loads on, and how much).</li>
+<li><strong>Maths:</strong> <strong>Aᵢ = Σₖ βᵢₖ · Fₖ + √(1 − Σₖ βᵢₖ²) · εᵢ</strong>, with Fₖ ~ N(0,1) systemic factors and loadings βᵢₖ (Σβ² ≤ 1). Default if Aᵢ ≤ Φ⁻¹(PDᵢ).</li>
+<li><strong>Correlation:</strong> <strong>multiple</strong> shared factors; a name can load on <strong>several at once</strong> — this is the genuine <em>multi-factor</em> case (vs the &quot;grouped&quot; models where a name sits in one pool).</li>
+<li><strong>Calibration:</strong> factor definitions + per-obligor loadings, from sector/region membership and an intra-/inter-sector correlation matrix.</li>
+<li><strong>Model risks:</strong> loading / factor misspecification; <strong>data-hungry</strong>; still Gaussian tail-independence (no extreme co-movement).</li>
+<li><strong>Relationships:</strong> generalises SF Gaussian to many factors; the right tool for <strong>concentration</strong> questions.</li>
+<li><strong>Bottom line:</strong> the model when &quot;are we over-exposed to one sector?&quot; is the question.</li>
+</ul>
+<hr>
+<h2 id="multi-factor-student-t-copula">Multi-Factor Student-t Copula</h2>
+<p><strong>Type:</strong> JTD, multi-factor copula with heavy tails · <strong>Correlation:</strong> sector factors + tail dependence · <strong>Calibrate:</strong> loadings, ν · <strong>Tail:</strong> fattest</p>
+<ul>
+<li><strong>Models:</strong> the most complete — sector/region clustering <strong>and</strong> crisis co-movement together.</li>
+<li><strong>Inputs:</strong> EAD, PD, LGD, factor loadings, ν.</li>
+<li><strong>Maths:</strong> the MF Gaussian latent structure <strong>plus</strong> the shared chi-square / Student-t mixing at ν.</li>
+<li><strong>Correlation:</strong> multi-factor (sectors) <strong>and</strong> tail dependence.</li>
+<li><strong>Calibration:</strong> loadings (as MF Gaussian) <strong>plus</strong> ν — the heaviest calibration burden.</li>
+<li><strong>Model risks:</strong> compounded calibration risk (loadings <em>and</em> ν); easy to over-engineer relative to the question / data.</li>
+<li><strong>Relationships:</strong> MF Gaussian + tail dependence; the top of the ladder.</li>
+<li><strong>Bottom line:</strong> worst-case, fully-loaded tail — reach for it only when concentration <em>and</em> crisis co-movement both matter.</li>
+</ul>
+<hr>
+<h2 id="tail-severity-at-a-glance">Tail Severity at a Glance</h2>
+<ul>
+<li><strong>Thinnest → fattest tail (same book, same PDs):</strong>
+Independent Bernoulli → Beta-Binomial / Stress-Regime → <strong>SF Gaussian</strong> → SF Student-t / MF Gaussian → <strong>MF Student-t</strong>.</li>
+<li><strong>Forced Default</strong> sits outside the ladder: a <em>deterministic</em> worst case for the chosen names.</li>
+<li><strong>Expected Loss is the same across all of them</strong> — only the tail moves.</li>
+<li>The Basel and grouped variants don't change the family's tail character; they change <strong>where the correlation comes from</strong> (PD-driven, or segmented).</li>
+</ul>
+<p><strong>Bottom line:</strong> moving down the ladder buys realism in the tail at the cost of more calibration.</p>
+<hr>
+<h2 id="choosing-a-model">Choosing a Model</h2>
+<table>
+<thead>
+<tr>
+<th>The question</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>&quot;What if our worst 2–3 names default?&quot;</td>
+<td><strong>Forced Default</strong> (stress)</td>
+</tr>
+<tr>
+<td>&quot;What's our expected loss?&quot;</td>
+<td><strong>Independent Bernoulli</strong> (EL is model-invariant)</td>
+</tr>
+<tr>
+<td>&quot;What's a credible 97.5 / 99% loss?&quot;</td>
+<td><strong>SF Gaussian</strong> (or <strong>Basel</strong> ρ for regulator alignment)</td>
+</tr>
+<tr>
+<td>&quot;What if a downturn hits?&quot; (describable)</td>
+<td><strong>Stress-Regime</strong> (grouped for sector-specific shocks)</td>
+</tr>
+<tr>
+<td>&quot;What about crisis co-movement / fat tails?&quot;</td>
+<td><strong>SF Student-t</strong></td>
+</tr>
+<tr>
+<td>&quot;Are we over-concentrated in a sector?&quot;</td>
+<td><strong>MF Gaussian</strong></td>
+</tr>
+<tr>
+<td>&quot;Concentration <em>and</em> crisis co-movement?&quot;</td>
+<td><strong>MF Student-t</strong></td>
+</tr>
+<tr>
+<td>Homogeneous retail / SME pool(s)</td>
+<td><strong>Beta-Binomial</strong> (grouped for multiple segments)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Recommended headline trio:</strong> Forced Default (stress) · Independent Bernoulli (EL &amp; floor) · SF Gaussian (the percentile number). Escalate only when tail dependence or concentration is the specific concern.</p>
+<hr>
+<h2 id="governance--validation">Governance &amp; Validation</h2>
+<ul>
+<li><strong>Reproducible:</strong> every run records model, parameters, scenario count, seed and an input hash — same inputs reproduce the numbers exactly.</li>
+<li><strong>Benchmarks we check:</strong> EL reconciles to Σ PD·LGD·EAD; the tail is <strong>monotone in correlation</strong> (more ρ ⇒ fatter tail); per-obligor tail contributions <strong>foot</strong> to portfolio ES / UL.</li>
+<li><strong>Monte-Carlo error:</strong> deep-tail figures (e.g. 99.9th) need enough scenarios to be stable — quote tail numbers with that in mind.</li>
+<li><strong>Standing caveats (print on outputs):</strong> default-mode only; deterministic LGD; single period; conditional on PD/LGD/EAD and the correlation assumption.</li>
+<li><strong>Validation status:</strong> <em>[to be completed with Model Validation].</em></li>
+</ul>
+<p><strong>Bottom line:</strong> standard, literature-grounded models; reproducible and self-checking; limitations stated up front.</p>
+<hr>
+<h2 id="next-steps">Next Steps</h2>
+<ul>
+<li><strong>Model validation sign-off</strong> — independent review of methodology, implementation and parameters (the outstanding validation-status line).</li>
+<li><strong>Calibrate correlation to our book</strong> — estimate ρ / ν / loadings from <strong>internal</strong> default and sector data rather than the current Basel / expert defaults; <strong>add SME-size and retail Basel curves</strong> (only the corporate R(PD) is implemented today).</li>
+<li><strong>Backtest &amp; benchmark</strong> — reconcile EL to provisions; compare the tail to realised and stress outcomes; document VaR sensitivity to ρ and ν.</li>
+<li><strong>Reporting integration</strong> — wire the loss distribution and per-obligor / per-sector tail attribution into the presentation and Excel reporting layer.</li>
+<li><strong>Governance</strong> — agree the standard model(s) for <strong>capital</strong> vs <strong>stress</strong>, the run cadence, and parameter-change control.</li>
+<li><strong>Documentation</strong> — finalise the Technical Model Document and complete its validation section.</li>
+</ul>
+<p><strong>Bottom line:</strong> the engine is built, reproducible and self-checking — the path to production is <strong>validation + calibration-to-our-book + governance sign-off.</strong></p>
+<hr>
+<h2 id="appendix-glossary">Appendix: Glossary</h2>
+<ul>
+<li><strong>JTD (jump-to-default):</strong> loss only from outright default in the horizon (default mode).</li>
+<li><strong>EL / UL:</strong> expected loss (mean); unexpected loss (std-dev of loss).</li>
+<li><strong>VaR / ES:</strong> loss not exceeded at confidence α / average loss in the worst (1−α) — ES is the coherent, regulator-preferred measure.</li>
+<li><strong>Economic capital:</strong> VaR − EL — the buffer above expected loss.</li>
+<li><strong>Asset correlation (ρ):</strong> correlation of the latent variables driving joint default in copula models.</li>
+<li><strong>Copula:</strong> the dependence structure linking individual PDs into a joint distribution; Gaussian vs Student-t differ in <strong>tail dependence</strong>.</li>
+<li><strong>Tail dependence:</strong> tendency for extreme outcomes (many defaults) to occur together — present in the t-copula, weak in the Gaussian.</li>
+<li><strong>Factor loading (β):</strong> how strongly an obligor loads on a systemic factor in the multi-factor copula.</li>
+<li><strong>R(PD):</strong> the Basel IRB regulatory function mapping PD to asset correlation.</li>
+</ul>
+<hr>
+<!-- ## Appendix — slide-conversion notes
+
+- Each `## ` heading = one slide; `---` separates slides.
+- **Marp / reveal-md:** renders as-is.
+- **Pandoc → PPTX:** `pandoc CREDIT_VAR_MODEL_REVIEW.md -o deck.pptx --slide-level=2`.
+- Tables and the unicode maths render in all of the above; no LaTeX required. -->
+
+</body>
+</html>

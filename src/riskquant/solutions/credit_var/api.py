@@ -24,6 +24,7 @@ from __future__ import annotations
 __all__ = [
     # entry point
     "run_credit_var",
+    "simulate_portfolio_losses",
     # request / result contract
     "CreditVarRequest",
     "CreditVarResult",
@@ -52,7 +53,10 @@ from riskquant.solutions.credit_var.catalog import (
     model_entry,
     supported_model_keys,
 )
-from riskquant.solutions.credit_var.run import run_credit_var
+from riskquant.solutions.credit_var.run import (
+    run_credit_var,
+    simulate_portfolio_losses,
+)
 from riskquant.solutions.credit_var.schemas import (
     CreditVarRequest,
     CreditVarResult,

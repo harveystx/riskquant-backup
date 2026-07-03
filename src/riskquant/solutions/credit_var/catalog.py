@@ -56,6 +56,7 @@ class ModelEntry:
     params: tuple[ParamSpec, ...] = field(default_factory=tuple)
     requires_loadings: bool = False  # multi-factor: needs a systemic-loadings sheet
     requires_groups: bool = False  # grouped: needs per-group params + obligor groups
+    accepts_obligor_rho: bool = False  # SF copulas: optional per-obligor rho column
 
 
 _RHO = ParamSpec(
@@ -70,7 +71,7 @@ _RHO = ParamSpec(
 _NU = ParamSpec(
     key="nu",
     label="Degrees of Freedom (nu)",
-    default=8.0,
+    default=7.0,
     min_value=2.0,
     max_value=250.0,
     min_inclusive=True,
@@ -122,13 +123,12 @@ MODEL_CATALOG: dict[str, ModelEntry] = {
         "A deterministic worst-case bound (PD is ignored).",
         params=(),
     ),
-    "beta_binomial": ModelEntry(
-        key="beta_binomial",
-        display_name="Beta-Binomial",
-        description="Conditionally-independent defaults driven by a shared per-"
-        "scenario PD drawn from Beta(alpha, beta). Mean PD = alpha/(alpha+beta); "
-        "the obligor PD column is not used.",
-        params=(_BETA_ALPHA, _BETA_BETA),
+    "independent_bernoulli": ModelEntry(
+        key="independent_bernoulli",
+        display_name="Independent Bernoulli",
+        description="Each obligor defaults independently with probability PD. "
+        "No correlation; the diversified baseline.",
+        params=(),
     ),
     "stress_regime_bernoulli": ModelEntry(
         key="stress_regime_bernoulli",
@@ -137,16 +137,6 @@ MODEL_CATALOG: dict[str, ModelEntry] = {
         "that fires with probability stress_prob and multiplies every PD by "
         "stress_pd_multiplier (capped at 1).",
         params=(_STRESS_PROB, _STRESS_MULT),
-    ),
-    "beta_binomial_grouped": ModelEntry(
-        key="beta_binomial_grouped",
-        display_name="Beta-Binomial (Grouped Pools)",
-        description="Segmented beta-binomial: each obligor belongs to a pool, and "
-        "each pool draws its own per-scenario PD from Beta(alpha, beta). Defaults "
-        "correlate within a pool and are independent across pools. The obligor PD "
-        "column is not used; alpha/beta are supplied per pool via 'groups'.",
-        params=(_BETA_ALPHA, _BETA_BETA),
-        requires_groups=True,
     ),
     "stress_regime_bernoulli_grouped": ModelEntry(
         key="stress_regime_bernoulli_grouped",
@@ -158,27 +148,60 @@ MODEL_CATALOG: dict[str, ModelEntry] = {
         params=(_STRESS_PROB, _STRESS_MULT),
         requires_groups=True,
     ),
+    "beta_binomial": ModelEntry(
+        key="beta_binomial",
+        display_name="Beta-Binomial",
+        description="Conditionally-independent defaults driven by a shared per-"
+        "scenario PD drawn from Beta(alpha, beta). Mean PD = alpha/(alpha+beta); "
+        "the obligor PD column is not used.",
+        params=(_BETA_ALPHA, _BETA_BETA),
+    ),
+    "beta_binomial_grouped": ModelEntry(
+        key="beta_binomial_grouped",
+        display_name="Beta-Binomial (Grouped Pools)",
+        description="Segmented beta-binomial: each obligor belongs to a pool, and "
+        "each pool draws its own per-scenario PD from Beta(alpha, beta). Defaults "
+        "correlate within a pool and are independent across pools. The obligor PD "
+        "column is not used; alpha/beta are supplied per pool via 'groups'.",
+        params=(_BETA_ALPHA, _BETA_BETA),
+        requires_groups=True,
+    ),
     "sf_gaussian": ModelEntry(
         key="sf_gaussian",
         display_name="Single-Factor Gaussian Copula",
         description="One systemic factor with asset correlation rho (Vasicek / "
-        "Basel ASRF). The standard desk credit-VaR model.",
+        "Basel ASRF). The standard desk credit-VaR model. rho is the global fill; "
+        "obligors may carry a bespoke per-name rho that overrides it.",
         params=(_RHO,),
+        accepts_obligor_rho=True,
     ),
-    "independent_bernoulli": ModelEntry(
-        key="independent_bernoulli",
-        display_name="Independent Bernoulli",
-        description="Each obligor defaults independently with probability PD. "
-        "No correlation; the diversified baseline.",
+    "sf_gaussian_basel": ModelEntry(
+        key="sf_gaussian_basel",
+        display_name="Single-Factor Gaussian Copula (Basel rho)",
+        description="As Single-Factor Gaussian, but each obligor's asset "
+        "correlation is the Basel II/III IRB corporate weighting R(PD) (0.24 at "
+        "PD->0 down to 0.12 at PD->1). A per-name rho still overrides where given.",
         params=(),
+        accepts_obligor_rho=True,
     ),
     "sf_students_t": ModelEntry(
         key="sf_students_t",
         display_name="Single-Factor Student-t Copula",
         description="Single systemic factor with asset correlation rho plus a "
         "shared chi-square mixing variable at nu degrees of freedom (tail "
-        "dependence / fatter joint tails than Gaussian at the same rho).",
+        "dependence / fatter joint tails than Gaussian at the same rho). rho is the "
+        "global fill; a per-obligor rho overrides it.",
         params=(_RHO, _NU),
+        accepts_obligor_rho=True,
+    ),
+    "sf_students_t_basel": ModelEntry(
+        key="sf_students_t_basel",
+        display_name="Single-Factor Student-t Copula (Basel rho)",
+        description="Single-Factor Student-t with per-obligor asset correlation "
+        "from the Basel II/III IRB corporate weighting R(PD), plus a shared "
+        "chi-square mixing at nu. A per-name rho still overrides where given.",
+        params=(_NU,),
+        accepts_obligor_rho=True,
     ),
     "mf_gaussian": ModelEntry(
         key="mf_gaussian",

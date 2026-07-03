@@ -167,6 +167,8 @@ def main(profile: str | None = None):
         base_dir = Path().resolve() / "src" / "riskquant"
         base_dir_parent = base_dir.parent.parent
 
+    rq_lab_path = base_dir_parent / "src" / "riskquant_lab"
+
     print("\n" + "-" * 100)
     print("PROFILE:", profile)
     print(f"Generating context for profile '{profile}' from: {base_dir}")
@@ -354,7 +356,8 @@ def main(profile: str | None = None):
         ],
         "solutions_credit_var": [
             base_dir / "solutions" / "credit_var",
-            base_dir_parent / "scripts" / "credit_var",
+            base_dir_parent / "scripts" / "solutions" / "credit_var",
+            rq_lab_path,
         ],
         "market_data_reduced": [
             base_dir / "market_data",

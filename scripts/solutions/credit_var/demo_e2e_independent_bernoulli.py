@@ -4,11 +4,21 @@ import numpy as np
 import pandas as pd
 
 from riskquant.solutions.credit_var.api import CreditVarRequest, run_credit_var
+from riskquant.solutions.credit_var.run import simulate_portfolio_losses
 from riskquant.utils.printer import print_calling_file, print_success_message
+from riskquant_lab.fixtures.credit_var import (
+    generate_credit_portfolio_data,
+)
+from riskquant_lab.plotting.credit_var import plot_credit_loss_distribution
 
-NUM_OBLIGORS = 10
-RNG_SEED = 42
-NUM_SCENARIOS = 500
+NUM_OBLIGORS: int = 100
+RNG_SEED: int = 99
+NUM_SCENARIOS: int = 1_000_000
+MODEL_KEY: str = "independent_bernoulli"
+ALPHAS: list[float] = [0.9500, 0.9750, 0.9900, 0.9990]
+MODEL_PARAMS: dict[str, float] = {}
+GROUP_PARAMS: dict[str, dict[str, float]] = {}
+KDE_DISPLAY_PERCENTILE: float = 99.90
 
 
 def main():
@@ -26,51 +36,114 @@ def main():
 
     # 1. Generate random obligor data
     # ----------------------------------------------------------------------------------
-
-    # Pushing 10,000 names to give the JIT-compiled kernels something to chew on.
     rng = np.random.default_rng(RNG_SEED)
 
     obligor_df = pd.DataFrame(
-        {
-            # Unique identifier for each obligor
-            "uid": np.arange(NUM_OBLIGORS, dtype=np.int64),
-            # EAD: Uniformly distributed between 10k and 1M
-            "ead": rng.uniform(10_000, 1_000_000, size=NUM_OBLIGORS),
-            # PD: Skewed toward realistic lower PDs
-            "pd": rng.beta(a=1.5, b=20.0, size=NUM_OBLIGORS),
-            # LGD: Uniformly distributed between 10% and 90%
-            "lgd": rng.uniform(0.1, 0.9, size=NUM_OBLIGORS),
-        }
+        generate_credit_portfolio_data(
+            n_obligors=NUM_OBLIGORS,
+            rng=rng,
+        )
     )
 
-    # 2. Construct the request using the dataframe ergonomic bridge
+    # 2. Construct the request
     # ----------------------------------------------------------------------------------
     req = CreditVarRequest.from_dataframe(
         obligor_table=obligor_df,
-        model="independent_bernoulli",
-        n_scenarios=NUM_SCENARIOS,  # Default [cite: 138]
-        alphas=[0.9500, 0.9750, 0.9900, 0.9990],  # Default [cite: 129]
+        model=MODEL_KEY,
+        loadings_table=None,
+        group_params=GROUP_PARAMS,
+        n_scenarios=NUM_SCENARIOS,
+        alphas=ALPHAS,
         seed=RNG_SEED,
+        **MODEL_PARAMS,
     )
 
-    # 3. Fire the engine
+    # 3. Run the engine
     # ----------------------------------------------------------------------------------
     result = run_credit_var(req)
 
-    # 4. Display the minimalist output
+    # 4. Display the results
     # ----------------------------------------------------------------------------------
     print("-" * 81)
     print("Credit VaR Run Results")
     print("-" * 81)
-    print(f"Model:          {result.model}")
-    print(f"Obligors:       {result.provenance.n_obligors:,}")
-    print(f"Scenarios:      {result.provenance.n_scenarios:,}")
-    print(f"Expected Loss:  {result.summary.expected_loss:,.2f}")
+    print(f"Model:                  {result.model}")
+    print(f"Obligors:               {result.provenance.n_obligors:,}")
+    print(f"Scenarios:              {result.provenance.n_scenarios:,}")
+    print(f"Expected Loss:          {result.summary.loss_mean:,.2f}")
+    print(f"Loss Std Dev:           {result.summary.loss_std_dev:,.2f}")
+    print(f"Loss Skewness:          {result.summary.loss_skewness:,.2f}")
+    print(f"Loss Excess Kurtosis:   {result.summary.loss_excess_kurtosis:,.2f}")
+    print(f"Loss Probability:       {result.summary.loss_probability * 100:.2f}%")
+    print(f"Loss Min:               {result.summary.loss_min:,.2f}")
+    print(f"Loss Max:               {result.summary.loss_max:,.2f}")
     print("-" * 81)
 
     for alpha, var in result.summary.var.items():
         es = result.summary.es[alpha]
         print(f"VaR ({alpha}):  {var:>18,.0f} | ES: {es:>18,.0f}")
+    print("-" * 81)
+
+    # 5. Simulate losses for the request
+    # ----------------------------------------------------------------------------------
+    portfolio_losses = simulate_portfolio_losses(req)
+
+    # 6. Plot loss distribution with KDE overlay
+    # ----------------------------------------------------------------------------------
+    plot_credit_loss_distribution(
+        hist_bin_edges=result.loss_histogram.bin_edges,
+        hist_counts=result.loss_histogram.counts,
+        expected_loss=result.summary.loss_mean,
+        var_levels=result.summary.var,
+        losses=portfolio_losses,
+        model_name=req.model,
+        n_obligors=req.n_obligors,
+        n_scenarios=req.n_scenarios,
+        kde_display_percentile=KDE_DISPLAY_PERCENTILE,
+    )
+
+    # 7. Validate that the expected loss is consistent with the mean of the
+    # simulated losses
+    # ----------------------------------------------------------------------------------
+
+    # 1. Calculate Analytical Metrics
+    mean_analytical = np.sum(obligor_df["ead"] * obligor_df["lgd"] * obligor_df["pd"])
+
+    loss_given_default = obligor_df["ead"] * obligor_df["lgd"]
+    variance_analytical = np.sum(
+        (loss_given_default**2) * obligor_df["pd"] * (1 - obligor_df["pd"])
+    )
+    std_dev_analytical = np.sqrt(variance_analytical)
+
+    # 2. Compare against Engine Metrics
+    el_engine = result.summary.loss_mean
+    std_dev_engine = result.summary.loss_std_dev
+
+    # 3. Errors
+    loss_mean_abs_error = abs(mean_analytical - el_engine)
+    loss_mean_rel_error = (
+        (loss_mean_abs_error / mean_analytical) if mean_analytical != 0 else 0.0
+    )
+
+    loss_std_dev_abs_error = abs(std_dev_analytical - std_dev_engine)
+    loss_std_dev_rel_error = (
+        (loss_std_dev_abs_error / std_dev_analytical)
+        if std_dev_analytical != 0
+        else 0.0
+    )
+
+    print("\n" + "-" * 81)
+    print("Validation of Analytical vs Engine Metrics")
+    print("-" * 81)
+    print(f"Loss Mean (Analytical):    {mean_analytical:,.0f}")
+    print(f"Loss Mean (Engine):        {el_engine:,.0f}")
+    print(f"Loss Mean Abs Error:       {loss_mean_abs_error:,.0f}")
+    print(f"Loss Mean Rel Error:       {loss_mean_rel_error:.4%}\n")
+
+    print(f"Loss Std Dev (Analytical): {std_dev_analytical:,.0f}")
+    print(f"Loss Std Dev (Engine):     {std_dev_engine:,.0f}")
+    print(f"Loss Std Dev Abs Error:    {loss_std_dev_abs_error:,.0f}")
+    print(f"Loss Std Dev Rel Error:    {loss_std_dev_rel_error:.4%}")
     print("-" * 81)
 
     print_success_message()

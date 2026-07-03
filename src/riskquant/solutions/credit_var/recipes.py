@@ -165,7 +165,7 @@ def _assemble_independent_bernoulli(
     group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     uids = _uids(obligor_table)
-    uniform_names = [f"U_{int(u)}" for u in uids]
+    uniform_names = [f"U_{int(u):03d}" for u in uids]
     universe = _universe([_FactorRow(name=n, kind="UNIFORM") for n in uniform_names])
     frame = pd.DataFrame(
         {
@@ -193,7 +193,7 @@ def _assemble_beta_binomial(
     if alpha <= 0.0 or beta <= 0.0:
         raise ValueError(f"beta_binomial: alpha={alpha}, beta={beta} must be > 0.")
 
-    uniform_names = [f"U_{int(u)}" for u in uids]
+    uniform_names = [f"U_{int(u):03d}" for u in uids]
     universe = _universe(
         [_FactorRow(name=n, kind="UNIFORM") for n in uniform_names]
         + [_FactorRow(name=_BETA_PD_GLOBAL, kind="BETA_PD", alpha=alpha, beta=beta)]
@@ -229,7 +229,7 @@ def _assemble_stress_regime_bernoulli(
             f"stress_regime: stress_pd_multiplier={stress_mult} must be >= 1."
         )
 
-    uniform_names = [f"U_{int(u)}" for u in uids]
+    uniform_names = [f"U_{int(u):03d}" for u in uids]
     universe = _universe(
         [_FactorRow(name=n, kind="UNIFORM") for n in uniform_names]
         + [_FactorRow(name=_STRESS_GLOBAL, kind="STRESS_INDICATOR")]
@@ -252,36 +252,131 @@ def _assemble_stress_regime_bernoulli(
     )
 
 
+def _basel_corporate_correlation(pd_vals: np.ndarray) -> np.ndarray:
+    """Basel II/III IRB corporate asset correlation R(PD).
+
+    R = 0.12 * w + 0.24 * (1 - w),  w = (1 - e^{-50 PD}) / (1 - e^{-50}).
+
+    Decreasing in PD from 0.24 (PD -> 0) to 0.12 (PD -> 1): better credits are more
+    systematically correlated. (Corporate/sovereign/bank curve; SME size and
+    retail variants are not applied here.)
+    """
+    w = (1.0 - np.exp(-50.0 * pd_vals)) / (1.0 - math.exp(-50.0))
+    return 0.12 * w + 0.24 * (1.0 - w)
+
+
+def _per_obligor_rho(
+    obligor_table: pd.DataFrame,
+    params: Mapping[str, float],
+    *,
+    regulatory: bool,
+    ctx: str,
+) -> np.ndarray:
+    """Per-obligor asset correlation rho_i in [0, 1).
+
+    An explicit obligor `rho` (the `rho` column, where present) always wins; the
+    fill for the rest is the Basel R(PD_i) when `regulatory`, else the flat global
+    `rho` param. This is the ASRF-style per-name correlation with a global default.
+    """
+    n = len(obligor_table)
+    if regulatory:
+        pd_vals = obligor_table["pd"].to_numpy(dtype=np.float64)
+        rho = _basel_corporate_correlation(pd_vals)
+    else:
+        g = _require(params, "rho", _DEFAULT_RHO)
+        if not (0.0 <= g < 1.0):
+            raise ValueError(f"{ctx}: global rho={g} must be in [0, 1).")
+        rho = np.full(n, g, dtype=np.float64)
+
+    if "rho" in obligor_table.columns:
+        col = obligor_table["rho"]
+        notna = col.notna().to_numpy()
+        if notna.any():
+            explicit = pd.to_numeric(col, errors="coerce").to_numpy(dtype=np.float64)
+            rho = np.where(notna, explicit, rho)
+
+    if not np.all((rho >= 0.0) & (rho < 1.0)):
+        bad = sorted({float(x) for x in rho if not (0.0 <= x < 1.0)})
+        raise ValueError(f"{ctx}: per-obligor rho out of [0, 1): {bad[:5]}.")
+    return rho
+
+
+def _assemble_sf(
+    obligor_table: pd.DataFrame,
+    params: Mapping[str, float],
+    *,
+    instrument: str,
+    with_chi: bool,
+    regulatory: bool,
+    ctx: str,
+) -> AssembledInputs:
+    """Single-factor copula (Gaussian or Student-t), per-obligor systemic loading
+    sqrt(rho_i). One global systemic factor; idiosyncratic weight = sqrt(1 - rho_i)
+    is the engine residual."""
+    uids = _uids(obligor_table)
+    rho = _per_obligor_rho(obligor_table, params, regulatory=regulatory, ctx=ctx)
+    loading = np.sqrt(rho)
+
+    nu: float | None = None
+    if with_chi:
+        nu = _require(params, "nu", _DEFAULT_NU)
+        if nu <= 0.0:
+            raise ValueError(f"{ctx}: nu={nu} must be > 0.")
+
+    idio_names = [f"IDIO_{int(u):03d}" for u in uids]
+    rows = [_FactorRow(name=_SYSTEMIC_GLOBAL, kind="SYSTEMIC")]
+    rows += [_FactorRow(name=n, kind="IDIOSYNCRATIC") for n in idio_names]
+    if with_chi:
+        rows.append(_FactorRow(name=_CHI_GLOBAL, kind="CHI", nu=nu))
+    universe = _universe(rows)
+
+    frame_data: dict[str, object] = {
+        "uid": uids,
+        "instrument": instrument,
+        "factor_loading": loading,
+        "systemic_factor": _SYSTEMIC_GLOBAL,
+        "idiosyncratic_factor": idio_names,
+    }
+    if with_chi:
+        frame_data["chi_squared_factor"] = _CHI_GLOBAL
+        # nu on the frame must match the chi factor's nu (engine invariant).
+        frame_data["nu"] = np.full(uids.shape[0], nu, dtype=np.float64)
+    return AssembledInputs(
+        masters=_masters(obligor_table, universe),
+        bundle=JtdIngestBundle.from_instrument_frame(pd.DataFrame(frame_data)),
+        obligor_ead=_ead(obligor_table),
+    )
+
+
 def _assemble_sf_gaussian(
     obligor_table: pd.DataFrame,
     params: Mapping[str, float],
     loadings_table: pd.DataFrame | None = None,
     group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
-    uids = _uids(obligor_table)
-    rho = _require(params, "rho", _DEFAULT_RHO)
-    if not (0.0 <= rho < 1.0):
-        raise ValueError(f"sf_gaussian: rho={rho} must be in [0, 1).")
-    beta = math.sqrt(rho)  # systemic loading; idiosyncratic weight = sqrt(1 - rho)
+    return _assemble_sf(
+        obligor_table,
+        params,
+        instrument=JtdModel.COPULA_SF_GAUSSIAN.name,
+        with_chi=False,
+        regulatory=False,
+        ctx="sf_gaussian",
+    )
 
-    idio_names = [f"IDIO_{int(u)}" for u in uids]
-    universe = _universe(
-        [_FactorRow(name=_SYSTEMIC_GLOBAL, kind="SYSTEMIC")]
-        + [_FactorRow(name=n, kind="IDIOSYNCRATIC") for n in idio_names]
-    )
-    frame = pd.DataFrame(
-        {
-            "uid": uids,
-            "instrument": JtdModel.COPULA_SF_GAUSSIAN.name,
-            "factor_loading": np.full(uids.shape[0], beta, dtype=np.float64),
-            "systemic_factor": _SYSTEMIC_GLOBAL,
-            "idiosyncratic_factor": idio_names,
-        }
-    )
-    return AssembledInputs(
-        masters=_masters(obligor_table, universe),
-        bundle=JtdIngestBundle.from_instrument_frame(frame),
-        obligor_ead=_ead(obligor_table),
+
+def _assemble_sf_gaussian_basel(
+    obligor_table: pd.DataFrame,
+    params: Mapping[str, float],
+    loadings_table: pd.DataFrame | None = None,
+    group_params: Mapping[str, Mapping[str, float]] | None = None,
+) -> AssembledInputs:
+    return _assemble_sf(
+        obligor_table,
+        params,
+        instrument=JtdModel.COPULA_SF_GAUSSIAN.name,
+        with_chi=False,
+        regulatory=True,
+        ctx="sf_gaussian_basel",
     )
 
 
@@ -291,37 +386,29 @@ def _assemble_sf_students_t(
     loadings_table: pd.DataFrame | None = None,
     group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
-    uids = _uids(obligor_table)
-    rho = _require(params, "rho", _DEFAULT_RHO)
-    nu = _require(params, "nu", _DEFAULT_NU)
-    if not (0.0 <= rho < 1.0):
-        raise ValueError(f"sf_students_t: rho={rho} must be in [0, 1).")
-    if nu <= 0.0:
-        raise ValueError(f"sf_students_t: nu={nu} must be > 0.")
-    beta = math.sqrt(rho)
+    return _assemble_sf(
+        obligor_table,
+        params,
+        instrument=JtdModel.COPULA_SF_STUDENTS_T.name,
+        with_chi=True,
+        regulatory=False,
+        ctx="sf_students_t",
+    )
 
-    idio_names = [f"IDIO_{int(u)}" for u in uids]
-    universe = _universe(
-        [_FactorRow(name=_SYSTEMIC_GLOBAL, kind="SYSTEMIC")]
-        + [_FactorRow(name=n, kind="IDIOSYNCRATIC") for n in idio_names]
-        + [_FactorRow(name=_CHI_GLOBAL, kind="CHI", nu=nu)]
-    )
-    frame = pd.DataFrame(
-        {
-            "uid": uids,
-            "instrument": JtdModel.COPULA_SF_STUDENTS_T.name,
-            "factor_loading": np.full(uids.shape[0], beta, dtype=np.float64),
-            "systemic_factor": _SYSTEMIC_GLOBAL,
-            "idiosyncratic_factor": idio_names,
-            "chi_squared_factor": _CHI_GLOBAL,
-            # nu on the frame must match the chi factor's nu (engine invariant).
-            "nu": np.full(uids.shape[0], nu, dtype=np.float64),
-        }
-    )
-    return AssembledInputs(
-        masters=_masters(obligor_table, universe),
-        bundle=JtdIngestBundle.from_instrument_frame(frame),
-        obligor_ead=_ead(obligor_table),
+
+def _assemble_sf_students_t_basel(
+    obligor_table: pd.DataFrame,
+    params: Mapping[str, float],
+    loadings_table: pd.DataFrame | None = None,
+    group_params: Mapping[str, Mapping[str, float]] | None = None,
+) -> AssembledInputs:
+    return _assemble_sf(
+        obligor_table,
+        params,
+        instrument=JtdModel.COPULA_SF_STUDENTS_T.name,
+        with_chi=True,
+        regulatory=True,
+        ctx="sf_students_t_basel",
     )
 
 
@@ -345,7 +432,7 @@ def _mf_universe_and_bundle(
             f"{instrument}: a multi-factor model requires a non-empty loadings table."
         )
     uids = _uids(obligor_table)
-    idio_names = [f"IDIO_{int(u)}" for u in uids]
+    idio_names = [f"IDIO_{int(u):03d}" for u in uids]
     # Distinct systemic factors, authoring order preserved.
     systemic_names = list(dict.fromkeys(loadings_table["factor"].astype(str)))
 
@@ -437,7 +524,7 @@ def _assemble_beta_binomial_grouped(
     groups = obligor_table["group"].astype(str).to_numpy()
     distinct = list(dict.fromkeys(groups.tolist()))  # authoring order
 
-    uniform_names = [f"U_{int(u)}" for u in uids]
+    uniform_names = [f"U_{int(u):03d}" for u in uids]
     beta_factor = {g: f"BETA_PD::{g}" for g in distinct}
     rows = [_FactorRow(name=n, kind="UNIFORM") for n in uniform_names]
     for g in distinct:
@@ -492,7 +579,7 @@ def _assemble_stress_regime_bernoulli_grouped(
     groups = obligor_table["group"].astype(str).to_numpy()
     distinct = list(dict.fromkeys(groups.tolist()))
 
-    uniform_names = [f"U_{int(u)}" for u in uids]
+    uniform_names = [f"U_{int(u):03d}" for u in uids]
     stress_factor = {g: f"STRESS::{g}" for g in distinct}
     prob_by_group: dict[str, float] = {}
     mult_by_group: dict[str, float] = {}
@@ -547,12 +634,14 @@ def _assemble_stress_regime_bernoulli_grouped(
 SUPPORTED_RECIPES: dict[str, object] = {
     "forced_default": _assemble_forced_default,
     "independent_bernoulli": _assemble_independent_bernoulli,
-    "beta_binomial": _assemble_beta_binomial,
     "stress_regime_bernoulli": _assemble_stress_regime_bernoulli,
-    "beta_binomial_grouped": _assemble_beta_binomial_grouped,
     "stress_regime_bernoulli_grouped": _assemble_stress_regime_bernoulli_grouped,
+    "beta_binomial": _assemble_beta_binomial,
+    "beta_binomial_grouped": _assemble_beta_binomial_grouped,
     "sf_gaussian": _assemble_sf_gaussian,
+    "sf_gaussian_basel": _assemble_sf_gaussian_basel,
     "sf_students_t": _assemble_sf_students_t,
+    "sf_students_t_basel": _assemble_sf_students_t_basel,
     "mf_gaussian": _assemble_mf_gaussian,
     "mf_students_t": _assemble_mf_students_t,
 }
