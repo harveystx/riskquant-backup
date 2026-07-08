@@ -78,26 +78,6 @@ MAX_EWMA_VOL_RATIO: float = 10.0
 MIN_EWMA_VARIANCE: float = 1e-12
 
 # ==============================================================================
-# CREDIT RISK CONSTANTS
-# ==============================================================================
-
-NO_PARENT_OBLIGOR: np.int64 = np.int64(-1)
-NO_RATING_ID: np.int8 = np.int8(-1)
-NO_SECTOR_ID: np.int32 = np.int32(-1)
-NO_COUNTRY_ID: np.int32 = np.int32(-1)
-
-# Degrees-of-freedom sentinel for non-chi credit factors. nu is strictly
-# positive for a chi-square mixing factor, so a negative value is an
-# unambiguous "this factor carries no nu" marker (sentinel over NaN, per the
-# core blocks contract).
-NO_CHI_NU: np.float64 = np.float64(-1.0)
-
-# Beta(alpha, beta) parameter sentinel for non-BETA_PD credit factors. Both
-# shape parameters are strictly positive for a Beta factor, so a negative value
-# is an unambiguous "this factor carries no alpha/beta" marker.
-NO_BETA_PARAM: np.float64 = np.float64(-1.0)
-
-# ==============================================================================
 # RANDOM SEED FOR TESTING
 # ==============================================================================
 
@@ -126,3 +106,56 @@ IV_SOLVER_FAILED_SENTINEL = -1.0
 #: ``vega < MIN_RELIABLE_VEGA_OVER_FWD * fwd`` are gated out by
 #: ``CalibratedOptionQuotes.reliable_mask``. Heuristic; tune per surface.
 MIN_RELIABLE_VEGA_OVER_FWD: float = 1e-3
+
+
+###############################################################################
+#                                                                             #
+#                            CREDIT RISK CONSTANTS                            #
+#                                                                             #
+###############################################################################
+
+# ==============================================================================
+# CREDIT RISK: OBLIGOR RELATED CONSTANTS
+# ==============================================================================
+
+NO_PARENT_OBLIGOR: np.int64 = np.int64(-1)
+NO_RATING_ID: np.int8 = np.int8(-1)
+NO_SECTOR_ID: np.int32 = np.int32(-1)
+NO_COUNTRY_ID: np.int32 = np.int32(-1)
+
+# Degrees-of-freedom sentinel for non-chi credit factors. nu is strictly
+# positive for a chi-square mixing factor, so a negative value is an
+# unambiguous "this factor carries no nu" marker (sentinel over NaN, per the
+# core blocks contract).
+NO_CHI_NU: np.float64 = np.float64(-1.0)
+
+# Beta(alpha, beta) parameter sentinel for non-BETA_PD credit factors. Both
+# shape parameters are strictly positive for a Beta factor, so a negative value
+# is an unambiguous "this factor carries no alpha/beta" marker.
+NO_BETA_PARAM: np.float64 = np.float64(-1.0)
+
+
+# ==============================================================================
+# CREDIT RISK: EXPOSURE ENGINE CONSTANTS
+# ==============================================================================
+
+
+# --- Current Exposure Method (CEM) --------------------------------------------
+
+#: CEM net-PFE compression: ``Net_PFE = gross_PFE * (FLOOR + COEFF * NGR)``.
+#: The 0.4 floor retains 40% of the gross add-on even under perfect netting
+#: (NGR -> 0) as a supervisory buffer for basis / operational / roll risk; the
+#: 0.6 coefficient scales the remaining fraction by the netting-to-gross ratio.
+#: Legacy Basel CEM values, kept for the interim CEM engine (SA-CCR's PFE
+#: multiplier supersedes them).
+CEM_PFE_FLOOR_DEFAULT: float = 0.4
+CEM_PFE_COEFFICIENT_DEFAULT: float = 0.6
+
+
+# --- SA-CCR (config-driven; these are overridable defaults, not the taxonomy) ---
+#: Supervisory alpha in EAD = alpha * (RC + PFE). Basel default 1.4; a house
+#: model may recalibrate it.
+SACCR_ALPHA_DEFAULT: float = 1.4
+
+#: PFE-multiplier floor in min(1, floor + (1-floor)*exp((V-C)/(2*(1-floor)*AddOn))).
+SACCR_MULTIPLIER_FLOOR_DEFAULT: float = 0.05

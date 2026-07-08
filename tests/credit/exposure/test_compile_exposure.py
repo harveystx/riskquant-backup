@@ -22,16 +22,16 @@ from riskquant.constants import NO_NETTING_SET_ID
 from riskquant.credit.exposure.compile import (
     _join_netting_set_ids,
     _resolve_collateral,
-    compile_exposure,
+    compile_exposure_rc,
 )
 from riskquant.credit.exposure.compiled import CompiledExposure
 from riskquant.credit.exposure.engine import run_exposure
 from riskquant.credit.exposure.models import REPLACEMENT_COST_ID
 from riskquant.credit.exposure.results import NettingSetExposurePaths
 from riskquant.credit.exposure.views.replacement_cost import RcNettingSetView
-from riskquant.valuation.blocks.spot_block import SpotBlock
 from riskquant.portfolio.compiled import CompiledPortfolio
 from riskquant.portfolio.ingest.batch import IngestBatch
+from riskquant.valuation.blocks.spot_block import SpotBlock
 
 _SENTINEL = int(NO_NETTING_SET_ID)
 
@@ -185,7 +185,7 @@ class TestJoinNettingSetIds:
         batch = _make_batch(uids=[1, 2, 3], netting_set_id=[10, 10, 20])
         portfolio = _make_portfolio(trade_uids=[1, 2, 9999])
         with pytest.raises(ValueError, match="absent from the ingest batch"):
-            compile_exposure(portfolio=portfolio, batch=batch)
+            compile_exposure_rc(portfolio=portfolio, batch=batch)
 
 
 # ==============================================================================
@@ -229,7 +229,7 @@ class TestResolveCollateral:
 
 class TestCompileExposureLayout:
     def test_returns_single_rc_view(self, minimal_case):
-        exposure = compile_exposure(
+        exposure = compile_exposure_rc(
             portfolio=minimal_case.portfolio, batch=minimal_case.batch
         )
         assert isinstance(exposure, CompiledExposure)
@@ -239,7 +239,7 @@ class TestCompileExposureLayout:
         assert view.EXPOSURE_MODEL_ID == REPLACEMENT_COST_ID
 
     def test_netting_set_uids_and_offsets(self, minimal_case):
-        view = compile_exposure(
+        view = compile_exposure_rc(
             portfolio=minimal_case.portfolio, batch=minimal_case.batch
         ).views[0]
         np.testing.assert_array_equal(view.netting_set_uids, [101, 102, 103])
@@ -248,14 +248,14 @@ class TestCompileExposureLayout:
         assert view.num_trades == 6
 
     def test_mtm_row_perm_exact_permutation(self, minimal_case):
-        view = compile_exposure(
+        view = compile_exposure_rc(
             portfolio=minimal_case.portfolio, batch=minimal_case.batch
         ).views[0]
         # Deterministic given the fixture: stable group-by on the joined ids.
         np.testing.assert_array_equal(view.mtm_row_perm, [2, 4, 5, 3, 7, 0])
 
     def test_perm_selects_only_linked_trades(self, minimal_case):
-        view = compile_exposure(
+        view = compile_exposure_rc(
             portfolio=minimal_case.portfolio, batch=minimal_case.batch
         ).views[0]
         banded = {int(u) for u in minimal_case.portfolio.trade_uids[view.mtm_row_perm]}
@@ -263,7 +263,7 @@ class TestCompileExposureLayout:
         assert 1007 not in banded and 1008 not in banded
 
     def test_bands_group_correct_netting_sets(self, minimal_case):
-        view = compile_exposure(
+        view = compile_exposure_rc(
             portfolio=minimal_case.portfolio, batch=minimal_case.batch
         ).views[0]
         assert _band_netting_sets(view, minimal_case.portfolio) == [
@@ -273,7 +273,7 @@ class TestCompileExposureLayout:
         ]
 
     def test_within_band_order_is_stable(self, minimal_case):
-        view = compile_exposure(
+        view = compile_exposure_rc(
             portfolio=minimal_case.portfolio, batch=minimal_case.batch
         ).views[0]
         off = view.netting_set_offsets
@@ -282,7 +282,7 @@ class TestCompileExposureLayout:
             assert np.all(np.diff(band) > 0), "band rows must stay in portfolio order"
 
     def test_view_array_dtypes_and_contiguity(self, minimal_case):
-        view = compile_exposure(
+        view = compile_exposure_rc(
             portfolio=minimal_case.portfolio, batch=minimal_case.batch
         ).views[0]
         assert view.mtm_row_perm.dtype == np.int32
@@ -298,7 +298,7 @@ class TestCompileExposureLayout:
             assert arr.flags.c_contiguous
 
     def test_collateral_resolved_into_band_order(self, minimal_case):
-        view = compile_exposure(
+        view = compile_exposure_rc(
             portfolio=minimal_case.portfolio,
             batch=minimal_case.batch,
             collateral={103: 1_000_000.0, 101: 250.0},
@@ -306,13 +306,13 @@ class TestCompileExposureLayout:
         np.testing.assert_array_equal(view.collateral, [250.0, 0.0, 1_000_000.0])
 
     def test_collateral_none_yields_zero_band(self, minimal_case):
-        view = compile_exposure(
+        view = compile_exposure_rc(
             portfolio=minimal_case.portfolio, batch=minimal_case.batch
         ).views[0]
         np.testing.assert_array_equal(view.collateral, np.zeros(3))
 
     def test_compiled_exposure_aggregate(self, minimal_case):
-        exposure = compile_exposure(
+        exposure = compile_exposure_rc(
             portfolio=minimal_case.portfolio, batch=minimal_case.batch
         )
         np.testing.assert_array_equal(exposure.netting_set_uids, [101, 102, 103])
@@ -330,11 +330,11 @@ class TestCompileExposureErrors:
         batch = _make_batch(uids=[1, 2], netting_set_id=[_SENTINEL, _SENTINEL])
         portfolio = _make_portfolio(trade_uids=[1, 2])
         with pytest.raises(ValueError, match="no priced trade carries"):
-            compile_exposure(portfolio=portfolio, batch=batch)
+            compile_exposure_rc(portfolio=portfolio, batch=batch)
 
     def test_negative_collateral_rejected(self, minimal_case):
         with pytest.raises(ValueError, match="negative collateral"):
-            compile_exposure(
+            compile_exposure_rc(
                 portfolio=minimal_case.portfolio,
                 batch=minimal_case.batch,
                 collateral={101: -1.0},
@@ -348,7 +348,7 @@ class TestCompileExposureErrors:
 
 class TestRunExposureIntegration:
     def test_result_shape_and_join_key(self, minimal_case):
-        exposure = compile_exposure(
+        exposure = compile_exposure_rc(
             portfolio=minimal_case.portfolio, batch=minimal_case.batch
         )
         mtm = _make_mtm(minimal_case.portfolio, n_scenarios=4)
@@ -362,7 +362,7 @@ class TestRunExposureIntegration:
 
     def test_rc_floor_collateral_and_negative_netting(self, minimal_case):
         # V: 101 -> 180, 102 -> -70, 103 -> 500.  C: 101=80, 103 over-collateralized.
-        exposure = compile_exposure(
+        exposure = compile_exposure_rc(
             portfolio=minimal_case.portfolio,
             batch=minimal_case.batch,
             collateral={101: 80.0, 102: 0.0, 103: 1_000_000.0},
@@ -375,7 +375,7 @@ class TestRunExposureIntegration:
         np.testing.assert_allclose(ead[2], [0.0, 0.0])  # 103: over-collateralized
 
     def test_rc_without_collateral_is_max_v_zero(self, minimal_case):
-        exposure = compile_exposure(
+        exposure = compile_exposure_rc(
             portfolio=minimal_case.portfolio, batch=minimal_case.batch
         )
         mtm = _make_mtm(minimal_case.portfolio, n_scenarios=1)
@@ -385,7 +385,7 @@ class TestRunExposureIntegration:
 
     def test_rc_floor_crosses_within_scenarios(self, minimal_case):
         # 101 V_s = 180*(s+1) = 180, 360, 540;  C = 400 -> RC = 0, 0, 140.
-        exposure = compile_exposure(
+        exposure = compile_exposure_rc(
             portfolio=minimal_case.portfolio,
             batch=minimal_case.batch,
             collateral={101: 400.0},
@@ -400,7 +400,7 @@ class TestRunExposureIntegration:
         mtm = _make_mtm(minimal_case.portfolio, n_scenarios=1)
 
         ead_eq = run_exposure(
-            exposure=compile_exposure(
+            exposure=compile_exposure_rc(
                 portfolio=minimal_case.portfolio,
                 batch=minimal_case.batch,
                 collateral={103: 500.0},
@@ -410,7 +410,7 @@ class TestRunExposureIntegration:
         assert ead_eq[2, 0] == 0.0
 
         ead_below = run_exposure(
-            exposure=compile_exposure(
+            exposure=compile_exposure_rc(
                 portfolio=minimal_case.portfolio,
                 batch=minimal_case.batch,
                 collateral={103: 499.0},
@@ -421,7 +421,7 @@ class TestRunExposureIntegration:
 
     def test_ead_per_scenario_independent(self, minimal_case):
         # Scenario-scaled V proves the kernel sums per-scenario, not per-set-total.
-        exposure = compile_exposure(
+        exposure = compile_exposure_rc(
             portfolio=minimal_case.portfolio,
             batch=minimal_case.batch,
             collateral={101: 80.0},

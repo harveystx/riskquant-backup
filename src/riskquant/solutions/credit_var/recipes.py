@@ -21,13 +21,14 @@ relational recipe path.
 
 from __future__ import annotations
 
+from riskquant.basel.irb.correlation import basel_corporate_correlation
+
 __all__ = [
     "AssembledInputs",
     "SUPPORTED_RECIPES",
     "assemble_inputs",
 ]
 
-import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
@@ -252,19 +253,6 @@ def _assemble_stress_regime_bernoulli(
     )
 
 
-def _basel_corporate_correlation(pd_vals: np.ndarray) -> np.ndarray:
-    """Basel II/III IRB corporate asset correlation R(PD).
-
-    R = 0.12 * w + 0.24 * (1 - w),  w = (1 - e^{-50 PD}) / (1 - e^{-50}).
-
-    Decreasing in PD from 0.24 (PD -> 0) to 0.12 (PD -> 1): better credits are more
-    systematically correlated. (Corporate/sovereign/bank curve; SME size and
-    retail variants are not applied here.)
-    """
-    w = (1.0 - np.exp(-50.0 * pd_vals)) / (1.0 - math.exp(-50.0))
-    return 0.12 * w + 0.24 * (1.0 - w)
-
-
 def _per_obligor_rho(
     obligor_table: pd.DataFrame,
     params: Mapping[str, float],
@@ -281,7 +269,7 @@ def _per_obligor_rho(
     n = len(obligor_table)
     if regulatory:
         pd_vals = obligor_table["pd"].to_numpy(dtype=np.float64)
-        rho = _basel_corporate_correlation(pd_vals)
+        rho = basel_corporate_correlation(pd_vals)
     else:
         g = _require(params, "rho", _DEFAULT_RHO)
         if not (0.0 <= g < 1.0):

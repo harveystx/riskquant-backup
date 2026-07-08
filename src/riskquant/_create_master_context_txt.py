@@ -359,6 +359,11 @@ def main(profile: str | None = None):
             base_dir_parent / "scripts" / "solutions" / "credit_var",
             rq_lab_path,
         ],
+        "solutions_credit_exposure": [
+            base_dir / "solutions" / "credit_exposure",
+            base_dir_parent / "scripts" / "solutions" / "credit_exposure",
+            rq_lab_path,
+        ],
         "market_data_reduced": [
             base_dir / "market_data",
             # base_dir / "ingest_fixtures",
@@ -413,6 +418,21 @@ def main(profile: str | None = None):
             base_dir / "credit" / "jtd" / "blocks",
             base_dir / "credit" / "jtd" / "kernels",
             base_dir / "credit" / "jtd" / "evaluators",
+        ],
+        "credit_exposure": [
+            base_dir / "credit" / "exposure",
+            base_dir / "constants.py",
+            base_dir / "jit.py",
+            # SCRIPTS
+            base_dir_parent / "scripts" / "demos" / "credit" / "exposure",
+        ],
+        "basel": [
+            base_dir / "basel",
+            base_dir / "utils",
+            base_dir / "_arrays.py",
+            base_dir / "jit.py",
+            # SCRIPTS
+            base_dir_parent / "scripts" / "demos" / "basel",
         ],
         "credit_reduced": [
             # SOURCE CODE
@@ -656,8 +676,13 @@ if __name__ == "__main__":
     main(profile="ingest")
     main(profile="market_data_only")
     main(profile="portfolio_only")
-    main(profile="solutions_credit_var")
+    main(profile="credit")
     main(profile="credit_jtd_kernels")
+    main(profile="credit_exposure")
+    main(profile="basel")
+    # SOLUTIONS
+    main(profile="solutions_credit_var")
+    main(profile="solutions_credit_exposure")
     # main(profile="ce_jtd")
     # main(profile="risk_quant")
     # main(profile="risk_quant_adhoc")
@@ -665,7 +690,6 @@ if __name__ == "__main__":
     # main(profile="market_data")
     # main(profile="market_data_reduced")
     # main(profile="market_data_calibrate")
-    main(profile="credit")
     # main(profile="credit_jtd")
     # main(profile="credit_reduced")
     # main(profile="ingest_fixtures")

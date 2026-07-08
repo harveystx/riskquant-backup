@@ -18,9 +18,13 @@ from typing import TypeAlias
 import numpy as np
 import numpy.typing as npt
 
+from riskquant.credit.exposure.views.current_exposure_method import (
+    CemNettingSetView,
+)
 from riskquant.credit.exposure.views.replacement_cost import RcNettingSetView
+from riskquant.credit.exposure.views.saccr import SaccrNettingSetView
 
-ViewT: TypeAlias = RcNettingSetView  # | SaccrNettingSetView | ...  (future)
+ViewT: TypeAlias = RcNettingSetView | CemNettingSetView | SaccrNettingSetView
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -29,6 +33,8 @@ class CompiledExposure:
 
     # VIEWS: One per exposure model. Each has its own netting set membership, collateral, etc.
     replacement_cost: RcNettingSetView | None = None
+    current_exposure_method: CemNettingSetView | None = None
+    saccr: SaccrNettingSetView | None = None
 
     # DERIVED FIELDS: Populated at init by __post_init__. These are the fields the engine dispatches on.
     _views: tuple[ViewT, ...] = field(init=False, repr=False)
@@ -38,7 +44,11 @@ class CompiledExposure:
     _netting_set_uids: npt.NDArray[np.int64] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        ordered: tuple[ViewT | None, ...] = (self.replacement_cost,)
+        ordered: tuple[ViewT | None, ...] = (
+            self.replacement_cost,
+            self.current_exposure_method,
+            self.saccr,
+        )
         views: tuple[ViewT, ...] = tuple(v for v in ordered if v is not None)
         total_views = len(views)
 

@@ -37,7 +37,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from riskquant.credit.exposure.compile import compile_exposure
+from riskquant.credit.exposure.compile import compile_exposure_rc
 from riskquant.credit.exposure.engine import run_exposure
 from riskquant.credit.exposure.results import NettingSetExposurePaths
 from riskquant.ingest_fixtures.credit.credit_exposure.minimal_spot_with_netting_sets import (
@@ -114,7 +114,7 @@ def _run_pipeline(
     )
     mtm = np.ascontiguousarray(qty_vec[:, None] * _PRICES[None, :])
 
-    exposure = compile_exposure(
+    exposure = compile_exposure_rc(
         portfolio=portfolio,
         batch=batch,
         collateral=collateral,

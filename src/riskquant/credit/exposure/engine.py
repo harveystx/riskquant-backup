@@ -18,12 +18,18 @@ import numpy as np
 import numpy.typing as npt
 
 from riskquant.credit.exposure.compiled import CompiledExposure
+from riskquant.credit.exposure.evaluators.current_exposure_method import (
+    evaluate_current_exposure_method,
+)
 from riskquant.credit.exposure.evaluators.replacement_cost import (
     evaluate_replacement_cost,
 )
+from riskquant.credit.exposure.evaluators.saccr import evaluate_saccr
 from riskquant.credit.exposure.models import (
+    CURRENT_EXPOSURE_METHOD_ID,
     NUM_EXPOSURE_MODELS,
     REPLACEMENT_COST_ID,
+    SACCR_ID,
     ExposureModel,
 )
 from riskquant.credit.exposure.results import NettingSetExposurePaths
@@ -60,6 +66,8 @@ def _register(model_id: int, evaluator: ExposureEvaluator[Any]) -> None:
 
 
 _register(REPLACEMENT_COST_ID, evaluate_replacement_cost)
+_register(CURRENT_EXPOSURE_METHOD_ID, evaluate_current_exposure_method)
+_register(SACCR_ID, evaluate_saccr)
 
 EXPOSURE_EVALUATORS: Final[tuple[ExposureEvaluator[Any], ...]] = cast(
     tuple[ExposureEvaluator[Any], ...], tuple(_EXPOSURE_EVALUATORS_MUT)

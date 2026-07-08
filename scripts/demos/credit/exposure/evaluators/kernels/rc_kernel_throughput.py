@@ -28,9 +28,9 @@ def run_benchmark():
     print_calling_file()
 
     # --- 1. Scale Parameters ---
-    m_trades = 10_000  # 100k Trades
-    s_scenarios = 1_000  # 10k Scenarios
-    n_netting_sets = 500  # 5k Counterparties (Avg 20 trades per Netting Set)
+    m_trades = 100_000  # 100k Trades
+    s_scenarios = 10_000  # 10k Scenarios
+    n_netting_sets = 5_000  # 5k Counterparties (Avg 20 trades per Netting Set)
 
     print("--- S-TIER REPLACEMENT COST KERNEL BENCHMARK ---")
     print(f"Trades:       {m_trades:,}")
