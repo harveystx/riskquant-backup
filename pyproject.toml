@@ -1,18 +1,20 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "riskquant"
 version = "0.1.0"
-requires-python = ">=3.10"
+description = "Quantitative risk management library"
+readme = "README.md"
+requires-python = ">=3.11"
 dependencies = [
   "numpy>=1.26",
   "pandas>=2.0",
   "openpyxl>=3.1",
   "matplotlib>=3.10",
   "scipy>=1.15",
-  "numba>=0.59",
+  "numba>=0.59",     # Numba 0.59+ officially supports Python 3.11
   "seaborn>=0.13",
   "pandas-stubs>=2.0",
 ]
@@ -21,6 +23,8 @@ dependencies = [
 dev = [
   "ruff>=0.6",
   "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "mypy>=1.10",      # Added for strict array/type validation
 ]
 scripts = [
   "python-dotenv>=1.0,<2.0",
@@ -31,21 +35,33 @@ notebooks = [
   "marimo[recommended]",
 ]
 
-[tool.setuptools]
-package-dir = {"" = "src"}
-
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["riskquant*"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/riskquant"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "UP", "B", "SIM", "NPY"]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade (will enforce 3.11 modernizations)
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "NPY", # numpy-specific rules
+    "RUF", # Ruff-specific rules
+]
 ignore = ["E501"]
 fixable = ["ALL"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["riskquant"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
