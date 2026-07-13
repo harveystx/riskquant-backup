@@ -19,7 +19,7 @@ def generate_credit_portfolio_data(
     Produces economically structured obligors with:
     - rating-driven PDs
     - sector adjustments
-    - PD–LGD dependence
+    - PD-LGD dependence
     - lognormal EAD distribution
     """
 
@@ -122,7 +122,7 @@ def generate_credit_portfolio_data(
     # ------------------------------------------------------------------
 
     return {
-        "uid": np.arange(n_obligors, dtype=np.int64),
+        "obligor_uid": np.arange(n_obligors, dtype=np.int64),
         "rating": rating,
         "rating_id": np.array([ratings_to_id_map[r] for r in rating], dtype=np.int64),
         "sector": sector,

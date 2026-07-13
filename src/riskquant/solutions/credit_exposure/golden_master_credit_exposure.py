@@ -55,7 +55,7 @@ def _gross_add_on_by_netting_set(trades, add_on):
         * trades["current_price"]
         * trades["asset_subclass_uix"].map(factor)
     )
-    return trades.assign(_g=gross).groupby("netting_set_id")["_g"].sum().to_dict()
+    return trades.assign(_g=gross).groupby("netting_set_uid")["_g"].sum().to_dict()
 
 
 def assert_contract_invariants(trades, netting_sets, add_on):
@@ -63,8 +63,8 @@ def assert_contract_invariants(trades, netting_sets, add_on):
     cem = _run("current_exposure_method", trades, netting_sets, add_on)
     rc = _run("replacement_cost", trades, netting_sets)
 
-    cem_obl = {o.uid: o.ead for o in cem.obligor_ead}
-    rc_obl = {o.uid: o.ead for o in rc.obligor_ead}
+    cem_obl = {o.obligor_uid: o.ead for o in cem.obligor_ead}
+    rc_obl = {o.obligor_uid: o.ead for o in rc.obligor_ead}
     cem_ns = {n.netting_set_uid: n.ead for n in cem.netting_set_ead}
     rc_ns = {n.netting_set_uid: n.ead for n in rc.netting_set_ead}
 
@@ -97,7 +97,7 @@ def assert_contract_invariants(trades, netting_sets, add_on):
     cem_zero = _run(
         "current_exposure_method", trades, netting_sets, add_on.assign(factor=0.0)
     )
-    cem_zero_obl = {o.uid: o.ead for o in cem_zero.obligor_ead}
+    cem_zero_obl = {o.obligor_uid: o.ead for o in cem_zero.obligor_ead}
     for uid in cem_zero_obl:
         assert abs(cem_zero_obl[uid] - rc_obl[uid]) <= _TOL, (
             f"obligor {uid}: zero-add-on CEM {cem_zero_obl[uid]} != RC {rc_obl[uid]}"
@@ -129,8 +129,8 @@ def _frozen_book():
     """
     trades = pd.DataFrame(
         {
-            "uid": [1, 2, 3, 4, 5],
-            "netting_set_id": [1, 1, 2, 3, 4],
+            "trade_uid": [1, 2, 3, 4, 5],
+            "netting_set_uid": [1, 1, 2, 3, 4],
             "mtm": [100.0, -60.0, 80.0, -40.0, 20.0],
             "volume": [1000.0, 500.0, 200.0, 300.0, 100.0],
             "current_price": [1.0, 1.0, 1.0, 1.0, 1.0],
@@ -166,7 +166,7 @@ def test_frozen_case():
         assert np.isclose(got_ns[ns_uid], expected, atol=_TOL), (
             f"frozen netting set {ns_uid}: {got_ns[ns_uid]} != {expected}"
         )
-    got_obl = {o.uid: o.ead for o in result.obligor_ead}
+    got_obl = {o.obligor_uid: o.ead for o in result.obligor_ead}
     assert set(got_obl) == set(_FROZEN_OBLIGOR_EAD)
     for uid, expected in _FROZEN_OBLIGOR_EAD.items():
         assert np.isclose(got_obl[uid], expected, atol=_TOL), (
@@ -185,8 +185,8 @@ def test_invariants_on_canonical_book():
     book = generate_canonical_exposure_book()
     trades = pd.DataFrame(
         {
-            "uid": book.trade_uid,
-            "netting_set_id": book.trade_netting_set_id,
+            "trade_uid": book.trade_uid,
+            "netting_set_uid": book.trade_netting_set_id,
             "mtm": book.mtm,
             "volume": book.volume,
             "current_price": book.current_price,

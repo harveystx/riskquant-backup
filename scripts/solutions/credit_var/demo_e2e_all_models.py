@@ -84,12 +84,14 @@ def _build_loadings(obligor_df: pd.DataFrame) -> pd.DataFrame:
     """Common MARKET factor + each obligor's sector factor (genuine multi-loading)."""
     return pd.DataFrame(
         [
-            {"uid": int(u), "factor": "MARKET", "loading": 0.30}
-            for u in obligor_df["uid"]
+            {"obligor_uid": int(u), "factor": "MARKET", "loading": 0.30}
+            for u in obligor_df["obligor_uid"]
         ]
         + [
-            {"uid": int(u), "factor": s, "loading": 0.50}
-            for u, s in zip(obligor_df["uid"], obligor_df["sector"], strict=True)
+            {"obligor_uid": int(u), "factor": s, "loading": 0.50}
+            for u, s in zip(
+                obligor_df["obligor_uid"], obligor_df["sector"], strict=True
+            )
         ]
     )
 

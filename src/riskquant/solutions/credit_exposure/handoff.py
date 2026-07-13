@@ -27,7 +27,7 @@ def attach_exposure_ead(
     obligor_table: pd.DataFrame,
     result: CreditExposureResult,
     *,
-    uid_col: str = "uid",
+    uid_col: str = "obligor_uid",
 ) -> pd.DataFrame:
     """Return ``obligor_table`` with an ``ead`` column filled from the exposure run.
 
@@ -37,15 +37,15 @@ def attach_exposure_ead(
     """
     if uid_col not in obligor_table.columns:
         raise ValueError(f"attach_exposure_ead: obligor_table missing '{uid_col}'.")
-    ead_by_uid = result.ead_by_uid()
+    ead_by_obligor_uid = result.ead_by_obligor_uid()
     obligor_uids = [int(u) for u in obligor_table[uid_col]]
     obligor_uids_missing_eads: list[int] = sorted(
-        {u for u in obligor_uids if u not in ead_by_uid}
+        {u for u in obligor_uids if u not in ead_by_obligor_uid}
     )
     if obligor_uids_missing_eads:
         raise ValueError(
             f"attach_exposure_ead: no exposure EAD for obligor uid(s): {obligor_uids_missing_eads}."
         )
     out = obligor_table.copy()
-    out["ead"] = [ead_by_uid[u] for u in obligor_uids]
+    out["ead"] = [ead_by_obligor_uid[u] for u in obligor_uids]
     return out

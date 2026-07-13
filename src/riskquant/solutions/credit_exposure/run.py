@@ -73,8 +73,8 @@ def run_credit_exposure(
     )
 
     # --- trade SoA ---
-    trade_uids = np.array([t.uid for t in req.trades], dtype=np.int64)
-    trade_ns = np.array([t.netting_set_id for t in req.trades], dtype=np.int64)
+    trade_uids = np.array([t.trade_uid for t in req.trades], dtype=np.int64)
+    trade_ns = np.array([t.netting_set_uid for t in req.trades], dtype=np.int64)
     mtm = np.ascontiguousarray(
         np.array([t.mtm for t in req.trades], dtype=np.float64).reshape(-1, 1)
     )  # (M, S=1) deterministic
@@ -134,7 +134,7 @@ def run_credit_exposure(
 
     # --- assemble result (Contract B) ---
     obligor_rows = [
-        ObligorExposure(uid=int(u), ead=float(e))
+        ObligorExposure(obligor_uid=int(u), ead=float(e))
         for u, e in zip(target, ead_by_obligor[:, 0], strict=True)
     ]
     # netting-set detail: join each result netting set back to its obligor.

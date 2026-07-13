@@ -20,14 +20,14 @@ from typing import Any
 import pandas as pd
 
 __all__ = [
-    "ObligorRow",
-    "LoadingRow",
-    "GroupRow",
     "CreditVarRequest",
-    "RiskSummary",
-    "ModelTail",
-    "RunProvenance",
     "CreditVarResult",
+    "GroupRow",
+    "LoadingRow",
+    "ModelTail",
+    "ObligorRow",
+    "RiskSummary",
+    "RunProvenance",
 ]
 
 from pydantic import (
@@ -48,7 +48,7 @@ class ObligorRow(BaseModel):
 
     model_config = _STRICT
 
-    uid: int
+    obligor_uid: int
     ead: float = Field(ge=0.0, description="Exposure at default (>= 0).")
     pd: float = Field(ge=0.0, le=1.0, description="Probability of default in [0, 1].")
     lgd: float = Field(ge=0.0, le=1.0, description="Loss given default in [0, 1].")
@@ -79,14 +79,14 @@ class ObligorRow(BaseModel):
 
 
 class LoadingRow(BaseModel):
-    """One systemic-factor loading for a multi-factor model: obligor `uid` loads
+    """One systemic-factor loading for a multi-factor model: obligor `obligor_uid` loads
     on systemic `factor` with `loading`. The set of distinct `factor` values
     defines the model's systemic factors; per-obligor idiosyncratic weight is the
     engine residual sqrt(1 - sum loading^2)."""
 
     model_config = _STRICT
 
-    uid: int
+    obligor_uid: int
     factor: str = Field(min_length=1)
     loading: float = Field(ge=-1.0, le=1.0)
 
@@ -163,7 +163,7 @@ class CreditVarRequest(BaseModel):
 
     @model_validator(mode="after")
     def _unique_uids(self) -> CreditVarRequest:
-        uids = [o.uid for o in self.obligors]
+        uids = [o.obligor_uid for o in self.obligors]
         if len(uids) != len(set(uids)):
             raise ValueError("duplicate obligor uid(s).")
         return self
@@ -182,11 +182,11 @@ class CreditVarRequest(BaseModel):
                 f"model '{self.model}' requires a non-empty 'loadings' table "
                 "(one row per obligor x systemic factor)."
             )
-        obligor_uids = {o.uid for o in self.obligors}
-        stray = sorted({lo.uid for lo in self.loadings} - obligor_uids)
+        obligor_uids = {o.obligor_uid for o in self.obligors}
+        stray = sorted({lo.obligor_uid for lo in self.loadings} - obligor_uids)
         if stray:
             raise ValueError(f"loadings reference uid(s) not in obligors: {stray}.")
-        uncovered = sorted(obligor_uids - {lo.uid for lo in self.loadings})
+        uncovered = sorted(obligor_uids - {lo.obligor_uid for lo in self.loadings})
         if uncovered:
             raise ValueError(f"obligor(s) have no systemic loadings: {uncovered}.")
         return self
@@ -217,7 +217,7 @@ class CreditVarRequest(BaseModel):
                 f"model '{self.model}' requires a non-empty 'groups' table "
                 "(one row per pool/regime with its parameters)."
             )
-        ungrouped = sorted(o.uid for o in self.obligors if o.group is None)
+        ungrouped = sorted(o.obligor_uid for o in self.obligors if o.group is None)
         if ungrouped:
             raise ValueError(f"obligor(s) have no group: {ungrouped}.")
         names = [g.name for g in self.groups]
@@ -295,7 +295,7 @@ class CreditVarRequest(BaseModel):
         Validation is identical to the dict/JSON path — a bad cell still raises a
         `ValidationError` with a `loc` into `obligors` / `loadings` / `groups`.
         """
-        required = ("uid", "ead", "pd", "lgd")
+        required = ("obligor_uid", "ead", "pd", "lgd")
         missing = [c for c in required if c not in obligor_table.columns]
         if missing:
             raise ValueError(
@@ -310,7 +310,7 @@ class CreditVarRequest(BaseModel):
         )
         obligors = [
             ObligorRow(
-                uid=int(rec["uid"]),
+                obligor_uid=int(rec["obligor_uid"]),
                 ead=float(rec["ead"]),
                 pd=float(rec["pd"]),
                 lgd=float(rec["lgd"]),
@@ -334,7 +334,7 @@ class CreditVarRequest(BaseModel):
                 for name, gp in group_params.items()
             ]
         if loadings_table is not None:
-            lcols = ("uid", "factor", "loading")
+            lcols = ("obligor_uid", "factor", "loading")
             lmissing = [c for c in lcols if c not in loadings_table.columns]
             if lmissing:
                 raise ValueError(
@@ -342,7 +342,7 @@ class CreditVarRequest(BaseModel):
                 )
             kwargs["loadings"] = [
                 LoadingRow(
-                    uid=int(rec["uid"]),
+                    obligor_uid=int(rec["obligor_uid"]),
                     factor=str(rec["factor"]),
                     loading=float(rec["loading"]),
                 )
@@ -477,7 +477,7 @@ class ObligorContribution(BaseModel):
 
     model_config = ConfigDict(extra="forbid", protected_namespaces=())
 
-    uid: int
+    obligor_uid: int
     ead: float
     expected_loss: float
     es_contribution: float  # Euler ES contribution; sums to portfolio ES
@@ -510,7 +510,7 @@ class StressTestObligor(BaseModel):
 
     model_config = ConfigDict(extra="forbid", protected_namespaces=())
 
-    uid: int
+    obligor_uid: int
     ead: float
     lgd: float
     loss: float  # EAD * LGD — the certain loss if this name defaults

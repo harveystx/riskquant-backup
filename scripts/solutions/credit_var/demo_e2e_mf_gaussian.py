@@ -52,24 +52,26 @@ def main():
     loadings_df = pd.DataFrame(
         [
             {
-                "uid": int(uid),
+                "obligor_uid": int(uid),
                 "factor": "MARKET",
                 "loading": rng.integers(low=10, high=20) / 100,
             }
-            for uid in obligor_df["uid"]
+            for uid in obligor_df["obligor_uid"]
         ]
         + [
             {
-                "uid": int(uid),
+                "obligor_uid": int(uid),
                 "factor": sector,
                 "loading": rng.integers(low=25, high=75) / 100,
             }
-            for uid, sector in zip(obligor_df["uid"], obligor_df["sector"], strict=True)
+            for uid, sector in zip(
+                obligor_df["obligor_uid"], obligor_df["sector"], strict=True
+            )
         ]
     )
 
     grouped_loadings_df = loadings_df.groupby(["factor"]).agg(
-        num_obligors=pd.NamedAgg(column="uid", aggfunc="count"),
+        num_obligors=pd.NamedAgg(column="obligor_uid", aggfunc="count"),
         loading_mean=pd.NamedAgg(column="loading", aggfunc="mean"),
         loading_std_dev=pd.NamedAgg(column="loading", aggfunc="std"),
         loading_min=pd.NamedAgg(column="loading", aggfunc="min"),

@@ -35,9 +35,7 @@ def _contract(name: str, **arrays: np.ndarray) -> None:
     print(f"\n  [{name}]")
     for label, arr in arrays.items():
         head = np.array2string(arr.ravel()[:6], precision=2, separator=", ")
-        print(
-            f"    {label:<26} shape={str(arr.shape):<10} dtype={str(arr.dtype):<8} {head}"
-        )
+        print(f"    {label:<26} shape={arr.shape!s:<10} dtype={arr.dtype!s:<8} {head}")
 
 
 def main() -> None:

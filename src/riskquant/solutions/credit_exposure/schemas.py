@@ -5,7 +5,7 @@ Credit-exposure request/result contract (Pydantic, the human edge).
 Locks the two boundaries the pipeline hinges on, as types:
 
   CONTRACT A (input)   trades + netting sets + add-on table + method choice
-  CONTRACT B (output)  per-obligor EAD (uid -> EAD) that feeds the JTD credit
+  CONTRACT B (output)  per-obligor EAD (obligor_uid -> EAD) that feeds the JTD credit
                        layer, plus the netting-set detail behind it.
 
 Validation mirrors ``solutions.credit_var``: a bad field raises a ``ValidationError``
@@ -17,14 +17,14 @@ the add-on table + priced-notional inputs) are enforced against the catalog.
 from __future__ import annotations
 
 __all__ = [
-    "TradeRow",
-    "NettingSetRow",
     "AddOnFactorRow",
     "CreditExposureRequest",
-    "ObligorExposure",
-    "NettingSetExposureRow",
-    "ExposureProvenance",
     "CreditExposureResult",
+    "ExposureProvenance",
+    "NettingSetExposureRow",
+    "NettingSetRow",
+    "ObligorExposure",
+    "TradeRow",
 ]
 
 from collections.abc import Hashable, Mapping
@@ -47,8 +47,8 @@ class TradeRow(BaseModel):
 
     model_config = _STRICT
 
-    uid: int
-    netting_set_id: int
+    trade_uid: int
+    netting_set_uid: int
     mtm: float = Field(description="Current mark-to-market value (valuation output).")
     # Priced-notional inputs — required only for methods with `requires_add_on`.
     volume: float | None = Field(default=None, ge=0.0)
@@ -123,7 +123,7 @@ class CreditExposureRequest(BaseModel):
                 for field in ("volume", "current_price", "asset_subclass_uix"):
                     if getattr(t, field) is None:
                         raise ValueError(
-                            f"trade {i} (uid={t.uid}) missing '{field}', required by "
+                            f"trade {i} (trade_uid={t.trade_uid}) missing '{field}', required by "
                             f"model '{self.model}'."
                         )
         return self
@@ -141,12 +141,12 @@ class CreditExposureRequest(BaseModel):
     ) -> CreditExposureRequest:
         """Build a request from flat DataFrames (notebook / desk ergonomics).
 
-        ``trades`` needs ``uid, netting_set_id, mtm`` (plus ``volume,
+        ``trades`` needs ``trade_uid, netting_set_uid, mtm`` (plus ``volume,
         current_price, asset_subclass_uix`` for CEM); ``netting_sets`` needs
         ``netting_set_uid, obligor_uid, net_collateral``; ``add_on_factors`` needs
         ``subclass_uix, factor``. Extra columns are ignored.
         """
-        _require(trades, ("uid", "netting_set_id", "mtm"), "trades")
+        _require(trades, ("trade_uid", "netting_set_uid", "mtm"), "trades")
         _require(
             netting_sets,
             ("netting_set_uid", "obligor_uid", "net_collateral"),
@@ -154,8 +154,8 @@ class CreditExposureRequest(BaseModel):
         )
         trade_rows = [
             TradeRow(
-                uid=int(r["uid"]),
-                netting_set_id=int(r["netting_set_id"]),
+                trade_uid=int(r["trade_uid"]),
+                netting_set_uid=int(r["netting_set_uid"]),
                 mtm=float(r["mtm"]),
                 volume=_opt_float(r, "volume"),
                 current_price=_opt_float(r, "current_price"),
@@ -196,7 +196,7 @@ class ObligorExposure(BaseModel):
 
     model_config = _STRICT
 
-    uid: int
+    obligor_uid: int
     ead: float
 
 
@@ -231,9 +231,9 @@ class CreditExposureResult(BaseModel):
     netting_set_ead: list[NettingSetExposureRow]
     provenance: ExposureProvenance
 
-    def ead_by_uid(self) -> dict[int, float]:
+    def ead_by_obligor_uid(self) -> dict[int, float]:
         """``{obligor_uid: EAD}`` — the join map for the credit-VaR handoff."""
-        return {o.uid: o.ead for o in self.obligor_ead}
+        return {o.obligor_uid: o.ead for o in self.obligor_ead}
 
 
 def _require(df: pd.DataFrame, cols: tuple[str, ...], name: str) -> None:

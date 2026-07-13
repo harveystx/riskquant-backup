@@ -1,0 +1,43 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../riskquant-emissary"
+		},
+		{
+			"path": "../riskquant-excel"
+		},
+		{
+			"path": "../stx-data-god"
+		}
+	],
+	"settings": {
+		"workbench.editorAssociations": {
+			"**/notebooks/**/*.py": "marimo-notebook"
+		},
+		"git.confirmSync": false,
+		"workbench.tree.indent": 20,
+		"workbench.colorCustomizations": {
+			"editorInlayHint.foreground": "#868686",
+			"editorInlayHint.background": "#1e1e1e33"
+		},
+		"terminal.integrated.defaultProfile.windows": "PowerShell",
+		"terminal.integrated.profiles.windows": {
+			"PowerShell": {
+				"source": "PowerShell",
+				"icon": "terminal-powershell"
+			}
+		},
+		"terminal.integrated.cursorBlinking": true,
+		"terminal.integrated.fontSize": 13,
+		"explorer.confirmDelete": false,
+		"explorer.compactFolders": false,
+		"workbench.iconTheme": "vscode-icons",
+		"window.title": "${dirty}${activeEditorMedium}${separator}${rootName}",
+		"extensions.ignoreRecommendations": false,
+		"debug.toolBarLocation": "docked",
+		"debug.console.fontSize": 13
+	}
+}

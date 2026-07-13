@@ -18,8 +18,8 @@ aggregation is a genuine many-to-one).
 from __future__ import annotations
 
 __all__ = [
-    "EnvironmentalSubclass",
     "CanonicalExposureBook",
+    "EnvironmentalSubclass",
     "generate_canonical_exposure_book",
 ]
 

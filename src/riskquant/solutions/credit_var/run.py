@@ -23,7 +23,7 @@ import hashlib
 import json
 import math
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
@@ -89,7 +89,7 @@ def _engine_version() -> str:
 def _obligor_frame(obligors: list) -> pd.DataFrame:
     return pd.DataFrame(
         {
-            "uid": [o.uid for o in obligors],
+            "uid": [o.obligor_uid for o in obligors],
             "ead": [o.ead for o in obligors],
             "pd": [o.pd for o in obligors],
             "lgd": [o.lgd for o in obligors],
@@ -141,12 +141,12 @@ def _loadings_frame(
     # Only loadings for modeled obligors; forced-default names bypass the model.
     if not request.loadings:
         return None
-    rows = [lo for lo in request.loadings if lo.uid in keep_uids]
+    rows = [lo for lo in request.loadings if lo.obligor_uid in keep_uids]
     if not rows:
         return None
     return pd.DataFrame(
         {
-            "uid": [lo.uid for lo in rows],
+            "uid": [lo.obligor_uid for lo in rows],
             "factor": [lo.factor for lo in rows],
             "loading": [lo.loading for lo in rows],
         }
@@ -203,7 +203,7 @@ def _stress_test_result(request: CreditVarRequest) -> StressTestResult | None:
         return None
     items = [
         StressTestObligor(
-            uid=int(o.uid),
+            obligor_uid=int(o.obligor_uid),
             ead=float(o.ead),
             lgd=float(o.lgd),
             loss=float(o.ead) * float(o.lgd),
@@ -230,7 +230,7 @@ class _Simulated:
 
 def _simulate(request: CreditVarRequest, obligors: list) -> _Simulated:
     """Run the selected model over `obligors` (the unflagged subset)."""
-    keep = {o.uid for o in obligors}
+    keep = {o.obligor_uid for o in obligors}
     inputs = assemble_inputs(
         model_key=request.model,
         obligor_table=_obligor_frame(obligors),
@@ -303,8 +303,8 @@ def _build_loss_matrix(request: CreditVarRequest, alphas: tuple) -> _LossMatrix:
         if request.model == "forced_default"
         else [o for o in request.obligors if o.force_default]
     )
-    forced_uids = {o.uid for o in forced}
-    modeled = [o for o in request.obligors if o.uid not in forced_uids]
+    forced_uids = {o.obligor_uid for o in forced}
+    modeled = [o for o in request.obligors if o.obligor_uid not in forced_uids]
 
     if modeled:
         sim = _simulate(request, modeled)
@@ -330,7 +330,7 @@ def _build_loss_matrix(request: CreditVarRequest, alphas: tuple) -> _LossMatrix:
         forced_rows = np.empty((len(forced), scenarios), dtype=np.float64)
         for i, o in enumerate(forced):
             forced_rows[i, :] = float(o.ead) * float(o.lgd)
-        forced_uid_arr = np.array([int(o.uid) for o in forced], dtype=np.int64)
+        forced_uid_arr = np.array([int(o.obligor_uid) for o in forced], dtype=np.int64)
         if modeled_uids.size:
             loss = np.vstack([modeled_loss, forced_rows])
             uids = np.concatenate([modeled_uids.astype(np.int64), forced_uid_arr])
@@ -426,12 +426,12 @@ def run_credit_var(request: CreditVarRequest | dict) -> CreditVarResult:
         portfolio_losses=portfolio_losses,
         confidence_level=headline_alpha,
     )
-    ead_by_uid = {int(o.uid): float(o.ead) for o in req.obligors}
+    ead_by_uid = {int(o.obligor_uid): float(o.ead) for o in req.obligors}
     es_total = attribution.es_total
     ul_total = attribution.ul_total
     contributions = [
         ObligorContribution(
-            uid=int(uid),
+            obligor_uid=int(uid),
             ead=ead_by_uid.get(int(uid), float("nan")),
             expected_loss=float(attribution.expected_loss[i]),
             es_contribution=float(attribution.es_contribution[i]),
@@ -485,6 +485,6 @@ def run_credit_var(request: CreditVarRequest | dict) -> CreditVarResult:
             seed=req.seed,
             alphas=list(req.alphas),
             input_hash=_input_hash(req),
-            generated_at=datetime.now(timezone.utc).isoformat(),
+            generated_at=datetime.now(UTC).isoformat(),
         ),
     )
