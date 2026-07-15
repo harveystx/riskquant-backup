@@ -12,11 +12,10 @@ dependencies = [
   "numpy>=1.26",
   "pandas>=2.0",
   "openpyxl>=3.1",
-  "matplotlib>=3.10",
   "scipy>=1.15",
   "numba>=0.59",     # Numba 0.59+ officially supports Python 3.11
-  "seaborn>=0.13",
   "pandas-stubs>=2.0",
+  "polars>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -30,9 +29,13 @@ scripts = [
   "python-dotenv>=1.0,<2.0",
   "SQLAlchemy>=2.0,<3.0",
   "psycopg[binary]>=3.1,<4.0",
+  "matplotlib>=3.10",
+  "seaborn>=0.13",
 ]
 notebooks = [
   "marimo[recommended]",
+  "matplotlib>=3.10",
+  "seaborn>=0.13",
 ]
 
 [tool.hatch.build.targets.wheel]

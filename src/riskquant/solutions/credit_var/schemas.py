@@ -455,6 +455,10 @@ class ModelTail(BaseModel):
     var: float
     es: float
 
+    @property
+    def es_to_var_ratio(self) -> float:
+        return self.es / self.var if self.var != 0 else float("nan")
+
 
 class RunProvenance(BaseModel):
     """Audit stamp: enough to reproduce a number."""
