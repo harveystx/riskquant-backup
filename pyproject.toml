@@ -39,7 +39,10 @@ notebooks = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/riskquant"]
+packages = [
+  "src/riskquant",
+  "src/riskquant_lab",
+  ]
 
 [tool.ruff]
 line-length = 88
