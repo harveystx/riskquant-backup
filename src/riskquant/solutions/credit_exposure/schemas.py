@@ -21,9 +21,11 @@ __all__ = [
     "CreditExposureRequest",
     "CreditExposureResult",
     "ExposureProvenance",
+    "HedgingSetRhoRow",
     "NettingSetExposureRow",
     "NettingSetRow",
     "ObligorExposure",
+    "SubclassHedgingSetRow",
     "TradeRow",
 ]
 
@@ -31,6 +33,7 @@ from collections.abc import Hashable, Mapping
 from typing import Any
 
 import pandas as pd
+import polars as pl
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from riskquant.solutions.credit_exposure.catalog import (
@@ -75,6 +78,24 @@ class AddOnFactorRow(BaseModel):
     factor: float = Field(ge=0.0)
 
 
+class SubclassHedgingSetRow(BaseModel):
+    """Maps an asset subclass to its SA-CCR hedging set (house-defined)."""
+
+    model_config = _STRICT
+
+    subclass_uix: int
+    hedging_set_uix: int
+
+
+class HedgingSetRhoRow(BaseModel):
+    """Per-hedging-set supervisory correlation (house-calibrated)."""
+
+    model_config = _STRICT
+
+    hedging_set_uix: int
+    rho: float = Field(ge=0.0, le=1.0)
+
+
 class CreditExposureRequest(BaseModel):
     """A single credit-exposure run, as a JSON payload (Contract A)."""
 
@@ -94,6 +115,25 @@ class CreditExposureRequest(BaseModel):
         ge=0.0,
         le=1.0,
         description="CEM NGR-compression floor; default 0.4 when omitted.",
+    )
+    subclass_hedging_sets: list[SubclassHedgingSetRow] | None = Field(
+        default=None,
+        description="SA-CCR subclass -> hedging-set map; required for 'saccr'.",
+    )
+    hedging_set_correlations: list[HedgingSetRhoRow] | None = Field(
+        default=None,
+        description="SA-CCR per-hedging-set correlation rho; required for 'saccr'.",
+    )
+    saccr_alpha: float | None = Field(
+        default=None,
+        gt=0.0,
+        description="SA-CCR alpha in EAD = alpha*(RC+PFE); default 1.4 when omitted.",
+    )
+    saccr_multiplier_floor: float | None = Field(
+        default=None,
+        gt=0.0,
+        lt=1.0,
+        description="SA-CCR PFE-multiplier floor; default 0.05 when omitted.",
     )
     pfe_coefficient: float | None = Field(
         default=None,
@@ -126,6 +166,13 @@ class CreditExposureRequest(BaseModel):
                             f"trade {i} (trade_uid={t.trade_uid}) missing '{field}', required by "
                             f"model '{self.model}'."
                         )
+        if entry.requires_saccr_config and (
+            not self.subclass_hedging_sets or not self.hedging_set_correlations
+        ):
+            raise ValueError(
+                f"model '{self.model}' requires 'subclass_hedging_sets' and "
+                "'hedging_set_correlations' (the SA-CCR hedging-set config)."
+            )
         return self
 
     @classmethod
@@ -138,6 +185,10 @@ class CreditExposureRequest(BaseModel):
         add_on_factors: pd.DataFrame | None = None,
         pfe_floor: float | None = None,
         pfe_coefficient: float | None = None,
+        subclass_hedging_sets: pd.DataFrame | None = None,
+        hedging_set_correlations: pd.DataFrame | None = None,
+        saccr_alpha: float | None = None,
+        saccr_multiplier_floor: float | None = None,
     ) -> CreditExposureRequest:
         """Build a request from flat DataFrames (notebook / desk ergonomics).
 
@@ -180,6 +231,33 @@ class CreditExposureRequest(BaseModel):
                 )
                 for r in add_on_factors.to_dict("records")
             ]
+        hedging_rows: list[SubclassHedgingSetRow] | None = None
+        if subclass_hedging_sets is not None:
+            _require(
+                subclass_hedging_sets,
+                ("subclass_uix", "hedging_set_uix"),
+                "subclass_hedging_sets",
+            )
+            hedging_rows = [
+                SubclassHedgingSetRow(
+                    subclass_uix=int(r["subclass_uix"]),
+                    hedging_set_uix=int(r["hedging_set_uix"]),
+                )
+                for r in subclass_hedging_sets.to_dict("records")
+            ]
+        rho_rows: list[HedgingSetRhoRow] | None = None
+        if hedging_set_correlations is not None:
+            _require(
+                hedging_set_correlations,
+                ("hedging_set_uix", "rho"),
+                "hedging_set_correlations",
+            )
+            rho_rows = [
+                HedgingSetRhoRow(
+                    hedging_set_uix=int(r["hedging_set_uix"]), rho=float(r["rho"])
+                )
+                for r in hedging_set_correlations.to_dict("records")
+            ]
         return cls(
             model=model,
             trades=trade_rows,
@@ -187,6 +265,10 @@ class CreditExposureRequest(BaseModel):
             add_on_factors=addon_rows,
             pfe_floor=pfe_floor,
             pfe_coefficient=pfe_coefficient,
+            subclass_hedging_sets=hedging_rows,
+            hedging_set_correlations=rho_rows,
+            saccr_alpha=saccr_alpha,
+            saccr_multiplier_floor=saccr_multiplier_floor,
         )
 
 
@@ -234,6 +316,35 @@ class CreditExposureResult(BaseModel):
     def ead_by_obligor_uid(self) -> dict[int, float]:
         """``{obligor_uid: EAD}`` — the join map for the credit-VaR handoff."""
         return {o.obligor_uid: o.ead for o in self.obligor_ead}
+
+    # --- OBLIGOR EAD DATAFRAME
+    @property
+    def obligor_ead_df(self) -> pl.DataFrame:
+        return self.obligor_ead_dataframe()
+
+    def obligor_ead_dataframe(self) -> pl.DataFrame:
+        """Return the obligor-EAD list as a DataFrame (for notebook / desk ergonomics)."""
+        return pl.DataFrame(
+            {
+                "obligor_uid": [o.obligor_uid for o in self.obligor_ead],
+                "ead": [o.ead for o in self.obligor_ead],
+            }
+        )
+
+    # --- NETTING-SET EAD DATAFRAME
+    @property
+    def netting_set_ead_df(self) -> pl.DataFrame:
+        return self.netting_set_ead_dataframe()
+
+    def netting_set_ead_dataframe(self) -> pl.DataFrame:
+        """Return the netting-set-EAD list as a DataFrame (for notebook / desk ergonomics)."""
+        return pl.DataFrame(
+            {
+                "netting_set_uid": [n.netting_set_uid for n in self.netting_set_ead],
+                "obligor_uid": [n.obligor_uid for n in self.netting_set_ead],
+                "ead": [n.ead for n in self.netting_set_ead],
+            }
+        )
 
 
 def _require(df: pd.DataFrame, cols: tuple[str, ...], name: str) -> None:

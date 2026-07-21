@@ -16,6 +16,7 @@ from riskquant.credit.jtd.blocks.forced_default import (
 from riskquant.credit.jtd.blocks.independent_bernoulli import (
     IndependentBernoulliJtdBlock,
 )
+from riskquant.credit.jtd.blocks.marshall_olkin import MarshallOlkinJtdBlock
 from riskquant.credit.jtd.blocks.mf_copula_gaussian import (
     MfGaussianCopulaJtdBlock,
 )
@@ -41,6 +42,7 @@ JtdBlockTypeUnion: TypeAlias = (
     | SfGaussianCopulaJtdBlock
     | SfStudentsTCopulaJtdBlock
     | StressRegimeBernoulliJtdBlock
+    | MarshallOlkinJtdBlock
 )
 
 SfCopulaJtdBlockTypeUnion: TypeAlias = (

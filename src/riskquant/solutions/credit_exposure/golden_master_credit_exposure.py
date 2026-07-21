@@ -31,12 +31,27 @@ _TOL = 1e-6
 
 
 # ============================================================ LAYER 1: invariants
-def _run(model, trades, netting_sets, add_on=None):
+def _run(model, trades, netting_sets, add_on=None, **extra):
     return run_credit_exposure(
         CreditExposureRequest.from_dataframe(
-            trades, netting_sets, model=model, add_on_factors=add_on
+            trades, netting_sets, model=model, add_on_factors=add_on, **extra
         )
     )
+
+
+def _saccr_config_for(add_on):
+    """A house hedging-set config covering every subclass in the add-on table,
+    derived from it so the invariant rides whatever subclasses the fixture has:
+    subclasses split across two hedging sets with distinct correlations."""
+    subs = sorted(int(x) for x in add_on["subclass_uix"])
+    hedging_sets = pd.DataFrame(
+        {
+            "subclass_uix": subs,
+            "hedging_set_uix": [10 if i % 2 == 0 else 20 for i in range(len(subs))],
+        }
+    )
+    correlations = pd.DataFrame({"hedging_set_uix": [10, 20], "rho": [0.40, 0.30]})
+    return hedging_sets, correlations
 
 
 def _gross_add_on_by_netting_set(trades, add_on):
@@ -115,6 +130,56 @@ def assert_contract_invariants(trades, netting_sets, add_on):
     assert (
         abs((CEM_PFE_FLOOR_DEFAULT + CEM_PFE_COEFFICIENT_DEFAULT) - 1.0) < 1e-12
     )  # multiplier caps at 1
+
+    # (7) SA-CCR: EAD = alpha * (RC + PFE). Same structural checks as CEM plus the
+    #     alpha wiring — all input-agnostic, so they ride the evolving fixture.
+    hedging_sets, correlations = _saccr_config_for(add_on)
+
+    def _run_saccr(alpha):
+        return _run(
+            "saccr",
+            trades,
+            netting_sets,
+            add_on,
+            subclass_hedging_sets=hedging_sets,
+            hedging_set_correlations=correlations,
+            saccr_alpha=alpha,
+        )
+
+    saccr = _run_saccr(1.0)
+    saccr_obl = {o.obligor_uid: o.ead for o in saccr.obligor_ead}
+    saccr_ns = {n.netting_set_uid: n.ead for n in saccr.netting_set_ead}
+
+    # 7a. Non-negativity + aggregation conserves + many-to-one is a pure sum.
+    for uid, ead in saccr_obl.items():
+        assert ead >= -_TOL, f"negative SA-CCR obligor EAD {uid}: {ead}"
+    assert abs(sum(saccr_obl.values()) - sum(saccr_ns.values())) <= _TOL, (
+        "SA-CCR aggregation does not conserve"
+    )
+    saccr_per_obligor: dict[int, float] = {}
+    for n in saccr.netting_set_ead:
+        saccr_per_obligor[n.obligor_uid] = (
+            saccr_per_obligor.get(n.obligor_uid, 0.0) + n.ead
+        )
+    for uid, total in saccr_per_obligor.items():
+        assert abs(total - saccr_obl[uid]) <= _TOL, (
+            f"SA-CCR obligor {uid}: netting-set sum {total} != {saccr_obl[uid]}"
+        )
+
+    # 7b. SA-CCR(alpha=1) >= RC: PFE add-on is non-negative on top of the RC term.
+    for uid in saccr_obl:
+        assert saccr_obl[uid] >= rc_obl[uid] - _TOL, (
+            f"obligor {uid}: SA-CCR(alpha=1) {saccr_obl[uid]} < RC {rc_obl[uid]}"
+        )
+
+    # 7c. Alpha-linearity: EAD = alpha * (RC + PFE) and (RC + PFE) is alpha-free,
+    #     so doubling alpha doubles every obligor's EAD. Locks the alpha wiring.
+    saccr2_obl = {o.obligor_uid: o.ead for o in _run_saccr(2.0).obligor_ead}
+    for uid in saccr_obl:
+        assert np.isclose(saccr2_obl[uid], 2.0 * saccr_obl[uid], rtol=1e-9), (
+            f"obligor {uid}: SA-CCR not alpha-linear "
+            f"({saccr2_obl[uid]} != 2 x {saccr_obl[uid]})"
+        )
 
 
 # ============================================================= LAYER 2: frozen case
@@ -212,7 +277,8 @@ def main():
     print("CONTRACT LOCK PASSED")
     print(f"  frozen obligor EAD (hand-computed): {_FROZEN_OBLIGOR_EAD}")
     print("  structural invariants: conservation, many-to-one sum, CEM>=RC,")
-    print("  zero-add-on==RC, NGR compression bounds  (frozen + canonical books)")
+    print("  zero-add-on==RC, NGR compression bounds, SA-CCR>=RC + alpha-linear")
+    print("  (frozen + canonical books; all three exposure models)")
 
 
 if __name__ == "__main__":

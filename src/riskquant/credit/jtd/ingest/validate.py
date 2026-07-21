@@ -521,7 +521,13 @@ def _assert_distinct_columns(frame, contract, factor_name_to_uix, *, ctx):
 
 
 def _semantic_sf_gaussian(
-    frame, *, factor_name_to_uix, factor_kind, chi_nu_by_uix, bundle, ctx
+    frame,
+    *,
+    factor_name_to_uix,
+    factor_kind,
+    chi_nu_by_uix,
+    bundle,
+    ctx,
 ):
     validate_factor_loading_range(
         frame["uid"].to_numpy(dtype=np.int64),
@@ -546,7 +552,13 @@ def _semantic_sf_students_t(
 
 
 def _semantic_mf_gaussian(
-    frame, *, factor_name_to_uix, factor_kind, chi_nu_by_uix, bundle, ctx
+    frame,
+    *,
+    factor_name_to_uix,
+    factor_kind,
+    chi_nu_by_uix,
+    bundle,
+    ctx,
 ):
     """Systemic-kind, coverage, no-duplicate, and sum-beta^2 <= 1 — all checked
     on the long-format loadings relation (the builder then packs CSR)."""
@@ -597,7 +609,13 @@ def _semantic_mf_gaussian(
 
 
 def _semantic_mf_students_t(
-    frame, *, factor_name_to_uix, factor_kind, chi_nu_by_uix, bundle, ctx
+    frame,
+    *,
+    factor_name_to_uix,
+    factor_kind,
+    chi_nu_by_uix,
+    bundle,
+    ctx,
 ):
     """MF systemic loadings checks (coverage / no-dup / sum-beta^2 / systemic
     kind) plus the Student-t chi/nu reconciliation. The systemic side lives on
@@ -618,6 +636,32 @@ def _semantic_mf_students_t(
     validate_chi_nu_against_reference(
         uids, chi_uix, nu, chi_nu_by_uix, factor_name_to_uix
     )
+
+
+def _semantic_marshall_olkin(
+    frame,
+    *,
+    factor_name_to_uix,
+    factor_kind,
+    chi_nu_by_uix,
+    bundle,
+    ctx,
+):
+    """
+    Semantic validation for the Marshall-Olkin Common Shock model.
+    """
+    sys_pd = frame["systemic_pd"].to_numpy(dtype=np.float64)
+
+    # systemic_pd must be bounded [0.0, 1.0).
+    # It must be strictly less than 1.0 to prevent division by zero during the
+    # idiosyncratic decoupling step in the builder: (1 - pd_total) / (1 - systemic_pd)
+    bad = ~((sys_pd >= 0.0) & (sys_pd < 1.0))
+    if bad.any():
+        uids = frame["uid"].to_numpy(dtype=np.int64)
+        raise ValueError(
+            f"{ctx}: 'systemic_pd' must be in [0.0, 1.0) for obligor(s) "
+            f"{uids[bad][:_PREVIEW].tolist()} to prevent infinite survival probabilities."
+        )
 
 
 # Per-model semantic-validator dispatch, DERIVED from the model registry: each

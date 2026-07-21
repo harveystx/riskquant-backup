@@ -204,22 +204,54 @@ def plot_credit_loss_distribution(
 # ======================================================================
 
 
+def _model_colors_small_n(n: int) -> list:
+    """Maximize color distinctness using golden ratio sampling."""
+    import colorsys
+
+    colors = []
+    golden_ratio_conjugate = 0.618033988749895
+
+    for i in range(n):
+        hue = (i * golden_ratio_conjugate) % 1.0
+        # Vary saturation and value slightly for even more distinction
+        saturation = 0.7 + (i % 3) * 0.1
+        value = 0.7 + (i % 2) * 0.2
+        rgb = colorsys.hsv_to_rgb(hue, saturation, value)
+        colors.append(rgb)
+    return colors
+
+
 def _model_colors(n: int) -> list:
-    """A distinct colour per model (tab20 supports up to 20 series)."""
-    cmap = plt.get_cmap("tab20")
-    return [cmap(i % cmap.N) for i in range(n)]
+    """Use colormaps for small n, golden ratio for large n."""
+    if n <= 12:
+        return _model_colors_small_n(n)
+    elif n <= 20:
+        cmap = plt.get_cmap("tab20")
+        return [cmap(i) for i in range(n)]
+    elif n <= 40:
+        cmap1 = plt.get_cmap("tab20")
+        cmap2 = plt.get_cmap("tab20b")
+        colors = [cmap1(i) for i in range(20)]
+        colors.extend([cmap2(i) for i in range(n - 20)])
+        return colors
+    else:
+        # Golden ratio for maximum distinctness with many colors
+        return _model_colors_small_n(n)
 
 
 def plot_loss_distribution_comparison(
     model_losses: dict[str, np.ndarray],
     *,
+    model_var_levels: dict[str, float] | None = None,
     display_percentile: float = 99.9,
     log_y: bool = False,
     linthresh_y: float = 1e-7,
-    figsize: tuple[float, float] = (13, 7),
+    figsize: tuple[float, float] = (14, 7),
+    legend_fontsize: int = 7,
     title: str | None = None,
     ax: Axes | None = None,
     smooth_kde: bool = True,
+    shade_alpha: float = 0.08,  # Very light shading
 ) -> tuple[Figure, Axes]:
     """Overlay reflection-corrected loss-distribution KDEs for many models.
 
@@ -228,6 +260,11 @@ def plot_loss_distribution_comparison(
     so the models are directly comparable on one axis. Degenerate distributions
     (constant losses, e.g. ``forced_default``) are skipped -- they have no smooth
     density and would otherwise raise.
+
+    Parameters
+    ----------
+    shade_alpha : float, default=0.08
+        Alpha for under-curve shading. Set to 0 to disable.
     """
 
     # 1. Determine if the user supplied the axes
@@ -250,7 +287,32 @@ def plot_loss_distribution_comparison(
         if fitted is None:
             continue
         x_values, density = fitted
-        ax.plot(x_values, density, label=label, color=color, linewidth=1.8)
+
+        # Plot the density curve
+        ax.plot(x_values, density, label=label, color=color, linewidth=2.0)
+
+        # Add very light shading under the curve
+        if shade_alpha > 0:
+            ax.fill_between(
+                x_values,
+                0,
+                density,
+                color=color,
+                alpha=shade_alpha,
+                linewidth=0,  # No edge line on the fill
+            )
+
+        # Add VaR vertical line if available
+        if model_var_levels and label in model_var_levels:
+            var_value = model_var_levels[label]
+            # Add vertical line for VaR
+            ax.axvline(
+                x=var_value,
+                color=color,
+                linestyle="--",
+                linewidth=1.5,
+                alpha=0.75,
+            )
 
     if log_y:
         ax.set_yscale("symlog", linthresh=linthresh_y)
@@ -259,13 +321,11 @@ def plot_loss_distribution_comparison(
     ax.set_ylabel("Density")
     ax.set_title(title or "Simulated Credit Loss Distribution by Model (KDE)")
     format_tick_labels(ax, axis="x", style="millions")
-    ax.legend(fontsize=8, ncol=1)
+    ax.legend(fontsize=legend_fontsize, ncol=1, prop={"family": "monospace"})
 
     # 2. Only apply layout adjustments if we created the figure ourselves
     if not ax_provided:
         fig.tight_layout()
-
-    # plt.show() has been removed. The caller handles rendering.
 
     return fig, ax
 
@@ -275,7 +335,7 @@ def plot_ecdf_comparison(
     *,
     display_percentile: float = 99.9,
     n_points: int = 512,
-    figsize: tuple[float, float] = (13, 7),
+    figsize: tuple[float, float] = (14, 7),
     title: str | None = None,
 ) -> tuple[Figure, Axes]:
     """Overlay empirical CDFs of portfolio loss for many models.

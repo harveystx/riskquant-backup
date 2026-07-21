@@ -11,10 +11,10 @@ same way credit-VaR validates against ``requires_loadings`` / ``requires_groups`
 from __future__ import annotations
 
 __all__ = [
-    "ExposureModelEntry",
     "EXPOSURE_MODEL_CATALOG",
-    "supported_exposure_models",
+    "ExposureModelEntry",
     "exposure_model_entry",
+    "supported_exposure_models",
 ]
 
 from dataclasses import dataclass
@@ -22,7 +22,9 @@ from dataclasses import dataclass
 from riskquant.credit.exposure.models import (
     CURRENT_EXPOSURE_METHOD_ID,
     REPLACEMENT_COST_ID,
+    SACCR_ID,
 )
+from riskquant.solutions.credit_exposure.recipes import SUPPORTED_EXPOSURE_RECIPES
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -36,6 +38,9 @@ class ExposureModelEntry:
     #: (volume, current price, asset subclass). False for a pure replacement-cost
     #: method, which needs only marks + collateral.
     requires_add_on: bool = False
+    #: Needs the SA-CCR hedging-set config (subclass->hedging-set map + per-
+    #: hedging-set correlation), analogous to credit-VaR's `requires_loadings`.
+    requires_saccr_config: bool = False
 
 
 EXPOSURE_MODEL_CATALOG: dict[str, ExposureModelEntry] = {
@@ -51,7 +56,23 @@ EXPOSURE_MODEL_CATALOG: dict[str, ExposureModelEntry] = {
         exposure_model_id=CURRENT_EXPOSURE_METHOD_ID,
         requires_add_on=True,
     ),
+    "saccr": ExposureModelEntry(
+        key="saccr",
+        display_name="SA-CCR (house-calibrated)",
+        exposure_model_id=SACCR_ID,
+        requires_add_on=True,
+        requires_saccr_config=True,
+    ),
 }
+
+
+# Guard: every catalog model must have a recipe (mirrors credit_var's guard).
+_missing = set(EXPOSURE_MODEL_CATALOG) - set(SUPPORTED_EXPOSURE_RECIPES)
+if _missing:
+    raise RuntimeError(
+        f"exposure catalog/recipe mismatch: catalog model(s) {sorted(_missing)} "
+        "have no recipe in SUPPORTED_EXPOSURE_RECIPES."
+    )
 
 
 def supported_exposure_models() -> tuple[str, ...]:

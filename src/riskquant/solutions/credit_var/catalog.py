@@ -12,11 +12,11 @@ construction lives in `riskquant.solutions.credit_var.recipe`.
 from __future__ import annotations
 
 __all__ = [
-    "ParamSpec",
-    "ModelEntry",
     "MODEL_CATALOG",
-    "supported_model_keys",
+    "ModelEntry",
+    "ParamSpec",
     "model_entry",
+    "supported_model_keys",
 ]
 
 from dataclasses import dataclass, field
@@ -112,6 +112,15 @@ _STRESS_MULT = ParamSpec(
     max_value=50.0,
     min_inclusive=True,
     max_inclusive=True,
+)
+_SYSTEMIC_PD = ParamSpec(
+    key="systemic_pd",
+    label="Systemic Common-Shock Probability",
+    default=0.02,
+    min_value=0.0,
+    max_value=1.0,
+    min_inclusive=True,
+    max_inclusive=False,
 )
 
 
@@ -211,6 +220,15 @@ MODEL_CATALOG: dict[str, ModelEntry] = {
         "Idiosyncratic weight is the residual sqrt(1 - sum beta^2).",
         params=(),
         requires_loadings=True,
+    ),
+    "marshall_olkin": ModelEntry(
+        key="marshall_olkin",
+        display_name="Marshall-Olkin (Common Shock)",
+        description="Each obligor defaults on its own idiosyncratic shock OR a "
+        "single shared common shock that fires with probability systemic_pd. A "
+        "firing shock defaults the whole cohort at once (deterministic contagion / "
+        "the framework's most extreme tail). Requires PD >= systemic_pd per name.",
+        params=(_SYSTEMIC_PD,),
     ),
     "mf_students_t": ModelEntry(
         key="mf_students_t",

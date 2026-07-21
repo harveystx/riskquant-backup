@@ -180,10 +180,10 @@ from riskquant.credit.factors.simulate.mixed import MixedCreditFactorGenerator
 from riskquant.credit.jtd.engine import run_jtd
 from riskquant.credit.jtd.ingest.bundle import JtdIngestBundle
 from riskquant.credit.jtd.ingest.compile import compile_jtd_portfolio
+from riskquant.credit.jtd.models import JtdModel
 from riskquant.credit.masters.cross_master.compiled import (
     CompiledCreditMasters,
 )
-from riskquant.credit.jtd.models import JtdModel
 from riskquant.credit.masters.factor_universe.ingest import (
     compile_credit_factor_universe,
 )

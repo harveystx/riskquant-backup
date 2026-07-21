@@ -145,6 +145,7 @@ JTD_MODEL_CONTRACTS: Final[dict[JtdModel, JtdModelContract]] = {
         ),
         float_columns=frozenset({"factor_loading", "nu"}),
     ),
+    # MF Copula models
     JtdModel.COPULA_MF_GAUSSIAN: JtdModelContract(
         model=JtdModel.COPULA_MF_GAUSSIAN,
         required_columns=frozenset({OBLIGOR_KEY, "idiosyncratic_factor"}),
@@ -159,6 +160,22 @@ JTD_MODEL_CONTRACTS: Final[dict[JtdModel, JtdModelContract]] = {
         factor_name_columns=frozenset({"idiosyncratic_factor", "chi_squared_factor"}),
         float_columns=frozenset({"nu"}),
         uses_mf_loadings=True,
+    ),
+    # Marshall-Olkin
+    JtdModel.MARSHALL_OLKIN: JtdModelContract(
+        model=JtdModel.MARSHALL_OLKIN,
+        required_columns=frozenset(
+            {
+                OBLIGOR_KEY,
+                "uniform_factor",
+                "systemic_uniform_factor",
+                "systemic_pd",
+            }
+        ),
+        factor_name_columns=frozenset({"uniform_factor", "systemic_uniform_factor"}),
+        float_columns=frozenset({"systemic_pd"}),
+        distinct_columns=frozenset({"uniform_factor"}),
+        uses_mf_loadings=False,
     ),
 }
 
@@ -176,6 +193,7 @@ FACTOR_COLUMN_KIND: Final[dict[str, CreditFactorKind]] = {
     "idiosyncratic_factor": CreditFactorKind.IDIOSYNCRATIC,
     "chi_squared_factor": CreditFactorKind.CHI,
     "uniform_factor": CreditFactorKind.UNIFORM,
+    "systemic_uniform_factor": CreditFactorKind.UNIFORM,
     "beta_factor": CreditFactorKind.BETA_PD,
     "stress_regime_factor": CreditFactorKind.STRESS_INDICATOR,
 }

@@ -24,8 +24,8 @@ from __future__ import annotations
 from riskquant.basel.irb.correlation import basel_corporate_correlation
 
 __all__ = [
-    "AssembledInputs",
     "SUPPORTED_RECIPES",
+    "AssembledInputs",
     "assemble_inputs",
 ]
 
@@ -62,6 +62,8 @@ _STRESS_GLOBAL = "STRESS_GLOBAL"
 _CHI_GLOBAL = "CHI_GLOBAL"
 # forced-default reads no factor; the generator needs >=1
 _FORCED_DUMMY = "FORCED_DUMMY"
+_SYSTEMIC_SHOCK = "SYSTEMIC_SHOCK"  # Marshall-Olkin shared common-shock (UNIFORM)
+_DEFAULT_MO_SYSTEMIC_PD = 0.02
 
 _DEFAULT_RHO = SF_RHO
 _DEFAULT_NU = SF_NU
@@ -619,6 +621,47 @@ def _assemble_stress_regime_bernoulli_grouped(
 
 # Recipe key -> assembler. The key is the stable model identifier the solution
 # dispatches on; the catalog mirrors it (no-drift guard).
+def _assemble_marshall_olkin(
+    obligor_table: pd.DataFrame,
+    params: Mapping[str, float],
+    loadings_table: pd.DataFrame | None = None,
+    group_params: Mapping[str, Mapping[str, float]] | None = None,
+) -> AssembledInputs:
+    """Marshall-Olkin common-shock model.
+
+    Every obligor carries its own idiosyncratic UNIFORM draw plus a single shared
+    UNIFORM common shock that fires with probability `systemic_pd`; a firing shock
+    defaults the whole cohort at once (deterministic contagion). The builder
+    decouples each obligor's marginal PD, and requires PD >= systemic_pd per name.
+    """
+    uids = _uids(obligor_table)
+    systemic_pd = _require(params, "systemic_pd", _DEFAULT_MO_SYSTEMIC_PD)
+    if not (0.0 <= systemic_pd < 1.0):
+        raise ValueError(
+            f"marshall_olkin: systemic_pd={systemic_pd} must be in [0, 1)."
+        )
+
+    uniform_names = [f"U_{int(u):03d}" for u in uids]
+    universe = _universe(
+        [_FactorRow(name=n, kind="UNIFORM") for n in uniform_names]
+        + [_FactorRow(name=_SYSTEMIC_SHOCK, kind="UNIFORM")]
+    )
+    frame = pd.DataFrame(
+        {
+            "uid": uids,
+            "instrument": JtdModel.MARSHALL_OLKIN.name,
+            "uniform_factor": uniform_names,
+            "systemic_uniform_factor": _SYSTEMIC_SHOCK,
+            "systemic_pd": np.full(uids.shape[0], systemic_pd, np.float64),
+        }
+    )
+    return AssembledInputs(
+        masters=_masters(obligor_table, universe),
+        bundle=JtdIngestBundle.from_instrument_frame(frame),
+        obligor_ead=_ead(obligor_table),
+    )
+
+
 SUPPORTED_RECIPES: dict[str, object] = {
     "forced_default": _assemble_forced_default,
     "independent_bernoulli": _assemble_independent_bernoulli,
@@ -632,6 +675,7 @@ SUPPORTED_RECIPES: dict[str, object] = {
     "sf_students_t_basel": _assemble_sf_students_t_basel,
     "mf_gaussian": _assemble_mf_gaussian,
     "mf_students_t": _assemble_mf_students_t,
+    "marshall_olkin": _assemble_marshall_olkin,
 }
 
 

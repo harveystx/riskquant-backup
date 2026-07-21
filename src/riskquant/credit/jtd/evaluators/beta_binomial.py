@@ -1,3 +1,4 @@
+# src/riskquant/credit/jtd/evaluators/beta_binomial.py
 from __future__ import annotations
 
 import numpy as np

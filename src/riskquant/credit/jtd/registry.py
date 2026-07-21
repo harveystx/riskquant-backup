@@ -40,6 +40,7 @@ from riskquant.credit.jtd.blocks.forced_default import ForcedDefaultJtdBlock
 from riskquant.credit.jtd.blocks.independent_bernoulli import (
     IndependentBernoulliJtdBlock,
 )
+from riskquant.credit.jtd.blocks.marshall_olkin import MarshallOlkinJtdBlock
 from riskquant.credit.jtd.blocks.mf_copula_gaussian import MfGaussianCopulaJtdBlock
 from riskquant.credit.jtd.blocks.mf_copula_students_t import (
     MfStudentsTCopulaJtdBlock,
@@ -57,6 +58,9 @@ from riskquant.credit.jtd.ingest.builders.forced_default import (
 )
 from riskquant.credit.jtd.ingest.builders.independent_bernoulli import (
     build_independent_bernoulli_block,
+)
+from riskquant.credit.jtd.ingest.builders.marshall_olkin import (
+    build_marshall_olkin_block,
 )
 from riskquant.credit.jtd.ingest.builders.mf_gaussian import build_mf_gaussian_block
 from riskquant.credit.jtd.ingest.builders.mf_students_t import (
@@ -211,6 +215,19 @@ JTD_MODEL_SPECS: Final[tuple[JtdModelSpec, ...]] = (
         needs_factor_uix=True,
         needs_mf_loadings=True,
         semantic_validator_attr="_semantic_mf_students_t",
+    ),
+    JtdModelSpec(
+        model=JtdModel.MARSHALL_OLKIN,
+        contract=JTD_MODEL_CONTRACTS[JtdModel.MARSHALL_OLKIN],
+        block_type=MarshallOlkinJtdBlock,
+        builder=build_marshall_olkin_block,
+        evaluator_module="marshall_olkin",
+        evaluator_attr="evaluate_marshall_olkin_jtd",
+        compiled_slot="marshall_olkin_jtd_block",
+        bundle_field="marshall_olkin_df",
+        needs_factor_uix=True,
+        needs_mf_loadings=False,
+        semantic_validator_attr="_semantic_marshall_olkin",
     ),
 )
 

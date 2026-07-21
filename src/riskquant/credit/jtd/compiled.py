@@ -29,6 +29,7 @@ from riskquant.credit.jtd.blocks.forced_default import ForcedDefaultJtdBlock
 from riskquant.credit.jtd.blocks.independent_bernoulli import (
     IndependentBernoulliJtdBlock,
 )
+from riskquant.credit.jtd.blocks.marshall_olkin import MarshallOlkinJtdBlock
 from riskquant.credit.jtd.blocks.mf_copula_gaussian import MfGaussianCopulaJtdBlock
 from riskquant.credit.jtd.blocks.mf_copula_students_t import (
     MfStudentsTCopulaJtdBlock,
@@ -62,6 +63,9 @@ class CompiledJtdPortfolio:
     # MF Copula blocks
     mf_gaussian_copula_jtd_block: MfGaussianCopulaJtdBlock | None = None
     mf_students_t_copula_jtd_block: MfStudentsTCopulaJtdBlock | None = None
+
+    # Common-shock blocks
+    marshall_olkin_jtd_block: MarshallOlkinJtdBlock | None = None
 
     # Internal fields derived from the above and used by the engine.
     _blocks: tuple[JtdBlockTypeUnion, ...] = field(init=False, repr=False)

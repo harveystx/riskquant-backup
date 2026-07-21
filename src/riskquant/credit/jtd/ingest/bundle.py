@@ -42,6 +42,7 @@ class JtdIngestBundle:
     sf_students_t_copula_df: pd.DataFrame | None = None
     mf_gaussian_copula_df: pd.DataFrame | None = None
     mf_students_t_copula_df: pd.DataFrame | None = None
+    marshall_olkin_df: pd.DataFrame | None = None
 
     # Shared long-format relation (obligor_uid, factor_name, factor_loading),
     # consumed by every multi-factor model. NOT a per-model frame.
@@ -106,7 +107,7 @@ _missing = [m.name for m in JtdModel if m not in _covered]
 if _missing:
     raise RuntimeError(
         f"JtdIngestBundle has no frame slot for JTD model(s): {_missing}. "
-        "Add them to _MODEL_FIELD_ORDER in credit/jtd/ingest/bundle.py."
+        "Add them to _MODEL_FIELD_ORDER in riskqaunt/credit/jtd/ingest/bundle.py."
     )
 
 # Guard: the per-model attribute names actually exist on the dataclass.

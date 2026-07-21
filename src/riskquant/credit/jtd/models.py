@@ -63,6 +63,11 @@ class JtdModel(IntEnum):
     COPULA_MF_GAUSSIAN = 6  # multi-factor Gaussian copula
     COPULA_MF_STUDENTS_T = 7  # multi-factor Student-t copula
 
+    # ---------------------------------------------------------------------
+    # Marshall-Olkin model
+    # ---------------------------------------------------------------------
+    MARSHALL_OLKIN = 8  # Marshall-Olkin default model
+
 
 # -------------------------------------------------------------------------
 # Derived constants (single source of truth = enum)
@@ -107,3 +112,6 @@ COPULA_SF_T_ID: Final[int] = int(JtdModel.COPULA_SF_STUDENTS_T)
 # Multi-factor copula models
 COPULA_MF_GAUSSIAN_ID: Final[int] = int(JtdModel.COPULA_MF_GAUSSIAN)
 COPULA_MF_T_ID: Final[int] = int(JtdModel.COPULA_MF_STUDENTS_T)
+
+# Marshall-Olkin model
+MARSHALL_OLKIN_ID: Final[int] = int(JtdModel.MARSHALL_OLKIN)

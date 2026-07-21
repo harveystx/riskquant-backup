@@ -121,8 +121,10 @@ class CreditVarRequest(BaseModel):
         default=None,
         description="Per-group factor parameters for grouped models; omit otherwise.",
     )
-    n_scenarios: int = Field(default=100_000, gt=0)
-    alphas: list[float] = Field(default_factory=lambda: [0.95, 0.99, 0.999])
+    n_scenarios: int = Field(default=250_000, gt=0)
+    alphas: list[float] = Field(
+        default_factory=lambda: [0.9500, 0.9750, 0.9900, 0.9990]
+    )
     seed: int = 12345
 
     @property

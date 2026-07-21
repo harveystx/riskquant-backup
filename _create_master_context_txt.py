@@ -413,6 +413,13 @@ def main(profile: str | None = None):
             rq_project_directory / "scripts" / "demos" / "credit" / "jtd",
             # # base_dir_parent / "scripts" / "reporting" / "credit_risk" / "stress_tests",
         ],
+        "credit_jtd": [
+            rq_src_path / "credit" / "factors",
+            rq_src_path / "credit" / "jtd",
+            rq_src_path / "utils",
+            rq_src_path / "_arrays.py",
+            rq_src_path / "jit.py",
+        ],
         "credit_jtd_kernels": [
             rq_src_path / "credit" / "jtd" / "blocks",
             rq_src_path / "credit" / "jtd" / "kernels",
@@ -579,6 +586,7 @@ def main(profile: str | None = None):
             "- Memory locality matters\n"
             "- CPU efficiency matters\n"
             "- Memory efficiency matters\n"
+            "- Correctness over cleverness\n"
             "- Kernels do not contain policy - they are purely computational\n"
             "- Compilers are responsible for policy and orchestration; they must fail fast on invalid inputs\n"
             "- Avoid unnecessary branching in hot paths\n"
@@ -677,6 +685,7 @@ if __name__ == "__main__":
     main(profile="market_data_only")
     main(profile="portfolio_only")
     main(profile="credit")
+    main(profile="credit_jtd")
     main(profile="credit_jtd_kernels")
     main(profile="credit_exposure")
     main(profile="basel")

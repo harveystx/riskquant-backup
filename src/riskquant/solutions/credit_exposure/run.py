@@ -2,11 +2,12 @@
 """
 Credit-exposure entry point: trade table in, per-obligor EAD out.
 
-``run_credit_exposure`` wraps the whole pipeline — build masters, resolve the
-priced notional and supervisory factor, compile the chosen exposure view, run the
-engine, aggregate netting-set EAD up to the obligor — behind one call, returning
-the typed `CreditExposureResult` (Contract B). Deterministic: ``mtm`` is one
-current mark per trade, so the exposure is a single "scenario".
+``run_credit_exposure`` is a thin orchestrator, mirroring
+``solutions.credit_var.run``: it converts the validated request into flat tables,
+hands them to the model recipe (`recipes.assemble_exposure_inputs`) for all
+model-specific assembly, runs the engine, aggregates netting-set EAD up to the
+obligor, and shapes the typed `CreditExposureResult` (Contract B). Deterministic:
+``mtm`` is one current mark per trade, so the exposure is a single "scenario".
 """
 
 from __future__ import annotations
@@ -18,17 +19,9 @@ __all__ = [
 import numpy as np
 import pandas as pd
 
-from riskquant.credit.exposure.add_on.ingest import compile_add_on_factors
-from riskquant.credit.exposure.add_on.resolve import (
-    resolve_quantity_price_effective_notional,
-    resolve_supervisory_factors,
-)
-from riskquant.credit.exposure.compile import compile_exposure_cem, compile_exposure_rc
 from riskquant.credit.exposure.engine import run_exposure
-from riskquant.credit.exposure.models import CURRENT_EXPOSURE_METHOD_ID
 from riskquant.credit.jtd.bridge import aggregate_ead_to_obligor
-from riskquant.credit.masters.netting_set.compiled import CompiledNettingSetMaster
-from riskquant.solutions.credit_exposure.catalog import exposure_model_entry
+from riskquant.solutions.credit_exposure.recipes import assemble_exposure_inputs
 from riskquant.solutions.credit_exposure.schemas import (
     CreditExposureRequest,
     CreditExposureResult,
@@ -46,6 +39,58 @@ def _coerce(request: CreditExposureRequest | dict) -> CreditExposureRequest:
     return CreditExposureRequest.model_validate(request)
 
 
+# --------------------------------------------------------------------------
+# Request -> flat tables (the recipes' authoring contract)
+# --------------------------------------------------------------------------
+
+
+def _trades_frame(req: CreditExposureRequest) -> pd.DataFrame:
+    return pd.DataFrame([t.model_dump() for t in req.trades])
+
+
+def _netting_sets_frame(req: CreditExposureRequest) -> pd.DataFrame:
+    return pd.DataFrame([n.model_dump() for n in req.netting_sets])
+
+
+def _add_on_frame(req: CreditExposureRequest) -> pd.DataFrame | None:
+    if not req.add_on_factors:
+        return None
+    return pd.DataFrame([a.model_dump() for a in req.add_on_factors])
+
+
+def _hedging_sets_frame(req: CreditExposureRequest) -> pd.DataFrame | None:
+    if not req.subclass_hedging_sets:
+        return None
+    return pd.DataFrame([h.model_dump() for h in req.subclass_hedging_sets])
+
+
+def _correlations_frame(req: CreditExposureRequest) -> pd.DataFrame | None:
+    if not req.hedging_set_correlations:
+        return None
+    return pd.DataFrame([c.model_dump() for c in req.hedging_set_correlations])
+
+
+def _params(req: CreditExposureRequest) -> dict[str, float]:
+    """The scalar knobs, present only when the author set them (engine defaults
+    otherwise)."""
+    out: dict[str, float] = {}
+    for key in (
+        "pfe_floor",
+        "pfe_coefficient",
+        "saccr_alpha",
+        "saccr_multiplier_floor",
+    ):
+        value = getattr(req, key)
+        if value is not None:
+            out[key] = float(value)
+    return out
+
+
+# --------------------------------------------------------------------------
+# Entry point
+# --------------------------------------------------------------------------
+
+
 def run_credit_exposure(
     request: CreditExposureRequest | dict,
     *,
@@ -57,71 +102,24 @@ def run_credit_exposure(
     ``obligor_uids``); it defaults to the ascending distinct obligors in the book.
     """
     req = _coerce(request)
-    entry = exposure_model_entry(req.model)
 
-    # --- netting-set master (ascending by uid, the master invariant) ---
-    ns_uid = np.array([n.netting_set_uid for n in req.netting_sets], dtype=np.int64)
-    ns_obligor = np.array([n.obligor_uid for n in req.netting_sets], dtype=np.int64)
-    ns_collateral = np.array(
-        [n.net_collateral for n in req.netting_sets], dtype=np.float64
+    # --- model-specific assembly (the recipe layer) ---
+    inputs = assemble_exposure_inputs(
+        model_key=req.model,
+        trades=_trades_frame(req),
+        netting_sets=_netting_sets_frame(req),
+        params=_params(req),
+        add_on_factors=_add_on_frame(req),
+        subclass_hedging_sets=_hedging_sets_frame(req),
+        hedging_set_correlations=_correlations_frame(req),
     )
-    order = np.argsort(ns_uid, kind="stable")
-    master = CompiledNettingSetMaster(
-        uid=np.ascontiguousarray(ns_uid[order]),
-        obligor_uid=np.ascontiguousarray(ns_obligor[order]),
-        net_collateral=np.ascontiguousarray(ns_collateral[order]),
-    )
+    master = inputs.netting_set_master
 
-    # --- trade SoA ---
-    trade_uids = np.array([t.trade_uid for t in req.trades], dtype=np.int64)
-    trade_ns = np.array([t.netting_set_uid for t in req.trades], dtype=np.int64)
+    # --- run + aggregate ---
     mtm = np.ascontiguousarray(
         np.array([t.mtm for t in req.trades], dtype=np.float64).reshape(-1, 1)
     )  # (M, S=1) deterministic
-
-    # --- compile the chosen view ---
-    if entry.exposure_model_id == CURRENT_EXPOSURE_METHOD_ID:
-        add_on = compile_add_on_factors(
-            pd.DataFrame(
-                {
-                    "subclass_uix": [
-                        a.subclass_uix for a in (req.add_on_factors or [])
-                    ],
-                    "factor": [a.factor for a in (req.add_on_factors or [])],
-                }
-            )
-        )
-        volume = np.array([t.volume for t in req.trades], dtype=np.float64)
-        current_price = np.array(
-            [t.current_price for t in req.trades], dtype=np.float64
-        )
-        subclass = np.array([t.asset_subclass_uix for t in req.trades], dtype=np.int32)
-        effective_notional = resolve_quantity_price_effective_notional(
-            volume=volume, current_price=current_price
-        )
-        supervisory_factor = resolve_supervisory_factors(subclass, add_on)
-        cem_overrides = {}
-        if req.pfe_floor is not None:
-            cem_overrides["pfe_floor"] = req.pfe_floor
-        if req.pfe_coefficient is not None:
-            cem_overrides["pfe_coefficient"] = req.pfe_coefficient
-        compiled = compile_exposure_cem(
-            trade_uids=trade_uids,
-            trade_netting_set_id=trade_ns,
-            trade_effective_notional=effective_notional,
-            trade_supervisory_factor=supervisory_factor,
-            netting_set_master=master,
-            **cem_overrides,
-        )
-    else:  # replacement cost
-        compiled = compile_exposure_rc(
-            trade_uids=trade_uids,
-            trade_netting_set_id=trade_ns,
-            netting_set_master=master,
-        )
-
-    # --- run + aggregate ---
-    ns_paths = run_exposure(exposure=compiled, mtm=mtm)
+    ns_paths = run_exposure(exposure=inputs.compiled, mtm=mtm)
 
     target = (
         np.ascontiguousarray(np.asarray(obligor_uids_target, dtype=np.int64))
