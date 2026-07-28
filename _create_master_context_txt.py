@@ -505,6 +505,17 @@ def main(profile: str | None = None):
             rq_src_path / "scenario_metrics",
             rq_src_path / "jit.py",
         ],
+        "sensitivity_pnl": [
+            # CODE
+            rq_src_path / "sensitivity_pnl",
+            rq_src_path / "_arrays.py",
+            rq_src_path / "jit.py",
+            rq_src_path / "constants.py",
+            # SCRIPTS
+            rq_project_directory / "scripts" / "demos" / "sensitivity_pnl",
+            # TESTS
+            rq_project_directory / "tests" / "sensitivity_pnl",
+        ],
     }
 
     # print("base_dir_parent`:", base_dir_parent)
@@ -689,6 +700,7 @@ if __name__ == "__main__":
     main(profile="credit_jtd_kernels")
     main(profile="credit_exposure")
     main(profile="basel")
+    main(profile="sensitivity_pnl")
     # SOLUTIONS
     main(profile="solutions_credit_var")
     main(profile="solutions_credit_exposure")
