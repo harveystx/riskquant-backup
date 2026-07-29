@@ -363,6 +363,11 @@ def main(profile: str | None = None):
             rq_project_directory / "scripts" / "solutions" / "credit_exposure",
             rq_lab_src_path,
         ],
+        "solutions_sensitivity_pnl": [
+            rq_src_path / "solutions" / "sensitivity_pnl",
+            rq_project_directory / "scripts" / "solutions" / "sensitivity_pnl",
+            rq_lab_src_path,
+        ],
         "market_data_reduced": [
             rq_src_path / "market_data",
             # rq_path / "ingest_fixtures",
@@ -704,6 +709,7 @@ if __name__ == "__main__":
     # SOLUTIONS
     main(profile="solutions_credit_var")
     main(profile="solutions_credit_exposure")
+    main(profile="solutions_sensitivity_pnl")
     # main(profile="ce_jtd")
     # main(profile="risk_quant")
     # main(profile="risk_quant_adhoc")
