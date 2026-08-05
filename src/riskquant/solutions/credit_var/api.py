@@ -22,27 +22,24 @@ Import as::
 from __future__ import annotations
 
 __all__ = [
-    # entry point
-    "run_credit_var",
-    "simulate_portfolio_losses",
-    # request / result contract
+    "MODEL_CATALOG",
     "CreditVarRequest",
     "CreditVarResult",
-    "ObligorRow",
-    "LoadingRow",
     "GroupRow",
-    "RiskSummary",
-    "ModelTail",
-    "RunProvenance",
-    "ObligorContribution",
+    "LoadingRow",
     "LossHistogram",
-    "StressTestResult",
-    "StressTestObligor",
-    # model catalog (the front-end menu + param specs)
-    "MODEL_CATALOG",
     "ModelEntry",
+    "ModelTail",
+    "ObligorContribution",
+    "ObligorRow",
     "ParamSpec",
+    "RiskSummary",
+    "RunProvenance",
+    "StressTestObligor",
+    "StressTestResult",
     "model_entry",
+    "run_credit_var",
+    "simulate_portfolio_losses",
     "supported_model_keys",
 ]
 
