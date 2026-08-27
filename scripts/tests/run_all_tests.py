@@ -1,4 +1,4 @@
-# scripts/tests/run_all_unit_tests.py
+# scripts/tests/run_all_tests.py
 import sys
 from pathlib import Path
 

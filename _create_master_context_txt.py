@@ -521,6 +521,16 @@ def main(profile: str | None = None):
             # TESTS
             rq_project_directory / "tests" / "sensitivity_pnl",
         ],
+        "dependence_stress": [
+            # SOURCE CODE
+            rq_src_path / "dependence_stress",
+            rq_src_path / "jit.py",
+            rq_src_path / "constants.py",
+            # SCRIPTS
+            rq_project_directory / "scripts" / "demos" / "dependence_stress",
+            # TESTS
+            rq_project_directory / "tests" / "dependence_stress",
+        ],
     }
 
     # print("base_dir_parent`:", base_dir_parent)
@@ -724,3 +734,4 @@ if __name__ == "__main__":
     # main(profile="ingest_fixtures_market_data")
     # main(profile="pricer_kernels")
     # main(profile="scenario_metrics")
+    main(profile="dependence_stress")
