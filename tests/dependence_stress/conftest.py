@@ -49,3 +49,4 @@ def tied() -> FloatArray:
         ],
         dtype=np.float64,
     )
+

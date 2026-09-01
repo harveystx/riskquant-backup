@@ -8,41 +8,47 @@ version = "0.1.0"
 description = "Quantitative risk management library"
 readme = "README.md"
 requires-python = ">=3.11"
+
 dependencies = [
-  "numpy>=1.26",
-  "pandas>=2.0",
-  "openpyxl>=3.1",
-  "scipy>=1.15",
-  "numba>=0.59",     # Numba 0.59+ officially supports Python 3.11
-  "pandas-stubs>=2.0",
-  "polars>=1.0",
+    "numpy>=1.26",
+    "pandas>=2.0",
+    "openpyxl>=3.1",
+    "scipy>=1.15",
+    "scikit-learn>=1.9",
+    "numba>=0.59",
+    "pandas-stubs>=2.0",
+    "polars>=1.0",
 ]
 
 [project.optional-dependencies]
+
 dev = [
-  "ruff>=0.6",
-  "pytest>=8.0",
-  "pytest-cov>=5.0",
-  "mypy>=1.10",      # Added for strict array/type validation
+    "ruff>=0.6",
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "mypy>=1.10",
+    "hypothesis>=6.0",
 ]
+
 scripts = [
-  "python-dotenv>=1.0,<2.0",
-  "SQLAlchemy>=2.0,<3.0",
-  "psycopg[binary]>=3.1,<4.0",
-  "matplotlib>=3.10",
-  "seaborn>=0.13",
+    "python-dotenv>=1.0,<2.0",
+    "SQLAlchemy>=2.0,<3.0",
+    "psycopg[binary]>=3.1,<4.0",
+    "matplotlib>=3.10",
+    "seaborn>=0.13",
 ]
+
 notebooks = [
-  "marimo[recommended]",
-  "matplotlib>=3.10",
-  "seaborn>=0.13",
+    "marimo[recommended]",
+    "matplotlib>=3.10",
+    "seaborn>=0.13",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = [
-  "src/riskquant",
-  "src/riskquant_lab",
-  ]
+    "src/riskquant",
+    "src/riskquant_lab",
+]
 
 [tool.ruff]
 line-length = 88
@@ -50,16 +56,17 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = [
-    "E",   # pycodestyle errors
-    "F",   # pyflakes
-    "I",   # isort
-    "N",   # pep8-naming
-    "UP",  # pyupgrade (will enforce 3.11 modernizations)
-    "B",   # flake8-bugbear
-    "SIM", # flake8-simplify
-    "NPY", # numpy-specific rules
-    "RUF", # Ruff-specific rules
+    "E",
+    "F",
+    "I",
+    "N",
+    "UP",
+    "B",
+    "SIM",
+    "NPY",
+    "RUF",
 ]
+
 ignore = ["E501"]
 fixable = ["ALL"]
 
@@ -71,3 +78,50 @@ quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+mypy_path = "src"
+explicit_package_bases = true
+namespace_packages = true
+
+[[tool.mypy.overrides]]
+module = [
+    "dcor",
+    "dcor.*",
+    "sklearn",
+    "sklearn.*",
+    "scipy",
+    "scipy.*",
+    "seaborn",
+    "seaborn.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Numba ships partial annotations: prange is declared non-iterable,
+# get_thread_id is not re-exported, and the jit decorators are untyped.
+# Skipping the follow resolves the whole surface to Any, which is the
+# honest description of an untyped compiler API.
+module = [
+    "numba",
+    "numba.*",
+]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# Numba's decorators are untyped, so every kernel would otherwise trip
+# disallow_untyped_decorators. The kernels carry explicit nb signatures
+# and full annotations; only the decorator's own typing is unavailable.
+module = [
+    "riskquant.dependence._kernels.*",
+    "riskquant.observations._kernels",
+    "riskquant.market_state._kernels",
+]
+disallow_untyped_decorators = false
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

@@ -108,6 +108,55 @@ IV_SOLVER_FAILED_SENTINEL = -1.0
 MIN_RELIABLE_VEGA_OVER_FWD: float = 1e-3
 
 
+# ==============================================================================
+# DEPENDENCE ESTIMATION CONSTANTS
+# ==============================================================================
+
+#: Minimum observations (S) required by every dependence estimator. Two points
+#: define a line, so Pearson is computable at S = 2 (and degenerate: |rho| = 1).
+#: Below that the sample covariance is undefined.
+MIN_DEPENDENCE_OBSERVATIONS: int = 2
+
+#: Minimum variables (K) required. A 1x1 dependence matrix carries no
+#: information; pairwise estimators need at least one off-diagonal pair.
+MIN_DEPENDENCE_VARIABLES: int = 2
+
+#: Maximum observation count. Forced by ``sort_order`` being ``np.int32`` and,
+#: independently, by the requirement that average ranks (integers and
+#: half-integers up to S) be exactly representable in float64.
+MAX_DEPENDENCE_OBSERVATIONS: int = 2**31
+
+#: Closed interval containing every value a correlation-like estimator can
+#: return in exact arithmetic.
+CORRELATION_LOWER_BOUND: float = -1.0
+CORRELATION_UPPER_BOUND: float = +1.0
+
+#: Exact diagonal of a correlation-like dependence matrix. Pearson, Spearman
+#: and Kendall tau-b all equal 1 for a variable against itself; the value is
+#: asserted, never estimated.
+UNIT_DEPENDENCE_DIAGONAL: float = 1.0
+
+#: Engine-wide numerical excursion tolerance for declared value ranges.
+#:
+#: This is a NUMERICAL tolerance, not a statistical parameter. It bounds the
+#: floating-point error of a length-S inner product of unit-norm rows, whose
+#: worst case grows like S * eps: at S = 1e6 that is about 2.2e-10. A tolerance
+#: of 1e-9 sits two orders above the achievable rounding error and nine orders
+#: below any statistically meaningful difference.
+#:
+#: An excursion inside the tolerance is clamped to the declared bound. An
+#: excursion beyond it is an implementation defect and RAISES. A finite declared
+#: range alone never licenses clamping.
+NUMERICAL_EXCURSION_TOLERANCE: float = 1e-9
+
+#: MAD-to-sigma consistency factor for a normal distribution: 1 / Phi^-1(0.75).
+MAD_TO_SIGMA_NORMAL: float = 1.4826
+
+#: Default degrees-of-freedom correction for cross-sectional volatility
+#: normalisation in the market-state indices.
+MARKET_STATE_DEFAULT_DDOF: int = 1
+
+
 ###############################################################################
 #                                                                             #
 #                            CREDIT RISK CONSTANTS                            #

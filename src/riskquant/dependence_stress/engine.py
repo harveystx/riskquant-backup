@@ -11,6 +11,7 @@ aggregate.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 import numpy as np
@@ -20,10 +21,19 @@ from . import validation as val
 from .copulas import GaussianCopula, TCopula
 from .permutations import (
     DependenceTransformer,
+    _apply_permutation_unchecked,
+    _iter_transform_trusted,
     _transform_trusted,
 )
-from .tails import Comonotonic, LowerTailAlignment
+from .tails import (
+    Comonotonic,
+    DualTailAlignment,
+    LowerTailAlignment,
+    UpperTailAlignment,
+)
 from .types import DependenceStressResult, FloatArray, IntArray, TailOrder
+
+_DEFAULT_TAIL_PROBABILITY = 0.05
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, eq=False)
@@ -32,9 +42,19 @@ class DependenceStressEngine:
     High-level empirical dependence-stress engine.
 
     The engine accepts a domain-agnostic K x S empirical observation
-    matrix and produces K x S matrices holding exactly the same row-wise
-    observations rearranged across scenarios. No observation is created,
-    destroyed, scaled, rounded, or interpolated.
+    matrix and rearranges each row across scenarios. No observation is
+    created, destroyed, scaled, rounded, or interpolated.
+
+    Every transformation returns exactly two first-class outputs:
+
+        permutations    K x S int64   the dependence stress itself
+        portfolio_pnl   S   float64   sum_k over the rearranged rows
+
+    THE PERMUTATION IS THE DEPENDENCE STRESS.
+    THE S-VECTOR IS THE STRESSED PORTFOLIO SCENARIO OUTPUT.
+    THE K x S STRESSED MATRIX IS AN OPTIONAL DERIVED REPRESENTATION,
+    available through ``stressed_matrix()`` and never built by the
+    production path.
 
     Parameters
     ----------
@@ -142,7 +162,7 @@ class DependenceStressEngine:
 
     def apply_lower_tail_alignment(
         self,
-        tail_probability: float = 0.05,
+        tail_probability: float = _DEFAULT_TAIL_PROBABILITY,
         *,
         tail_order: TailOrder = "comonotonic",
         preserve_non_tail_order: bool = True,
@@ -157,6 +177,48 @@ class DependenceStressEngine:
         return self._run(
             LowerTailAlignment(
                 tail_probability=tail_probability,
+                tail_order=tail_order,
+                preserve_non_tail_order=preserve_non_tail_order,
+            ),
+            rng=rng,
+            audit=audit,
+        )
+
+    def apply_upper_tail_alignment(
+        self,
+        tail_probability: float = _DEFAULT_TAIL_PROBABILITY,
+        *,
+        tail_order: TailOrder = "comonotonic",
+        preserve_non_tail_order: bool = True,
+        rng: np.random.Generator | None = None,
+        audit: bool = False,
+    ) -> DependenceStressResult:
+        """Engineer empirical upper-tail co-occurrence directly."""
+        return self._run(
+            UpperTailAlignment(
+                tail_probability=tail_probability,
+                tail_order=tail_order,
+                preserve_non_tail_order=preserve_non_tail_order,
+            ),
+            rng=rng,
+            audit=audit,
+        )
+
+    def apply_dual_tail_alignment(
+        self,
+        lower_probability: float = _DEFAULT_TAIL_PROBABILITY,
+        upper_probability: float = _DEFAULT_TAIL_PROBABILITY,
+        *,
+        tail_order: TailOrder = "comonotonic",
+        preserve_non_tail_order: bool = True,
+        rng: np.random.Generator | None = None,
+        audit: bool = False,
+    ) -> DependenceStressResult:
+        """Engineer co-occurrence at both extremes simultaneously."""
+        return self._run(
+            DualTailAlignment(
+                lower_probability=lower_probability,
+                upper_probability=upper_probability,
                 tail_order=tail_order,
                 preserve_non_tail_order=preserve_non_tail_order,
             ),
@@ -227,6 +289,112 @@ class DependenceStressEngine:
         )
 
     # ==================================================================
+    # Streaming Monte Carlo
+    # ==================================================================
+
+    def iter_results(
+        self,
+        transformer: DependenceTransformer,
+        *,
+        rng: np.random.Generator | None = None,
+        n_realizations: int,
+        audit: bool = False,
+    ) -> Iterator[DependenceStressResult]:
+        """
+        Stream many stress realisations, one at a time.
+
+        Intended for Monte Carlo estimation of the finite-sample
+        distribution a stochastic stress specification induces. Memory
+        stays bounded by a single realisation, so 10,000 draws cost the
+        same resident memory as one:
+
+            base data       K x S   owned once by the engine
+            permutation     K x S   one live realisation
+            portfolio_pnl   S       one live realisation
+
+        Nothing is accumulated. A caller that only needs a downstream
+        scalar per draw retains only that scalar::
+
+            rng = np.random.default_rng(seed)
+            tail_losses = [
+                downstream_metric(result.portfolio_pnl)
+                for result in engine.iter_results(
+                    copula,
+                    rng=rng,
+                    n_realizations=10_000,
+                )
+            ]
+
+        This is Monte Carlo estimation, not a bootstrap: the empirical
+        observations are never resampled, only re-paired.
+
+        The same initial generator state gives the same SEQUENCE of
+        realisations. That is reproducibility of a stochastic sequence,
+        not determinism of the method.
+
+        Parameters
+        ----------
+        transformer:
+            Object implementing ``DependenceTransformer``.
+        rng:
+            Explicit generator, required for a stochastic transformer.
+            The whole sequence is drawn from this one generator, so its
+            state advances between realisations.
+        n_realizations:
+            Number of realisations to yield. Zero yields nothing.
+        audit:
+            Run the full structural audit on every realisation. Costly;
+            useful when validating a new transformer.
+
+        Yields
+        ------
+        DependenceStressResult
+        """
+        if not isinstance(transformer, DependenceTransformer):
+            raise TypeError(
+                "transformer must implement the DependenceTransformer protocol "
+                "(requires_rng, build_permutation)."
+            )
+
+        return _iter_transform_trusted(
+            self.data,
+            transformer,
+            rng,
+            n_realizations=n_realizations,
+            audit=audit,
+        )
+
+    # ==================================================================
+    # Optional derived representation
+    # ==================================================================
+
+    def stressed_matrix(
+        self,
+        result: DependenceStressResult,
+    ) -> FloatArray:
+        """
+        Reconstruct the full stressed K x S matrix for a result.
+
+        The stressed matrix is an optional derived representation, not a
+        result field. Call this only for audit, diagnostics, debugging,
+        demonstration, or a consumer that genuinely needs row-level
+        stressed observations.
+
+        Returns
+        -------
+        FloatArray
+            Owned K x S matrix satisfying
+            ``stressed[k, s] == data[k, permutations[k, s]]``, with every
+            row's empirical marginal preserved exactly.
+        """
+        permutations = val.validate_permutation_matrix(
+            result.permutations,
+            expected_shape=self.shape,
+        )
+
+        return _apply_permutation_unchecked(self.data, permutations)
+
+    # ==================================================================
     # Diagnostics
     # ==================================================================
 
@@ -294,14 +462,29 @@ class DependenceStressEngine:
         """
         Verify a complete result against the base matrix.
 
-        Audit operation. Checks permutation validity, exact marginal
-        preservation, and exact reproduction of the stressed matrix from
-        the recorded permutation.
+        Audit operation. Reconstructs the stressed matrix, then checks
+        permutation validity, exact marginal preservation, exact
+        reproduction from the recorded permutation, and agreement
+        between ``result.portfolio_pnl`` and the scenario sums of the
+        reconstruction.
+
+        Cost is O(K S log S) plus one K x S allocation. Do not call it
+        on every production transformation.
         """
-        return val.validate_transformation(
+        stressed = self.stressed_matrix(result)
+
+        if not val.validate_transformation(
             self.data,
-            result.stressed,
+            stressed,
             result.permutations,
+        ):
+            return False
+
+        return bool(
+            np.array_equal(
+                stressed.sum(axis=0),
+                result.portfolio_pnl,
+            )
         )
 
     @staticmethod

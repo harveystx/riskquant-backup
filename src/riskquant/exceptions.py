@@ -1,4 +1,4 @@
-# riskquant/exceptions.py
+# src/riskquant/exceptions.py
 
 
 class PrettyKeyError(KeyError):

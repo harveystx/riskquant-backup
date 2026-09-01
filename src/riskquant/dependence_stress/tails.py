@@ -173,6 +173,165 @@ class LowerTailAlignment:
 
 
 @dataclass(frozen=True, slots=True)
+class UpperTailAlignment:
+    """
+    Non-parametric upper-tail alignment transformer.
+
+    The highest ``n_tail = max(1, ceil(q * S))`` observations of every row
+    move into the same scenario slots ``S - n_tail .. S-1``. The rows
+    therefore realize their highest outcomes together.
+    """
+
+    tail_probability: float = 0.05
+    tail_order: TailOrder = "comonotonic"
+    preserve_non_tail_order: bool = True
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "tail_probability",
+            validate_probability(self.tail_probability),
+        )
+
+        if self.tail_order not in ("comonotonic", "random"):
+            raise ValueError(
+                f"unsupported tail_order={self.tail_order!r}; "
+                "expected 'comonotonic' or 'random'."
+            )
+
+    @property
+    def requires_rng(self) -> bool:
+        return self.tail_order == "random"
+
+    def build_permutation(
+        self,
+        data: FloatArray,
+        rng: np.random.Generator | None = None,
+    ) -> IntArray:
+
+        k, s = data.shape
+        n_tail = max(1, int(np.ceil(self.tail_probability * s)))
+
+        sorted_indices = np.argsort(
+            data,
+            axis=1,
+            kind="stable",
+        ).astype(np.int64, copy=False)
+
+        permutations = np.empty((k, s), dtype=np.int64, order="C")
+
+        # Upper tail occupies the last n_tail slots
+        tail_block = sorted_indices[:, s - n_tail :]
+
+        if self.tail_order == "random":
+            generator = validate_rng(rng)
+            permutations[:, s - n_tail :] = generator.permuted(tail_block, axis=1)
+        else:
+            permutations[:, s - n_tail :] = tail_block
+
+        # Non-tail block occupies the first S - n_tail slots
+        if n_tail < s:
+            non_tail_block = sorted_indices[:, : s - n_tail]
+
+            if self.preserve_non_tail_order:
+                permutations[:, : s - n_tail] = np.sort(non_tail_block, axis=1)
+            else:
+                permutations[:, : s - n_tail] = non_tail_block
+
+        return permutations
+
+
+@dataclass(frozen=True, slots=True)
+class DualTailAlignment:
+    """
+    Non-parametric dual-tail alignment transformer.
+
+    The lowest `n_lower` observations move into slots `0 .. n_lower-1`.
+    The highest `n_upper` observations move into slots `S - n_upper .. S-1`.
+    This enforces extreme co-occurrence at both ends of the marginals,
+    essential for risk factors with mixed long/short exposures.
+    """
+
+    lower_probability: float = 0.05
+    upper_probability: float = 0.05
+    tail_order: TailOrder = "comonotonic"
+    preserve_non_tail_order: bool = True
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "lower_probability",
+            validate_probability(self.lower_probability),
+        )
+        object.__setattr__(
+            self,
+            "upper_probability",
+            validate_probability(self.upper_probability),
+        )
+
+        if self.lower_probability + self.upper_probability >= 1.0:
+            raise ValueError(
+                "The sum of lower and upper tail probabilities must be "
+                f"strictly less than 1.0; got {self.lower_probability + self.upper_probability}"
+            )
+
+        if self.tail_order not in ("comonotonic", "random"):
+            raise ValueError(
+                f"unsupported tail_order={self.tail_order!r}; "
+                "expected 'comonotonic' or 'random'."
+            )
+
+    @property
+    def requires_rng(self) -> bool:
+        return self.tail_order == "random"
+
+    def build_permutation(
+        self,
+        data: FloatArray,
+        rng: np.random.Generator | None = None,
+    ) -> IntArray:
+
+        k, s = data.shape
+
+        n_lower = max(1, int(np.ceil(self.lower_probability * s)))
+        n_upper = max(1, int(np.ceil(self.upper_probability * s)))
+
+        sorted_indices = np.argsort(
+            data,
+            axis=1,
+            kind="stable",
+        ).astype(np.int64, copy=False)
+
+        permutations = np.empty((k, s), dtype=np.int64, order="C")
+
+        # 1. Lower Tail Block
+        lower_block = sorted_indices[:, :n_lower]
+
+        # 2. Upper Tail Block
+        upper_block = sorted_indices[:, s - n_upper :]
+
+        if self.tail_order == "random":
+            generator = validate_rng(rng)
+            permutations[:, :n_lower] = generator.permuted(lower_block, axis=1)
+            permutations[:, s - n_upper :] = generator.permuted(upper_block, axis=1)
+        else:
+            permutations[:, :n_lower] = lower_block
+            permutations[:, s - n_upper :] = upper_block
+
+        # 3. Non-Tail (Middle) Block
+        if n_lower + n_upper < s:
+            middle_block = sorted_indices[:, n_lower : s - n_upper]
+
+            if self.preserve_non_tail_order:
+                # Re-sorting the original indices ascending restores their original relative ordering
+                permutations[:, n_lower : s - n_upper] = np.sort(middle_block, axis=1)
+            else:
+                permutations[:, n_lower : s - n_upper] = middle_block
+
+        return permutations
+
+
+@dataclass(frozen=True, slots=True)
 class Comonotonic:
     """
     Extreme positive-dependence empirical benchmark.

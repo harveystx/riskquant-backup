@@ -187,6 +187,42 @@ def empirical_lower_tail_cooccurrence(
     )
 
 
+def empirical_upper_tail_cooccurrence(
+    data: FloatArray,
+    threshold: float = 0.05,
+) -> FloatArray:
+    """
+    Finite-sample empirical upper-tail co-occurrence.
+
+    Calculates the proportion of shared scenarios among the highest
+    `n_tail = max(1, ceil(threshold * S))` observations for every pair.
+    """
+    probability = validate_probability(threshold)
+    matrix = validate_observation_matrix(data)
+    _, s = matrix.shape
+
+    n_tail = max(1, int(np.ceil(probability * s)))
+
+    sorted_indices = np.argsort(matrix, axis=1, kind="stable")
+
+    tail_indicator = np.zeros(matrix.shape, dtype=np.float64, order="C")
+
+    # Place 1.0 at the original scenario indices of the highest n_tail elements
+    np.put_along_axis(
+        tail_indicator,
+        sorted_indices[:, s - n_tail :],
+        1.0,
+        axis=1,
+    )
+
+    joint_count = tail_indicator @ tail_indicator.T
+
+    return np.ascontiguousarray(
+        joint_count / n_tail,
+        dtype=np.float64,
+    )
+
+
 #: Deprecated alias retained for backward compatibility.
 #:
 #: The name suggests the asymptotic copula coefficient, which this

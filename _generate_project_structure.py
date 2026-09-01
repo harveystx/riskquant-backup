@@ -23,6 +23,9 @@ def generate_template_tree(
         ".vscode",
         ".idea",
         "riskquant.egg-info",
+        "_deprecated",
+        "_deprecated_v1",
+        "_deprecated_v2",
     }
     ignore_files = {
         ".DS_Store",

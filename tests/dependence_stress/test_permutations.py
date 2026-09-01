@@ -13,13 +13,25 @@ from riskquant.dependence_stress.permutations import (
     apply_permutation,
     build_rank_permutation,
     comonotonic_permutation,
+    reconstruct_stressed,
     transform_empirical_matrix,
 )
 from riskquant.dependence_stress.tails import Comonotonic
-from riskquant.dependence_stress.types import FloatArray
+from riskquant.dependence_stress.types import DependenceStressResult, FloatArray
 from riskquant.dependence_stress.validation import validate_permutation_matrix
 
 SMALL = np.array([[5.0, 1.0, 3.0], [2.0, 4.0, 6.0]])
+
+
+def stressed(base: FloatArray, result: DependenceStressResult) -> FloatArray:
+    """
+    Reconstruct the stressed K x S matrix for a result.
+
+    The stressed matrix is no longer a result field. Tests that need
+    row-level stressed observations reconstruct it explicitly, which is
+    exactly what a production audit consumer does.
+    """
+    return reconstruct_stressed(base, result.permutations)
 
 
 def test_build_rank_permutation_transfers_score_order() -> None:
@@ -149,9 +161,11 @@ def test_transform_accepts_non_canonical_input(base: FloatArray) -> None:
     awkward = np.asfortranarray(base.astype(np.float32))
 
     result = transform_empirical_matrix(awkward, Comonotonic())
+    reconstructed = stressed(base, result)
 
-    assert result.stressed.dtype == np.float64
-    assert result.stressed.flags.c_contiguous
+    assert reconstructed.dtype == np.float64
+    assert reconstructed.flags.c_contiguous
+    assert result.portfolio_pnl.dtype == np.float64
 
 
 def test_audit_mode_raises_on_a_lying_transformer(base: FloatArray) -> None:
@@ -177,7 +191,14 @@ def test_audit_mode_raises_on_a_lying_transformer(base: FloatArray) -> None:
     # Without audit the invalid permutation is applied silently. This is
     # the documented cost of the trusted path and the reason audit exists.
     unaudited = transform_empirical_matrix(base, liar)
-    assert np.array_equal(unaudited.stressed[:, 0], unaudited.stressed[:, 1])
+
+    # take_along_axis directly, not reconstruct_stressed: the whole point
+    # is that this permutation is invalid, so the validated reconstruction
+    # path would (correctly) refuse it.
+    reconstructed = np.take_along_axis(base, unaudited.permutations, axis=1)
+
+    assert np.array_equal(reconstructed[:, 0], reconstructed[:, 1])
+    assert np.array_equal(reconstructed.sum(axis=0), unaudited.portfolio_pnl)
 
 
 def test_protocol_runtime_check() -> None:

@@ -1,4 +1,4 @@
-# src/riskquant/numba.py
+# src/riskquant/jit.py
 
 """
 Centralized Numba decorator definitions used throughout RiskQuant.
@@ -30,25 +30,69 @@ from __future__ import annotations
 from functools import partial
 
 import numba as nb
+from numba.core import types as nb_types
 
 # Type aliases for Numba-compiled functions — enforce C-contiguous layout for all
 # arrays to ensure the compiler emits straight-line SIMD loops with no dynamic
 # stride checks. These are used in type signatures for compiled functions below.
-_F64_1D = nb.float64[::1]
-_F64_2D = nb.float64[:, ::1]
-_F64_3D = nb.float64[:, :, ::1]
-_F64_4D = nb.float64[:, :, :, ::1]
+_F64_1D = nb_types.float64[::1]
+_F64_2D = nb_types.float64[:, ::1]
+_F64_3D = nb_types.float64[:, :, ::1]
+_F64_4D = nb_types.float64[:, :, :, ::1]
 
-_F32_1D = nb.float32[::1]
-_F32_2D = nb.float32[:, ::1]
-_F32_3D = nb.float32[:, :, ::1]
-_F32_4D = nb.float32[:, :, :, ::1]
+_F32_1D = nb_types.float32[::1]
+_F32_2D = nb_types.float32[:, ::1]
+_F32_3D = nb_types.float32[:, :, ::1]
+_F32_4D = nb_types.float32[:, :, :, ::1]
 
-_I64_1D = nb.int64[::1]
-_I32_1D = nb.int32[::1]
-_I8_1D = nb.int8[::1]
+_I64_1D = nb_types.int64[::1]
+_I64_2D = nb_types.int64[:, ::1]
+_I64_3D = nb_types.int64[:, :, ::1]
+_I64_4D = nb_types.int64[:, :, :, ::1]
 
-_BOOL_1D = nb.bool_[::1]
+_I32_1D = nb_types.int32[::1]
+_I32_2D = nb_types.int32[:, ::1]
+_I32_4D = nb_types.int32[:, :, :, ::1]
+_I32_3D = nb_types.int32[:, :, ::1]
+
+_I8_1D = nb_types.int8[::1]
+_I8_2D = nb_types.int8[:, ::1]
+_I8_3D = nb_types.int8[:, :, ::1]
+_I8_4D = nb_types.int8[:, :, :, ::1]
+
+_BOOL_1D = nb_types.bool_[::1]
+_BOOL_2D = nb_types.bool_[:, ::1]
+_BOOL_3D = nb_types.bool_[:, :, ::1]
+_BOOL_4D = nb_types.bool_[:, :, :, ::1]
+
+# Read-only counterparts. A NumPy array with ``writeable=False`` is typed by
+# Numba as ``readonly array(...)``, which does NOT unify with the mutable
+# aliases above: passing a frozen array to a kernel declared with ``_F64_2D``
+# raises a TypeError at dispatch. The compiled sample and rank representation
+# own their storage and mark every array non-writeable, so every kernel that
+# READS one of them must declare the read-only type. Kernels that WRITE an
+# output keep the mutable alias for that argument.
+#
+# Derived with ``.copy(readonly=True)`` rather than constructed from
+# ``nb_types.Array``: it keeps each read-only alias tied to its mutable
+# counterpart, so a change to one cannot silently diverge from the other.
+_F64_1D_RO = _F64_1D.copy(readonly=True)
+_F64_2D_RO = _F64_2D.copy(readonly=True)
+_F64_3D_RO = _F64_3D.copy(readonly=True)
+
+_F32_1D_RO = _F32_1D.copy(readonly=True)
+_F32_2D_RO = _F32_2D.copy(readonly=True)
+
+_I64_1D_RO = _I64_1D.copy(readonly=True)
+_I64_2D_RO = _I64_2D.copy(readonly=True)
+
+_I32_1D_RO = _I32_1D.copy(readonly=True)
+_I32_2D_RO = _I32_2D.copy(readonly=True)
+
+_I8_1D_RO = _I8_1D.copy(readonly=True)
+
+_BOOL_1D_RO = _BOOL_1D.copy(readonly=True)
+_BOOL_2D_RO = _BOOL_2D.copy(readonly=True)
 
 #: Default Numba compiler configuration used throughout RiskQuant.
 #:

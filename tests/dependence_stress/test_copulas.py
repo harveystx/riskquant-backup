@@ -14,8 +14,23 @@ from riskquant.dependence_stress.diagnostics import (
     empirical_lower_tail_cooccurrence,
     spearman_correlation,
 )
-from riskquant.dependence_stress.permutations import transform_empirical_matrix
-from riskquant.dependence_stress.types import FloatArray
+from riskquant.dependence_stress.permutations import (
+    reconstruct_stressed,
+    transform_empirical_matrix,
+)
+from riskquant.dependence_stress.types import DependenceStressResult, FloatArray
+
+
+def stressed(base: FloatArray, result: DependenceStressResult) -> FloatArray:
+    """
+    Reconstruct the stressed K x S matrix for a result.
+
+    The stressed matrix is no longer a result field. Tests that need
+    row-level stressed observations reconstruct it explicitly, which is
+    exactly what a production audit consumer does.
+    """
+    return reconstruct_stressed(base, result.permutations)
+
 
 
 def _equi(k: int, rho: float) -> FloatArray:
@@ -174,7 +189,7 @@ def test_t_copula_across_representative_nu(
     result = transform_empirical_matrix(base, copula, np.random.default_rng(7))
 
     assert np.array_equal(
-        np.sort(result.stressed, axis=1),
+        np.sort(stressed(base, result), axis=1),
         np.sort(base, axis=1),
     )
 
@@ -207,7 +222,7 @@ def test_identical_seed_gives_identical_permutation(
     second = transform_empirical_matrix(base, copula, np.random.default_rng(11))
 
     assert np.array_equal(first.permutations, second.permutations)
-    assert np.array_equal(first.stressed, second.stressed)
+    assert np.array_equal(stressed(base, first), stressed(base, second))
 
 
 def test_different_seeds_give_different_realizations(
@@ -222,8 +237,8 @@ def test_different_seeds_give_different_realizations(
 
     assert not np.array_equal(first.permutations, second.permutations)
     assert np.array_equal(
-        np.sort(first.stressed, axis=1),
-        np.sort(second.stressed, axis=1),
+        np.sort(stressed(base, first), axis=1),
+        np.sort(stressed(base, second), axis=1),
     )
 
 
@@ -239,7 +254,7 @@ def test_positive_latent_correlation_creates_positive_rank_dependence(
 
     result = transform_empirical_matrix(base, copula, np.random.default_rng(3))
 
-    assert _mean_off_diagonal(spearman_correlation(result.stressed)) > 0.6
+    assert _mean_off_diagonal(spearman_correlation(stressed(base, result))) > 0.6
 
 
 def test_negative_latent_correlation_creates_negative_rank_dependence() -> None:
@@ -249,7 +264,7 @@ def test_negative_latent_correlation_creates_negative_rank_dependence() -> None:
     copula = GaussianCopula(latent_correlation=_equi(2, -0.8))
     result = transform_empirical_matrix(data, copula, np.random.default_rng(4))
 
-    assert _mean_off_diagonal(spearman_correlation(result.stressed)) < -0.6
+    assert _mean_off_diagonal(spearman_correlation(stressed(data, result))) < -0.6
 
 
 def test_identity_latent_correlation_creates_no_systematic_structure(
@@ -261,11 +276,14 @@ def test_identity_latent_correlation_creates_no_systematic_structure(
     values = [
         _mean_off_diagonal(
             spearman_correlation(
-                transform_empirical_matrix(
+                stressed(
                     base,
-                    copula,
-                    np.random.default_rng(seed),
-                ).stressed
+                    transform_empirical_matrix(
+                        base,
+                        copula,
+                        np.random.default_rng(seed),
+                    ),
+                )
             )
         )
         for seed in range(20)
@@ -287,11 +305,14 @@ def test_lower_nu_increases_symmetric_tail_cooccurrence() -> None:
                 [
                     _mean_off_diagonal(
                         empirical_lower_tail_cooccurrence(
-                            transform_empirical_matrix(
+                            stressed(
                                 data,
-                                copula,
-                                np.random.default_rng(seed),
-                            ).stressed,
+                                transform_empirical_matrix(
+                                    data,
+                                    copula,
+                                    np.random.default_rng(seed),
+                                ),
+                            ),
                             0.05,
                         )
                     )

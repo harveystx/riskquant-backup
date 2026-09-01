@@ -30,7 +30,6 @@ import sys
 import textwrap
 import time
 from pathlib import Path
-from typing import cast
 
 import numpy as np
 
@@ -42,12 +41,15 @@ if _REPO_SRC.is_dir():
 from riskquant.dependence_stress.copulas import GaussianCopula, TCopula  # noqa: E402
 from riskquant.dependence_stress.diagnostics import (  # noqa: E402
     empirical_lower_tail_cooccurrence,
+    empirical_upper_tail_cooccurrence,
     pearson_correlation,
     spearman_correlation,
 )
 from riskquant.dependence_stress.engine import DependenceStressEngine  # noqa: E402
 from riskquant.dependence_stress.permutations import (  # noqa: E402
+    aggregate_portfolio,
     apply_permutation,
+    reconstruct_stressed,
     transform_empirical_matrix,
 )
 from riskquant.dependence_stress.ranks import (  # noqa: E402
@@ -56,9 +58,15 @@ from riskquant.dependence_stress.ranks import (  # noqa: E402
 )
 from riskquant.dependence_stress.tails import (  # noqa: E402
     Comonotonic,
+    DualTailAlignment,
     LowerTailAlignment,
+    UpperTailAlignment,
 )
-from riskquant.dependence_stress.types import FloatArray, IntArray  # noqa: E402
+from riskquant.dependence_stress.types import (  # noqa: E402
+    DependenceStressResult,
+    FloatArray,
+    IntArray,
+)
 from riskquant.dependence_stress.validation import (  # noqa: E402
     validate_marginal_preservation,
     validate_permutation_matrix,
@@ -186,6 +194,20 @@ def print_square(
             f"{float(value):>{cell_width}.{decimals}f}" for value in matrix[row]
         )
         print(f"{label:<{label_width}}" + cells)
+
+
+def stressed_of(
+    base: FloatArray,
+    result: DependenceStressResult,
+) -> FloatArray:
+    """
+    Reconstruct the stressed K x S matrix for a result.
+
+    The stressed matrix is NOT a field of the result. It is an optional
+    derived representation. The demo reconstructs it explicitly, which
+    is exactly what a production audit consumer does.
+    """
+    return reconstruct_stressed(base, result.permutations)
 
 
 def check(description: str, condition: bool) -> None:
@@ -693,7 +715,7 @@ def section_comonotonic() -> FloatArray:
     print_int_matrix(result.permutations, GOLDEN_LABELS)
 
     heading("Stressed matrix")
-    print_matrix(result.stressed, GOLDEN_LABELS)
+    print_matrix(stressed_of(GOLDEN, result), GOLDEN_LABELS)
 
     heading("[HAND CHECK] Row-by-row reconstruction")
 
@@ -711,19 +733,19 @@ def section_comonotonic() -> FloatArray:
         print(f"        original row:  {fmt_row(GOLDEN[row])}")
         print(f"        sorted row:    {fmt_row(np.sort(GOLDEN[row]))}")
         print(f"        permutation:   {fmt_int_row(result.permutations[row])}")
-        print(f"        stressed row:  {fmt_row(result.stressed[row])}")
+        print(f"        stressed row:  {fmt_row(stressed_of(GOLDEN, result)[row])}")
 
         manual = reference_take(
             GOLDEN[row].tolist(),
             result.permutations[row].tolist(),
         )
 
-        assert np.array_equal(np.asarray(manual), result.stressed[row])
+        assert np.array_equal(np.asarray(manual), stressed_of(GOLDEN, result)[row])
 
     print()
     check(
         "[HAND CHECK PASSES] stressed == sorted rows for every row",
-        np.array_equal(result.stressed, np.sort(GOLDEN, axis=1)),
+        np.array_equal(stressed_of(GOLDEN, result), np.sort(GOLDEN, axis=1)),
     )
 
     heading("Stressed rank ordering")
@@ -737,7 +759,7 @@ def section_comonotonic() -> FloatArray:
         """
     )
 
-    stressed_ranks = average_ranks(result.stressed)
+    stressed_ranks = average_ranks(stressed_of(GOLDEN, result))
 
     print()
     print_matrix(stressed_ranks, GOLDEN_LABELS, decimals=2)
@@ -753,7 +775,7 @@ def section_comonotonic() -> FloatArray:
 
     heading("Spearman correlation of the comonotonic result")
 
-    spearman = spearman_correlation(result.stressed)
+    spearman = spearman_correlation(stressed_of(GOLDEN, result))
     print_square(spearman, GOLDEN_LABELS)
 
     paragraph(
@@ -804,7 +826,7 @@ def section_comonotonic() -> FloatArray:
 
     heading("A precise point about Pearson correlation")
 
-    pearson = pearson_correlation(result.stressed)
+    pearson = pearson_correlation(stressed_of(GOLDEN, result))
     print_square(pearson, GOLDEN_LABELS)
 
     paragraph(
@@ -834,28 +856,28 @@ def section_comonotonic() -> FloatArray:
 
     heading("Idempotence")
 
-    twice = transform_empirical_matrix(result.stressed, Comonotonic())
+    once = stressed_of(GOLDEN, result)
+    twice = stressed_of(once, transform_empirical_matrix(once, Comonotonic()))
 
     print("    Applying Comonotonic a second time...")
     print()
-    check(
-        "T(T(X)) == T(X)",
-        np.array_equal(twice.stressed, result.stressed),
+    check("T(T(X)) == T(X)", np.array_equal(twice, once))
+
+    audit_transformation(
+        GOLDEN, stressed_of(GOLDEN, result), result.permutations, "Comonotonic"
     )
 
-    audit_transformation(GOLDEN, result.stressed, result.permutations, "Comonotonic")
-
-    return result.stressed
+    return stressed_of(GOLDEN, result)
 
 
 # ======================================================================
-# Section 6: lower-tail alignment
+# Section 6A: lower-tail alignment
 # ======================================================================
 
 
 def section_lower_tail() -> FloatArray:
     """Demonstrate lower-tail alignment in all three modes."""
-    banner("METHOD 2: LOWER-TAIL ALIGNMENT")
+    banner("METHOD 2A: LOWER-TAIL ALIGNMENT")
 
     q = 0.25
     s = TAIL_DATA.shape[1]
@@ -942,7 +964,7 @@ def section_lower_tail() -> FloatArray:
         )
 
     heading("Stressed matrix")
-    print_matrix(result.stressed, TAIL_LABELS)
+    print_matrix(stressed_of(TAIL_DATA, result), TAIL_LABELS)
 
     paragraph(
         f"""
@@ -958,16 +980,18 @@ def section_lower_tail() -> FloatArray:
 
     print(f"    Tail block only (slots 0..{n_tail - 1}):")
     print()
-    print_matrix(result.stressed[:, :n_tail], TAIL_LABELS)
+    print_matrix(stressed_of(TAIL_DATA, result)[:, :n_tail], TAIL_LABELS)
 
     check(
         "tail block ascends in every row (worst with worst)",
-        bool(np.all(np.diff(result.stressed[:, :n_tail], axis=1) >= 0.0)),
+        bool(
+            np.all(np.diff(stressed_of(TAIL_DATA, result)[:, :n_tail], axis=1) >= 0.0)
+        ),
     )
 
     audit_transformation(
         TAIL_DATA,
-        result.stressed,
+        stressed_of(TAIL_DATA, result),
         result.permutations,
         "LowerTailAlignment(comonotonic, preserve=True)",
     )
@@ -997,26 +1021,28 @@ def section_lower_tail() -> FloatArray:
     print()
     print(f"    preserve=True, non-tail block (slots {n_tail}..{s - 1}):")
     print()
-    print_matrix(result.stressed[:, n_tail:], TAIL_LABELS)
+    print_matrix(stressed_of(TAIL_DATA, result)[:, n_tail:], TAIL_LABELS)
 
     print()
     print("    preserve=False, same slots:")
     print()
-    print_matrix(full.stressed[:, n_tail:], TAIL_LABELS)
+    print_matrix(stressed_of(TAIL_DATA, full)[:, n_tail:], TAIL_LABELS)
 
     print()
     check(
         "preserve=True leaves the non-tail block unsorted",
-        not bool(np.all(np.diff(result.stressed[:, n_tail:], axis=1) >= 0.0)),
+        not bool(
+            np.all(np.diff(stressed_of(TAIL_DATA, result)[:, n_tail:], axis=1) >= 0.0)
+        ),
     )
     check(
         "preserve=False gives the fully comonotonic matrix",
-        np.array_equal(full.stressed, np.sort(TAIL_DATA, axis=1)),
+        np.array_equal(stressed_of(TAIL_DATA, full), np.sort(TAIL_DATA, axis=1)),
     )
     check(
         "both modes preserve marginals exactly",
-        validate_marginal_preservation(TAIL_DATA, result.stressed)
-        and validate_marginal_preservation(TAIL_DATA, full.stressed),
+        validate_marginal_preservation(TAIL_DATA, stressed_of(TAIL_DATA, result))
+        and validate_marginal_preservation(TAIL_DATA, stressed_of(TAIL_DATA, full)),
     )
 
     # ------------------------------------------------------------------
@@ -1047,26 +1073,26 @@ def section_lower_tail() -> FloatArray:
     print()
     print("    Comonotonic tail block:")
     print()
-    print_matrix(result.stressed[:, :n_tail], TAIL_LABELS)
+    print_matrix(stressed_of(TAIL_DATA, result)[:, :n_tail], TAIL_LABELS)
 
     print()
     print("    Randomised tail block (seed 2024):")
     print()
-    print_matrix(random_result.stressed[:, :n_tail], TAIL_LABELS)
+    print_matrix(stressed_of(TAIL_DATA, random_result)[:, :n_tail], TAIL_LABELS)
 
     print()
     check(
         "the tail block holds the same observations in both modes",
         np.array_equal(
-            np.sort(result.stressed[:, :n_tail], axis=1),
-            np.sort(random_result.stressed[:, :n_tail], axis=1),
+            np.sort(stressed_of(TAIL_DATA, result)[:, :n_tail], axis=1),
+            np.sort(stressed_of(TAIL_DATA, random_result)[:, :n_tail], axis=1),
         ),
     )
     check(
         "only the ordering within the tail block changed",
         np.array_equal(
-            result.stressed[:, n_tail:],
-            random_result.stressed[:, n_tail:],
+            stressed_of(TAIL_DATA, result)[:, n_tail:],
+            stressed_of(TAIL_DATA, random_result)[:, n_tail:],
         ),
     )
     check(
@@ -1078,17 +1104,132 @@ def section_lower_tail() -> FloatArray:
         LowerTailAlignment(tail_probability=q, tail_order="random").requires_rng,
     )
 
-    return result.stressed
+    return stressed_of(TAIL_DATA, result)
 
 
 # ======================================================================
-# Section 7: lower-tail co-occurrence diagnostic
+# Section 6B: upper-tail alignment
 # ======================================================================
 
 
-def section_tail_cooccurrence(tail_stressed: FloatArray) -> None:
-    """Demonstrate the finite-sample tail co-occurrence statistic."""
-    banner("DIAGNOSTIC: EMPIRICAL LOWER-TAIL CO-OCCURRENCE")
+def section_upper_tail() -> FloatArray:
+    """Demonstrate upper-tail alignment."""
+    banner("METHOD 2B: UPPER-TAIL ALIGNMENT")
+
+    q = 0.25
+    s = TAIL_DATA.shape[1]
+    n_tail = max(1, math.ceil(q * s))
+
+    paragraph(
+        """
+        Upper-tail alignment functions identically to lower-tail alignment,
+        but acts on the highest observations rather than the lowest.
+
+        The highest `n_tail` observations of every row move into the
+        final scenario slots `S - n_tail .. S-1`. The rows therefore
+        realize their highest outcomes together.
+        """
+    )
+
+    result = transform_empirical_matrix(
+        TAIL_DATA,
+        UpperTailAlignment(tail_probability=q),
+    )
+
+    heading("Permutation produced by the package")
+    print_int_matrix(result.permutations, TAIL_LABELS)
+
+    heading("Stressed matrix")
+    print_matrix(stressed_of(TAIL_DATA, result), TAIL_LABELS)
+
+    print()
+    check(
+        "upper tail block ascends in every row",
+        bool(
+            np.all(
+                np.diff(stressed_of(TAIL_DATA, result)[:, s - n_tail :], axis=1) >= 0.0
+            )
+        ),
+    )
+    check(
+        "marginals are exactly preserved",
+        validate_marginal_preservation(TAIL_DATA, stressed_of(TAIL_DATA, result)),
+    )
+
+    return stressed_of(TAIL_DATA, result)
+
+
+# ======================================================================
+# Section 6C: dual-tail alignment
+# ======================================================================
+
+
+def section_dual_tail() -> FloatArray:
+    """Demonstrate dual-tail alignment."""
+    banner("METHOD 2C: DUAL-TAIL ALIGNMENT")
+
+    q = 0.25
+    s = TAIL_DATA.shape[1]
+    n_tail = max(1, math.ceil(q * s))
+
+    paragraph(
+        """
+        Dual-tail alignment enforces extreme co-occurrence at BOTH ends
+        of the marginal distributions simultaneously. It groups the lowest
+        observations into a shared left-tail block, and the highest into a
+        shared right-tail block.
+
+        The center block (the non-tail observations) is left independent
+        by preserving its relative scenario order.
+        """
+    )
+
+    result = transform_empirical_matrix(
+        TAIL_DATA,
+        DualTailAlignment(lower_probability=q, upper_probability=q),
+    )
+
+    heading("Permutation produced by the package")
+    print_int_matrix(result.permutations, TAIL_LABELS)
+
+    heading("Stressed matrix")
+    print_matrix(stressed_of(TAIL_DATA, result), TAIL_LABELS)
+
+    print()
+    check(
+        "lower tail block ascends in every row",
+        bool(
+            np.all(np.diff(stressed_of(TAIL_DATA, result)[:, :n_tail], axis=1) >= 0.0)
+        ),
+    )
+    check(
+        "upper tail block ascends in every row",
+        bool(
+            np.all(
+                np.diff(stressed_of(TAIL_DATA, result)[:, s - n_tail :], axis=1) >= 0.0
+            )
+        ),
+    )
+    check(
+        "marginals are exactly preserved",
+        validate_marginal_preservation(TAIL_DATA, stressed_of(TAIL_DATA, result)),
+    )
+
+    return stressed_of(TAIL_DATA, result)
+
+
+# ======================================================================
+# Section 7: tail co-occurrence diagnostics
+# ======================================================================
+
+
+def section_tail_cooccurrence(
+    lower_stressed: FloatArray,
+    upper_stressed: FloatArray,
+    dual_stressed: FloatArray,
+) -> None:
+    """Demonstrate the finite-sample tail co-occurrence statistics."""
+    banner("DIAGNOSTIC: EMPIRICAL TAIL CO-OCCURRENCE")
 
     q = 0.25
     s = TAIL_DATA.shape[1]
@@ -1105,95 +1246,58 @@ def section_tail_cooccurrence(tail_stressed: FloatArray) -> None:
 
             lambda_hat(i, j) = #(scenarios in BOTH lower tails) / n_tail
 
-        The public name says what it is:
+        The public names are:
             empirical_lower_tail_cooccurrence()
+            empirical_upper_tail_cooccurrence()
         """
     )
 
-    heading("[HAND CHECK] One pairwise value, computed by hand")
+    heading("Full pairwise matrices, ORIGINAL data")
 
-    # Desk W against Desk Z. The intersection is partial, so the
-    # arithmetic is more instructive than a pair that happens to share
-    # its whole tail.
-    set_w = set(reference_tail_scenarios(TAIL_DATA[0].tolist(), n_tail))
-    set_z = set(reference_tail_scenarios(TAIL_DATA[3].tolist(), n_tail))
-    intersection = sorted(set_w & set_z)
-
-    manual_lambda = len(intersection) / n_tail
-
-    paragraph(
-        f"""
-        n_tail = {n_tail}
-
-        Desk W row:                  {fmt_row(TAIL_DATA[0])}
-        Desk W lower-tail scenarios: {sorted(set_w)}
-
-        Desk Z row:                  {fmt_row(TAIL_DATA[3])}
-        Desk Z lower-tail scenarios: {sorted(set_z)}
-
-        Intersection:       {intersection}
-        Intersection count: {len(intersection)}
-
-            lambda_hat(W, Z) = {len(intersection)} / {n_tail}
-                             = {manual_lambda:.4f}
-
-        Two of Desk W's three worst scenarios are also among Desk Z's
-        three worst. One is not. The statistic reports that as 2/3.
-        """
-    )
-
-    package = empirical_lower_tail_cooccurrence(TAIL_DATA, q)
-
+    print("    Lower Tail:")
+    print_square(empirical_lower_tail_cooccurrence(TAIL_DATA, q), TAIL_LABELS)
     print()
-    print(f"    Independent reference: {manual_lambda:.4f}")
-    print(f"    Package diagnostic:    {package[0, 3]:.4f}")
+    print("    Upper Tail:")
+    print_square(empirical_upper_tail_cooccurrence(TAIL_DATA, q), TAIL_LABELS)
+
+    heading("Full pairwise matrices, AFTER Lower-Tail Alignment")
+
+    print("    Lower Tail:")
+    print_square(empirical_lower_tail_cooccurrence(lower_stressed, q), TAIL_LABELS)
     print()
+    print("    Upper Tail:")
+    print_square(empirical_upper_tail_cooccurrence(lower_stressed, q), TAIL_LABELS)
 
-    check(
-        "[HAND CHECK PASSES] hand-computed lambda matches package",
-        math.isclose(manual_lambda, float(package[0, 3])),
-    )
+    heading("Full pairwise matrices, AFTER Upper-Tail Alignment")
 
-    heading("Full pairwise matrix, ORIGINAL data")
-    print_square(package, TAIL_LABELS)
+    print("    Lower Tail:")
+    print_square(empirical_lower_tail_cooccurrence(upper_stressed, q), TAIL_LABELS)
+    print()
+    print("    Upper Tail:")
+    print_square(empirical_upper_tail_cooccurrence(upper_stressed, q), TAIL_LABELS)
+
+    heading("Full pairwise matrices, AFTER Dual-Tail Alignment")
+
+    print("    Lower Tail:")
+    print_square(empirical_lower_tail_cooccurrence(dual_stressed, q), TAIL_LABELS)
+    print()
+    print("    Upper Tail:")
+    print_square(empirical_upper_tail_cooccurrence(dual_stressed, q), TAIL_LABELS)
 
     paragraph(
         """
 
-        Each variable is in its own lower tail by definition, so the
-        diagonal must be exactly 1.0.
+        Notice how targeted the stresses are. A lower-tail alignment drives
+        downside co-occurrence to its maximum without engineering right-tail
+        extremes. The dual-tail stress cleanly aligns both ends simultaneously.
         """
     )
 
     print()
     check(
-        "diagonal is exactly 1.0",
-        np.array_equal(np.diag(package), np.ones(TAIL_DATA.shape[0])),
-    )
-
-    heading("Full pairwise matrix, AFTER lower-tail alignment")
-
-    stressed_cooccurrence = empirical_lower_tail_cooccurrence(tail_stressed, q)
-    print_square(stressed_cooccurrence, TAIL_LABELS)
-
-    paragraph(
-        """
-
-        Every entry is 1.0: all four desks now share the same tail
-        scenarios. That is the point of the method. The marginals are
-        untouched, but downside co-occurrence has been driven to its
-        maximum.
-        """
-    )
-
-    print()
-    check(
-        "alignment drove co-occurrence to 1.0 everywhere",
-        bool(np.allclose(stressed_cooccurrence, 1.0)),
-    )
-    check(
-        "the marginals were not touched",
-        validate_marginal_preservation(TAIL_DATA, tail_stressed),
+        "dual-tail alignment drove BOTH co-occurrences to 1.0 everywhere",
+        bool(np.allclose(empirical_lower_tail_cooccurrence(dual_stressed, q), 1.0))
+        and bool(np.allclose(empirical_upper_tail_cooccurrence(dual_stressed, q), 1.0)),
     )
 
 
@@ -1382,7 +1486,7 @@ def section_gaussian_copula(data: FloatArray) -> None:
         """
     )
 
-    cholesky = cast(FloatArray, np.linalg.cholesky(correlation))
+    cholesky = np.linalg.cholesky(correlation).astype(np.float64)
 
     print()
     print_square(cholesky, COPULA_LABELS)
@@ -1418,12 +1522,12 @@ def section_gaussian_copula(data: FloatArray) -> None:
     print_int_matrix(result.permutations[:, :12], COPULA_LABELS)
 
     heading("Resulting stressed matrix, first 8 slots of each row")
-    print_matrix(result.stressed[:, :8], COPULA_LABELS, decimals=3)
+    print_matrix(stressed_of(data, result)[:, :8], COPULA_LABELS, decimals=3)
 
     heading("Dependence before and after")
 
     before = spearman_correlation(data)
-    after = spearman_correlation(result.stressed)
+    after = spearman_correlation(stressed_of(data, result))
 
     print("    Spearman correlation BEFORE:")
     print()
@@ -1454,7 +1558,9 @@ def section_gaussian_copula(data: FloatArray) -> None:
     print(f"    population Spearman implied by it:    {expected_spearman:.4f}")
     print(f"    realised finite-sample Spearman:      {float(after[0, 1]):.4f}")
 
-    audit_transformation(data, result.stressed, result.permutations, "GaussianCopula")
+    audit_transformation(
+        data, stressed_of(data, result), result.permutations, "GaussianCopula"
+    )
 
     heading("Reproducibility")
 
@@ -1474,7 +1580,7 @@ def section_gaussian_copula(data: FloatArray) -> None:
     )
     check(
         "identical seed gives identical stressed matrix",
-        np.array_equal(result.stressed, repeat.stressed),
+        np.array_equal(stressed_of(data, result), stressed_of(data, repeat)),
     )
 
     other = transform_empirical_matrix(
@@ -1494,8 +1600,8 @@ def section_gaussian_copula(data: FloatArray) -> None:
     check(
         "but the marginals are identical in both realisations",
         np.array_equal(
-            np.sort(result.stressed, axis=1),
-            np.sort(other.stressed, axis=1),
+            np.sort(stressed_of(data, result), axis=1),
+            np.sort(stressed_of(data, other), axis=1),
         ),
     )
 
@@ -1590,14 +1696,14 @@ def section_t_copula(data: FloatArray) -> None:
             )
 
             assert np.array_equal(
-                np.sort(outcome.stressed, axis=1),
+                np.sort(stressed_of(data, outcome), axis=1),
                 np.sort(data, axis=1),
             )
 
             for matrix, sink in (
-                (spearman_correlation(outcome.stressed), spearman_values),
+                (spearman_correlation(stressed_of(data, outcome)), spearman_values),
                 (
-                    empirical_lower_tail_cooccurrence(outcome.stressed, 0.05),
+                    empirical_lower_tail_cooccurrence(stressed_of(data, outcome), 0.05),
                     tail_values,
                 ),
             ):
@@ -1803,6 +1909,8 @@ def section_method_comparison(copula_data: FloatArray) -> None:
         ("Comonotonic", "Yes", "No", "Perfect positive rank alignment"),
         ("Lower tail (comono)", "Yes", "No", "Engineer empirical lower tail"),
         ("Lower tail (random)", "No", "Yes", "Tail membership fixed, pairing random"),
+        ("Upper tail (comono)", "Yes", "No", "Engineer empirical upper tail"),
+        ("Dual tail (comono)", "Yes", "No", "Engineer both empirical tails"),
         ("Gaussian copula", "No", "Yes", "Latent Gaussian rank dependence"),
         ("t copula", "No", "Yes", "Latent t rank dependence, tail control"),
     )
@@ -1833,31 +1941,43 @@ def section_method_comparison(copula_data: FloatArray) -> None:
     def off_diagonal(matrix: FloatArray) -> float:
         return float((matrix.sum() - np.trace(matrix)) / (k * (k - 1)))
 
-    outcomes = {
-        "original": copula_data,
-        "comonotonic": engine.apply_comonotonic().stressed,
-        "lower tail q=0.05": engine.apply_lower_tail_alignment(0.05).stressed,
+    results = {
+        "comonotonic": engine.apply_comonotonic(),
+        "lower tail q=0.05": engine.apply_lower_tail_alignment(0.05),
+        "upper tail q=0.05": engine.apply_upper_tail_alignment(0.05),
+        "dual tail q=0.05": engine.apply_dual_tail_alignment(0.05, 0.05),
         "gaussian copula": engine.apply_gaussian_copula(
             correlation,
             rng=np.random.default_rng(7),
-        ).stressed,
+        ),
         "t copula nu=3": engine.apply_t_copula(
             correlation,
             degrees_of_freedom=3.0,
             rng=np.random.default_rng(7),
-        ).stressed,
+        ),
+    }
+
+    # Diagnostics need row-level observations, so this section explicitly
+    # reconstructs the stressed matrices. That is the legitimate use of
+    # the derived representation: a diagnostic consumer that genuinely
+    # needs rows, not the production portfolio path.
+    outcomes = {"original": copula_data} | {
+        name: engine.stressed_matrix(result) for name, result in results.items()
     }
 
     print()
-    print(f"    {'variant':<20} {'Pearson':>10} {'Spearman':>10} {'tail 5%':>10}")
-    print(f"    {'-' * 20} {'-' * 10} {'-' * 10} {'-' * 10}")
+    print(
+        f"    {'variant':<20} {'Pearson':>9} {'Spearman':>9} {'L-tail':>9} {'U-tail':>9}"
+    )
+    print(f"    {'-' * 20} {'-' * 9} {'-' * 9} {'-' * 9} {'-' * 9}")
 
     for name, matrix in outcomes.items():
         print(
             f"    {name:<20}"
-            f" {off_diagonal(pearson_correlation(matrix)):>10.4f}"
-            f" {off_diagonal(spearman_correlation(matrix)):>10.4f}"
-            f" {off_diagonal(empirical_lower_tail_cooccurrence(matrix, 0.05)):>10.4f}"
+            f" {off_diagonal(pearson_correlation(matrix)):>9.4f}"
+            f" {off_diagonal(spearman_correlation(matrix)):>9.4f}"
+            f" {off_diagonal(empirical_lower_tail_cooccurrence(matrix, 0.05)):>9.4f}"
+            f" {off_diagonal(empirical_upper_tail_cooccurrence(matrix, 0.05)):>9.4f}"
         )
 
     paragraph(
@@ -2084,13 +2204,13 @@ def section_audit_mode(copula_data: FloatArray) -> None:
     print()
     check(
         "marginals preserved (passes, but proves little)",
-        validate_marginal_preservation(copula_data, honest.stressed),
+        validate_marginal_preservation(copula_data, stressed_of(copula_data, honest)),
     )
     check(
         "validate_transformation rejects the false permutation",
         not validate_transformation(
             copula_data,
-            honest.stressed,
+            stressed_of(copula_data, honest),
             np.ascontiguousarray(liar),
         ),
     )
@@ -2098,7 +2218,7 @@ def section_audit_mode(copula_data: FloatArray) -> None:
         "validate_transformation accepts the true permutation",
         validate_transformation(
             copula_data,
-            honest.stressed,
+            stressed_of(copula_data, honest),
             honest.permutations,
         ),
     )
@@ -2108,22 +2228,430 @@ def section_audit_mode(copula_data: FloatArray) -> None:
     paragraph(
         """
         A frozen dataclass does not freeze array contents. The result
-        therefore owns read-only copies, so a stressed matrix cannot be
-        altered after the fact and cannot alias engine memory.
+        therefore owns read-only copies of both first-class outputs, so
+        neither can be altered after the fact and neither can alias
+        engine memory.
         """
     )
 
     print()
-    print(f"    result.stressed writable:      {result.stressed.flags.writeable}")
-    print(f"    result.permutations writable:  {result.permutations.flags.writeable}")
-    print(f"    engine.data writable:          {engine.data.flags.writeable}")
+    print(f"    result.permutations writable:   {result.permutations.flags.writeable}")
+    print(f"    result.portfolio_pnl writable:  {result.portfolio_pnl.flags.writeable}")
+    print(f"    engine.data writable:           {engine.data.flags.writeable}")
     print()
 
-    try:
-        result.stressed[0, 0] = 0.0
-    except ValueError as error:
-        print(f"    Attempted write to result.stressed -> ValueError: {error}")
-        check("result arrays are genuinely read-only", True)
+    for name, array in (
+        ("permutations", result.permutations),
+        ("portfolio_pnl", result.portfolio_pnl),
+    ):
+        try:
+            array[0] = 0
+        except ValueError as error:
+            print(f"    Write to result.{name} -> ValueError: {error}")
+
+    print()
+    check(
+        "both first-class outputs are genuinely read-only",
+        not result.permutations.flags.writeable
+        and not result.portfolio_pnl.flags.writeable,
+    )
+
+
+# ======================================================================
+# Section: the two-output contract, fully hand-verifiable
+# ======================================================================
+
+TOY_LABELS = ("Row A", "Row B", "Row C")
+
+#: K = 3, S = 5. Small enough that a reviewer can check every scenario
+#: of the portfolio aggregation with a calculator.
+TOY = np.array(
+    [
+        [2.0, 5.0, 1.0, 7.0, 4.0],
+        [3.0, 4.0, 8.0, 2.0, 6.0],
+        [1.0, 6.0, 2.0, 5.0, 9.0],
+    ],
+    dtype=np.float64,
+)
+
+TOY_PERMUTATIONS = np.array(
+    [
+        [1, 3, 0, 2, 4],
+        [3, 0, 2, 4, 1],
+        [2, 1, 3, 0, 4],
+    ],
+    dtype=np.int64,
+)
+
+
+def section_two_output_contract() -> None:
+    """Explain and hand-verify permutations plus portfolio_pnl."""
+    banner("THE TWO FIRST-CLASS OUTPUTS")
+
+    paragraph(
+        """
+        Every transformation returns exactly two things:
+
+            permutations    K x S int64    the dependence stress itself
+            portfolio_pnl   S   float64    the scenario aggregate
+
+        THE PERMUTATION IS THE DEPENDENCE STRESS.
+        THE S-VECTOR IS THE STRESSED PORTFOLIO SCENARIO OUTPUT.
+        THE K x S STRESSED MATRIX IS AN OPTIONAL DERIVED REPRESENTATION.
+
+        The aggregation is:
+
+            portfolio_pnl[s] = sum_k data[k, permutations[k, s]]
+
+        The package performs exactly this one sum over rows and attaches
+        no portfolio semantics to them. The caller decides whether
+        summing the supplied rows is meaningful. DEPENDENCE_STRESS knows
+        nothing about VaR, ES, CSC, desks, books, or capital.
+
+        portfolio_pnl has NumPy shape (S,), not (1, S). The mathematical
+        object is a 1 x S scenario vector, but a flat vector is the
+        natural NumPy shape and spares every consumer a singleton axis.
+        """
+    )
+
+    heading("[HAND CHECK] A complete K = 3, S = 5 audit")
+
+    print()
+    print("ORIGINAL DATA")
+    print("-------------")
+    print_matrix(TOY, TOY_LABELS, decimals=1)
+
+    print()
+    print("PERMUTATIONS")
+    print("------------")
+    print_int_matrix(TOY_PERMUTATIONS, TOY_LABELS)
+
+    paragraph(
+        """
+
+        Now walk every scenario. For slot s, each row contributes the
+        observation sitting at its own permutation index.
+        """
+    )
+
+    portfolio = aggregate_portfolio(TOY, TOY_PERMUTATIONS)
+    manual_portfolio: list[float] = []
+
+    for slot in range(TOY.shape[1]):
+        picks = []
+        total = 0.0
+
+        print()
+        print(f"    Scenario {slot}:")
+
+        for row, label in enumerate(TOY_LABELS):
+            index = int(TOY_PERMUTATIONS[row, slot])
+            value = float(TOY[row, index])
+            total += value
+            picks.append(f"{value:.0f}")
+
+            print(
+                f"        {label} uses original observation "
+                f"{label[-1]}[{index}] = {value:>4.0f}"
+            )
+
+        manual_portfolio.append(total)
+
+        print(f"        Portfolio = {' + '.join(picks)} = {total:.0f}")
+
+    print()
+    print(
+        f"    Independent reference: {fmt_row(np.asarray(manual_portfolio), decimals=1)}"
+    )
+    print(f"    Package result:        {fmt_row(portfolio, decimals=1)}")
+    print()
+
+    check(
+        "[HAND CHECK PASSES] portfolio_pnl matches manual arithmetic",
+        np.array_equal(np.asarray(manual_portfolio), portfolio),
+    )
+
+    heading("Row marginals are untouched")
+
+    reconstructed = reconstruct_stressed(TOY, TOY_PERMUTATIONS)
+
+    for row, label in enumerate(TOY_LABELS):
+        print()
+        print(f"    {label}")
+        print(f"        original sorted:  {fmt_row(np.sort(TOY[row]), decimals=1)}")
+        print(
+            f"        stressed sorted:  {fmt_row(np.sort(reconstructed[row]), decimals=1)}"
+        )
+
+    print()
+    check(
+        "every row-sorted sequence is identical",
+        np.array_equal(
+            np.sort(reconstructed, axis=1),
+            np.sort(TOY, axis=1),
+        ),
+    )
+
+    heading("Why standalone row statistics cannot change")
+
+    paragraph(
+        """
+        A statistic that depends only on one row's empirical marginal
+        reads the same multiset of numbers before and after. Rearranging
+        which scenario a number sits in cannot change its mean,
+        variance, quantiles, minimum, or maximum.
+        """
+    )
+
+    print()
+    print(
+        f"    {'row':<8}{'mean before':>14}{'mean after':>13}{'min before':>13}{'min after':>12}"
+    )
+    print(f"    {'-' * 8}{'-' * 14:>14}{'-' * 13:>13}{'-' * 13:>13}{'-' * 12:>12}")
+
+    for row, label in enumerate(TOY_LABELS):
+        print(
+            f"    {label:<8}"
+            f"{TOY[row].mean():>14.4f}{reconstructed[row].mean():>13.4f}"
+            f"{TOY[row].min():>13.1f}{reconstructed[row].min():>12.1f}"
+        )
+
+    heading("Why portfolio risk CAN change")
+
+    paragraph(
+        """
+        The portfolio scenario vector is a sum ACROSS rows within each
+        scenario. Repairing which observations meet in a scenario
+        changes that sum, even though no row changed.
+        """
+    )
+
+    original_portfolio = TOY.sum(axis=0)
+
+    print()
+    print(f"    original portfolio:  {fmt_row(original_portfolio, decimals=1)}")
+    print(f"    stressed portfolio:  {fmt_row(portfolio, decimals=1)}")
+    print()
+    print(
+        f"    original sorted:     {fmt_row(np.sort(original_portfolio), decimals=1)}"
+    )
+    print(f"    stressed sorted:     {fmt_row(np.sort(portfolio), decimals=1)}")
+    print()
+    print(
+        f"    original min / std:  {original_portfolio.min():>6.2f} / {original_portfolio.std():>6.3f}"
+    )
+    print(f"    stressed min / std:  {portfolio.min():>6.2f} / {portfolio.std():>6.3f}")
+
+    paragraph(
+        """
+
+        The row marginals are byte-identical and the portfolio total
+        across all scenarios is unchanged, because it is just the sum of
+        fixed row totals. What moved is the SHAPE of the portfolio
+        scenario distribution. That is the quantity a downstream risk
+        engine cares about, and it is why the dependence stress matters.
+        """
+    )
+
+    print()
+    check(
+        "total across all scenarios is unchanged",
+        math.isclose(float(portfolio.sum()), float(TOY.sum())),
+    )
+
+    heading("Exact reconstruction and exact aggregation")
+
+    paragraph(
+        """
+        The production path never builds the K x S stressed matrix. It
+        goes straight from the permutation to the S-vector:
+
+            portfolio_pnl = empty(S)
+            take(data[0], permutations[0], out=portfolio_pnl)
+            for k in 1 .. K-1:
+                portfolio_pnl += data[k][permutations[k]]
+
+        Accumulation runs k = 0, 1, ..., K-1, the same order NumPy uses
+        when reducing a C-contiguous array along axis 0. The two agree
+        BITWISE, which is asserted below rather than assumed.
+        """
+    )
+
+    print()
+    print(
+        f"    reconstructed.sum(axis=0):  {fmt_row(reconstructed.sum(axis=0), decimals=1)}"
+    )
+    print(f"    result portfolio_pnl:       {fmt_row(portfolio, decimals=1)}")
+    print()
+
+    check(
+        "portfolio_pnl == reconstructed.sum(axis=0), bitwise",
+        np.array_equal(reconstructed.sum(axis=0), portfolio),
+    )
+    check(
+        "stressed == take_along_axis(data, permutations)",
+        np.array_equal(
+            reconstructed,
+            np.take_along_axis(TOY, TOY_PERMUTATIONS, axis=1),
+        ),
+    )
+
+
+# ======================================================================
+# Section: streaming Monte Carlo
+# ======================================================================
+
+
+def section_streaming(copula_data: FloatArray) -> None:
+    """Demonstrate the streaming ensemble API and its memory model."""
+    banner("STREAMING MONTE CARLO")
+
+    paragraph(
+        """
+        A stochastic copula specification does not induce ONE
+        finite-sample permutation. It induces a DISTRIBUTION over them.
+        Estimating anything about that distribution means drawing many
+        realisations.
+
+        Naively, B = 10,000 realisations of a K x S stressed matrix is a
+        B x K x S array. At K = 4 and S = 2000 that is 640 MB, and it is
+        entirely wasted if the consumer only needs a scalar per draw.
+
+        The iterator yields one realisation at a time and accumulates
+        nothing:
+
+            base data       K x S   owned once by the engine
+            permutation     K x S   one live realisation
+            portfolio_pnl   S       one live realisation
+
+        This is MONTE CARLO ESTIMATION of the finite-sample distribution
+        the specification induces. It is NOT a bootstrap: the empirical
+        observations are never resampled. Only their cross-sectional
+        pairing is redrawn.
+        """
+    )
+
+    k, s = copula_data.shape
+    correlation = _equicorrelation(k, 0.80)
+    copula = GaussianCopula(latent_correlation=correlation)
+    engine = DependenceStressEngine(data=copula_data)
+
+    n_realizations = 10_000
+
+    heading(f"Consuming {n_realizations:,} realisations, keeping only scalars")
+
+    paragraph(
+        """
+        The loop below retains one float per draw. A downstream risk
+        engine would compute its own metric here. DEPENDENCE_STRESS does
+        not know what that metric is, and deliberately has no VaR, ES or
+        CSC of its own.
+        """
+    )
+
+    start = time.perf_counter()
+    worst_scenarios = np.empty(n_realizations, dtype=np.float64)
+
+    for index, result in enumerate(
+        engine.iter_results(
+            copula,
+            rng=np.random.default_rng(4242),
+            n_realizations=n_realizations,
+        )
+    ):
+        worst_scenarios[index] = result.portfolio_pnl.min()
+
+    elapsed = time.perf_counter() - start
+
+    ensemble_bytes = n_realizations * k * s * 8
+    live_bytes = (k * s * 8) + (k * s * 8) + (s * 8)
+
+    print()
+    print(f"    realisations consumed:        {n_realizations:>12,}")
+    print(f"    elapsed:                      {elapsed:>12.2f} s")
+    print(f"    retained per realisation:     {'1 float64':>12}")
+    print()
+    print(f"    B x K x S if materialised:    {ensemble_bytes / 1e6:>9.1f} MB")
+    print(f"    live arrays while streaming:  {live_bytes / 1e6:>9.3f} MB")
+    print(f"    ratio:                        {ensemble_bytes / live_bytes:>9.0f} x")
+
+    paragraph(
+        f"""
+
+        Distribution of the worst stressed portfolio scenario across
+        {n_realizations:,} finite-sample realisations of ONE fixed
+        specification:
+        """
+    )
+
+    print()
+    print(f"    mean:    {worst_scenarios.mean():>10.4f}")
+    print(f"    std:     {worst_scenarios.std():>10.4f}")
+    print(f"    min:     {worst_scenarios.min():>10.4f}")
+    print(f"    max:     {worst_scenarios.max():>10.4f}")
+
+    paragraph(
+        """
+
+        That spread IS the Monte Carlo realisation noise. The
+        specification is fixed; only the finite-sample draw varies. A
+        downstream charge computed from a single seeded realisation
+        inherits this spread, which is why the seed is part of the
+        methodology and not an implementation detail.
+        """
+    )
+
+    heading("Sequence reproducibility")
+
+    def first_three(seed: int) -> list[float]:
+        return [
+            float(result.portfolio_pnl[0])
+            for result in engine.iter_results(
+                copula,
+                rng=np.random.default_rng(seed),
+                n_realizations=3,
+            )
+        ]
+
+    same = first_three(7)
+    again = first_three(7)
+    different = first_three(8)
+
+    print()
+    print(f"    seed 7, first pass:   {[round(v, 6) for v in same]}")
+    print(f"    seed 7, second pass:  {[round(v, 6) for v in again]}")
+    print(f"    seed 8:               {[round(v, 6) for v in different]}")
+    print()
+
+    check("the same seed reproduces the same SEQUENCE", same == again)
+    check("a different seed gives a different sequence", same != different)
+
+    paragraph(
+        """
+
+        Reproducibility of a stochastic sequence is not determinism of
+        the method. The copula still induces a distribution over
+        finite-sample permutations rather than one uniquely determined
+        permutation. A deterministic rank-rearrangement construction is
+        separate methodological work and has not been implemented.
+        """
+    )
+
+    heading("Invariants hold on every streamed realisation")
+
+    checked = 0
+
+    for result in engine.iter_results(
+        copula,
+        rng=np.random.default_rng(11),
+        n_realizations=25,
+        audit=True,
+    ):
+        assert result.portfolio_pnl.shape == (s,)
+        checked += 1
+
+    print()
+    check(f"{checked} realisations passed the full structural audit", checked == 25)
 
 
 # ======================================================================
@@ -2183,11 +2711,15 @@ def main() -> int:
     section_golden_matrix()
     section_ranks()
     section_permutation_mechanism()
+    section_two_output_contract()
 
     comonotonic_stressed = section_comonotonic()
 
     tail_stressed = section_lower_tail()
-    section_tail_cooccurrence(tail_stressed)
+    upper_tail_stressed = section_upper_tail()
+    dual_tail_stressed = section_dual_tail()
+
+    section_tail_cooccurrence(tail_stressed, upper_tail_stressed, dual_tail_stressed)
 
     section_correlation_diagnostics()
 
@@ -2195,6 +2727,7 @@ def main() -> int:
 
     section_gaussian_copula(copula_data)
     section_t_copula(copula_data)
+    section_streaming(copula_data)
 
     section_what_changed(comonotonic_stressed)
     section_marginal_preservation(comonotonic_stressed)
@@ -2206,7 +2739,9 @@ def main() -> int:
     section_summary()
 
     print()
-    print("All demonstration assertions passed.")
+    print(RULE)
+    print("END OF DEMO: ALL DEMONSTRATION ASSERTIONS PASSED!")
+    print(RULE)
     print()
 
     return 0

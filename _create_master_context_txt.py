@@ -182,17 +182,23 @@ def main(profile: str | None = None):
             rq_src_path / "valuation",
             rq_src_path / "constants.py",
             rq_src_path / "exceptions.py",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "simlab": [
             rq_src_path / "simlab",
             rq_src_path / "market_data" / "state.py",
             rq_src_path / "market_data" / "risk_factors",
             rq_src_path / "config",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
             rq_src_path / "constants.py",
         ],
         "simlab_reduced": [
             rq_src_path / "simlab",
             rq_src_path / "constants.py",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "simlab_extended": [
             rq_src_path / "simlab",
@@ -203,6 +209,8 @@ def main(profile: str | None = None):
             rq_src_path / "constants.py",
             rq_src_path / "utils",
             rq_src_path / "pnl" / "results.py",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "valuation": [
             rq_src_path / "market_data" / "state.py",
@@ -212,19 +220,27 @@ def main(profile: str | None = None):
             rq_src_path / "constants.py",
             rq_src_path / "exceptions.py",
             rq_src_path / "jit.py",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "pricers": [
             rq_src_path / "valuation",
             rq_src_path / "constants.py",
             rq_project_directory / "scripts" / "demos" / "valuation",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "pricer_kernels": [
             rq_src_path / "valuation" / "kernels",
             rq_project_directory / "scripts" / "demos" / "valuation",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "config": [
             rq_src_path / "config",
             rq_src_path / "utils" / "tenors.py",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "config_static": [
             rq_src_path / "config" / "enums",
@@ -233,6 +249,8 @@ def main(profile: str | None = None):
             rq_src_path / "utils" / "tenors.py",
             rq_src_path / "constants.py",
             rq_src_path / "exceptions.py",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "config_proxy": [
             rq_src_path / "config" / "enums",
@@ -241,12 +259,16 @@ def main(profile: str | None = None):
             rq_src_path / "utils" / "tenors.py",
             rq_src_path / "constants.py",
             rq_src_path / "exceptions.py",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "ce_jtd": [
             rq_src_path / "portfolio",
             rq_src_path / "simlab" / "scenarios" / "base.py",
             rq_src_path / "valuation",
             rq_src_path / "constants.py",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "ingest": [
             rq_src_path / "config",
@@ -274,9 +296,13 @@ def main(profile: str | None = None):
             # base_dir_parent / "scripts" / "demos" / "misc",
             # base_dir_parent / "scripts" / "demos" / "simlab",
             # base_dir_parent / "scripts" / "demos" / "valuation",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "ingest_fixtures": [
             rq_src_path / "ingest_fixtures",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "ingest_fixtures_market_data": [
             rq_src_path / "ingest_fixtures" / "config",
@@ -288,9 +314,13 @@ def main(profile: str | None = None):
             / "market_data"
             / "risk_factors"
             / "demo_snapshot.py",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "ingest_fixtures_risk_static_config": [
             rq_src_path / "ingest_fixtures" / "config" / "risk_static_config",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "risk_quant": [
             # rq_path / "portfolio" / "ingest" / "schema.py",
@@ -312,6 +342,8 @@ def main(profile: str | None = None):
             rq_src_path / "utils",
             rq_src_path / "constants.py",
             rq_src_path / "exceptions.py",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "risk_quant_adhoc": [
             rq_src_path / "ingest_fixtures",
@@ -321,6 +353,8 @@ def main(profile: str | None = None):
             rq_src_path / "constants.py",
             rq_src_path / "exceptions.py",
             rq_src_path / "utils",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         # "pricers": [
         #     rq_path / "valuation" / "pricers",
@@ -341,6 +375,8 @@ def main(profile: str | None = None):
             # base_dir_parent / "scripts" / "demos" / "market_data",
             # # TESTS
             # base_dir_parent / "tests" / "market_data",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "portfolio_only": [
             # rq_path / "config",
@@ -352,21 +388,29 @@ def main(profile: str | None = None):
             # rq_path / "constants.py",
             # rq_path / "exceptions.py",
             # rq_path / "universe.py",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "solutions_credit_var": [
             rq_src_path / "solutions" / "credit_var",
             rq_project_directory / "scripts" / "solutions" / "credit_var",
             rq_lab_src_path,
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "solutions_credit_exposure": [
             rq_src_path / "solutions" / "credit_exposure",
             rq_project_directory / "scripts" / "solutions" / "credit_exposure",
             rq_lab_src_path,
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "solutions_sensitivity_pnl": [
             rq_src_path / "solutions" / "sensitivity_pnl",
             rq_project_directory / "scripts" / "solutions" / "sensitivity_pnl",
             rq_lab_src_path,
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "market_data_reduced": [
             rq_src_path / "market_data",
@@ -379,6 +423,8 @@ def main(profile: str | None = None):
             rq_src_path / "constants.py",
             rq_src_path / "exceptions.py",
             rq_src_path / "universe.py",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "market_data_calibrate": [
             rq_src_path / "market_data" / "calibrate",
@@ -389,6 +435,7 @@ def main(profile: str | None = None):
             rq_project_directory / "scripts" / "demos" / "market_data" / "calibrate",
             # TESTS
             rq_project_directory / "tests" / "market_data" / "calibrate",
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "credit": [
             # SOURCE CODE
@@ -417,6 +464,8 @@ def main(profile: str | None = None):
             rq_project_directory / "scripts" / "demos" / "credit" / "exposure",
             rq_project_directory / "scripts" / "demos" / "credit" / "jtd",
             # # base_dir_parent / "scripts" / "reporting" / "credit_risk" / "stress_tests",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "credit_jtd": [
             rq_src_path / "credit" / "factors",
@@ -424,11 +473,15 @@ def main(profile: str | None = None):
             rq_src_path / "utils",
             rq_src_path / "_arrays.py",
             rq_src_path / "jit.py",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "credit_jtd_kernels": [
             rq_src_path / "credit" / "jtd" / "blocks",
             rq_src_path / "credit" / "jtd" / "kernels",
             rq_src_path / "credit" / "jtd" / "evaluators",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "credit_exposure": [
             rq_src_path / "credit" / "exposure",
@@ -436,6 +489,8 @@ def main(profile: str | None = None):
             rq_src_path / "jit.py",
             # SCRIPTS
             rq_project_directory / "scripts" / "demos" / "credit" / "exposure",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "basel": [
             rq_src_path / "basel",
@@ -444,6 +499,8 @@ def main(profile: str | None = None):
             rq_src_path / "jit.py",
             # SCRIPTS
             rq_project_directory / "scripts" / "demos" / "basel",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "credit_reduced": [
             # SOURCE CODE
@@ -472,6 +529,8 @@ def main(profile: str | None = None):
             # base_dir_parent / "scripts" / "demos" / "credit" / "exposure",
             # base_dir_parent / "scripts" / "demos" / "credit" / "jtd",
             # # base_dir_parent / "scripts" / "reporting" / "credit_risk" / "stress_tests",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "credit_jtd": [
             # SOURCE CODE
@@ -494,6 +553,8 @@ def main(profile: str | None = None):
             # SCRIPTS
             rq_project_directory / "scripts" / "demos" / "credit" / "exposure",
             rq_project_directory / "scripts" / "demos" / "credit" / "jtd",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "portfolio": [
             rq_src_path / "config",
@@ -505,10 +566,14 @@ def main(profile: str | None = None):
             rq_src_path / "constants.py",
             rq_src_path / "exceptions.py",
             rq_src_path / "universe.py",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "scenario_metrics": [
             rq_src_path / "scenario_metrics",
             rq_src_path / "jit.py",
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "sensitivity_pnl": [
             # CODE
@@ -520,6 +585,7 @@ def main(profile: str | None = None):
             rq_project_directory / "scripts" / "demos" / "sensitivity_pnl",
             # TESTS
             rq_project_directory / "tests" / "sensitivity_pnl",
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
         "dependence_stress": [
             # SOURCE CODE
@@ -528,8 +594,30 @@ def main(profile: str | None = None):
             rq_src_path / "constants.py",
             # SCRIPTS
             rq_project_directory / "scripts" / "demos" / "dependence_stress",
+            rq_project_directory / "scripts" / "tests" / "dependence_stress",
             # TESTS
             rq_project_directory / "tests" / "dependence_stress",
+            rq_project_directory / "tests" / "test_architecture.py",
+        ],
+        "dependence": [
+            # SOURCE CODE
+            rq_src_path / "dependence",
+            rq_src_path / "market_state",
+            rq_src_path / "observations",
+            rq_src_path / "jit.py",
+            rq_src_path / "constants.py",
+            # SCRIPTS
+            rq_project_directory / "scripts" / "demos" / "dependence",
+            rq_project_directory / "scripts" / "demos" / "market_state",
+            rq_project_directory / "scripts" / "demos" / "observations",
+            rq_project_directory / "scripts" / "tests" / "dependence",
+            rq_project_directory / "scripts" / "tests" / "market_state",
+            rq_project_directory / "scripts" / "tests" / "observations",
+            # TESTS
+            rq_project_directory / "tests" / "dependence",
+            rq_project_directory / "tests" / "market_state",
+            rq_project_directory / "tests" / "observations",
+            rq_project_directory / "tests" / "test_architecture.py",
         ],
     }
 
@@ -735,3 +823,4 @@ if __name__ == "__main__":
     # main(profile="pricer_kernels")
     # main(profile="scenario_metrics")
     main(profile="dependence_stress")
+    main(profile="dependence")
