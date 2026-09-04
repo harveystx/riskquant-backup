@@ -405,13 +405,6 @@ def main(profile: str | None = None):
             # TESTS
             rq_project_directory / "tests" / "test_architecture.py",
         ],
-        "solutions_sensitivity_pnl": [
-            rq_src_path / "solutions" / "sensitivity_pnl",
-            rq_project_directory / "scripts" / "solutions" / "sensitivity_pnl",
-            rq_lab_src_path,
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
         "market_data_reduced": [
             rq_src_path / "market_data",
             # rq_path / "ingest_fixtures",
@@ -587,6 +580,13 @@ def main(profile: str | None = None):
             rq_project_directory / "tests" / "sensitivity_pnl",
             rq_project_directory / "tests" / "test_architecture.py",
         ],
+        "solutions_sensitivity_pnl": [
+            rq_src_path / "solutions" / "sensitivity_pnl",
+            rq_project_directory / "scripts" / "solutions" / "sensitivity_pnl",
+            rq_lab_src_path,
+            # TESTS
+            rq_project_directory / "tests" / "test_architecture.py",
+        ],
         "dependence_stress": [
             # SOURCE CODE
             rq_src_path / "dependence_stress",
@@ -619,6 +619,9 @@ def main(profile: str | None = None):
             rq_project_directory / "tests" / "observations",
             rq_project_directory / "tests" / "test_architecture.py",
         ],
+        "github": [
+            rq_project_directory / ".github",
+        ],
     }
 
     # print("base_dir_parent`:", base_dir_parent)
@@ -644,6 +647,8 @@ def main(profile: str | None = None):
         "_create_master_context.py",
         ".ruff_cache",
         "ruff_cache",
+        ".deprecated",
+        "_deprecated",
     }
 
     # 3. Gather all valid files
@@ -695,7 +700,7 @@ def main(profile: str | None = None):
             "- Data-Oriented Design (DOD)\n"
             "- Structure-of-Arrays (SoA)\n"
             "- Human-readable at the edge\n"
-            "- C-contiguous at the core\n"
+            "- Intentionally contiguous at the core\n"
             "- Strings must die early\n"
             "- Memory locality matters\n"
             "- CPU efficiency matters\n"
@@ -704,12 +709,12 @@ def main(profile: str | None = None):
             "- Kernels do not contain policy - they are purely computational\n"
             "- Compilers are responsible for policy and orchestration; they must fail fast on invalid inputs\n"
             "- Avoid unnecessary branching in hot paths\n"
-            "- Skip '__init__.py' files (they are always empty)\n\n"
-            "- Polars over Pandas for DataFrames\n"
+            "- Skip '__init__.py' files (they are always empty)\n"
+            "- Polars over Pandas for DataFrames\n\n"
             "When proposing code:\n"
             "- Preserve existing SoA layouts\n"
             "- Avoid object-heavy designs in hot paths\n"
-            "- Avoid pandas in performance-critical code\n"
+            "- Avoid polars in performance-critical code\n"
             "- Minimize allocations\n"
             "- Prefer vectorized NumPy operations\n"
             "- Preserve existing architectural patterns\n"
@@ -824,3 +829,4 @@ if __name__ == "__main__":
     # main(profile="scenario_metrics")
     main(profile="dependence_stress")
     main(profile="dependence")
+    main(profile="github")

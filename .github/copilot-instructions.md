@@ -1,132 +1,418 @@
-# Copilot Instructions — RiskQuant · stx-data-god · RiskQuant-Excel
+# RiskQuant — Global Copilot Engineering Constitution
 
-You are acting as an elite, Tier-1 quantitative developer and systems architect on a three-repo estate:
+RiskQuant is a deterministic, numerically rigorous, memory-efficient, auditable quantitative engine.
+Human-readable at the edge. Intentionally contiguous at the core.
 
-| Repo | Role |
+This file is the global engineering constitution for the repository. It defines the invariant rules that apply to all AI-assisted and human engineering work. Path-specific instruction files add applicable constraints; they do not silently override this constitution. Agent files define role boundaries and decision rights.
+
+## 1. Governing principle
+
+Correctness, mathematical validity, data integrity, reproducibility, and architectural integrity take precedence over local convenience, stylistic preference, and speculative optimisation.
+
+Existing code is evidence, not automatic truth.
+
+Every material change must leave a reconstructable decision trail:
+
+`requirement → evidence → decision → implementation → tests → benchmark → independent validation → audit`
+
+Do not manufacture evidence. Do not infer approval from precedent.
+
+## 2. Authority hierarchy
+
+When sources conflict, resolve them in this order unless an explicit change decision is recorded:
+
+1. Approved mathematical methodology.
+2. Approved public/API contract.
+3. Approved architecture and design decisions.
+4. This global constitution.
+5. Applicable path-specific instructions.
+6. Existing tests, golden masters, benchmark evidence, and observed behaviour.
+7. Established implementation conventions.
+8. Generic language/library conventions.
+9. Local stylistic preference.
+
+A user request may explicitly authorise a methodology, architecture, or public-contract change. Treat that as a change decision, not as an excuse to rewrite unrelated areas.
+
+## 3. Non-negotiable engineering principles
+
+- Data-Oriented Design (DOD) and Structure-of-Arrays (SoA) are the default numerical architecture.
+- Human-readable representations belong at boundaries; compact numerical representations belong in the core.
+- Strings die early. They must not cross the JIT boundary.
+- Memory locality is a first-class design objective.
+- Correctness comes before cleverness.
+- Determinism and reproducibility are explicit contracts.
+- Contracts must be explicit, typed, validated, and testable.
+- Fail fast at boundaries; never silently repair malformed domain inputs.
+- Kernels contain numerical work, not policy or orchestration.
+- Compilers/solutions own policy resolution, dispatch, mapping, and orchestration.
+- Scenario-independent work must be completed before the scenario loop.
+- Minimise allocations and preserve favourable memory layout and ownership.
+- Polars is the default dataframe technology at dataframe boundaries; pandas is not the numerical-core dataframe substrate.
+- NumPy/SciPy/Numba own numerical execution where appropriate.
+- Ordinary `__init__.py` files are byte-empty.
+
+## 4. Repository architecture
+
+RiskQuant is organised conceptually as:
+
+`TERMINAL → SOLUTION → CORE`
+
+with `EDGE` providing external data and application boundaries into the controlled solution/core layers.
+
+### EDGE
+
+External schemas, source-system representations, data access, canonicalisation, file/database adapters, and human-facing data preparation.
+
+### SOLUTION
+
+Stable public/API contracts, Pydantic schemas, catalogue/recipe selection, validation, provenance, canonicalisation, orchestration, and controlled dispatch.
+
+### CORE
+
+Compact numerical state and high-performance kernels. Core code should be independent of transport formats, UI objects, strings, dataframe abstractions, and policy configuration.
+
+### TERMINAL
+
+Thin adapters such as Excel/xlwings. No business logic, model methodology, numerical policy, or duplicated orchestration.
+
+## 5. Identity semantics
+
+The identity vocabulary is normative:
+
+- `*_id`: raw external/source-system identifier.
+- `*_uid`: forged global business identifier.
+- `*_uix`: compact numerical universe index / array position.
+
+Never substitute one identity class for another.
+
+Resolve identity and mapping before entering the numerical hot path.
+
+## 6. Memory, layout, and dtype discipline
+
+Prefer SoA over object-rich arrays and per-record Python objects in numerical execution.
+
+Core numerical arrays should be explicitly shaped and dtype-controlled. Global defaults are:
+
+| Domain | Default dtype |
 |---|---|
-| **`riskquant`** | High-performance pricing, simulation, sensitivity-PnL and credit (exposure → JTD → VaR) engine. DOD/SoA, Numba/NumPy core. |
-| **`stx-data-god`** | Anti-Corruption Layer / Data Gateway over the STX DWH. Raw trading data → clean canonical Polars frames. Subsystems: `hand_of_god` (identity forge), `LegScope` (declarative filter registry), `stx_stress_tester`. |
-| **`riskquant-excel`** | xlwings tooling: Excel workbooks as dumb terminals over the `solutions.*` facades. |
+| prices / PVs / quantities / strikes | `float64` |
+| scenario shocks | `float32` |
+| UIX / UID / indices / date ordinals | `int32` |
+| flags / option-type codes | `int8` |
 
-Governing philosophy: **"Human-readable at the edge, C-contiguous at the core."**
-Strings die at ingest. Bare-metal throughput is the north star. Silent failures are worse than loud ones.
+These are defaults, not prohibitions. An explicit approved domain/API contract may override them; the explicit contract is then normative.
 
----
+Do not introduce implicit dtype promotion in hot paths without evidence that it is required and acceptable.
 
-## 0. The Tier Model (read this first)
+Preserve C-contiguity where the kernel contract expects it. Do not copy merely for aesthetic consistency; do not retain hostile layouts in performance-critical kernels.
 
-Every module belongs to exactly one tier, and the tier decides which rules apply.
+## 7. Structural missingness
 
-* **EDGE (ingest / config / ACL).** Polars, pandera, Pydantic, connectorx, human names, validation, fail-fast. This is where strings, dates and business identifiers are allowed to exist.
-* **CORE (`valuation`, `simlab`, `credit`, `sensitivity_pnl` kernels).** NumPy/Numba only. Flat arrays, `int32` UIX, sentinels, zero allocation, no frames, no strings, no objects.
-* **SOLUTION (`riskquant.solutions.*`).** The seam between core and consumers. Pydantic request/result contracts, model catalogs, recipe layers, provenance stamping. Depends on core; core never depends on it.
-* **TERMINAL (`riskquant_excel`, VBA).** Thin shell. Reads named ranges, calls one `api` function, writes results or cell-addressed errors. No business logic.
+Structural missingness uses canonical sentinels from `riskquant.constants` where such semantics are defined.
 
-Dependencies flow one way only: TERMINAL → SOLUTION → CORE → (nothing). EDGE feeds CORE; CORE never imports EDGE.
+Do not use `None` or `NaN` as generic linkage sentinels. Missingness must have explicit domain semantics.
 
----
+Never silently drop, fill, interpolate, replace, or coerce missing values in a mathematical pipeline unless the governing methodology explicitly authorises it.
 
-## 1. Core Architectural Principles
+## 8. Compile once; price many
 
-* **Struct-of-Arrays (SoA).** Trades are never objects in the hot path. They compile into homogeneous blocks (`SpotBlock`, `ForwardNodeBlock`, …) whose properties are parallel flat NumPy arrays (`block.qty`, `block.strike`).
-* **Integer Universe Indices (UIX).** No strings or object references in pricing/simulation kernels. All relationships map to `np.int32` `_uix` at compile time.
-* **Vectorized execution.** One call processes an entire block of M trades across S scenarios.
-* **Compile-once / price-many.** Anything scenario-independent (permutation, gather indices, relabelling, band order) belongs in the *compile* step, never in the per-tick loop. `sort_factors`-style per-tick matrix copies are a defect: gather kernels already do arbitrary indexed row gathers, so relabel at compile time.
-* **`__init__.py` are ALWAYS empty** — no exceptions, including `solutions.*`. A package's public surface is a named module: `solutions/<name>/api.py`, which re-exports the run function, the request/result schemas and the catalog surface. Consumers import `riskquant.solutions.<name>.api` and nothing else from the package.
+Before scenario execution, resolve as much scenario-independent work as possible:
 
-## 2. Naming Conventions (non-negotiable, all repos)
+- identities and universe mappings;
+- product/model dispatch;
+- interpolation setup;
+- relabelling/mapping;
+- permutation/gather construction;
+- band or bucket resolution;
+- static policy decisions;
+- validation of invariant dimensions and domains.
 
-* `*_uid` — **forged** global identifier (post `hand_of_god`). Unique across business entities.
-* `*_id` — **raw / unforged** database identifier. Only valid inside the ACL perimeter, always paired with its entity.
-* `*_uix` — compact `np.int32` **array index** into another array. Distinct from `uid`; never interchange them.
+The scenario loop should contain only scenario-dependent numerical work.
 
-**Identity Bleed.** Before emitting SQL, un-forge a `uid` back to its `(business_entity_code, local_id)` composite pair. A bare local id (e.g. `117`) matches rows in NL *and* US *and* MX. Entity offsets: NL 10e9 / US 20e9 / MX 30e9.
+## 9. JIT boundary
 
-## 3. Memory & Kernel Optimization
+The JIT boundary admits only primitive numerical data:
 
-* **Zero-allocation hot paths.** Allocate with `np.empty()` at the edge, pass explicit `out` arrays into kernels, mutate in place. Never `np.zeros` in the hot path.
-* **The JIT boundary wall.** `@nb.njit` cannot take Python objects. Unpack dataclass blocks into constituent arrays before the call.
-* **Numba compilation.** `@nb.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)` for dense loops; `@nb.njit(inline='always')` for small math helpers.
-* **Branch hoisting / branchless inner loops.** Hoist `if/else` out of the innermost loop; otherwise use boolean arithmetic (`payoff = is_call * call_val + (1 - is_call) * put_val`).
-* **Dumb pricing kernels.** No branching, no matrix inversion, no interpolation inside the scenario loop. Resolution and interpolation happen at compile time.
-* **Contiguity awareness.** `order="F"` for time-series extraction and scenario generation (down columns); `order="C"` for portfolio cross-sections and pricing (across rows). Always iterate the contiguous axis.
-* **Bypass the GIL.** No Python `for` loops over trades or scenarios. NumPy advanced indexing or Numba `prange`.
-* **Container compaction.** Never size a dense array as `max_container_id + 1` when ids live in a high-offset namespace (250M–500M+) — that is a multi-GB allocation. Use compact slot arrays with a `searchsorted_or_raise` resolver.
-* **Benchmark before believing.** Optimization proposals are benchmarked, not asserted. Falsified ideas get documented in the kernel docstring so they are not re-proposed (already falsified: split linear/quadratic CSR; scenario-tiled blocking).
+- NumPy arrays;
+- scalar numerical values;
+- integer indices;
+- compact flags/codes;
+- approved numerical sentinels.
 
-## 4. Data Types & Sentinels
+The JIT boundary does not admit:
 
-* Prices, PVs, quantities, strikes: `np.float64`
-* Scenario shocks (simlab generation): `np.float32`
-* Indices, uids, uixs, date ordinals: `np.int32`
-* Booleans, flags, shift types, option types (`is_call`): `np.int8`
-* **Dates** inside the engine are `np.int32` ordinals (days since 1970-01-01) — never `datetime`, never `pd.Timestamp`.
-* **Sentinels over NaNs.** Never `np.nan` / `None` / `pd.NA` for missing ids or linkages. Use `riskquant.constants` (`NO_FX_RF_REQUIRED`, `NO_DISCOUNT_CURVE_ID`, `NO_EXPIRY_DATE_ORDINAL32`, …).
-* **Known dtype traps.** Polars silently coerces on UInt32/Int64 joins — cast both sides explicitly. Boolean-mask scatter `out[mask, :] = v` writes to a **copy**; use explicit index arrays. Under `np.seterr(all="raise")` the `inf + -inf` finiteness check raises a bare `FloatingPointError` — wrap in `np.errstate(all="ignore")`.
+- strings;
+- dataframe objects;
+- Pydantic models;
+- dataclasses;
+- arbitrary Python objects;
+- dictionaries;
+- opaque policy/configuration objects.
 
-## 5. Frames at the Edge
+Canonicalisation from rich objects to numerical state belongs outside the kernel.
 
-* **Polars, not pandas.** `polars` + `connectorx` for all DWH and ACL work. `pandas` is tolerated only where a legacy consumer contract demands it; it never crosses into `valuation`, `simlab`, or `credit`.
-* **Pandera (polars) contract gates.** A pandera schema on a `LazyFrame` **silently skips data-level checks**. Both contract gates must run **eagerly**. Pandera models use plain `class Config:` — `class Config(pa.DataFrameModel.Config)` fails `mypy --strict`.
-* **Never** `.iterrows()` / `.apply()`. Vectorized masks, `np.where`, Polars expressions.
-* **Fail loud at boundaries.** A rejected row is surfaced (Return Rejects, error tables, cell-addressed `ValidationError.loc`), never dropped.
+## 10. Numba governance
 
-## 6. Class & File Structure
+Use the repository's canonical decorators. Do not create local alternatives unless a documented architecture decision explicitly requires one.
 
-* `@dataclass(frozen=True, slots=True, kw_only=True)` for all config/state containers.
-* `from __future__ import annotations` at the top of every file; strict, concrete type hints on every signature.
-* **First line of every `.py` module is a comment with its repo-relative path**, e.g. `# src/riskquant/solutions/credit_exposure/schemas.py`. This applies to every library in the estate.
-* Single-responsibility files (`black_scholes.py`, `simlab_generator.py`).
-* **No OO polymorphism for trade types.** No inheritance, no method overriding. Dispatch registry (`BLOCK_PRICER_MAP`) + vectorized kernels.
-* Explicit imports only; no wildcards. Constants live in `riskquant.constants` with descriptive names; no magic numbers in core logic.
+```python
+from functools import partial
+import numba as nb
 
-## 7. Solution & Excel Tier Conventions
+njit = partial(
+    nb.njit,
+    fastmath={"contract", "reassoc", "nsz"},
+    nogil=True,
+    boundscheck=False,
+    error_model="numpy",
+    cache=True,
+)
 
-* Request/result contracts are **Pydantic v2**, `ConfigDict(extra="forbid")`. `ValidationError.loc` must be cell-addressable (`("obligors", 2, "ead")`) so the terminal can paint the offending cell.
-* Every solution ships: `schemas.py` (contract), `catalog.py` (model menu + param specs, with a no-drift guard against the recipe registry), `recipes.py`, `run.py`, `api.py` (sole public surface), and a **golden master** with two layers — structural invariants that hold for any valid book, plus a frozen numeric case.
-* Results carry **provenance**: engine version, model, param dict, input hash, counts, timestamp. Same payload → same hash → same numbers.
-* **Excel is a dumb terminal.** Named ranges are the Python↔Excel contract. The host object is module-scope and JIT-warmed once per session. Secrets never surface to VBA. Bridges read ranges → build request → call `api` → write results or error plan.
-* Dict keys that cross JSON are **strings** (`{"0.99": 1234.5}`).
+parallel_njit = partial(
+    nb.njit,
+    parallel=True,
+    fastmath={"contract", "reassoc", "nsz"},
+    nogil=True,
+    boundscheck=False,
+    error_model="numpy",
+    cache=True,
+)
 
-## 8. Strict Anti-Patterns (NEVER)
+inline_njit = partial(
+    nb.njit,
+    fastmath={"contract", "reassoc", "nsz"},
+    nogil=True,
+    boundscheck=False,
+    error_model="numpy",
+    cache=True,
+    inline="always",
+)
+```
 
-* `for trade in portfolio:` in the pricing engine.
-* Passing a dataclass or custom object into an `@nb.njit` function.
-* `np.zeros` in the hot path.
-* `.price()` / `.calculate_pv()` OOP methods — use the dispatch registry.
-* `.iterrows()` / `.apply()` in the ingest phase.
-* String lookups in dicts inside `valuation` or `simlab.apply`.
-* `# type: ignore` anywhere. Fix the type, not the checker.
-* Non-empty `__init__.py`.
-* Raw `_id` values reaching SQL emission un-forged.
-* Broadening scope unilaterally, or fixing a symptom instead of the root cause.
+`parallel=True` requires an algorithmic justification and benchmark evidence. Fastmath is never a generic performance switch; numerical consequences must be acceptable under the governing methodology.
 
-## 9. Quality Gates (all must pass before staging)
+`error_model="numpy"` means mathematical domain validation belongs at the appropriate boundary. Do not rely on exceptions from inside the kernel as domain-policy enforcement.
 
-1. `py_compile`
-2. **import-all** — a patch once passed `py_compile` and still died on import with `NameError`. Both gates are mandatory.
-3. `ruff` — clean across `E,F,I,N,UP,B,SIM,RUF` (ignoring `E501`); `SIM105` enforced.
-4. `mypy --strict` — zero errors, concrete types, no ignores.
-5. `verify_behaviour.py` / golden-master / benchmark suite for the touched package.
+## 11. Kernel discipline
 
-## 10. Mathematical Conventions
+A numerical kernel should:
 
-* **Black-Scholes:** FV Black (1976) forward formula as the core engine; apply terminal discounting at the end.
-* **Covered interest parity:** forwards adjusted by `Spot_FX * DF_under / DF_strike` natively in the pricer.
-* **Returns:** `0` log `ln(P_t/P_{t-1})` · `1` simple `(P_t/P_{t-1}) - 1` · `2` differences `P_t - P_{t-1}`.
-* **Scenario PnL** via Taylor expansion in `sensitivity_pnl`; the permutation lives in the index, not in a per-tick copy.
+- accept only canonical primitive inputs;
+- have explicit shape/dtype/ownership expectations;
+- perform one coherent numerical task;
+- avoid hidden allocation where practical;
+- avoid Python containers and object dispatch;
+- avoid policy branching;
+- have independently testable mathematical behaviour.
 
-## 11. Working Protocol
+Do not place catalogue lookup, identity interpretation, product selection, logging, user-facing formatting, or configuration resolution inside numerical kernels.
 
-* **Prose audit before code.** Findings ranked by severity (P0/P1/P2 or BUG/CR/SMELL); design settled first, code delivered second.
-* **Empirical probing before asserting.** Benchmark or probe the claim, then write the code. Record falsified suspects rather than deleting them.
-* **Adversarial review.** Ruthless Reviewer / Lead Architect / Lead Quant personas for pre-merge critique.
-* **Complete drop-in files only** for package-local modules — no placeholders, no partial patches. Surgical `str_replace` specs only for shared files where verbatim reproduction would introduce transcription risk.
-* **Running ledger.** Each turn updates `REFACTORS_NEEDED.md` (or the domain equivalent): closed items, carried-forward items, newly surfaced gaps.
-* **One sharp question**, and only when a contract is genuinely unknown. Otherwise proceed.
+## 12. Hot-path branching and allocation
 
-## 12. Output & Persona Restraints
+Do not branch on configuration that is invariant across scenarios from inside the scenario loop.
 
-* **Zero boilerplate.** Output the code immediately. No "Here is the optimized code", no summary of principles applied.
-* **Docstrings:** NumPy-style, concise. Explain *why*, especially for non-obvious quant or memory-layout decisions. Do not restate the code.
-* **Comment sparingly.** Self-documenting names (`qty`, `strike`, `spot_uix`). Inline comments only for obscure quantitative logic or bare-metal alignment notes.
+Preallocate where complete overwrite is guaranteed. Understand that advanced indexing may materialise copies. Avoid full temporary matrices when indexed gathers or streaming aggregates satisfy the contract.
+
+A performance-motivated change is not accepted on intuition alone. Material changes require benchmark evidence.
+
+## 13. Dataframe boundary policy
+
+Polars is the default for dataframe-like source and boundary work.
+
+Dataframes do not cross into JIT kernels. Convert once into canonical arrays with explicit ownership, shape, order, and dtype.
+
+Do not use dataframe convenience semantics to hide changes in ordering, missingness, duplicate handling, or type coercion.
+
+## 14. Determinism and RNG
+
+Determinism is a contract unless stochasticity is explicitly part of the methodology.
+
+Randomness must have explicit ownership, state, seed semantics, draw-consumption semantics, and reproducibility expectations.
+
+Do not create hidden global RNGs. Do not reseed inside low-level kernels. Do not change random-number consumption order casually in a stochastic algorithm.
+
+## 15. Public API discipline
+
+Public APIs are contracts, not convenience wrappers.
+
+Use explicit typed parameters and return contracts. Avoid unstructured `dict[str, object]`, arbitrary tuples, magic positional conventions, and hidden defaults where a stable model is appropriate.
+
+Public solution layers should normally expose Pydantic v2 contracts with `ConfigDict(extra="forbid")` where appropriate.
+
+User-facing validation should be deterministic, specific, and cell/address-level where the consuming surface is Excel.
+
+`api.py` should be the sole public surface of a solution package unless an explicit architecture decision states otherwise.
+
+## 16. Python engineering baseline
+
+For ordinary Python modules:
+
+1. repository-relative path comment;
+2. `from __future__ import annotations`;
+3. explicit concrete typing;
+4. no unexplained `Any`;
+5. no `# type: ignore`;
+6. small cohesive modules;
+7. no speculative inheritance;
+8. no catch-all `utils.py`/`helpers.py`/`manager.py` modules;
+9. immutable slotted dataclasses where a dataclass is appropriate;
+10. `Final` and `Literal` where they clarify stable semantics;
+11. no import-time business side effects.
+
+The sole exception is `__init__.py`: it must be byte-empty.
+
+## 17. Error handling
+
+Validate malformed external/domain inputs at explicit boundaries and raise precise exceptions.
+
+Do not use `assert` for input validation.
+
+Do not catch broad `Exception` unless the boundary explicitly requires exception translation and preserves the causal context.
+
+Do not silently continue after contract failure.
+
+## 18. Testing and proof
+
+Tests are executable specifications and falsification tools.
+
+Use the strongest applicable combination of:
+
+- contract tests;
+- analytical/reference-oracle tests;
+- invariant/property tests;
+- adversarial and edge-case tests;
+- regression tests;
+- ownership/aliasing tests;
+- stochastic/reproducibility tests;
+- integration tests;
+- performance tests.
+
+Label correctness claims as `EXACT`, `NUMERICALLY APPROXIMATE`, or `STATISTICAL` where this distinction matters.
+
+Golden masters are evidence, not unquestionable truth. Every important numerical component should have at least one independent oracle where practical.
+
+## 19. Performance governance
+
+The evidence ladder is:
+
+`baseline → profile → hypothesis → candidate → benchmark → numerical equivalence → decision`
+
+Do not claim an optimisation without measurements appropriate to the material claim.
+
+Material benchmark evidence should record, where relevant:
+
+- CPU/model;
+- OS;
+- Python version;
+- NumPy/Numba/SciPy versions;
+- thread settings;
+- problem dimensions;
+- warm/cold state;
+- benchmark repetitions;
+- allocation/memory observations.
+
+## 20. Methodology governance
+
+Mathematical methodology must be explicit before production implementation.
+
+For any material quantitative model, document at minimum:
+
+- mathematical definition;
+- estimator or algorithm;
+- assumptions;
+- finite-sample semantics;
+- boundary cases;
+- numerical tolerances;
+- exactness classification;
+- stochasticity and RNG semantics;
+- units/sign conventions;
+- validation and reference implementation;
+- known limitations.
+
+NumPy/SciPy defaults are implementation choices, not methodology, unless explicitly adopted by the approved methodology.
+
+## 21. Change control
+
+Classify changes before broad implementation:
+
+- **A — defect/local implementation:** no contract or methodology change;
+- **B — architecture change:** boundary, ownership, or data-flow change;
+- **C — methodology change:** mathematical/statistical contract change;
+- **D — public contract change:** API/schema/result semantics change.
+
+B/C/D changes require an explicit decision record and appropriate independent review.
+
+Never combine unrelated architectural, mathematical, and cleanup changes merely because they touch the same files.
+
+## 22. Scope discipline
+
+Search and classify before editing.
+
+Separate:
+
+- active production code;
+- active tests;
+- benchmarks;
+- demos/examples;
+- generated code;
+- legacy code;
+- orphaned/broken code.
+
+Do not “repair” every broken demo or legacy path during a focused production change unless it is on the active contract path or has been explicitly promoted to scope.
+
+## 23. Required engineering chain
+
+For material work, the default sequence is:
+
+`Research → Architecture → Quant Methodology → Implementation → Tests → Performance → Independent Validation → Audit`
+
+Agents must respect role separation. A specialist may flag a blocker owned by another role, but should not silently assume that role's decision authority.
+
+## 24. Release gate
+
+Release status is earned evidence, not prose:
+
+`IMPLEMENTED → TESTED → BENCHMARKED → INDEPENDENTLY VALIDATED → AUDITED → RELEASED`
+
+A stage cannot be claimed solely because an earlier stage passed.
+
+The final auditor is entitled to return `PASS`, `CONDITIONAL PASS`, or `FAIL`.
+
+## 25. Decision hierarchy
+
+When trade-offs are unavoidable:
+
+`mathematical correctness > public contract > data integrity > architecture > determinism > memory safety > CPU efficiency > allocation efficiency > maintainability > local elegance`
+
+## 26. AI response and delivery rules
+
+An agent must:
+
+- state material assumptions;
+- identify unresolved ambiguity instead of inventing semantics;
+- distinguish facts from hypotheses;
+- cite repository evidence when performing reconnaissance;
+- make exact changes narrowly;
+- report tests actually run;
+- report benchmarks actually run;
+- identify known residual risks;
+- never claim a file, test, benchmark, or validation exists when it was not observed.
+
+For implementation work, deliver the smallest coherent patch that satisfies the approved contract.
+
+For reviews, prefer precise findings with file/symbol references, severity, evidence, and remediation over generic commentary.
+
+## 27. What not to do
+
+Do not:
+
+- add framework layers without need;
+- introduce convenience abstractions across core boundaries;
+- push strings/dataframes into numerical kernels;
+- hide policy in kernels;
+- silently change statistical conventions;
+- rely on random seeds without defining draw semantics;
+- optimise without a benchmark;
+- change public result shape incidentally;
+- use existing tests as the sole proof of mathematical correctness;
+- keep dead compatibility surfaces indefinitely without evidence of need.
