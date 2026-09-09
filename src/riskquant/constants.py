@@ -14,6 +14,12 @@ from datetime import date
 
 import numpy as np
 
+###############################################################################
+#                                                                             #
+#                            MARKET RISK CONSTANTS                            #
+#                                                                             #
+###############################################################################
+
 # ==============================================================================
 # GLOBAL SENTINELS
 # ==============================================================================
@@ -167,6 +173,7 @@ MARKET_STATE_DEFAULT_DDOF: int = 1
 # CREDIT RISK: OBLIGOR RELATED CONSTANTS
 # ==============================================================================
 
+NO_NETTING_SET_ID: np.int64 = np.int64(-1)
 NO_PARENT_OBLIGOR: np.int64 = np.int64(-1)
 NO_RATING_ID: np.int8 = np.int8(-1)
 NO_SECTOR_ID: np.int32 = np.int32(-1)
@@ -182,6 +189,14 @@ NO_CHI_NU: np.float64 = np.float64(-1.0)
 # shape parameters are strictly positive for a Beta factor, so a negative value
 # is an unambiguous "this factor carries no alpha/beta" marker.
 NO_BETA_PARAM: np.float64 = np.float64(-1.0)
+
+# Unit-scale-factor sentinel for un-occupied rf_id slots in the dense
+# rf_id -> unit_scale array. Valid unit-scale factors are strictly positive
+# (they are multipliers from UNIT_SCALE_TO_BASE), so a negative value is an
+# unambiguous "this rf_id slot is not occupied" marker (sentinel over NaN, per
+# the CORE blocks contract). A stale rf_id reaching a consumer then fails loud
+# instead of silently propagating NaN into computed levels. (RQ-AUD-012.)
+INVALID_UNIT_SCALE: np.float64 = np.float64(-999_999.0)
 
 
 # ==============================================================================

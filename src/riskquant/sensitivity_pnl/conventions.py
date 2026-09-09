@@ -46,12 +46,31 @@ DISPLACEMENT_ABSOLUTE_ID: np.int8 = np.int8(DisplacementConvention.ABSOLUTE)
 DISPLACEMENT_RELATIVE_ID: np.int8 = np.int8(DisplacementConvention.RELATIVE)
 DISPLACEMENT_LOG_ID: np.int8 = np.int8(DisplacementConvention.LOG)
 
-#: Conventions whose displacement divides by the base level. Compile- and
-#: run-time validation rejects non-positive base levels for these factors.
+#: Conventions whose displacement divides by the BASE level. Engine construction
+#: rejects a non-positive base level for these factors.
 RATIO_DISPLACEMENT_IDS: tuple[np.int8, ...] = (
     DISPLACEMENT_RELATIVE_ID,
     DISPLACEMENT_LOG_ID,
 )
+
+#: Conventions whose displacement is undefined at a non-positive SHOCKED level.
+#: A strict subset of `RATIO_DISPLACEMENT_IDS`, and the distinction is
+#: load-bearing rather than pedantic:
+#:
+#:   RELATIVE  x = L/L0 - 1 is finite for every finite L once L0 > 0. A negative
+#:             shocked level yields a return below -100%, which is economically
+#:             odd but arithmetically defined, and clamping it would silently
+#:             replace the caller's scenario with a different one.
+#:   LOG       x = ln(L/L0) is NaN at L < 0 and -inf at L = 0. Under
+#:             `error_model="numpy"` the kernel emits that quietly, so the value
+#:             reaches the PnL grid, survives `PnlMatrix`, poisons the portfolio
+#:             row on summation, and then SORTS TO THE END of a lower-tail order
+#:             statistic — turning the worst scenario in the book into one that
+#:             is silently excluded from VaR.
+#:
+#: Levels crossing zero are not hypothetical: a rate curve shifted absolutely,
+#: a spread, or a basis can all go through zero on a real historical window.
+POSITIVE_LEVEL_DISPLACEMENT_IDS: tuple[np.int8, ...] = (DISPLACEMENT_LOG_ID,)
 
 #: Named `quote_base` values. The compiled book stores a float64 per factor, so
 #: houses with bespoke units pass the scalar directly rather than extending this.

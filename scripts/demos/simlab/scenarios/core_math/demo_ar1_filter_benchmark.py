@@ -9,9 +9,19 @@ from riskquant.market_data.risk_factors.shift_types import (
     SHIFT_LOG_RETURN_ID,
 )
 from riskquant.simlab.scenarios.core_math.ar1_filter import kernel_ar1_residuals
+from riskquant.utils.printer import (
+    print_calling_file,
+    print_header,
+    print_success_message,
+)
 
 
 def benchmark_ar1_kernel() -> None:
+
+    print_calling_file(add_space_after=False)
+
+    print_header("AR(1) Filter Benchmark")
+
     # ------------------------------------------------------------------
     # Data Setup: 5 years of daily data for 10,000 risk factors
     # ------------------------------------------------------------------
@@ -37,9 +47,12 @@ def benchmark_ar1_kernel() -> None:
     print("Triggering Numba JIT Compilation (warmup)...")
     t0_warmup = time.perf_counter()
 
-    # Run on a tiny slice just to trigger compilation
+    # Run on a tiny slice just to trigger compilation (ensure F-contiguity for 2D arrays)
     kernel_ar1_residuals(
-        values_f[:10, :10], cols[:10], shift_types[:10], out_residuals_f[:10, :10]
+        np.asfortranarray(values_f[:10, :10]),
+        cols[:10],
+        shift_types[:10],
+        np.asfortranarray(out_residuals_f[:10, :10]),
     )
 
     t1_warmup = time.perf_counter()
@@ -68,6 +81,7 @@ def benchmark_ar1_kernel() -> None:
     print("-" * 50)
     print("Conclusion: The zero-allocation parallel architecture successfully")
     print("eliminates the Python Global Interpreter Lock (GIL) overhead.")
+    print_success_message("AR(1) Filter Benchmark Completed Successfully")
 
 
 if __name__ == "__main__":

@@ -1075,6 +1075,31 @@ def _validate_no_blanks(dict_of_dfs: dict[str, pd.DataFrame]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _validate_ccy_id_bounds(dict_of_dfs: dict[str, pd.DataFrame]) -> None:
+    """
+    Validate that every ``ccy_id`` fits within the ``np.int8`` range [0, 127].
+
+    ``_build_currency_state`` stores currency ids as ``np.int8`` (the universe of
+    currencies is small). A ``ccy_id`` outside [0, 127] would either raise an
+    opaque ``OverflowError`` from numpy during state construction or silently
+    wrap into a negative id and misindex the FX matrix, and a large positive id
+    would size the dense ``(n, n)`` ``fx_spot_matrix`` far beyond what is
+    intended. ``GlobalIdNamespace`` bounds rf/curve/surface ids but not currency
+    ids, so this is the gate that keeps the narrowing cast safe. (RQ-AUD-014.)
+    """
+    ccy_df = dict_of_dfs["ccy"]
+    ids = ccy_df["ccy_id"].to_numpy()
+    max_int8 = int(np.iinfo(np.int8).max)  # 127
+    out_of_bounds = ids[(ids < 0) | (ids > max_int8)]
+    if out_of_bounds.size > 0:
+        raise ConfigurationError(
+            f"ccy_id values out of the valid range [0, {max_int8}]: "
+            f"{sorted({int(v) for v in out_of_bounds})}. "
+            f"ccy_id is stored as np.int8; values must satisfy 0 <= ccy_id <= "
+            f"{max_int8}. Exceeding this also over-sizes the dense fx_spot_matrix."
+        )
+
+
 def validate_static_config_dfs(dict_of_dfs: dict[str, pd.DataFrame]) -> None:
     """
     Execute all validation tiers against the loaded config DataFrames.
@@ -1162,6 +1187,7 @@ def validate_static_config_dfs(dict_of_dfs: dict[str, pd.DataFrame]) -> None:
 
     _validate_no_blanks(dict_of_dfs)
     _validate_uniqueness(dict_of_dfs)
+    _validate_ccy_id_bounds(dict_of_dfs)
     _validate_enums(dict_of_dfs)
     _validate_fks(dict_of_dfs)
 

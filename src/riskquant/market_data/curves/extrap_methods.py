@@ -1,4 +1,4 @@
-# src\riskquant\market_data\curves\extrap_methods.py
+# src/riskquant/market_data/curves/extrap_methods.py
 
 from __future__ import annotations
 

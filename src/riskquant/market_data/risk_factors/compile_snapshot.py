@@ -113,12 +113,21 @@ def compile_risk_factor_level_snapshot_from_levels_dict(
                 f"out of sync with the static config."
             )
         ids_buf[i] = np.int32(rf_id)
-        # rf_id_to_unit_scale_factor is keyed by rf_id (numpy array indexed
-        # by id). float()-wrap because the result will be cast to
-        # float_dtype anyway and we want native multiplication.
-        levels_buf[i] = float_dtype(raw_level) * float_dtype(
-            rf_id_to_unit_scale[int(rf_id)]
-        )
+        # rf_id_to_unit_scale_factor is keyed by rf_id (numpy array indexed by
+        # id). Guard against un-occupied slots (sentinel INVALID_UNIT_SCALE < 0):
+        # a stale rf_id absent from the current static config would otherwise
+        # silently multiply the level by the sentinel instead of failing loud.
+        # Valid scale factors are strictly positive. (RQ-AUD-012.)
+        _scale = rf_id_to_unit_scale[int(rf_id)]
+        if _scale <= 0.0:
+            raise KeyError(
+                f"rf_id {int(rf_id)!r} (rel_name {rel_name!r}) maps to an "
+                f"un-occupied / sentinel slot in rf_id_to_unit_scale_factor "
+                f"(value={_scale}). The snapshot rel-name resolves to an rf_id "
+                f"that is not present in the current static config."
+            )
+        # float()-wrap because the result is cast to float_dtype anyway.
+        levels_buf[i] = float_dtype(raw_level) * float_dtype(_scale)
 
     # The snapshot constructor enforces sorted-unique + contiguous; pass
     # the buffers in directly. If callers fed us duplicate rel-names that

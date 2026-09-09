@@ -682,6 +682,7 @@ def test_entry_blocking_boundaries() -> None:
                 want += book.cross_second_order[e] * xi.astype(np.float64) * xj
             assert np.allclose(got[0], want, rtol=1e-5, atol=1e-5), (nnz_per, cross_per)
 
+
 # =========================================================================
 # LAYER 1 — prange work balance
 # =========================================================================

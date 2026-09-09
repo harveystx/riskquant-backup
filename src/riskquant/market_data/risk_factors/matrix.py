@@ -1,4 +1,4 @@
-# riskquant/market_data/risk_factors/matrix.py
+# src/riskquant/market_data/risk_factors/matrix.py
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -13,17 +13,19 @@ import numpy as np
 from numpy.typing import NDArray
 
 from riskquant.jit import (
-    _F64_1D,
-    _F64_1D_RO,
-    _F64_2D,
-    _F64_2D_RO,
-    _I32_2D_RO,
+    _F64_1D_C,
+    _F64_1D_C_RO,
+    _F64_2D_C,
+    _F64_2D_C_RO,
+    _I32_2D_C_RO,
+    _NB_INT64,
+    _NB_VOID,
     njit,
     parallel_njit,
 )
 
 
-@njit(nb.int64(_F64_2D_RO))
+@njit(_NB_INT64(_F64_2D_C_RO))
 def kernel_first_non_finite_flat_index(matrix: NDArray[np.float64]) -> int:
     """
     Flat index of the first non-finite cell, or ``-1`` when all cells are finite.
@@ -44,7 +46,7 @@ def kernel_first_non_finite_flat_index(matrix: NDArray[np.float64]) -> int:
     return -1
 
 
-@parallel_njit(nb.void(_F64_2D_RO, _F64_1D))
+@parallel_njit(_NB_VOID(_F64_2D_C_RO, _F64_1D_C))
 def kernel_sum_of_squares(
     matrix: NDArray[np.float64],
     sum_of_squares_out: NDArray[np.float64],
@@ -88,7 +90,7 @@ def kernel_sum_of_squares(
         sum_of_squares_out[row] = accumulated
 
 
-@parallel_njit(nb.void(_F64_2D_RO, _F64_2D, _F64_1D))
+@parallel_njit(_NB_VOID(_F64_2D_C_RO, _F64_2D_C, _F64_1D_C))
 def kernel_center_rows(
     matrix: NDArray[np.float64],
     centered_out: NDArray[np.float64],
@@ -123,7 +125,7 @@ def kernel_center_rows(
         sum_of_squares_out[row] = accumulated
 
 
-@parallel_njit(nb.void(_F64_2D, _F64_1D_RO))
+@parallel_njit(_NB_VOID(_F64_2D_C, _F64_1D_C_RO))
 def kernel_scale_rows(
     matrix: NDArray[np.float64],
     scale: NDArray[np.float64],
@@ -137,7 +139,7 @@ def kernel_scale_rows(
             matrix[row, col] *= factor
 
 
-@parallel_njit(nb.void(_F64_2D_RO, _I32_2D_RO, _F64_1D))
+@parallel_njit(_NB_VOID(_F64_2D_C_RO, _I32_2D_C_RO, _F64_1D_C))
 def kernel_tied_pair_counts(
     variables: NDArray[np.float64],
     sort_order: NDArray[np.int32],
@@ -171,7 +173,7 @@ def kernel_tied_pair_counts(
         tied_pairs_out[variable] = total
 
 
-@parallel_njit(nb.void(_F64_2D_RO, _I32_2D_RO, _F64_1D))
+@parallel_njit(_NB_VOID(_F64_2D_C_RO, _I32_2D_C_RO, _F64_1D_C))
 def kernel_tie_rate(
     variables: NDArray[np.float64],
     sort_order: NDArray[np.int32],

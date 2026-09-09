@@ -26,16 +26,19 @@ import math
 
 import numba as nb  # type: ignore[import-untyped]
 
-from riskquant.jit import inline_njit, parallel_njit  # type: ignore[import]
+from riskquant.jit import (
+    _F64_2D_F,
+    _I8_1D_C,
+    _I32_1D_C,
+    _NB_VOID,
+    inline_njit,
+    parallel_njit,
+)
 from riskquant.market_data.risk_factors.shift_types import (
     SHIFT_DIFFERENCE_ID,
     SHIFT_LOG_RETURN_ID,
     SHIFT_SIMPLE_RETURN_ID,
 )
-
-_F64_2D_F = nb.float64[::1, :]
-_I32_1D = nb.int32[::1]
-_I8_1D = nb.int8[::1]
 
 _T_STAT_CRITICAL_95: float = 1.96
 _VAR_X_FLOOR: float = 1e-12
@@ -196,10 +199,10 @@ def _ar1_one_col(col_vals, col_res, st: int) -> None:
 
 
 @parallel_njit(
-    nb.void(
+    _NB_VOID(
         _F64_2D_F,  # values            (T, K_total) F-contig
-        _I32_1D,  # cols              (K_req,)
-        _I8_1D,  # shift_types       (K_req,)
+        _I32_1D_C,  # cols              (K_req,)
+        _I8_1D_C,  # shift_types       (K_req,)
         _F64_2D_F,  # out_residuals     (T, K_req)   F-contig
     ),
 )

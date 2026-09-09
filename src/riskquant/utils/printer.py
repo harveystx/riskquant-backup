@@ -33,12 +33,54 @@ ANSI_BRIGHT_BLACK = "\033[90m"  # Dark gray, great for subdued metadata
 ANSI_BLACK_BG = "\033[40m"
 
 
-DEFAULT_TITLE_COLOR = ANSI_BLUE
+# Default colors for title hierarchy (same blue palette)
+DEFAULT_TITLE_COLOR = ANSI_BRIGHT_BLUE  # H0 – most prominent
+DEFAULT_HEADER_COLOR = ANSI_BLUE  # H1 – standard
+DEFAULT_SUBHEADER_COLOR = ANSI_NAVY_BLUE  # H2 – subdued
+
+
+def print_title(
+    title: str,
+    *,
+    step_delta: int | None = None,
+    add_space_before: bool = True,
+    add_space_after: bool = True,
+    color: str | None = None,
+) -> None:
+    """
+    Prints a highly prominent, double-line boxed title (H0).
+    Acts as the top-level title renderer, above header (H1) and subheader (H2).
+    """
+    if step_delta is not None:
+        title_ = f"STEP N - {abs(step_delta):1.0f}: {title}"
+    else:
+        title_ = title
+
+    c = color or DEFAULT_TITLE_COLOR
+
+    if add_space_before:
+        print()
+
+    # Double-line box with extra padding and blank lines for emphasis
+    inner_width = len(title_) + 4  # two spaces on each side
+    top_border = f"╔{'═' * inner_width}╗"
+    empty_line = f"║{' ' * inner_width}║"
+    title_line = f"║  {title_}  ║"
+    bottom_border = f"╚{'═' * inner_width}╝"
+
+    print(f"{c}{ANSI_BOLD}{top_border}{ANSI_RESET}")
+    print(f"{c}{ANSI_BOLD}{empty_line}{ANSI_RESET}")
+    print(f"{c}{ANSI_BOLD}{title_line}{ANSI_RESET}")
+    print(f"{c}{ANSI_BOLD}{empty_line}{ANSI_RESET}")
+    print(f"{c}{ANSI_BOLD}{bottom_border}{ANSI_RESET}")
+
+    if add_space_after:
+        print()
 
 
 def print_header(
-    *,
     title: str,
+    *,
     step_delta: int | None = None,
     add_space_before: bool = True,
     add_space_after: bool = True,
@@ -53,7 +95,7 @@ def print_header(
     else:
         title_ = title
 
-    c = color or DEFAULT_TITLE_COLOR
+    c = color or DEFAULT_HEADER_COLOR
 
     if add_space_before:
         print()
@@ -71,8 +113,8 @@ def print_header(
 
 
 def print_subheader(
-    *,
     title: str,
+    *,
     step_delta: int | None = None,
     add_space_before: bool = True,
     add_space_after: bool = True,
@@ -87,7 +129,7 @@ def print_subheader(
     else:
         title_ = title
 
-    c = color or DEFAULT_TITLE_COLOR
+    c = color or DEFAULT_SUBHEADER_COLOR
 
     if add_space_before:
         print()
@@ -140,7 +182,7 @@ def print_wrapped_text_box(
     add_space_after: bool = True,
     color: str | None = None,
 ) -> None:
-    """Word‑wrap `text` to `width` characters and display it in an ASCII box."""
+    """Word-wrap `text` to `width` characters and display it in an ASCII box."""
     import textwrap
 
     lines = textwrap.wrap(text, width=width)
@@ -354,9 +396,10 @@ def print_dict(
 
 
 class _FloatFormatter:
-    __slots__ = ("_fmt", "_zero_tol")
+    __slots__ = ("_fmt", "_spec", "_zero_tol")
 
     def __init__(self, spec: str, zero_tol: float = 0.0) -> None:
+        self._spec = spec
         if "_" in spec:
             clean_spec = spec.replace("_", ",")
             self._fmt = lambda x, s=clean_spec: f"{x:{s}}".replace(",", "_")
@@ -368,12 +411,7 @@ class _FloatFormatter:
         if x is None or (isinstance(x, float) and math.isnan(x)):
             # Handle NaN alignment for Numpy formats
             try:
-                width = int(
-                    self._fmt.__defaults__[0]
-                    .split(".")[0]
-                    .replace(">", "")
-                    .replace("<", "")
-                )
+                width = int(self._spec.split(".")[0].replace(">", "").replace("<", ""))
                 return "nan".rjust(width)
             except (ValueError, TypeError, IndexError):
                 return "nan"

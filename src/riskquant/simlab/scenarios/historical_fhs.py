@@ -30,7 +30,14 @@ from dataclasses import dataclass, field
 import numba as nb  # type: ignore[import-untyped]
 import numpy as np
 
-from riskquant.jit import parallel_njit
+from riskquant.jit import (
+    _F32_2D_C,
+    _F32_2D_F,
+    _F64_2D_F,
+    _I32_1D_C,
+    _I8_1D_C,
+    parallel_njit,
+)
 from riskquant.constants import EWMA_DECAY_FACTOR, MAX_EWMA_VOL_RATIO
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.market_data.risk_factors.shift_types import (
@@ -48,10 +55,6 @@ from riskquant.simlab.scenarios.core_math.ewma_volatility import (
     kernel_ewma_vol_ratios_from_residuals,
 )
 
-_F64_2D_F = nb.float64[::1, :]
-_F32_2D_F = nb.float32[::1, :]
-_I32_1D = nb.int32[::1]
-_I8_1D = nb.int8[::1]
 
 
 # =========================================================================
@@ -59,19 +62,30 @@ _I8_1D = nb.int8[::1]
 # =========================================================================
 
 
-@parallel_njit(
+@parallel_njit([
     nb.void(
         _F64_2D_F,  # residuals       (T, K_req) F-contig
         _F64_2D_F,  # vol_ratios      (T, K_req) F-contig
-        _I32_1D,  # cols            (K_req,) — kept for shape parity / debug
-        _I8_1D,  # shift_types     (K_req,)
-        _I32_1D,  # inv_perm        (K_req,)
+        _I32_1D_C,  # cols            (K_req,) — kept for shape parity / debug
+        _I8_1D_C,  # shift_types     (K_req,)
+        _I32_1D_C,  # inv_perm        (K_req,)
         nb.int64,  # t_start
         nb.int64,  # h
         nb.int64,  # B
         _F32_2D_F,  # out             (B, K_req) F-contig
     ),
-)
+    nb.void(
+        _F64_2D_F,  # residuals       (T, K_req) F-contig
+        _F64_2D_F,  # vol_ratios      (T, K_req) F-contig
+        _I32_1D_C,  # cols            (K_req,) — kept for shape parity / debug
+        _I8_1D_C,  # shift_types     (K_req,)
+        _I32_1D_C,  # inv_perm        (K_req,)
+        nb.int64,  # t_start
+        nb.int64,  # h
+        nb.int64,  # B
+        _F32_2D_C,  # out             (B, K_req) F-contig
+    ),
+])
 def _kernel_fused_filtered_h_day_shock(
     residuals,
     vol_ratios,
@@ -240,6 +254,15 @@ class FilteredHistoricalGenerator(ScenarioGenerator):
             t_end = min(t_max, t_start + batch_size)
             batch_len = t_end - t_start
             shocks_view = shocks_buf[:batch_len, :]
+            # See historical.py for the full explanation: a partial-batch
+            # slice of an F-contiguous buffer is not itself contiguous, but
+            # the kernel's `out` parameter requires genuine F-contiguity.
+            # (RQ-AUD-017.)
+            kernel_out = (
+                shocks_view
+                if shocks_view.flags["F_CONTIGUOUS"]
+                else np.empty((batch_len, k_req), dtype=np.float32, order="F")
+            )
 
             _kernel_fused_filtered_h_day_shock(
                 self._ar1_residuals,
@@ -250,11 +273,11 @@ class FilteredHistoricalGenerator(ScenarioGenerator):
                 np.int64(t_start),
                 np.int64(h),
                 np.int64(batch_len),
-                shocks_view,
+                kernel_out,
             )
 
             yield ScenarioSetBatch(
-                shocks=shocks_view,
+                shocks=kernel_out,
                 required_to_shock_uix=shock_universe.required_to_shock_uix,
                 shock_scale=shock_scale,
                 required_shift_type_id=required_shift_type_id,

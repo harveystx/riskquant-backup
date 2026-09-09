@@ -146,26 +146,26 @@ import numpy as np
 import numpy.typing as npt
 
 from riskquant.jit import (
-    _F64_1D,
-    _F64_2D,
-    _I32_1D,
-    _I64_1D,
+    _F64_1D_C,
+    _F64_2D_C,
+    _I32_1D_C,
+    _I64_1D_C,
     parallel_njit,
 )
 
 
 @parallel_njit(
     nb.void(
-        _F64_2D,  # out (M, S)
-        _F64_2D,  # latent_factors (F, S)
-        _F64_2D,  # ead (M, S)
-        _F64_1D,  # lgd (M,)
-        _I64_1D,  # loading_indptr (M + 1,)
-        _F64_1D,  # loading_values (nnz,)
-        _I32_1D,  # systemic_uix (nnz,)
-        _I32_1D,  # idiosyncratic_uix (M,)
-        _F64_1D,  # idio_weight (M,)
-        _F64_1D,  # thresholds (M,)
+        _F64_2D_C,  # out (M, S)
+        _F64_2D_C,  # latent_factors (F, S)
+        _F64_2D_C,  # ead (M, S)
+        _F64_1D_C,  # lgd (M,)
+        _I64_1D_C,  # loading_indptr (M + 1,)
+        _F64_1D_C,  # loading_values (nnz,)
+        _I32_1D_C,  # systemic_uix (nnz,)
+        _I32_1D_C,  # idiosyncratic_uix (M,)
+        _F64_1D_C,  # idio_weight (M,)
+        _F64_1D_C,  # thresholds (M,)
     )
 )
 def kernel_mf_gaussian_copula_jtd(

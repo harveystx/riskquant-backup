@@ -49,19 +49,23 @@ import numpy as np
 from numpy.typing import NDArray
 
 from riskquant.jit import (
-    _F64_1D,
-    _F64_1D_RO,
-    _F64_2D,
-    _F64_2D_RO,
-    _I32_1D_RO,
-    _I32_2D_RO,
+    _F64_1D_C,
+    _F64_1D_C_RO,
+    _F64_2D_C,
+    _F64_2D_C_RO,
+    _I32_1D_C_RO,
+    _I32_2D_C_RO,
+    _NB_FLOAT64,
+    _NB_VOID,
     njit,
     parallel_njit,
 )
 
 
-@njit(nb.float64(_F64_1D, _F64_1D))
-def _count_inversions(values: NDArray[np.float64], buffer: NDArray[np.float64]) -> float:
+@njit(_NB_FLOAT64(_F64_1D_C, _F64_1D_C))
+def _count_inversions(
+    values: NDArray[np.float64], buffer: NDArray[np.float64]
+) -> float:
     """
     Count inversions by bottom-up merge sort. Destroys ``values``.
 
@@ -133,16 +137,16 @@ def _count_inversions(values: NDArray[np.float64], buffer: NDArray[np.float64]) 
 
 
 @parallel_njit(
-    nb.void(
-        _F64_2D_RO,  # variables (K, S)
-        _I32_2D_RO,  # sort_order (K, S)
-        _F64_1D_RO,  # tied_pairs (K,)
-        _I32_1D_RO,  # pair_row (P,)
-        _I32_1D_RO,  # pair_col (P,)
-        _F64_2D,  # x_scratch (T, S)
-        _F64_2D,  # y_scratch (T, S)
-        _F64_2D,  # merge_scratch (T, S)
-        _F64_2D,  # out (K, K)
+    _NB_VOID(
+        _F64_2D_C_RO,  # variables (K, S)
+        _I32_2D_C_RO,  # sort_order (K, S)
+        _F64_1D_C_RO,  # tied_pairs (K,)
+        _I32_1D_C_RO,  # pair_row (P,)
+        _I32_1D_C_RO,  # pair_col (P,)
+        _F64_2D_C,  # x_scratch (T, S)
+        _F64_2D_C,  # y_scratch (T, S)
+        _F64_2D_C,  # merge_scratch (T, S)
+        _F64_2D_C,  # out (K, K)
     )
 )
 def kernel_kendall_tau_b_upper(
@@ -189,7 +193,7 @@ def kernel_kendall_tau_b_upper(
     total_pairs = n_observations * (n_observations - 1) / 2.0
 
     for pair in nb.prange(n_pairs):
-        thread = nb.get_thread_id()
+        thread = nb.get_thread_id()  # type: ignore
 
         row = pair_row[pair]
         col = pair_col[pair]

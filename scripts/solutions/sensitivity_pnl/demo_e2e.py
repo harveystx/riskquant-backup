@@ -23,7 +23,6 @@ from __future__ import annotations
 import numpy as np
 import polars as pl
 
-from riskquant.sensitivity_pnl.grid import allocate_pnl_grid
 from riskquant.solutions.sensitivity_pnl.api import (
     DisplacementConvention,
     FactorAxis,
@@ -32,13 +31,15 @@ from riskquant.solutions.sensitivity_pnl.api import (
     SensitivityPnlCalculator,
     SensitivityPnlInputError,
     SensitivityPnlRequest,
+    allocate_pnl_grid,
     run_sensitivity_pnl,
     write_sensitivity_pnl,
 )
 
 # --- the book ------------------------------------------------------------
 # V = volume * X_rep * S, so second order is zero and all curvature is the
-# single cross term d2V/dS dX = volume. See scripts/.../verify_spot.py.
+# single cross term d2V/dS dX = volume. See tests/solutions/sensitivity_pnl/
+# test_demo_scripts_are_runnable.py for this file's own regression coverage.
 SPOT, FX = 42.50, 0.85
 LONG_UID, HEDGE_UID, EMPTY_UID = 101, 202, 303
 LONG_VOLUME, HEDGE_VOLUME = 50_000.0, -18_000.0
@@ -100,7 +101,11 @@ def show(result_pnl: np.ndarray, uids: np.ndarray, shocks: np.ndarray) -> None:
         + "".join(f"{f'scn {i}':>14}" for i in range(shocks.shape[1]))
     )
     for row, uid in enumerate(uids):
-        cells = "".join(f"{v:>14,.2f}" for v in result_pnl[row])
+        # `+ 0.0` normalises IEEE negative zero (e.g. -0.0 * volume), which is
+        # a real value distinct from 0.0 in bit pattern and prints as "-0.00"
+        # -- misleading in a demo whose stated point is that every number here
+        # can be checked against the closed form by hand.
+        cells = "".join(f"{(v + 0.0):>14,.2f}" for v in result_pnl[row])
         print(f"  {uid:>10} {cells}")
 
 

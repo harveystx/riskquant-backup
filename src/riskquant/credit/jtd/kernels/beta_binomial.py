@@ -6,21 +6,21 @@ import numpy as np
 import numpy.typing as npt
 
 from riskquant.jit import (
-    _F64_1D,
-    _F64_2D,
-    _I32_1D,
+    _F64_1D_C,
+    _F64_2D_C,
+    _I32_1D_C,
     parallel_njit,
 )
 
 
 @parallel_njit(
     nb.void(
-        _F64_2D,  # out
-        _F64_2D,  # latent_factors
-        _F64_2D,  # ead
-        _F64_1D,  # lgd
-        _I32_1D,  # uniform_uix
-        _I32_1D,  # beta_uix
+        _F64_2D_C,  # out
+        _F64_2D_C,  # latent_factors
+        _F64_2D_C,  # ead
+        _F64_1D_C,  # lgd
+        _I32_1D_C,  # uniform_uix
+        _I32_1D_C,  # beta_uix
     )
 )
 def kernel_beta_binomial_jtd(

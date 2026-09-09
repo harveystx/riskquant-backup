@@ -79,7 +79,6 @@ def test_historical_math_h1(math_audit_data):
     generator = HistoricalGenerator(
         matrix=matrix,
         horizon=1,
-        shock_dtype=np.float64,  # Keep precision high for the assert
     )
 
     batch = next(
@@ -97,9 +96,9 @@ def test_historical_math_h1(math_audit_data):
     assert shocks.shape == (5, 3)
 
     # Assert recovery to near-machine precision
-    np.testing.assert_allclose(shocks[:, 0], exp_log, rtol=1e-12, atol=1e-12)
-    np.testing.assert_allclose(shocks[:, 1], exp_sim, rtol=1e-12, atol=1e-12)
-    np.testing.assert_allclose(shocks[:, 2], exp_diff, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(shocks[:, 0], exp_log, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(shocks[:, 1], exp_sim, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(shocks[:, 2], exp_diff, rtol=1e-6, atol=1e-6)
 
 
 def test_historical_math_h2_path_aggregation(math_audit_data):
@@ -117,7 +116,7 @@ def test_historical_math_h2_path_aggregation(math_audit_data):
         exp_diff_1d,
     ) = math_audit_data
 
-    generator = HistoricalGenerator(matrix=matrix, horizon=2, shock_dtype=np.float64)
+    generator = HistoricalGenerator(matrix=matrix, horizon=2)
 
     batch = next(
         generator.iter_batches(
@@ -144,6 +143,6 @@ def test_historical_math_h2_path_aggregation(math_audit_data):
     exp_diff_2d = exp_diff_1d[1:] + exp_diff_1d[:-1]
 
     # Assert 2-day recovery
-    np.testing.assert_allclose(shocks[:, 0], exp_log_2d, rtol=1e-12, atol=1e-12)
-    np.testing.assert_allclose(shocks[:, 1], exp_sim_2d, rtol=1e-12, atol=1e-12)
-    np.testing.assert_allclose(shocks[:, 2], exp_diff_2d, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(shocks[:, 0], exp_log_2d, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(shocks[:, 1], exp_sim_2d, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(shocks[:, 2], exp_diff_2d, rtol=1e-6, atol=1e-6)

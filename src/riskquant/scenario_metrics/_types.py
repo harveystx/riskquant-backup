@@ -1,3 +1,7 @@
+# src/riskquant/scenario_metrics/_types.py
+
+from __future__ import annotations
+
 import numpy as np
 import numpy.typing as npt
 

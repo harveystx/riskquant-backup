@@ -1,4 +1,4 @@
-# src/riskquant/ingest_fixtures/credit/jtd/stress_regime/minimal_stress_regime_bernoulli_jtd.py
+# src/riskquant/ingest_fixtures/credit/jtd/stress_regime_bernoulli/minimal_stress_regime_bernoulli_jtd.py
 """
 Canonical stress-regime Bernoulli JTD ingest case.
 

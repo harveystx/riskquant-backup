@@ -8,10 +8,10 @@ import math
 import numba as nb  # type: ignore[import-untyped]
 
 from riskquant.jit import (
-    _F64_1D,
-    _F64_2D,
-    _I8_1D,
-    _I32_1D,
+    _F64_1D_C,
+    _F64_2D_C,
+    _I8_1D_C,
+    _I32_1D_C,
     parallel_njit,
 )
 from riskquant.valuation.pricing_models.black76.model import (
@@ -22,23 +22,23 @@ from riskquant.valuation.pricing_models.black76.model import (
 @parallel_njit(
     nb.void(
         # OUTPUT
-        _F64_2D,  # out
+        _F64_2D_C,  # out
         # MARKET DATA
-        _F64_2D,  # forward_prices
-        _F64_2D,  # vols
-        _F64_2D,  # discount_factors
-        _F64_2D,  # fx_spots_effective
+        _F64_2D_C,  # forward_prices
+        _F64_2D_C,  # vols
+        _F64_2D_C,  # discount_factors
+        _F64_2D_C,  # fx_spots_effective
         # BLOCK FIELDS (TRADE SPECIFICS)
-        _F64_1D,  # qty
-        _F64_1D,  # strike
-        _I8_1D,  # cp_mult
-        _F64_1D,  # sqrt_tte
-        _F64_1D,  # half_tte
+        _F64_1D_C,  # qty
+        _F64_1D_C,  # strike
+        _I8_1D_C,  # cp_mult
+        _F64_1D_C,  # sqrt_tte
+        _F64_1D_C,  # half_tte
         # BLOCK FIELDS (LINKAGES / UIX)
-        _I32_1D,  # forward_price_uix
-        _I32_1D,  # vol_uix
-        _I32_1D,  # discount_factor_k_uix
-        _I32_1D,  # fx_spot_effective_k2s_uix
+        _I32_1D_C,  # forward_price_uix
+        _I32_1D_C,  # vol_uix
+        _I32_1D_C,  # discount_factor_k_uix
+        _I32_1D_C,  # fx_spot_effective_k2s_uix
     ),
 )
 def _kernel_price_vanilla_european_option(

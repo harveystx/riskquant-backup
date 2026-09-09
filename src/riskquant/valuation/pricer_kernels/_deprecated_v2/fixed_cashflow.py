@@ -8,10 +8,10 @@ from __future__ import annotations
 import numba as nb
 
 from riskquant.jit import (
-    _F64_1D,
-    _F64_2D,
-    _I8_1D,
-    _I32_1D,
+    _F64_1D_C,
+    _F64_2D_C,
+    _I8_1D_C,
+    _I32_1D_C,
     parallel_njit,
 )
 
@@ -19,17 +19,17 @@ from riskquant.jit import (
 @parallel_njit(
     nb.void(
         # OUTPUT
-        _F64_2D,  # out
+        _F64_2D_C,  # out
         # MARKET DATA
-        _F64_2D,  # discount_factors
-        _F64_2D,  # fx_spots_effective
+        _F64_2D_C,  # discount_factors
+        _F64_2D_C,  # fx_spots_effective
         # BLOCK FIELDS
-        _F64_1D,  # notional
-        _F64_1D,  # accrual_factor
-        _F64_1D,  # fixed_rate
-        _I8_1D,  # pay_receive_mult
-        _I32_1D,  # discount_factor_uix
-        _I32_1D,  # fx_spot_effective_uix
+        _F64_1D_C,  # notional
+        _F64_1D_C,  # accrual_factor
+        _F64_1D_C,  # fixed_rate
+        _I8_1D_C,  # pay_receive_mult
+        _I32_1D_C,  # discount_factor_uix
+        _I32_1D_C,  # fx_spot_effective_uix
     ),
 )
 def _kernel_price_fixed_cashflow(

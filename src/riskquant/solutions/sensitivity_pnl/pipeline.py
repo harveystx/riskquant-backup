@@ -36,6 +36,7 @@ __all__ = [
     "build_provenance",
     "compile_book",
     "make_engine",
+    "make_validity_engine",
     "resolve_batch_size",
     "scope_factor_meta",
     "stream_scenarios",
@@ -52,7 +53,11 @@ from riskquant.sensitivity_pnl.compile import (
     compile_sensitivity_book,
 )
 from riskquant.sensitivity_pnl.contracts import CompiledSensitivityBook
-from riskquant.sensitivity_pnl.engine import SensitivityPnlEngine
+from riskquant.sensitivity_pnl.engine import (
+    SensitivityPnlEngine,
+    StreamingSensitivityEngine,
+)
+from riskquant.sensitivity_pnl.validity import TaylorValidityEngine
 from riskquant.solutions.sensitivity_pnl.market import (
     FactorAxis,
     MarketScenarios,
@@ -87,12 +92,19 @@ def scope_factor_meta(spec: SensitivityBookSpec) -> pl.DataFrame:
     Returns the frame untouched when the key column is absent or in the wrong key
     space — validation reports that and raises, and filtering on a mismatched
     dtype would only replace one error with a worse one.
+
+    `keys.implode()`: `keys` and the frame's key column share a dtype by
+    construction of the guard above, which is exactly the case polars now
+    treats `is_in` as ambiguous for. `implode()` is cheap (no data copy, just a
+    single-row List-typed view) and keeps the intended "membership in a
+    collection" meaning explicit rather than relying on the soon-to-change
+    default.
     """
     frame = spec.factor_meta
     keys = spec.factor_axis.keys
     if COL_FACTOR_ID not in frame.columns or frame.schema[COL_FACTOR_ID] != keys.dtype:
         return frame
-    return frame.filter(pl.col(COL_FACTOR_ID).is_in(keys))
+    return frame.filter(pl.col(COL_FACTOR_ID).is_in(keys.implode()))
 
 
 def compile_book(
@@ -164,7 +176,7 @@ def make_engine(
 def stream_scenarios(
     *,
     market: MarketScenarios,
-    engine: SensitivityPnlEngine,
+    engine: StreamingSensitivityEngine,
     num_scenarios: int,
 ) -> None:
     """
@@ -177,6 +189,10 @@ def stream_scenarios(
     The two market contracts drive the identical Taylor kernel and differ only in
     how the displacement scratch is filled, so the split is a two-arm dispatch
     here rather than an abstraction either side has to carry.
+
+    Typed against `StreamingSensitivityEngine` rather than `SensitivityPnlEngine`
+    directly: `TaylorValidityEngine` (`validity.py`) implements the identical two
+    methods and streams through this same loop unchanged.
     """
     batch_size = engine.batch_size
     for offset in range(0, num_scenarios, batch_size):
@@ -195,6 +211,33 @@ def stream_scenarios(
                 scenario_offset=offset,
                 levels_offset=offset,
             )
+
+
+def make_validity_engine(
+    *,
+    book: CompiledSensitivityBook,
+    market: MarketScenarios,
+    linear_out: npt.NDArray[np.float32],
+    quadratic_out: npt.NDArray[np.float32],
+    batch_size: int,
+) -> TaylorValidityEngine:
+    """
+    `make_engine`'s counterpart for the linear/quadratic split. Same reasoning
+    on why this is built fresh per scenario set rather than cached: freezing
+    two output views at construction means reusing an engine would mean two
+    results silently sharing one buffer.
+    """
+    return TaylorValidityEngine(
+        book=book,
+        linear_out=linear_out,
+        quadratic_out=quadratic_out,
+        batch_size=batch_size,
+        base_levels=(
+            market.base_levels
+            if isinstance(market, ScenarioLevels)
+            else np.empty(0, dtype=np.float64)
+        ),
+    )
 
 
 def build_provenance(

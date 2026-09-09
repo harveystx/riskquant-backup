@@ -1,4 +1,4 @@
-# src/riskquant/valuation/kernels/vanilla_european_option.py
+# src/riskquant/valuation/pricer_kernels/vanilla_european_option.py
 """Pricing kernels for vanilla European options."""
 
 from __future__ import annotations
@@ -6,10 +6,10 @@ from __future__ import annotations
 import numba as nb
 
 from riskquant.jit import (
-    _F64_1D,
-    _F64_2D,
-    _I8_1D,
-    _I32_1D,
+    _F64_1D_C,
+    _F64_2D_C,
+    _I8_1D_C,
+    _I32_1D_C,
     parallel_njit,
 )
 from riskquant.valuation.pricing_models.black76.model import (
@@ -20,24 +20,24 @@ from riskquant.valuation.pricing_models.black76.model import (
 @parallel_njit(
     nb.void(
         # OUTPUT
-        _F64_2D,  # out
+        _F64_2D_C,  # out
         # MARKET DATA
-        _F64_2D,  # forward_prices_strike_ccy
-        _F64_2D,  # option_log_forward_prices_strike_ccy
-        _F64_2D,  # vols
-        _F64_2D,  # effective_discount_factors
+        _F64_2D_C,  # forward_prices_strike_ccy
+        _F64_2D_C,  # option_log_forward_prices_strike_ccy
+        _F64_2D_C,  # vols
+        _F64_2D_C,  # effective_discount_factors
         # BLOCK FIELDS (TRADE SPECIFICS)
-        _F64_1D,  # qty
-        _F64_1D,  # strike
-        _F64_1D,  # log_strike
-        _I8_1D,  # cp_mult
-        _F64_1D,  # sqrt_tte
-        _F64_1D,  # half_tte
+        _F64_1D_C,  # qty
+        _F64_1D_C,  # strike
+        _F64_1D_C,  # log_strike
+        _I8_1D_C,  # cp_mult
+        _F64_1D_C,  # sqrt_tte
+        _F64_1D_C,  # half_tte
         # BLOCK FIELDS (LINKAGES / UIX)
-        _I32_1D,  # forward_price_strike_ccy_uix
-        _I32_1D,  # option_log_forward_price_strike_ccy_uix
-        _I32_1D,  # vol_uix
-        _I32_1D,  # effective_discount_factor_uix
+        _I32_1D_C,  # forward_price_strike_ccy_uix
+        _I32_1D_C,  # option_log_forward_price_strike_ccy_uix
+        _I32_1D_C,  # vol_uix
+        _I32_1D_C,  # effective_discount_factor_uix
     ),
 )
 def _kernel_price_vanilla_european_option(

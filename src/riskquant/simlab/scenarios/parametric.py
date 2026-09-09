@@ -371,10 +371,23 @@ class ParametricGenerator(ScenarioGenerator):
 
             # 5. Cast into the F-contig float32 streaming buffer.
             # `np.copyto` honours the buffer's F-layout writeback path.
+            # np.copyto itself does not require shocks_view to be contiguous
+            # (it writes element-wise through the view's strides either way),
+            # but the *yielded* ScenarioSetBatch.shocks contract requires
+            # genuine F-contiguity. A slice of an F-contiguous buffer along
+            # its first axis is only itself F-contiguous when the slice
+            # covers every row; the final (partial) batch is neither C nor
+            # F contiguous. Materialise a contiguous copy only in that case.
+            # (RQ-AUD-017.)
             np.copyto(shocks_view, correlated_view, casting="same_kind")
+            shocks_out = (
+                shocks_view
+                if shocks_view.flags["F_CONTIGUOUS"]
+                else np.asfortranarray(shocks_view)
+            )
 
             yield ScenarioSetBatch(
-                shocks=shocks_view,
+                shocks=shocks_out,
                 required_to_shock_uix=shock_universe.required_to_shock_uix,
                 shock_scale=shock_scale,
                 required_shift_type_id=required_shift_type_id,

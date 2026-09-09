@@ -19,37 +19,58 @@ def compute_var_es(
     confidence_level: float,
 ) -> VarEsResult:
     """
-    Compute lower-tail VaR and ES for each group.
+    Compute empirical lower-tail historical VaR and ES for each group.
 
     Parameters
     ----------
-    group_value_matrix : Float64Matrix
-        Shape (n_groups, n_scenarios).
+    group_value_matrix
+        C-contiguous float64 matrix with shape
+        ``(n_groups, n_scenarios)``.
 
-    confidence_level : float
-        Example: 0.99.
+        Rows are independent empirical risk variables/groups.
+        Columns are historical scenarios.
+
+    confidence_level
+        Confidence level in ``(0, 1)``.
 
     Returns
     -------
-    var_es_result : VarEsResult
-        Contains the VaR and ES for each group.
+    VarEsResult
+        Empirical lower-tail VaR and ES for each group.
+
+    Mathematical convention
+    ------------------------
+    Let ``alpha = 1 - confidence_level`` and ``m = alpha * S``.
+
+    VaR is the empirical ``ceil(m)``-th lower-tail order statistic.
+
+    ES integrates exactly ``m`` observations' worth of empirical probability
+    mass, using a fractional weight on the boundary observation when ``m`` is
+    non-integral.
     """
 
     _validate_group_value_matrix(
         group_value_matrix,
     )
 
-    _validate_confidence_level(
+    canonical_confidence_level = _validate_confidence_level(
         confidence_level,
     )
 
-    kth_index, tail_count = _compute_lower_tail_parameters(
+    (
+        var_index,
+        full_tail_count,
+        fractional_weight,
+        tail_mass,
+    ) = _compute_lower_tail_parameters(
         scenario_count=group_value_matrix.shape[1],
-        confidence_level=confidence_level,
+        confidence_level=canonical_confidence_level,
     )
 
     return _compute_tail_var_es(
         group_value_matrix=group_value_matrix,
-        kth_index=kth_index,
-        tail_count=tail_count,
+        var_index=var_index,
+        full_tail_count=full_tail_count,
+        fractional_weight=fractional_weight,
+        tail_mass=tail_mass,
     )

@@ -1,4 +1,4 @@
-# riskquant/market_data/risk_factors/snapshot.py
+# src/riskquant/market_data/risk_factors/snapshot.py
 
 from __future__ import annotations
 

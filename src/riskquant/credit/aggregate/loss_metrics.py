@@ -24,6 +24,7 @@ __all__ = [
     "value_at_risk",
     "expected_shortfall",
     "tail_var_es_by_group",
+    "loss_var_es_contribution",
     "loss_quantiles",
     "PortfolioLossDistribution",
 ]
@@ -33,6 +34,9 @@ from dataclasses import dataclass
 import numpy as np
 import numpy.typing as npt
 
+from riskquant.scenario_metrics.api.contribution import (
+    compute_var_es_contribution,
+)
 from riskquant.scenario_metrics.api.var_es import compute_var_es
 
 _F64_1D = npt.NDArray[np.float64]
@@ -97,6 +101,33 @@ def tail_var_es_by_group(
     per-segment (e.g. per-model) tail risk.
     """
     return _loss_tail_var_es(loss_by_group=loss_by_group, alpha=alpha)
+
+
+def loss_var_es_contribution(
+    component_loss: _F64_2D,
+    portfolio_loss: _F64_1D,
+    alpha: float,
+) -> tuple[_F64_1D, _F64_1D]:
+    """Per-component upper-tail loss VaR/ES contributions (Euler allocation).
+
+    ``component_loss`` is ``(K, S)`` per-component loss; ``portfolio_loss`` is its
+    ``(S,)`` column sum. Returns ``(var_contribution, es_contribution)``, each
+    ``(K,)`` in loss space, which foot to the headline loss VaR/ES exactly.
+
+    Delegates to the shared ``scenario_metrics`` tail-allocation kernel — the
+    single home for VaR/ES contribution across market and credit risk — via the
+    same lower-tail negation bridge ``loss_var_es`` uses. Negate losses into P&L
+    on the way in, negate the contributions back into loss space on the way out.
+    """
+    result = compute_var_es_contribution(
+        component_matrix=np.ascontiguousarray(-component_loss),
+        total_row=np.ascontiguousarray(-portfolio_loss),
+        confidence_level=alpha,
+    )
+    return (
+        np.ascontiguousarray(-result.var_contribution),
+        np.ascontiguousarray(-result.es_contribution),
+    )
 
 
 def loss_quantiles(portfolio_loss: _F64_1D, alphas: _F64_1D) -> _F64_1D:

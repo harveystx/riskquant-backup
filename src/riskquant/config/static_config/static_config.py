@@ -82,7 +82,7 @@ from riskquant.config.static_config.schema_objects import (
     SurfaceMeta,
     SurfacePointMeta,
 )
-from riskquant.constants import NO_ID
+from riskquant.constants import INVALID_UNIT_SCALE, NO_ID
 from riskquant.market_data.curves.extrap_methods import EXTRAP_METHOD_REGISTRY
 from riskquant.market_data.curves.interp_methods import INTERP_METHOD_REGISTRY
 from riskquant.market_data.risk_factors.shift_types import (
@@ -389,7 +389,10 @@ def _build_rf_state(
     parent_id = np.full(n, -1, dtype=np.int32)
     ccy_id = np.full(n, -1, dtype=np.int8)
     shift_id = np.full(n, -1, dtype=np.int8)
-    unit_scale = np.full(n, np.nan, dtype=np.float64)
+    # Unoccupied slots carry an explicit negative sentinel, never NaN, so a
+    # stale rf_id fails loud downstream instead of silently propagating NaN
+    # into computed levels. (RQ-AUD-012.)
+    unit_scale = np.full(n, float(INVALID_UNIT_SCALE), dtype=np.float64)
 
     ccy_name_to_id = state.ccy_name_to_id
 

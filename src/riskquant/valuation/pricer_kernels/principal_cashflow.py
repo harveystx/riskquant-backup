@@ -1,4 +1,4 @@
-# src/riskquant/valuation/kernels/principal_cashflow.py
+# src/riskquant/valuation/pricer_kernels/principal_cashflow.py
 """
 Principal cashflow pricing kernel.
 """
@@ -8,9 +8,9 @@ from __future__ import annotations
 import numba as nb
 
 from riskquant.jit import (
-    _F64_1D,
-    _F64_2D,
-    _I32_1D,
+    _F64_1D_C,
+    _F64_2D_C,
+    _I32_1D_C,
     parallel_njit,
 )
 
@@ -18,12 +18,12 @@ from riskquant.jit import (
 @parallel_njit(
     nb.void(
         # OUTPUT
-        _F64_2D,  # out
+        _F64_2D_C,  # out
         # MARKET DATA
-        _F64_2D,  # effective_discount_factors
+        _F64_2D_C,  # effective_discount_factors
         # BLOCK FIELDS
-        _F64_1D,  # amount
-        _I32_1D,  # effective_discount_factor_uix
+        _F64_1D_C,  # amount
+        _I32_1D_C,  # effective_discount_factor_uix
     ),
 )
 def _kernel_price_principal_cashflow(

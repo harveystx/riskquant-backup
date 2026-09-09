@@ -1,4 +1,4 @@
-# riskquant/market_data/risk_factors/shift_types.py
+# src/riskquant/market_data/risk_factors/shift_types.py
 from __future__ import annotations
 
 from collections.abc import Mapping

@@ -32,38 +32,85 @@ from functools import partial
 import numba as nb
 from numba.core import types as nb_types
 
+# =============================================================================
+# Scalar Types for Function Signatures
+# =============================================================================
+# Exported here so downstream modules can import `float64` or `void` directly
+# without triggering static type checker errors from `numba.float64`.
+
+_NB_FLOAT64 = nb_types.float64
+_NB_FLOAT32 = nb_types.float32
+_NB_INT64 = nb_types.int64
+_NB_INT32 = nb_types.int32
+_NB_INT8 = nb_types.int8
+_NB_BOOL = nb_types.bool_
+_NB_VOID = nb_types.void
+
 # Type aliases for Numba-compiled functions — enforce C-contiguous layout for all
 # arrays to ensure the compiler emits straight-line SIMD loops with no dynamic
 # stride checks. These are used in type signatures for compiled functions below.
-_F64_1D = nb_types.float64[::1]
-_F64_2D = nb_types.float64[:, ::1]
-_F64_3D = nb_types.float64[:, :, ::1]
-_F64_4D = nb_types.float64[:, :, :, ::1]
+_F64_1D_C = nb_types.float64[::1]
+_F64_2D_C = nb_types.float64[:, ::1]
+_F64_3D_C = nb_types.float64[:, :, ::1]
+_F64_4D_C = nb_types.float64[:, :, :, ::1]
 
-_F32_1D = nb_types.float32[::1]
-_F32_2D = nb_types.float32[:, ::1]
-_F32_3D = nb_types.float32[:, :, ::1]
-_F32_4D = nb_types.float32[:, :, :, ::1]
+_F32_1D_C = nb_types.float32[::1]
+_F32_2D_C = nb_types.float32[:, ::1]
+_F32_3D_C = nb_types.float32[:, :, ::1]
+_F32_4D_C = nb_types.float32[:, :, :, ::1]
 
-_I64_1D = nb_types.int64[::1]
-_I64_2D = nb_types.int64[:, ::1]
-_I64_3D = nb_types.int64[:, :, ::1]
-_I64_4D = nb_types.int64[:, :, :, ::1]
+_I64_1D_C = nb_types.int64[::1]
+_I64_2D_C = nb_types.int64[:, ::1]
+_I64_3D_C = nb_types.int64[:, :, ::1]
+_I64_4D_C = nb_types.int64[:, :, :, ::1]
 
-_I32_1D = nb_types.int32[::1]
-_I32_2D = nb_types.int32[:, ::1]
-_I32_4D = nb_types.int32[:, :, :, ::1]
-_I32_3D = nb_types.int32[:, :, ::1]
+_I32_1D_C = nb_types.int32[::1]
+_I32_2D_C = nb_types.int32[:, ::1]
+_I32_3D_C = nb_types.int32[:, :, ::1]
+_I32_4D_C = nb_types.int32[:, :, :, ::1]
 
-_I8_1D = nb_types.int8[::1]
-_I8_2D = nb_types.int8[:, ::1]
-_I8_3D = nb_types.int8[:, :, ::1]
-_I8_4D = nb_types.int8[:, :, :, ::1]
+_I8_1D_C = nb_types.int8[::1]
+_I8_2D_C = nb_types.int8[:, ::1]
+_I8_3D_C = nb_types.int8[:, :, ::1]
+_I8_4D_C = nb_types.int8[:, :, :, ::1]
 
-_BOOL_1D = nb_types.bool_[::1]
-_BOOL_2D = nb_types.bool_[:, ::1]
-_BOOL_3D = nb_types.bool_[:, :, ::1]
-_BOOL_4D = nb_types.bool_[:, :, :, ::1]
+_BOOL_1D_C = nb_types.bool_[::1]
+_BOOL_2D_C = nb_types.bool_[:, ::1]
+_BOOL_3D_C = nb_types.bool_[:, :, ::1]
+_BOOL_4D_C = nb_types.bool_[:, :, :, ::1]
+
+# F-contiguous (Column-major) counterparts.
+# The ::1 stride is placed on the FIRST index instead of the last.
+# Note: 1D arrays are identical in C and F layouts, so [::1] is used for both.
+_F64_1D_F = nb_types.float64[::1]
+_F64_2D_F = nb_types.float64[::1, :]
+_F64_3D_F = nb_types.float64[::1, :, :]
+_F64_4D_F = nb_types.float64[::1, :, :, :]
+
+_F32_1D_F = nb_types.float32[::1]
+_F32_2D_F = nb_types.float32[::1, :]
+_F32_3D_F = nb_types.float32[::1, :, :]
+_F32_4D_F = nb_types.float32[::1, :, :, :]
+
+_I64_1D_F = nb_types.int64[::1]
+_I64_2D_F = nb_types.int64[::1, :]
+_I64_3D_F = nb_types.int64[::1, :, :]
+_I64_4D_F = nb_types.int64[::1, :, :, :]
+
+_I32_1D_F = nb_types.int32[::1]
+_I32_2D_F = nb_types.int32[::1, :]
+_I32_3D_F = nb_types.int32[::1, :, :]
+_I32_4D_F = nb_types.int32[::1, :, :, :]
+
+_I8_1D_F = nb_types.int8[::1]
+_I8_2D_F = nb_types.int8[::1, :]
+_I8_3D_F = nb_types.int8[::1, :, :]
+_I8_4D_F = nb_types.int8[::1, :, :, :]
+
+_BOOL_1D_F = nb_types.bool_[::1]
+_BOOL_2D_F = nb_types.bool_[::1, :]
+_BOOL_3D_F = nb_types.bool_[::1, :, :]
+_BOOL_4D_F = nb_types.bool_[::1, :, :, :]
 
 # Read-only counterparts. A NumPy array with ``writeable=False`` is typed by
 # Numba as ``readonly array(...)``, which does NOT unify with the mutable
@@ -76,23 +123,68 @@ _BOOL_4D = nb_types.bool_[:, :, :, ::1]
 # Derived with ``.copy(readonly=True)`` rather than constructed from
 # ``nb_types.Array``: it keeps each read-only alias tied to its mutable
 # counterpart, so a change to one cannot silently diverge from the other.
-_F64_1D_RO = _F64_1D.copy(readonly=True)
-_F64_2D_RO = _F64_2D.copy(readonly=True)
-_F64_3D_RO = _F64_3D.copy(readonly=True)
 
-_F32_1D_RO = _F32_1D.copy(readonly=True)
-_F32_2D_RO = _F32_2D.copy(readonly=True)
+# C-contiguous Read-only counterparts
+_F64_1D_C_RO = _F64_1D_C.copy(readonly=True)
+_F64_2D_C_RO = _F64_2D_C.copy(readonly=True)
+_F64_3D_C_RO = _F64_3D_C.copy(readonly=True)
+_F64_4D_C_RO = _F64_4D_C.copy(readonly=True)
 
-_I64_1D_RO = _I64_1D.copy(readonly=True)
-_I64_2D_RO = _I64_2D.copy(readonly=True)
+_F32_1D_C_RO = _F32_1D_C.copy(readonly=True)
+_F32_2D_C_RO = _F32_2D_C.copy(readonly=True)
+_F32_3D_C_RO = _F32_3D_C.copy(readonly=True)
+_F32_4D_C_RO = _F32_4D_C.copy(readonly=True)
 
-_I32_1D_RO = _I32_1D.copy(readonly=True)
-_I32_2D_RO = _I32_2D.copy(readonly=True)
+_I64_1D_C_RO = _I64_1D_C.copy(readonly=True)
+_I64_2D_C_RO = _I64_2D_C.copy(readonly=True)
+_I64_3D_C_RO = _I64_3D_C.copy(readonly=True)
+_I64_4D_C_RO = _I64_4D_C.copy(readonly=True)
 
-_I8_1D_RO = _I8_1D.copy(readonly=True)
+_I32_1D_C_RO = _I32_1D_C.copy(readonly=True)
+_I32_2D_C_RO = _I32_2D_C.copy(readonly=True)
+_I32_3D_C_RO = _I32_3D_C.copy(readonly=True)
+_I32_4D_C_RO = _I32_4D_C.copy(readonly=True)
 
-_BOOL_1D_RO = _BOOL_1D.copy(readonly=True)
-_BOOL_2D_RO = _BOOL_2D.copy(readonly=True)
+_I8_1D_C_RO = _I8_1D_C.copy(readonly=True)
+_I8_2D_C_RO = _I8_2D_C.copy(readonly=True)
+_I8_3D_C_RO = _I8_3D_C.copy(readonly=True)
+_I8_4D_C_RO = _I8_4D_C.copy(readonly=True)
+
+_BOOL_1D_C_RO = _BOOL_1D_C.copy(readonly=True)
+_BOOL_2D_C_RO = _BOOL_2D_C.copy(readonly=True)
+_BOOL_3D_C_RO = _BOOL_3D_C.copy(readonly=True)
+_BOOL_4D_C_RO = _BOOL_4D_C.copy(readonly=True)
+
+# F-contiguous Read-only counterparts
+_F64_1D_F_RO = _F64_1D_F.copy(readonly=True)
+_F64_2D_F_RO = _F64_2D_F.copy(readonly=True)
+_F64_3D_F_RO = _F64_3D_F.copy(readonly=True)
+_F64_4D_F_RO = _F64_4D_F.copy(readonly=True)
+
+_F32_1D_F_RO = _F32_1D_F.copy(readonly=True)
+_F32_2D_F_RO = _F32_2D_F.copy(readonly=True)
+_F32_3D_F_RO = _F32_3D_F.copy(readonly=True)
+_F32_4D_F_RO = _F32_4D_F.copy(readonly=True)
+
+_I64_1D_F_RO = _I64_1D_F.copy(readonly=True)
+_I64_2D_F_RO = _I64_2D_F.copy(readonly=True)
+_I64_3D_F_RO = _I64_3D_F.copy(readonly=True)
+_I64_4D_F_RO = _I64_4D_F.copy(readonly=True)
+
+_I32_1D_F_RO = _I32_1D_F.copy(readonly=True)
+_I32_2D_F_RO = _I32_2D_F.copy(readonly=True)
+_I32_3D_F_RO = _I32_3D_F.copy(readonly=True)
+_I32_4D_F_RO = _I32_4D_F.copy(readonly=True)
+
+_I8_1D_F_RO = _I8_1D_F.copy(readonly=True)
+_I8_2D_F_RO = _I8_2D_F.copy(readonly=True)
+_I8_3D_F_RO = _I8_3D_F.copy(readonly=True)
+_I8_4D_F_RO = _I8_4D_F.copy(readonly=True)
+
+_BOOL_1D_F_RO = _BOOL_1D_F.copy(readonly=True)
+_BOOL_2D_F_RO = _BOOL_2D_F.copy(readonly=True)
+_BOOL_3D_F_RO = _BOOL_3D_F.copy(readonly=True)
+_BOOL_4D_F_RO = _BOOL_4D_F.copy(readonly=True)
 
 #: Default Numba compiler configuration used throughout RiskQuant.
 #:
@@ -140,6 +232,27 @@ parallel_njit = partial(
     nb.njit,
     parallel=True,
     fastmath={"contract", "reassoc", "nsz"},
+    nogil=True,
+    boundscheck=False,
+    error_model="numpy",
+    cache=True,
+)
+
+#: Stable-math parallel Numba compiler configuration.
+#:
+#: Intended for numerically sensitive kernels containing floating-point
+#: reductions where compiler reassociation would change the evaluation order.
+#:
+#: Compared with ``parallel_njit``, this configuration deliberately omits
+#: ``"reassoc"`` so the compiler cannot freely reorder floating-point
+#: operations in a reduction.
+#:
+#: ``"contract"`` remains enabled for fused multiply-add where available,
+#: and ``"nsz"`` retains the standard RiskQuant sign-zero policy.
+stable_math_parallel_njit = partial(
+    nb.njit,
+    parallel=True,
+    fastmath={"contract", "nsz"},
     nogil=True,
     boundscheck=False,
     error_model="numpy",

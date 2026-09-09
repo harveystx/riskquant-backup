@@ -25,16 +25,18 @@ from __future__ import annotations
 import numba as nb  # type: ignore[import-untyped]
 import numpy as np
 
-from riskquant.jit import parallel_njit
+from riskquant.jit import (
+    _I32_1D_C,
+    _I32_2D_C,
+    parallel_njit,
+)
 
-_I32_1D = nb.int32[::1]
-_I32_2D_C = nb.int32[:, ::1]
 
 
 @parallel_njit(
     nb.void(
-        _I32_1D,  # block_lengths        (max_blocks,)
-        _I32_1D,  # start_indices        (max_blocks,)
+        _I32_1D_C,  # block_lengths        (max_blocks,)
+        _I32_1D_C,  # start_indices        (max_blocks,)
         _I32_2D_C,  # out                  (B, h)  C-contig
         nb.int32,  # max_valid_length     T - 1
     ),

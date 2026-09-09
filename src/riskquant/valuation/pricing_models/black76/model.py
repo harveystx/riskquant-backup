@@ -171,19 +171,31 @@ def _black76_fv_vega(
     """
     Undiscounted Black-76 vega: dC/dvol = F * phi(d1) * sqrt(T).
 
-    Returns 0.0 for non-positive vol or tte. This makes vega the natural
-    quality weight on a calibrated IV: it is 0 for failed solves (sentinel
-    vol < 0) and for at-intrinsic zero-vol solves, tiny in flat-vega regions
-    (deep ITM/OTM, ultra-short tenors) where the IV is under-determined, and
-    large where the inversion is well-conditioned.
+    Returns 0.0 for non-positive vol or non-positive sqrt_tte. This makes
+    vega the natural quality weight on a calibrated IV:
+
+    - ``vol <= 0`` covers the failure-sentinel case (``IV_SOLVER_FAILED_SENTINEL
+      = -1.0``) and the degenerate zero-vol case. The guard is applied BEFORE
+      any arithmetic so that a negative sentinel never enters the log or the
+      division (which would produce a finite but incorrect positive result
+      rather than the contracted 0.0).
+    - ``sqrt_tte <= 0`` covers zero or negative time-to-expiry inputs, where
+      the option has no time value and vega is exactly zero.
+
+    Contract: vega == 0.0  iff  vol <= 0  or  sqrt_tte <= 0.
+
+    RQ-AUD-002 remediation: previously this function omitted the guard,
+    so ``vol = -1.0`` (IV_SOLVER_FAILED_SENTINEL) produced ``vol^2 > 0``,
+    making ``d1`` finite and returning a large positive vega (~19.3 for ATM)
+    instead of 0.0.  That caused ``CalibratedOptionQuotes.__post_init__`` to
+    raise on any batch containing a non-invertible quote.
     """
-    # ==================================================================================
-    # log_fk = math.log(fwd / strike)
-    # std_dev = vol * sqrt_tte
-    # d1 = (log_fk + vol * vol * half_tte) / std_dev
-    # pdf_d1 = numba_norm_pdf(d1)
-    # return fwd * pdf_d1 * sqrt_tte
-    # ==================================================================================
+    # Guard: honour the documented contract BEFORE any arithmetic.
+    # Without this gate, vol=-1.0 (IV_SOLVER_FAILED_SENTINEL) produces
+    # vol_sqrt_tte < 0, making d1 finite-but-wrong and returning a large
+    # positive vega instead of 0.0.
+    if vol <= 0.0 or sqrt_tte <= 0.0:
+        return 0.0
 
     log_fk = math.log(fwd / strike)
 

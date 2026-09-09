@@ -1,4 +1,4 @@
-# src/riskquant/valuation/kernels/spot.py
+# src/riskquant/valuation/pricer_kernels/spot.py
 """
 Spot pricing kernel.
 
@@ -14,24 +14,26 @@ from __future__ import annotations
 
 import numba as nb  # type: ignore[import-untyped]
 
-from riskquant.jit import parallel_njit
+from riskquant.jit import (
+    _F64_1D_C,
+    _F64_2D_C,
+    _I32_1D_C,
+    parallel_njit,
+)
 
 # ==============================================================================
 # Numba layout-pinned aliases — force C-contiguous strides at compile time so
 # the kernel emits straight-line SIMD loops with no dynamic stride checks.
 # ==============================================================================
 
-_F64_2D = nb.float64[:, ::1]
-_F64_1D = nb.float64[::1]
-_I32_1D = nb.int32[::1]
 
 
 @parallel_njit(
     nb.void(
-        _F64_2D,  # out
-        _F64_2D,  # effective_spot_prices
-        _F64_1D,  # qty
-        _I32_1D,  # effective_spot_price_uix
+        _F64_2D_C,  # out
+        _F64_2D_C,  # effective_spot_prices
+        _F64_1D_C,  # qty
+        _I32_1D_C,  # effective_spot_price_uix
     ),
 )
 def _kernel_price_spot(

@@ -41,28 +41,35 @@ from __future__ import annotations
 import math
 
 import numba as nb  # type: ignore[import-untyped]
+from numba.core import types as nb_types
 
-from riskquant.jit import parallel_njit
+# Array type aliases (C-contiguous, per-dtype) are imported from riskquant.jit
+# rather than reconstructed here — jit.py's own comment on that block is
+# explicit that it is the shared source for exactly this purpose ("used in
+# type signatures for compiled functions below"). Redefining them locally lets
+# a kernel silently drift from that canonical set; importing them cannot.
+from riskquant.jit import (
+    _F32_2D_C,
+    _F64_1D_C,
+    _F64_2D_C,
+    _I8_1D_C,
+    _I32_1D_C,
+    parallel_njit,
+)
 from riskquant.sensitivity_pnl.conventions import (
     DISPLACEMENT_ABSOLUTE_ID,
     DISPLACEMENT_RELATIVE_ID,
 )
 
-_F64_1D = nb.float64[::1]
-_F64_2D_C = nb.float64[:, ::1]
-_F32_2D_C = nb.float32[:, ::1]
-_I32_1D = nb.int32[::1]
-_I8_1D = nb.int8[::1]
-
 
 @parallel_njit(
-    nb.void(
-        _F64_1D,  # base_levels        (N_req,)
+    nb_types.void(
+        _F64_1D_C,  # base_levels        (N_req,)
         _F64_2D_C,  # shocked_levels   (N_req, S) f64 C-contig
-        _I32_1D,  # active_level_uix   (Ka,)
-        _I8_1D,  # convention_ids      (Ka,)
-        nb.int64,  # batch_len
-        nb.int64,  # levels_offset
+        _I32_1D_C,  # active_level_uix   (Ka,)
+        _I8_1D_C,  # convention_ids      (Ka,)
+        nb_types.int64,  # batch_len
+        nb_types.int64,  # levels_offset
         _F32_2D_C,  # out              (Ka, B_capacity) f32 C-contig
     ),
 )
@@ -92,12 +99,12 @@ def kernel_build_displacement(
 
         if convention == DISPLACEMENT_ABSOLUTE_ID:
             for s in range(batch_len):
-                dst[s] = nb.float32(src[levels_offset + s] - base)
+                dst[s] = nb_types.float32(src[levels_offset + s] - base)
         elif convention == DISPLACEMENT_RELATIVE_ID:
             inv_base = 1.0 / base
             for s in range(batch_len):
-                dst[s] = nb.float32(src[levels_offset + s] * inv_base - 1.0)
+                dst[s] = nb_types.float32(src[levels_offset + s] * inv_base - 1.0)
         else:
             inv_base = 1.0 / base
             for s in range(batch_len):
-                dst[s] = nb.float32(math.log(src[levels_offset + s] * inv_base))
+                dst[s] = nb_types.float32(math.log(src[levels_offset + s] * inv_base))

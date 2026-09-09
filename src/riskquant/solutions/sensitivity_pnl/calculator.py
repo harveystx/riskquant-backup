@@ -82,7 +82,10 @@ from riskquant.solutions.sensitivity_pnl.schemas import (
     SensitivityPnlProvenance,
     SensitivityPnlResult,
 )
-from riskquant.solutions.sensitivity_pnl.validate import validate_book_spec
+from riskquant.solutions.sensitivity_pnl.validate import (
+    validate_book_spec,
+    validate_market_against_book,
+)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -143,6 +146,7 @@ class SensitivityPnlCalculator:
             convention.
         """
         self._require_axis(market)
+        validate_market_against_book(book=self.book, axis=self.axis, market=market)
         num_scenarios = market.num_scenarios
         batch_size = resolve_batch_size(
             num_active_factors=self.book.num_active_factors,
@@ -199,6 +203,7 @@ class SensitivityPnlCalculator:
             )
             log.raise_if_any()
         self._require_axis(market)
+        validate_market_against_book(book=self.book, axis=self.axis, market=market)
 
         registered = grid.block_uids(block_index)
         if not bool(np.array_equal(self.book.position_uids, registered)):

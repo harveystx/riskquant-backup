@@ -1,4 +1,4 @@
-# src\riskquant\market_data\curves\interp_methods.py
+# src/riskquant/market_data/curves/interp_methods.py
 
 from __future__ import annotations
 

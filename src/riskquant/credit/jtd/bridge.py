@@ -26,23 +26,23 @@ from riskquant._arrays import (
     searchsorted_or_raise,
     searchsorted_soft_join,
 )
-from riskquant.jit import (
-    _F64_2D,
-    _I32_1D,
-    _I64_1D,
-    parallel_njit,
-)
 from riskquant.constants import INVALID_UIX
 from riskquant.credit.exposure.results import NettingSetExposurePaths
 from riskquant.credit.masters.netting_set.compiled import CompiledNettingSetMaster
+from riskquant.jit import (
+    _F64_2D_C,
+    _I32_1D_C,
+    _I64_1D_C,
+    parallel_njit,
+)
 
 
 @parallel_njit(
     nb.void(
-        _F64_2D,
-        _F64_2D,
-        _I32_1D,
-        _I64_1D,
+        _F64_2D_C,
+        _F64_2D_C,
+        _I32_1D_C,
+        _I64_1D_C,
     )
 )
 def _kernel_aggregate_ead(

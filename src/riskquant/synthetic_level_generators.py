@@ -20,13 +20,13 @@ _DEFAULT_RNG_SEED: Final[int] = 999_999
 
 
 _DEFAULT_NUM_OBS: Final[int] = (
-    int(22 * 12 * 5) + 1
-)  # 5 years of daily data + initial level
+    22 * 12 * 5
+) + 1  # 5 years of daily data + initial level
 _DEFAULT_VOL_PA: Final[float] = 0.25
 _DEFAULT_VOL_PA_LOW: Final[float] = 0.05
 _DEFAULT_VOL_PA_HIGH: Final[float] = 0.50
 _DEFAULT_DRIFT_PA: Final[float] = 0.010
-_DEFAULT_BDAYS_PER_YEAR: Final[int] = int(
+_DEFAULT_BDAYS_PER_YEAR: Final[int] = (
     22 * 12
 )  # Approximate number of business days in a year
 

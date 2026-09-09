@@ -55,8 +55,16 @@ def plot_acf_preservation(
     # 1.0 = standard bootstrap (destroys ACF)
     # 5.0 = weak preservation
     # 25.0 = strong preservation
-    block_sizes = [1.0, 5.0, 25.0]
-    colors = ["tab:red", "tab:orange", "tab:green"]
+    block_sizes = [1.0, 2.0, 3.0, 4.0, 5.0, 10.0, 25.0]
+    colors = [
+        "tab:red",
+        "tab:orange",
+        "yellow",
+        "tab:green",
+        "tab:blue",
+        "tab:purple",
+        "tab:brown",
+    ]
 
     rng = np.random.default_rng(seed)
 
@@ -67,7 +75,7 @@ def plot_acf_preservation(
     plt.plot(lags, hist_acf, "k-o", lw=2, label="Historical AR(1) Data")
 
     # Generate SBB paths and plot their average ACF
-    for b_size, color in zip(block_sizes, colors):
+    for b_size, color in zip(block_sizes, colors, strict=True):
         path_indices = generate_sbb_path_indices(
             t_max=t_max,
             h=horizon,

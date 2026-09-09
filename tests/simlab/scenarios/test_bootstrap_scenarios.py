@@ -66,7 +66,6 @@ def test_seeded_stream_replays_exactly() -> None:
         expected_block_size=5.0,
         horizon=3,
         seed=11,
-        shock_dtype=np.float64,
     )
 
     # Because iter_batches re-initializes the RNG with self.seed every time
@@ -86,7 +85,6 @@ def test_seeded_stream_is_batch_size_invariant() -> None:
         expected_block_size=7.0,
         horizon=2,
         seed=123,
-        shock_dtype=np.float64,
     )
     generator_b = StationaryBlockBootstrapGenerator(
         matrix=matrix,
@@ -94,7 +92,6 @@ def test_seeded_stream_is_batch_size_invariant() -> None:
         expected_block_size=7.0,
         horizon=2,
         seed=123,
-        shock_dtype=np.float64,
     )
 
     shocks_a = _collect_shocks(generator_a, batch_size=13)
@@ -112,7 +109,6 @@ def test_different_seeds_produce_different_paths() -> None:
         expected_block_size=6.0,
         horizon=1,
         seed=7,
-        shock_dtype=np.float64,
     )
     generator_b = StationaryBlockBootstrapGenerator(
         matrix=matrix,
@@ -120,7 +116,6 @@ def test_different_seeds_produce_different_paths() -> None:
         expected_block_size=6.0,
         horizon=1,
         seed=8,
-        shock_dtype=np.float64,
     )
 
     shocks_a = _collect_shocks(generator_a, batch_size=32)

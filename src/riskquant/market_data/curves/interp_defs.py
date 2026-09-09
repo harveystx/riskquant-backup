@@ -43,26 +43,26 @@ import numba as nb
 import numpy as np
 
 from riskquant.jit import (
-    _F64_1D,
-    _F64_2D,
-    _F64_3D,
+    _F64_1D_C,
+    _F64_2D_C,
+    _F64_3D_C,
     parallel_njit,
 )
 
 # --- HELPERS ---
 
 _NB_VOID_3D = nb.void(
-    _F64_2D,  # tenors
-    _F64_3D,  # values
-    _F64_1D,  # targets
-    _F64_3D,  # out
+    _F64_2D_C,  # tenors
+    _F64_3D_C,  # values
+    _F64_1D_C,  # targets
+    _F64_3D_C,  # out
 )
 
 _NB_VOID_2D = nb.void(
-    _F64_2D,  # pillars
-    _F64_3D,  # values
-    _F64_2D,  # targets
-    _F64_2D,  # out
+    _F64_2D_C,  # pillars
+    _F64_3D_C,  # values
+    _F64_2D_C,  # targets
+    _F64_2D_C,  # out
 )
 
 # ==============================================================================

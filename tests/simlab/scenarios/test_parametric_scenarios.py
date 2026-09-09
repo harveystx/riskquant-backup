@@ -58,7 +58,7 @@ def _expected_covariance(
 def test_standard_normal_replays_seeded_stream() -> None:
     correlation = np.array([[1.0, 0.35], [0.35, 1.0]], dtype=np.float64)
     generator = ParametricGenerator.standard_normal(
-        factor_ids=MOCK_REQ_FACTOR_IDS,
+        available_factor_ids=MOCK_REQ_FACTOR_IDS,
         cholesky_matrix=np.linalg.cholesky(correlation),
         volatilities=np.array([0.2, 0.4], dtype=np.float64),
         total_scenarios=32,
@@ -69,7 +69,7 @@ def test_standard_normal_replays_seeded_stream() -> None:
 
     # Re-instantiate exactly the same generator to test stream replay
     generator2 = ParametricGenerator.standard_normal(
-        factor_ids=MOCK_REQ_FACTOR_IDS,
+        available_factor_ids=MOCK_REQ_FACTOR_IDS,
         cholesky_matrix=np.linalg.cholesky(correlation),
         volatilities=np.array([0.2, 0.4], dtype=np.float64),
         total_scenarios=32,
@@ -89,8 +89,8 @@ def test_standard_normal_replays_seeded_stream() -> None:
 def test_student_t_rejects_invalid_df() -> None:
     with pytest.raises(ValueError, match="greater than 2"):
         ParametricGenerator.student_t(
-            factor_ids=MOCK_REQ_FACTOR_IDS,
-            df=2.0,
+            available_factor_ids=MOCK_REQ_FACTOR_IDS,
+            student_t_df=2.0,
             cholesky_matrix=np.eye(2, dtype=np.float64),
             volatilities=np.ones(2, dtype=np.float64),
             total_scenarios=8,
@@ -99,7 +99,7 @@ def test_student_t_rejects_invalid_df() -> None:
 
 def test_iter_batches_rejects_non_positive_batch_size() -> None:
     generator = ParametricGenerator.standard_normal(
-        factor_ids=MOCK_REQ_FACTOR_IDS,
+        available_factor_ids=MOCK_REQ_FACTOR_IDS,
         cholesky_matrix=np.eye(2, dtype=np.float64),
         volatilities=np.ones(2, dtype=np.float64),
         total_scenarios=8,
@@ -120,12 +120,11 @@ def test_standard_normal_covariance_matches_calibration() -> None:
     correlation = np.array([[1.0, 0.25], [0.25, 1.0]], dtype=np.float64)
     volatilities = np.array([0.2, 0.4], dtype=np.float64)
     generator = ParametricGenerator.standard_normal(
-        factor_ids=MOCK_REQ_FACTOR_IDS,
+        available_factor_ids=MOCK_REQ_FACTOR_IDS,
         cholesky_matrix=np.linalg.cholesky(correlation),
         volatilities=volatilities,
         total_scenarios=40000,
         seed=123,
-        shock_dtype=np.float64,
     )
 
     shocks = _collect_shocks(generator, batch_size=4096)
@@ -141,13 +140,12 @@ def test_student_t_covariance_matches_calibration() -> None:
     correlation = np.array([[1.0, 0.3], [0.3, 1.0]], dtype=np.float64)
     volatilities = np.array([0.3, 0.5], dtype=np.float64)
     generator = ParametricGenerator.student_t(
-        df=7.0,
-        factor_ids=MOCK_REQ_FACTOR_IDS,
+        student_t_df=7.0,
+        available_factor_ids=MOCK_REQ_FACTOR_IDS,
         cholesky_matrix=np.linalg.cholesky(correlation),
         volatilities=volatilities,
         total_scenarios=60000,
         seed=321,
-        shock_dtype=np.float64,
     )
 
     shocks = _collect_shocks(generator, batch_size=4096)
@@ -167,12 +165,11 @@ def test_regime_switching_covariance_matches_mixture_target() -> None:
     generator = ParametricGenerator.regime_switching_gmm(
         prob_crisis=prob_crisis,
         crisis_vol_multipliers=crisis_multiplier,
-        factor_ids=MOCK_REQ_FACTOR_IDS,
+        available_factor_ids=MOCK_REQ_FACTOR_IDS,
         cholesky_matrix=np.linalg.cholesky(correlation),
         volatilities=volatilities,
         total_scenarios=60000,
         seed=999,
-        shock_dtype=np.float64,
     )
 
     shocks = _collect_shocks(generator, batch_size=4096)

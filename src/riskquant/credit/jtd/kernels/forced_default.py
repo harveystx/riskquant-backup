@@ -13,14 +13,14 @@ import numba as nb  # type: ignore
 import numpy as np
 import numpy.typing as npt
 
-from riskquant.jit import _F64_1D, _F64_2D, parallel_njit
+from riskquant.jit import _F64_1D_C, _F64_2D_C, parallel_njit
 
 
 @parallel_njit(
     nb.void(
-        _F64_2D,
-        _F64_2D,
-        _F64_1D,
+        _F64_2D_C,
+        _F64_2D_C,
+        _F64_1D_C,
     )
 )
 def kernel_forced_default_jtd(

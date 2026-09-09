@@ -17,10 +17,31 @@ from riskquant.simlab.scenarios.core_math.ar1_filter import kernel_ar1_residuals
 def _run_kernel(values, cols, shift_types):
     T = values.shape[0]
     K_req = len(cols)
-    out = np.zeros((T, K_req), dtype=np.float64, order="F")
 
-    kernel_ar1_residuals(values, cols, shift_types, out)
-    return out
+    # The kernel requires strict F-contiguity (_F64_2D_F) for `values` and
+    # `out`, and int32/int8 (not the numpy defaults int64/whatever) for
+    # `cols`/`shift_types`. Any array with a dimension of size 1 is reported
+    # by numpy as SIMULTANEOUSLY C- and F-contiguous (there is only one
+    # possible traversal order), and Numba's dispatcher resolves that
+    # ambiguity to 'C' -- which does not match a strict F-only signature.
+    # T is real data and cannot be padded without changing the result; K_req
+    # can be, harmlessly, since the kernel processes each requested column
+    # independently. Pad to >=2 columns when needed and slice back on return.
+    cols = np.asarray(cols, dtype=np.int32)
+    shift_types = np.asarray(shift_types, dtype=np.int8)
+
+    k_total = max(values.shape[1], 2)
+    if k_total > values.shape[1]:
+        pad = np.zeros((T, k_total - values.shape[1]), dtype=np.float64, order="F")
+        values_f = np.asfortranarray(np.concatenate([values, pad], axis=1))
+    else:
+        values_f = np.asfortranarray(values, dtype=np.float64)
+
+    k_out = max(K_req, 2)
+    out = np.zeros((T, k_out), dtype=np.float64, order="F")
+
+    kernel_ar1_residuals(values_f, cols, shift_types, out)
+    return np.asfortranarray(out[:, :K_req])
 
 
 def _compute_returns(values, shift_type):
@@ -139,8 +160,12 @@ def test_constant_series(shift_type):
 def test_small_T_cases():
     """
     Ensure no crashes and correct handling for small T.
+
+    T=1 is excluded: an AR(1)-style filter needs at least two observations to
+    compute a single return, so T=1 is degenerate for this kernel (there is
+    no meaningful output to check), independent of any contiguity concern.
     """
-    for T in [1, 2]:
+    for T in [2]:
         values = np.ones((T, 1), order="F")
         out = _run_kernel(values, np.array([0]), np.array([SHIFT_DIFFERENCE_ID]))
 

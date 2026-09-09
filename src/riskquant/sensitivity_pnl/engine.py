@@ -50,6 +50,7 @@ from __future__ import annotations
 
 __all__ = [
     "SensitivityPnlEngine",
+    "StreamingSensitivityEngine",
     "accumulator_row_width",
     "compute_sensitivity_pnl_from_displacement",
     "compute_sensitivity_pnl_from_levels",
@@ -57,14 +58,20 @@ __all__ = [
 ]
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Protocol, runtime_checkable
 
 import numba as nb  # type: ignore[import-untyped]
 import numpy as np
 import numpy.typing as npt
 
+from riskquant.sensitivity_pnl._batch_contract import (
+    check_2d_batch_source,
+    derive_min_source_rows,
+    derive_positive_level_rows,
+    require_positive_levels_for_log_factors,
+    validate_base_levels_for_ratio_factors,
+)
 from riskquant.sensitivity_pnl.contracts import CompiledSensitivityBook
-from riskquant.sensitivity_pnl.conventions import RATIO_DISPLACEMENT_IDS
 from riskquant.sensitivity_pnl.grid import allocate_pnl_grid
 from riskquant.sensitivity_pnl.kernels.displacement import kernel_build_displacement
 from riskquant.sensitivity_pnl.kernels.gather import kernel_gather_displacement
@@ -111,6 +118,49 @@ def numba_thread_ceiling() -> int:
     return int(nb.config.NUMBA_NUM_THREADS)  # type: ignore[attr-defined]
 
 
+@runtime_checkable
+class StreamingSensitivityEngine(Protocol):
+    """
+    Structural contract shared by every engine that streams scenario batches
+    through a compiled book: `SensitivityPnlEngine` here, and
+    `TaylorValidityEngine` in `validity.py`.
+
+    Exists so orchestration that only ever calls these two methods —
+    `riskquant.solutions.sensitivity_pnl.pipeline.stream_scenarios`, most
+    notably — can be written once and reused for both engines, rather than
+    hardcoded to `SensitivityPnlEngine` and copy-pasted for the next one.
+    Structural (a `Protocol`), not a base class: neither engine inherits from
+    this or from each other, so a change to one's internals can never leak
+    into the other through a shared base.
+    """
+
+    #: Read-only in the Protocol to match both concrete engines, which are
+    #: frozen dataclasses: a plain `batch_size: int` attribute annotation asks
+    #: mypy for a SETTABLE variable, which a frozen dataclass field can never
+    #: be, and every call site would fail structural matching over an
+    #: attribute nothing here ever assigns.
+    @property
+    def batch_size(self) -> int: ...
+
+    def absorb_levels(
+        self,
+        *,
+        shocked_levels: npt.NDArray[np.float64],
+        batch_len: int,
+        scenario_offset: int,
+        levels_offset: int = 0,
+    ) -> None: ...
+
+    def absorb_displacement(
+        self,
+        *,
+        displacement: npt.NDArray[np.float32],
+        batch_len: int,
+        scenario_offset: int,
+        source_offset: int = 0,
+    ) -> None: ...
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SensitivityPnlEngine:
     """Immutable compute topology over a bounded, pre-allocated scratch arena."""
@@ -139,6 +189,8 @@ class SensitivityPnlEngine:
     _displacement: npt.NDArray[np.float32] = field(init=False, repr=False)
     _accumulator: npt.NDArray[np.float64] = field(init=False, repr=False)
     _min_source_rows: int = field(init=False, repr=False)
+    _positive_level_uix: npt.NDArray[np.int32] = field(init=False, repr=False)
+    _positive_level_factor_ids: npt.NDArray[np.int32] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.batch_size <= 0:
@@ -161,10 +213,25 @@ class SensitivityPnlEngine:
         # Highest levels/displacement row any kernel will dereference. Derived
         # from the active-factor axis, NOT from nnz: a cross-only book has
         # nnz == 0 and a fully populated active-factor axis.
-        object.__setattr__(self, "_min_source_rows", self.book.max_level_uix + 1)
+        object.__setattr__(self, "_min_source_rows", derive_min_source_rows(self.book))
+
+        # Levels rows whose displacement is undefined at a non-positive value.
+        # Resolved once, so a book with no LOG factors — the common case — pays
+        # a single `.size` test per batch and nothing else.
+        positive_level_uix, positive_level_factor_ids = derive_positive_level_rows(
+            self.book
+        )
+        object.__setattr__(self, "_positive_level_uix", positive_level_uix)
+        object.__setattr__(
+            self, "_positive_level_factor_ids", positive_level_factor_ids
+        )
 
         if self.base_levels.size:
-            self._validate_base_levels()
+            validate_base_levels_for_ratio_factors(
+                book=self.book,
+                base_levels=self.base_levels,
+                min_source_rows=self._min_source_rows,
+            )
 
         object.__setattr__(self, "_chunk_offsets", self._resolve_chunk_offsets())
 
@@ -250,35 +317,6 @@ class SensitivityPnlEngine:
             )
         return offsets
 
-    def _validate_base_levels(self) -> None:
-        levels = self.base_levels
-        if levels.dtype != np.float64 or levels.ndim != 1:
-            raise ValueError("base_levels must be 1-D float64")
-        if not levels.flags.c_contiguous:
-            raise ValueError("base_levels must be C-contiguous")
-        if levels.shape[0] < self._min_source_rows:
-            raise ValueError(
-                f"base_levels has {levels.shape[0]} rows; the book dereferences "
-                f"row {self._min_source_rows - 1}"
-            )
-
-        # RELATIVE / LOG displacements divide by the base level.
-        # `error_model='numpy'` emits inf rather than raising, so the gate is here.
-        ratio_mask = np.isin(
-            self.book.displacement_convention_ids,
-            np.asarray(RATIO_DISPLACEMENT_IDS, dtype=np.int8),
-        )
-        if not ratio_mask.any():
-            return
-        bases = levels[self.book.active_level_uix[ratio_mask]]
-        valid = np.isfinite(bases) & (bases > 0.0)
-        if not bool(valid.all()):
-            bad = self.book.active_factor_ids[ratio_mask][~valid]
-            raise ValueError(
-                "RELATIVE / LOG displacement requires a finite, strictly "
-                f"positive base level; violated by factor_id(s) {bad[:10].tolist()}"
-            )
-
     # ------------------------------------------------------------------
     # Hot path
     # ------------------------------------------------------------------
@@ -303,19 +341,29 @@ class SensitivityPnlEngine:
                 "absorb_levels requires base_levels; construct the engine with "
                 "it, or use absorb_displacement for the standalone path."
             )
-        self._check_source(
+        check_2d_batch_source(
             source=shocked_levels,
             dtype=np.float64,
-            source_offset=levels_offset,
-            batch_len=batch_len,
-            scenario_offset=scenario_offset,
             name="shocked_levels",
+            min_source_rows=self._min_source_rows,
+            batch_len=batch_len,
+            batch_size=self.batch_size,
+            source_offset=levels_offset,
+            scenario_offset=scenario_offset,
+            out_num_scenarios=self.out.shape[1],
         )
         if shocked_levels.shape[0] != self.base_levels.shape[0]:
             raise ValueError(
                 f"shocked_levels has {shocked_levels.shape[0]} factor rows; "
                 f"base_levels has {self.base_levels.shape[0]}"
             )
+        require_positive_levels_for_log_factors(
+            positive_level_uix=self._positive_level_uix,
+            positive_level_factor_ids=self._positive_level_factor_ids,
+            shocked_levels=shocked_levels,
+            batch_len=batch_len,
+            levels_offset=levels_offset,
+        )
         kernel_build_displacement(
             self.base_levels,
             shocked_levels,
@@ -342,13 +390,16 @@ class SensitivityPnlEngine:
         the book was compiled against, already expressed in each factor's
         declared `DisplacementConvention`. No base levels are read or required.
         """
-        self._check_source(
+        check_2d_batch_source(
             source=displacement,
             dtype=np.float32,
-            source_offset=source_offset,
-            batch_len=batch_len,
-            scenario_offset=scenario_offset,
             name="displacement",
+            min_source_rows=self._min_source_rows,
+            batch_len=batch_len,
+            batch_size=self.batch_size,
+            source_offset=source_offset,
+            scenario_offset=scenario_offset,
+            out_num_scenarios=self.out.shape[1],
         )
         kernel_gather_displacement(
             displacement,
@@ -376,40 +427,6 @@ class SensitivityPnlEngine:
             scenario_offset,
             self.out,
         )
-
-    def _check_source(
-        self,
-        *,
-        source: npt.NDArray[np.floating[Any]],
-        dtype: type[np.floating[Any]],
-        source_offset: int,
-        batch_len: int,
-        scenario_offset: int,
-        name: str,
-    ) -> None:
-        """
-        The complete bounds gate for caller-supplied buffers. Everything the
-        kernels index into a caller array is bounded here; there are no checks
-        downstream.
-        """
-        if source.ndim != 2:
-            raise ValueError(f"{name} must be 2-D")
-        if source.dtype != dtype:
-            raise ValueError(f"{name} must be {np.dtype(dtype).name}")
-        if not source.flags.c_contiguous:
-            raise ValueError(f"{name} must be C-contiguous")
-        if source.shape[0] < self._min_source_rows:
-            raise ValueError(
-                f"{name} has {source.shape[0]} factor rows; the book dereferences "
-                f"row {self._min_source_rows - 1}. Pass the matrix over the SAME "
-                "factor axis the book was compiled against."
-            )
-        if not 0 < batch_len <= self.batch_size:
-            raise ValueError(f"batch_len must lie in (0, {self.batch_size}]")
-        if source_offset < 0 or source_offset + batch_len > source.shape[1]:
-            raise ValueError(f"batch overruns the {name} scenario axis")
-        if scenario_offset < 0 or scenario_offset + batch_len > self.out.shape[1]:
-            raise ValueError("batch overruns the out scenario axis")
 
 
 # =========================================================================

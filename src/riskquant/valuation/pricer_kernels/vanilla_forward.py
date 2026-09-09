@@ -1,4 +1,4 @@
-# src/riskquant/valuation/kernels/vanilla_forward.py
+# src/riskquant/valuation/pricer_kernels/vanilla_forward.py
 """
 Vanilla forward pricing kernel.
 """
@@ -8,9 +8,9 @@ from __future__ import annotations
 import numba as nb  # type: ignore[import-untyped]
 
 from riskquant.jit import (
-    _F64_1D,
-    _F64_2D,
-    _I32_1D,
+    _F64_1D_C,
+    _F64_2D_C,
+    _I32_1D_C,
     parallel_njit,
 )
 
@@ -18,15 +18,15 @@ from riskquant.jit import (
 @parallel_njit(
     nb.void(
         # OUTPUT
-        _F64_2D,  # out
+        _F64_2D_C,  # out
         # MARKET DATA
-        _F64_2D,  # effective_forward_prices
-        _F64_2D,  # effective_discount_factors
+        _F64_2D_C,  # effective_forward_prices
+        _F64_2D_C,  # effective_discount_factors
         # BLOCK FIELDS
-        _F64_1D,  # qty
-        _F64_1D,  # strike
-        _I32_1D,  # effective_forward_price_uix
-        _I32_1D,  # effective_discount_factor_uix
+        _F64_1D_C,  # qty
+        _F64_1D_C,  # strike
+        _I32_1D_C,  # effective_forward_price_uix
+        _I32_1D_C,  # effective_discount_factor_uix
     ),
 )
 def _kernel_price_vanilla_forward(

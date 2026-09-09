@@ -23,19 +23,19 @@ contiguous-to-contiguous copy — the cheapest possible path into the kernel.
 from __future__ import annotations
 
 import numba as nb  # type: ignore[import-untyped]
+from numba.core import types as nb_types
 
-from riskquant.jit import parallel_njit
-
-_F32_2D_C = nb.float32[:, ::1]
-_I32_1D = nb.int32[::1]
+# See displacement.py for why these come from riskquant.jit rather than a
+# local `nb.float32[:, ::1]`-style redefinition.
+from riskquant.jit import _F32_2D_C, _I32_1D_C, parallel_njit
 
 
 @parallel_njit(
-    nb.void(
+    nb_types.void(
         _F32_2D_C,  # source_displacement (K, S)           f32 C-contig
-        _I32_1D,  # active_level_uix      (Ka,)
-        nb.int64,  # batch_len
-        nb.int64,  # source_offset
+        _I32_1D_C,  # active_level_uix      (Ka,)
+        nb_types.int64,  # batch_len
+        nb_types.int64,  # source_offset
         _F32_2D_C,  # out                 (Ka, B_capacity) f32 C-contig
     ),
 )

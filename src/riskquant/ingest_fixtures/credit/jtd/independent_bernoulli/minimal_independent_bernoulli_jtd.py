@@ -1,4 +1,4 @@
-# src/riskquant/ingest_fixtures/credit/jtd/bernoulli/minimal_independent_bernoulli_jtd.py
+# src/riskquant/ingest_fixtures/credit/jtd/independent_bernoulli/minimal_independent_bernoulli_jtd.py
 """
 Canonical independent-Bernoulli JTD ingest case.
 

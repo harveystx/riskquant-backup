@@ -16,10 +16,10 @@ import numba as nb
 import numpy as np
 from numpy.typing import NDArray
 
-from riskquant.jit import _F64_2D, njit
+from riskquant.jit import _F64_2D_C, njit
 
 
-@njit(nb.void(_F64_2D, nb.float64))
+@njit(nb.void(_F64_2D_C, nb.float64))
 def kernel_mirror_upper_and_set_diagonal(
     matrix: NDArray[np.float64],
     diagonal_value: float,
@@ -55,7 +55,7 @@ def kernel_mirror_upper_and_set_diagonal(
             matrix[col, row] = matrix[row, col]
 
 
-@njit(nb.int64(_F64_2D, nb.float64, nb.float64, nb.float64))
+@njit(nb.int64(_F64_2D_C, nb.float64, nb.float64, nb.float64))
 def kernel_first_bound_violation(
     matrix: NDArray[np.float64],
     lower_bound: float,
@@ -84,7 +84,7 @@ def kernel_first_bound_violation(
     return -1
 
 
-@njit(nb.void(_F64_2D, nb.float64, nb.float64, nb.float64))
+@njit(nb.void(_F64_2D_C, nb.float64, nb.float64, nb.float64))
 def kernel_clamp_upper_triangle(
     matrix: NDArray[np.float64],
     lower_bound: float,

@@ -4,17 +4,17 @@ from __future__ import annotations
 
 import numba as nb
 
-from riskquant.jit import _F64_1D, _I8_1D, parallel_njit
+from riskquant.jit import _F64_1D_C, _I8_1D_C, parallel_njit
 
 
 @parallel_njit(
     nb.void(
-        _F64_1D,  # forward price
-        _F64_1D,  # strike
-        _I8_1D,  # call_put_flag (1=call, 0=put)
-        _F64_1D,  # discount factor
-        _F64_1D,  # option price
-        _F64_1D,  # undiscounted call price out
+        _F64_1D_C,  # forward price
+        _F64_1D_C,  # strike
+        _I8_1D_C,  # call_put_flag (1=call, 0=put)
+        _F64_1D_C,  # discount factor
+        _F64_1D_C,  # option price
+        _F64_1D_C,  # undiscounted call price out
     )
 )
 def _kernel_compute_undiscounted_call_price(

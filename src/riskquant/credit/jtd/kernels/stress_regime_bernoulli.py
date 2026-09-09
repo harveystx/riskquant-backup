@@ -8,23 +8,23 @@ import numpy as np
 import numpy.typing as npt
 
 from riskquant.jit import (
-    _F64_1D,
-    _F64_2D,
-    _I32_1D,
+    _F64_1D_C,
+    _F64_2D_C,
+    _I32_1D_C,
     parallel_njit,
 )
 
 
 @parallel_njit(
     nb.void(
-        _F64_2D,  # out (N, S)
-        _F64_2D,  # latent_factors (F, S)
-        _F64_2D,  # ead (N, S)
-        _F64_1D,  # lgd (N,)
-        _F64_1D,  # pd (N,)
-        _I32_1D,  # uniform_uix (N,)
-        _I32_1D,  # stress_regime_uix (N,) - per-obligor stress-indicator factor
-        _F64_1D,  # stress_pd_multiplier (N,)
+        _F64_2D_C,  # out (N, S)
+        _F64_2D_C,  # latent_factors (F, S)
+        _F64_2D_C,  # ead (N, S)
+        _F64_1D_C,  # lgd (N,)
+        _F64_1D_C,  # pd (N,)
+        _I32_1D_C,  # uniform_uix (N,)
+        _I32_1D_C,  # stress_regime_uix (N,) - per-obligor stress-indicator factor
+        _F64_1D_C,  # stress_pd_multiplier (N,)
     )
 )
 def kernel_stress_regime_bernoulli_jtd(

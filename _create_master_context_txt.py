@@ -145,7 +145,7 @@ def main(profile: str | None = None):
             type=str,
             default="all",
             choices=[
-                "all",
+                "riskquant_all",
                 "ingest",
                 "valuation",
                 "simlab",
@@ -174,16 +174,14 @@ def main(profile: str | None = None):
 
     # 2. Define Domain Profiles
     PROFILES = {
-        "all": [
-            rq_src_path / "config",
-            rq_src_path / "market_data",
-            rq_src_path / "portfolio",
-            rq_src_path / "simlab",
-            rq_src_path / "valuation",
-            rq_src_path / "constants.py",
-            rq_src_path / "exceptions.py",
+        "riskquant_all": [
+            # CODE
+            rq_src_path,
+            rq_lab_src_path,
+            # SCRIPTS
+            rq_project_directory / "scripts",
             # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
+            rq_project_directory / "tests",
         ],
         "simlab": [
             rq_src_path / "simlab",
@@ -563,9 +561,17 @@ def main(profile: str | None = None):
             rq_project_directory / "tests" / "test_architecture.py",
         ],
         "scenario_metrics": [
+            # CODE
             rq_src_path / "scenario_metrics",
+            rq_src_path / "_arrays.py",
             rq_src_path / "jit.py",
+            rq_src_path / "constants.py",
+            rq_src_path / "exceptions.py",
+            # SCRIPTS
+            rq_project_directory / "scripts" / "demos" / "scenario_metrics",
+            rq_project_directory / "scripts" / "tests" / "scenario_metrics",
             # TESTS
+            rq_project_directory / "tests" / "scenario_metrics",
             rq_project_directory / "tests" / "test_architecture.py",
         ],
         "sensitivity_pnl": [
@@ -574,6 +580,9 @@ def main(profile: str | None = None):
             rq_src_path / "_arrays.py",
             rq_src_path / "jit.py",
             rq_src_path / "constants.py",
+            rq_src_path / "exceptions.py",
+            rq_src_path / "scenario_metrics",
+            rq_lab_src_path / "fixtures",
             # SCRIPTS
             rq_project_directory / "scripts" / "demos" / "sensitivity_pnl",
             # TESTS
@@ -582,9 +591,12 @@ def main(profile: str | None = None):
         ],
         "solutions_sensitivity_pnl": [
             rq_src_path / "solutions" / "sensitivity_pnl",
+            # SCRIPTS
             rq_project_directory / "scripts" / "solutions" / "sensitivity_pnl",
-            rq_lab_src_path,
+            rq_src_path / "scenario_metrics",
+            rq_lab_src_path / "fixtures",
             # TESTS
+            rq_project_directory / "tests" / "solutions" / "sensitivity_pnl",
             rq_project_directory / "tests" / "test_architecture.py",
         ],
         "dependence_stress": [
@@ -792,7 +804,7 @@ def main(profile: str | None = None):
 
 
 if __name__ == "__main__":
-    # main(profile="all")
+    main(profile="riskquant_all")
     # main(profile="config")
     # main(profile="config_static")
     # main(profile="config_proxy")
@@ -826,7 +838,7 @@ if __name__ == "__main__":
     # main(profile="ingest_fixtures_risk_static_config")
     # main(profile="ingest_fixtures_market_data")
     # main(profile="pricer_kernels")
-    # main(profile="scenario_metrics")
+    main(profile="scenario_metrics")
     main(profile="dependence_stress")
     main(profile="dependence")
     main(profile="github")

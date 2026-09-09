@@ -1,3 +1,4 @@
+# src/riskquant/valuation/blocks/block_type.py
 """
 Compiled valuation primitives (Block Types).
 

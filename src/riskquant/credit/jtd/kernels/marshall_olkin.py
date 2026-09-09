@@ -7,23 +7,23 @@ import numpy as np
 import numpy.typing as npt
 
 from riskquant.jit import (
-    _F64_1D,
-    _F64_2D,
-    _I32_1D,
+    _F64_1D_C,
+    _F64_2D_C,
+    _I32_1D_C,
     parallel_njit,
 )
 
 
 @parallel_njit(
     nb.void(
-        _F64_2D,  # out (N, S)
-        _F64_2D,  # latent_factors (F, S)
-        _F64_2D,  # ead (N, S)
-        _F64_1D,  # lgd (N,)
-        _F64_1D,  # pd_idio (N,) - The decoupled idiosyncratic PD
-        _F64_1D,  # pd_sys (N,) - The probability of the common shock triggering
-        _I32_1D,  # uniform_uix (N,) - Obligor-specific idiosyncratic uniform index
-        _I32_1D,  # systemic_uix (N,) - Shared systemic uniform index
+        _F64_2D_C,  # out (N, S)
+        _F64_2D_C,  # latent_factors (F, S)
+        _F64_2D_C,  # ead (N, S)
+        _F64_1D_C,  # lgd (N,)
+        _F64_1D_C,  # pd_idio (N,) - The decoupled idiosyncratic PD
+        _F64_1D_C,  # pd_sys (N,) - The probability of the common shock triggering
+        _I32_1D_C,  # uniform_uix (N,) - Obligor-specific idiosyncratic uniform index
+        _I32_1D_C,  # systemic_uix (N,) - Shared systemic uniform index
     )
 )
 def kernel_marshall_olkin_jtd(

@@ -74,7 +74,9 @@ class PnlGrid:
     def block_view(self, block_index: int) -> npt.NDArray[np.float32]:
         """C-contiguous `(M_block, S)` view of block `block_index`."""
         if not 0 <= block_index < self.num_blocks:
-            raise IndexError(f"block_index {block_index} outside [0, {self.num_blocks})")
+            raise IndexError(
+                f"block_index {block_index} outside [0, {self.num_blocks})"
+            )
         start = int(self.block_offsets[block_index])
         stop = int(self.block_offsets[block_index + 1])
         return self.pnl[start:stop]
@@ -82,7 +84,9 @@ class PnlGrid:
     def block_uids(self, block_index: int) -> npt.NDArray[np.int64]:
         """Row-aligned UID view for block `block_index`."""
         if not 0 <= block_index < self.num_blocks:
-            raise IndexError(f"block_index {block_index} outside [0, {self.num_blocks})")
+            raise IndexError(
+                f"block_index {block_index} outside [0, {self.num_blocks})"
+            )
         start = int(self.block_offsets[block_index])
         stop = int(self.block_offsets[block_index + 1])
         return self.trade_uids[start:stop]

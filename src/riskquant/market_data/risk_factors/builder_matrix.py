@@ -1,4 +1,4 @@
-# src\riskquant\market_data\risk_factors\builder_matrix.py
+# src/riskquant/market_data/risk_factors/builder_matrix.py
 from __future__ import annotations
 
 from collections.abc import Mapping

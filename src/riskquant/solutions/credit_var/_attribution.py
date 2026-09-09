@@ -7,9 +7,10 @@ complementary per-obligor views, both exact (no re-simulation — everything reu
 the loss matrix already in hand):
 
 * **ES contribution** — the Euler tail allocation the aggregate layer defers. Each
-  obligor's average loss over the engine's exact tail set (the worst
-  ``tail_count = max(1, int((1 - alpha) * S))`` scenarios). These SUM to the
-  portfolio ES, so the column foots. Answers "what share of the tail is obligor i".
+  obligor's Euler allocation over the engine's exact fractional tail set,
+  computed by the shared ``scenario_metrics`` contribution kernel. These SUM to
+  the portfolio ES exactly (the column foots) for any (alpha, S). Answers
+  "what share of the tail is obligor i".
 * **Incremental VaR / ES (leave-one-out)** — the change in portfolio VaR/ES from
   removing the obligor outright: ``risk(L) - risk(L - L_i)``. We already have the
   N x S matrix, so this is just re-aggregating ``portfolio_losses - loss[i]`` and
@@ -25,9 +26,9 @@ from __future__ import annotations
 
 __all__ = [
     "ObligorAttribution",
+    "loss_histogram",
     "obligor_tail_attribution",
     "obligor_ul_contribution",
-    "loss_histogram",
 ]
 
 from dataclasses import dataclass
@@ -37,6 +38,7 @@ import numpy.typing as npt
 
 from riskquant.credit.aggregate.loss_metrics import (
     loss_var_es,
+    loss_var_es_contribution,
     tail_var_es_by_group,
 )
 
@@ -108,12 +110,13 @@ def obligor_tail_attribution(
 
     var_total, es_total = loss_var_es(portfolio_losses, confidence_level)
 
-    # Euler ES contribution over the engine's exact tail set (worst tail_count).
-    tail_count = max(1, int((1.0 - confidence_level) * scenarios))
-    tail_idx = np.argpartition(portfolio_losses, scenarios - tail_count)[
-        scenarios - tail_count :
-    ]
-    es_contribution = obligor_loss[:, tail_idx].mean(axis=1)
+    # Euler ES contribution via the shared scenario_metrics tail-allocation
+    # kernel. It uses the SAME exact tail geometry as the headline ES (the same
+    # var_index / full_tail_count / fractional_weight / tail_mass), so the column
+    # foots to es_total even when (1 - alpha) * S is non-integral. (RQ-AUD-009.)
+    _var_contribution, es_contribution = loss_var_es_contribution(
+        obligor_loss, portfolio_losses, confidence_level
+    )
     expected_loss = obligor_loss.mean(axis=1)
 
     # Distribution-wide UL (std-dev) contribution — foots to portfolio UL.

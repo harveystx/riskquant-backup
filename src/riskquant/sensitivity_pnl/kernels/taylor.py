@@ -111,30 +111,28 @@ reintroduce either without re-running
 from __future__ import annotations
 
 import numba as nb  # type: ignore[import-untyped]
+from numba.core import types as nb_types
 
-from riskquant.jit import parallel_njit
-
-_F64_1D = nb.float64[::1]
-_F64_2D_C = nb.float64[:, ::1]
-_F32_2D_C = nb.float32[:, ::1]
-_I32_1D = nb.int32[::1]
+# See kernels/displacement.py for why these come from riskquant.jit rather
+# than a local redefinition.
+from riskquant.jit import _F32_2D_C, _F64_1D_C, _F64_2D_C, _I32_1D_C, parallel_njit
 
 
 @parallel_njit(
-    nb.void(
-        _I32_1D,  # chunk_offsets       (C+1,)  work-balanced row ranges
-        _I32_1D,  # position_offsets    (M+1,)
-        _I32_1D,  # factor_uix          (NNZ,)
-        _F64_1D,  # first_order         (NNZ,)
-        _F64_1D,  # second_order        (NNZ,)
-        _I32_1D,  # cross_offsets       (M+1,)
-        _I32_1D,  # cross_factor_uix_i  (NNZX,)
-        _I32_1D,  # cross_factor_uix_j  (NNZX,)
-        _F64_1D,  # cross_second_order  (NNZX,)
+    nb_types.void(
+        _I32_1D_C,  # chunk_offsets       (C+1,)  work-balanced row ranges
+        _I32_1D_C,  # position_offsets    (M+1,)
+        _I32_1D_C,  # factor_uix          (NNZ,)
+        _F64_1D_C,  # first_order         (NNZ,)
+        _F64_1D_C,  # second_order        (NNZ,)
+        _I32_1D_C,  # cross_offsets       (M+1,)
+        _I32_1D_C,  # cross_factor_uix_i  (NNZX,)
+        _I32_1D_C,  # cross_factor_uix_j  (NNZX,)
+        _F64_1D_C,  # cross_second_order  (NNZX,)
         _F32_2D_C,  # displacement      (Ka, B_capacity)        f32 C-contig
         _F64_2D_C,  # accumulator       (n_threads, B_capacity) f64 C-contig
-        nb.int64,  # batch_len
-        nb.int64,  # scenario_offset
+        nb_types.int64,  # batch_len
+        nb_types.int64,  # scenario_offset
         _F32_2D_C,  # out               (M, S_total)            f32 C-contig view
     ),
 )
@@ -158,7 +156,7 @@ def kernel_taylor_pnl(
     for c in nb.prange(chunk_offsets.shape[0] - 1):
         # Hoisted: one thread owns the whole chunk, so the scratch row is
         # resolved once per chunk rather than once per position.
-        acc = accumulator[nb.get_thread_id()]
+        acc = accumulator[nb.get_thread_id()] # type: ignore
 
         for m in range(chunk_offsets[c], chunk_offsets[c + 1]):
             lo = position_offsets[m]
@@ -270,4 +268,4 @@ def kernel_taylor_pnl(
             # ---- Fused narrow-cast scatter (acc row still hot in L1) ----
             row = out[m]
             for s in range(batch_len):
-                row[scenario_offset + s] = nb.float32(acc[s])
+                row[scenario_offset + s] = nb_types.float32(acc[s])

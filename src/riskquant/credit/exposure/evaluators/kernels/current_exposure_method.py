@@ -107,21 +107,23 @@ import numba as nb
 import numpy as np
 import numpy.typing as npt
 
-from riskquant.jit import parallel_njit
+from riskquant.jit import (
+    _F64_1D_C,
+    _F64_2D_C,
+    _I64_1D_C,
+    parallel_njit,
+)
 
-_F64_2D = nb.float64[:, ::1]
-_F64_1D = nb.float64[::1]
-_I64_1D = nb.int64[::1]
 
 
 @parallel_njit(
     nb.void(
-        _F64_2D,  # out
-        _F64_2D,  # mtm
-        _I64_1D,  # mtm_row_perm
-        _I64_1D,  # ns_offsets
-        _F64_1D,  # collateral
-        _F64_1D,  # gross_pfe
+        _F64_2D_C,  # out
+        _F64_2D_C,  # mtm
+        _I64_1D_C,  # mtm_row_perm
+        _I64_1D_C,  # ns_offsets
+        _F64_1D_C,  # collateral
+        _F64_1D_C,  # gross_pfe
         nb.float64,  # pfe_floor
         nb.float64,  # pfe_coefficient
     )

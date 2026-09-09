@@ -135,8 +135,20 @@ PUBLIC_DEPENDENCE = [
 ]
 
 
-@pytest.mark.parametrize(("module", "name"), PUBLIC_OBSERVATIONS + PUBLIC_DEPENDENCE)
-def test_the_declared_public_object_exists(module: str, name: str) -> None:
+PUBLIC_SCENARIO_METRICS = [
+    ("riskquant.scenario_metrics.api.var_es", "compute_var_es"),
+    ("riskquant.scenario_metrics._result", "VarEsResult"),
+]
+
+
+@pytest.mark.parametrize(
+    ("module", "name"),
+    PUBLIC_OBSERVATIONS + PUBLIC_DEPENDENCE + PUBLIC_SCENARIO_METRICS,
+)
+def test_the_declared_public_object_exists(
+    module: str,
+    name: str,
+) -> None:
     assert hasattr(importlib.import_module(module), name)
 
 
@@ -168,7 +180,12 @@ def test_core_packages_obey_the_mechanical_rules() -> None:
     import re
 
     exempt = {"preprocess.py"}
-    for package in ("observations", "dependence", "market_state"):
+    for package in (
+        "observations",
+        "dependence",
+        "market_state",
+        "scenario_metrics",
+    ):
         for path in _modules(package):
             if path.name in exempt:
                 continue
@@ -228,7 +245,9 @@ def test_the_phase_one_counting_path_names_no_coefficient() -> None:
     """The specific module the split exists to protect."""
     import re
 
-    source = _executable_source(SOURCE_ROOT / "dependence" / "estimators" / "tail_counts.py")
+    source = _executable_source(
+        SOURCE_ROOT / "dependence" / "estimators" / "tail_counts.py"
+    )
     assert not re.search(r"lambda_hat|chi_hat|chi_bar", source)
 
 

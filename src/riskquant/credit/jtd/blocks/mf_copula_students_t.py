@@ -1,4 +1,4 @@
-# src/riskquant/credit/jtd/blocks/mf_coplua_students_t.py
+# src/riskquant/credit/jtd/blocks/mf_copula_students_t.py
 from __future__ import annotations
 
 from dataclasses import dataclass

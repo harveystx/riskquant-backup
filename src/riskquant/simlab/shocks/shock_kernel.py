@@ -34,7 +34,15 @@ import math
 
 import numba as nb  # type: ignore[import-untyped]
 
-from riskquant.jit import parallel_njit
+from riskquant.jit import (
+    _F32_2D_F,
+    _F64_1D_C,
+    _F64_2D_C,
+    _F64_2D_F,
+    _I32_1D_C,
+    _I8_1D_C,
+    parallel_njit,
+)
 from riskquant.market_data.risk_factors.shift_types import (
     SHIFT_DIFFERENCE_ID,
     SHIFT_LOG_RETURN_ID,
@@ -42,21 +50,15 @@ from riskquant.market_data.risk_factors.shift_types import (
 )
 
 # Layout-pinned aliases.
-_F64_1D = nb.float64[::1]
-_F64_2D_C = nb.float64[:, ::1]
-_F64_2D_F = nb.float64[::1, :]
-_F32_2D_F = nb.float32[::1, :]
-_I32_1D = nb.int32[::1]
-_I8_1D = nb.int8[::1]
 
 
 @parallel_njit(
     nb.void(
-        _F64_1D,  # base_levels        (N,)
+        _F64_1D_C,  # base_levels        (N,)
         _F32_2D_F,  # shocks             (B, K)  F-contig
-        _I32_1D,  # req_to_uix         (N,)
-        _F64_1D,  # shock_scale        (N,)
-        _I8_1D,  # shift_types        (N,)
+        _I32_1D_C,  # req_to_uix         (N,)
+        _F64_1D_C,  # shock_scale        (N,)
+        _I8_1D_C,  # shift_types        (N,)
         _F64_2D_C,  # out                (N, B)  C-contig
     ),
 )

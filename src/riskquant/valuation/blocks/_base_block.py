@@ -1,4 +1,4 @@
-# src/riskquant/portfolio/blocks/base_block.py
+# src/riskquant/valuation/blocks/_base_block.py
 
 """
 Base class for all Struct-of-Arrays (SoA) trade blocks.
@@ -50,7 +50,21 @@ class Block:
     trade_uids: npt.NDArray[np.int64]
 
     def __init_subclass__(cls) -> None:
-        super().__init_subclass__()
+        # NOTE: deliberately `object.__init_subclass__()`, not the zero-arg
+        # `super().__init_subclass__()` sugar. `@dataclass(slots=True)` must
+        # rebuild the class object to attach `__slots__` (slots cannot be
+        # retrofitted onto an existing class), which discards the class that
+        # was live when this method body was compiled. Zero-arg `super()`
+        # desugars to `super(__class__, cls)`, where the implicit `__class__`
+        # cell still points at that discarded pre-rebuild class -- so `cls`
+        # (a genuine subtype of the *rebuilt* `Block`) is not recognised as a
+        # subtype of it, and Python raises `TypeError: super(type, obj): obj
+        # must be an instance or subtype of type` (a known CPython interaction
+        # between `__init_subclass__` and `dataclass(slots=True)`; RQ-AUD-016).
+        # `Block`'s only base is `object`, so calling `object.__init_subclass__()`
+        # directly is exactly what the `super()` call was trying to do, without
+        # going through the poisoned closure cell.
+        object.__init_subclass__()
 
         if cls.__name__.startswith("_"):
             return

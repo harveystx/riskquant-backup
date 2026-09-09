@@ -51,6 +51,7 @@ from __future__ import annotations
 
 __all__ = [
     "validate_book_spec",
+    "validate_market_against_book",
 ]
 
 import numpy as np
@@ -68,9 +69,17 @@ from riskquant.sensitivity_pnl.compile import (
     COL_QUOTE_BASE,
     COL_SECOND_ORDER,
 )
-from riskquant.sensitivity_pnl.conventions import DisplacementConvention
+from riskquant.sensitivity_pnl.contracts import CompiledSensitivityBook
+from riskquant.sensitivity_pnl.conventions import (
+    POSITIVE_LEVEL_DISPLACEMENT_IDS,
+    DisplacementConvention,
+)
 from riskquant.solutions.sensitivity_pnl.errors import MAX_REPORTED_ROWS, DefectLog
-from riskquant.solutions.sensitivity_pnl.market import FactorAxis
+from riskquant.solutions.sensitivity_pnl.market import (
+    FactorAxis,
+    MarketScenarios,
+    ScenarioLevels,
+)
 from riskquant.solutions.sensitivity_pnl.schemas import SensitivityBookSpec
 
 _DIAGONAL_ID_COLUMNS = (COL_POSITION_ID, COL_FACTOR_ID)
@@ -215,7 +224,7 @@ def _validate_entry_frame(
             # reported twice under two different headings.
             _report_absent(
                 source=f"{source}.{column}",
-                distinct=distinct.filter(distinct.is_in(axis.keys)),
+                distinct=distinct.filter(distinct.is_in(axis.keys.implode())),
                 present=covered,
                 problem_context="no row in factor_meta",
                 remedy=(
@@ -586,10 +595,18 @@ def _report_absent(
     fragile — measured over thirty calls on identical inputs, an earlier version
     of this function returned thirty different answers, each confidently naming
     factors that were not in fact missing.
+
+    `present.implode()`: by the time this line runs, the dtype guard just above
+    has already established `distinct.dtype == present.dtype` — exactly the
+    "collection of the same datatype" polars now treats as ambiguous between
+    element-wise comparison and membership-in-a-collection. `implode()` is the
+    library's own documented way to say "the second one, always" without a
+    warning; it wraps `present` into a single-row List-typed Series, a metadata
+    operation with no data copy.
     """
     if distinct.dtype != present.dtype or distinct.len() == 0:
         return
-    absent = distinct.filter(~distinct.is_in(present))
+    absent = distinct.filter(~distinct.is_in(present.implode()))
     if absent.len() == 0:
         return
     shown = absent.sort().head(MAX_REPORTED_ROWS).to_list()
@@ -600,3 +617,71 @@ def _report_absent(
         problem=f"{absent.len()} factor(s) with {problem_context}: {shown}{suffix}.",
         remedy=remedy,
     )
+
+
+# =========================================================================
+# MARKET AGAINST A COMPILED BOOK
+# =========================================================================
+
+
+def validate_market_against_book(
+    *,
+    book: CompiledSensitivityBook,
+    axis: FactorAxis,
+    market: MarketScenarios,
+) -> None:
+    """
+    The checks that need BOTH halves, run before anything is allocated.
+
+    Everything a scenario set can get wrong on its own is a construction
+    invariant of `ScenarioShocks` / `ScenarioLevels`. What neither half can see
+    alone is whether the LEVELS are admissible under the CONVENTIONS the book
+    was compiled with — the market does not know which factors are LOG, and the
+    book does not hold the levels.
+
+    `SensitivityPnlEngine` enforces the same rule per batch, and that guard is
+    the core-tier invariant rather than a duplicate to be removed: a caller
+    reaching the engine directly must not be able to produce a NaN PnL. This
+    one exists because the engine names a compiled `factor_id`, which under SLOT
+    encoding is a row position and tells a desk user nothing. Here the caller's
+    own key is still in scope.
+    """
+    if not isinstance(market, ScenarioLevels):
+        return
+
+    positive_mask = np.isin(
+        book.displacement_convention_ids,
+        np.asarray(POSITIVE_LEVEL_DISPLACEMENT_IDS, dtype=np.int8),
+    )
+    if not bool(positive_mask.any()):
+        return
+
+    rows = book.active_level_uix[positive_mask]
+    log = DefectLog()
+    levels = market.shocked_levels[rows]
+    row_min = levels.min(axis=1)
+    offending = np.flatnonzero(row_min <= 0.0)
+    if offending.size:
+        keys = axis.keys.to_list()
+        named = ", ".join(
+            f"{keys[int(rows[i])]!r} (min {float(row_min[i]):.6g})"
+            for i in offending[:MAX_REPORTED_ROWS]
+        )
+        extra = offending.size - min(offending.size, MAX_REPORTED_ROWS)
+        log.add(
+            source="market.shocked_levels",
+            problem=(
+                f"{offending.size} factor(s) declared LOG reach a non-positive "
+                f"shocked level: {named}" + (f" (+{extra} more)" if extra else "") + "."
+            ),
+            remedy=(
+                "ln of a non-positive level is NaN or -inf. It would reach the "
+                "PnL grid silently, poison every scenario of every position "
+                "sensitive to that factor, and then sort OUT of the lower tail "
+                "— a catastrophic loss becoming an invisible one. Declare the "
+                "factor ABSOLUTE if it can cross zero, or repair the scenario."
+            ),
+            row_indices=tuple(int(rows[i]) for i in offending[:MAX_REPORTED_ROWS]),
+            total_rows=int(offending.size),
+        )
+    log.raise_if_any()

@@ -51,9 +51,9 @@ import math
 import numba as nb  # type: ignore[import-untyped]
 
 from riskquant.jit import (
-    _F64_1D,
-    _F64_2D,
-    _I8_1D,
+    _F64_1D_C,
+    _F64_2D_C,
+    _I8_1D_C,
     parallel_njit,
 )
 from riskquant.valuation.pricing_models.black76.model import (
@@ -64,15 +64,15 @@ from riskquant.valuation.pricing_models.black76.model import (
 @parallel_njit(
     nb.void(
         # OUTPUT
-        _F64_2D,  # out
+        _F64_2D_C,  # out
         # MARKET DATA
-        _F64_2D,  # forwards
-        _F64_2D,  # vols
+        _F64_2D_C,  # forwards
+        _F64_2D_C,  # vols
         # TRADE SPECIFICS
-        _F64_1D,  # strike
-        _F64_1D,  # sqrt_tte
-        _F64_1D,  # half_tte
-        _I8_1D,  # cp_mult
+        _F64_1D_C,  # strike
+        _F64_1D_C,  # sqrt_tte
+        _F64_1D_C,  # half_tte
+        _I8_1D_C,  # cp_mult
     ),
 )
 def _kernel_black76_fv_batch(

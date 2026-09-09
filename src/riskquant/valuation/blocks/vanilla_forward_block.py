@@ -1,4 +1,4 @@
-# src/riskquant/portfolio/blocks/vanilla_forward_block.py
+# src/riskquant/valuation/blocks/vanilla_forward_block.py
 """
 Compiled blocks for vanilla forward trades.
 

@@ -32,7 +32,13 @@ import math
 
 import numba as nb  # type: ignore[import-untyped]
 
-from riskquant.jit import inline_njit, parallel_njit
+from riskquant.jit import (
+    _F64_2D_F,
+    _I32_1D_C,
+    _I8_1D_C,
+    inline_njit,
+    parallel_njit,
+)
 from riskquant.constants import MIN_EWMA_VARIANCE
 from riskquant.market_data.risk_factors.shift_types import (
     SHIFT_DIFFERENCE_ID,
@@ -40,9 +46,6 @@ from riskquant.market_data.risk_factors.shift_types import (
     SHIFT_SIMPLE_RETURN_ID,
 )
 
-_F64_2D_F = nb.float64[::1, :]
-_I32_1D = nb.int32[::1]
-_I8_1D = nb.int8[::1]
 
 
 # ============================================================
@@ -296,8 +299,8 @@ def _emit_ratios_raw(
 @parallel_njit(
     nb.void(
         _F64_2D_F,  # values        (T, K_total) F-contig
-        _I32_1D,  # cols          (K_req,)
-        _I8_1D,  # shift_types   (K_req,)
+        _I32_1D_C,  # cols          (K_req,)
+        _I8_1D_C,  # shift_types   (K_req,)
         nb.float64,  # decay_factor
         _F64_2D_F,  # out_ratios    (T, K_req) F-contig
         nb.float64,  # max_vol_ratio

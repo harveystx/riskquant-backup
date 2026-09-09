@@ -1,4 +1,4 @@
-# riskquant/utils/tenors.py
+# src/riskquant/utils/tenors.py
 from __future__ import annotations
 
 from datetime import date

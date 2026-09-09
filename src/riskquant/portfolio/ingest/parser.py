@@ -1,4 +1,4 @@
-# src\riskquant\portfolio\ingest\parser.py
+# src/riskquant/portfolio/ingest/parser.py
 
 
 from __future__ import annotations

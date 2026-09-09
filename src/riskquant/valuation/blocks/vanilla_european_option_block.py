@@ -1,4 +1,4 @@
-# src/riskquant/portfolio/blocks/vanilla_european_option_block.py
+# src/riskquant/valuation/blocks/vanilla_european_option_block.py
 """
 Compiled blocks for vanilla European option trades.
 

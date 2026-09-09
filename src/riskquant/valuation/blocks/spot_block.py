@@ -1,4 +1,4 @@
-# src/riskquant/portfolio/blocks/spot_block.py
+# src/riskquant/valuation/blocks/spot_block.py
 """
 Compiled, memory-efficient container for spot positions.
 

@@ -21,21 +21,23 @@ import numba as nb  # type: ignore
 import numpy as np
 import numpy.typing as npt
 
-from riskquant.jit import parallel_njit
+from riskquant.jit import (
+    _F64_1D_C,
+    _F64_2D_C,
+    _I64_1D_C,
+    parallel_njit,
+)
 
-_F64_2D = nb.float64[:, ::1]
-_F64_1D = nb.float64[::1]
-_I64_1D = nb.int64[::1]
 
 
 @parallel_njit(
     nb.void(
-        _F64_2D,
-        _F64_2D,
-        _I64_1D,
-        _I64_1D,
-        _F64_1D,
-        _F64_1D,
+        _F64_2D_C,
+        _F64_2D_C,
+        _I64_1D_C,
+        _I64_1D_C,
+        _F64_1D_C,
+        _F64_1D_C,
         nb.float64,
         nb.float64,
     )

@@ -47,7 +47,7 @@ A user request may explicitly authorise a methodology, architecture, or public-c
 - Compilers/solutions own policy resolution, dispatch, mapping, and orchestration.
 - Scenario-independent work must be completed before the scenario loop.
 - Minimise allocations and preserve favourable memory layout and ownership.
-- Polars is the default dataframe technology at dataframe boundaries; pandas is not the numerical-core dataframe substrate.
+- Polars is the sole approved internal dataframe technology for RiskQuant data-processing pipelines. `polars.LazyFrame` is the canonical and required representation for internal dataframe pipelines. Eager `polars.DataFrame` processing is permitted only at an explicit, justified materialisation boundary. Pandas is not an approved internal RiskQuant dataframe representation. Pandas may be used only at an unavoidable external interoperability boundary when required by a third-party or legacy API contract; such use must be isolated in EDGE and converted immediately to a `polars.LazyFrame`.
 - NumPy/SciPy/Numba own numerical execution where appropriate.
 - Ordinary `__init__.py` files are byte-empty.
 
@@ -55,7 +55,7 @@ A user request may explicitly authorise a methodology, architecture, or public-c
 
 RiskQuant is organised conceptually as:
 
-`TERMINAL → SOLUTION → CORE`
+`EDGE → SOLUTION → CORE → TERMINAL`
 
 with `EDGE` providing external data and application boundaries into the controlled solution/core layers.
 
@@ -63,13 +63,19 @@ with `EDGE` providing external data and application boundaries into the controll
 
 External schemas, source-system representations, data access, canonicalisation, file/database adapters, and human-facing data preparation.
 
+EDGE dataframe processing must use Polars `LazyFrame` as the canonical internal representation. External dataframe formats may be adapted at the outermost boundary but must not propagate into SOLUTION or CORE.
+
 ### SOLUTION
 
 Stable public/API contracts, Pydantic schemas, catalogue/recipe selection, validation, provenance, canonicalisation, orchestration, and controlled dispatch.
 
+SOLUTION code must not accept, return, construct, or transform pandas objects.
+
 ### CORE
 
 Compact numerical state and high-performance kernels. Core code should be independent of transport formats, UI objects, strings, dataframe abstractions, and policy configuration.
+
+CORE code must not import pandas or Polars.
 
 ### TERMINAL
 
@@ -215,13 +221,167 @@ Preallocate where complete overwrite is guaranteed. Understand that advanced ind
 
 A performance-motivated change is not accepted on intuition alone. Material changes require benchmark evidence.
 
-## 13. Dataframe boundary policy
+## 13. Dataframe Boundary Policy
 
-Polars is the default for dataframe-like source and boundary work.
+RiskQuant uses **Polars as its sole approved internal dataframe technology**.
 
-Dataframes do not cross into JIT kernels. Convert once into canonical arrays with explicit ownership, shape, order, and dtype.
+### Canonical representation
 
-Do not use dataframe convenience semantics to hide changes in ordering, missingness, duplicate handling, or type coercion.
+`polars.LazyFrame` is the canonical representation for dataframe-like source, ingestion, canonicalisation, filtering, joining, transformation, and preparation work.
+
+Use `LazyFrame` by default for dataframe pipelines.
+
+Prefer lazy expressions and deferred execution so that:
+
+* transformations remain composable;
+* predicate/projection pushdown can occur where applicable;
+* unnecessary intermediate materialisation is avoided;
+* execution is deferred until an explicit boundary requires materialisation.
+
+### Pandas prohibition
+
+**Pandas is not an approved internal RiskQuant dataframe representation.**
+
+Do not introduce or retain pandas for:
+
+* configuration processing;
+* ingestion;
+* data cleaning;
+* joins;
+* filtering;
+* grouping;
+* transformations;
+* canonicalisation;
+* market-data processing;
+* credit-data processing;
+* solution-layer dataframe manipulation.
+
+`pandas.DataFrame`, `pandas.Series`, and pandas-specific processing must not form part of an internal RiskQuant data pipeline.
+
+### External interoperability exception
+
+Pandas is permitted only where an unavoidable external dependency or legacy interface explicitly requires a pandas object.
+
+Any such use must satisfy:
+
+```text
+External interface
+    ↓
+isolated EDGE adapter
+    ↓
+Polars LazyFrame
+    ↓
+RiskQuant processing pipeline
+```
+
+Pandas must not leak beyond that narrow adapter boundary.
+
+Do not use pandas internally merely because a library, developer, or existing implementation happens to prefer it.
+
+Every retained pandas dependency must have an identifiable external-contract justification.
+
+Do not alternate between pandas, Polars DataFrame, Polars LazyFrame, and NumPy representations unnecessarily. Each transition must occur at an explicit architectural boundary and have a documented reason.
+
+### Eager Polars
+
+`polars.DataFrame` is not automatically equivalent to the canonical `LazyFrame` representation.
+
+Do not eagerly materialise a `DataFrame` when the operation can remain lazy without violating an explicit contract.
+
+`.collect()` is an execution/materialisation boundary and should occur only where required by:
+
+* a downstream API contract;
+* conversion to canonical NumPy/SoA core state;
+* an explicitly required terminal operation;
+* another documented architectural boundary.
+
+Premature `.collect()` is an architectural and performance concern because it may prevent lazy optimisation and create unnecessary materialisation.
+
+### NumPy/Core boundary
+
+Dataframes do not cross into CORE or JIT kernels.
+
+The intended transition is:
+
+```text
+External data
+    ↓
+EDGE adapter
+    ↓
+Polars LazyFrame
+    ↓
+lazy transformation pipeline
+    ↓
+explicit materialisation boundary
+    ↓
+canonical NumPy / SoA representation
+    ↓
+CORE / JIT
+```
+
+The dataframe-to-array transition must explicitly establish:
+
+* dtype;
+* shape;
+* ordering;
+* ownership;
+* mutability;
+* contiguity;
+* missing-value semantics.
+
+Do not use dataframe convenience semantics to hide changes in ordering, missingness, duplicate handling, alignment, or type coercion.
+
+### Prohibited internal pattern
+
+The following pattern is prohibited unless explicitly approved as an external interoperability adapter:
+
+```text
+External data
+    ↓
+Pandas
+    ↓
+Pandas transformations
+    ↓
+Polars
+    ↓
+NumPy
+```
+
+Likewise, avoid:
+
+```text
+Polars LazyFrame
+    ↓
+collect()
+    ↓
+eager DataFrame transformations
+    ↓
+LazyFrame
+```
+
+unless the eager boundary is explicitly required and documented.
+
+
+### Enforcement
+
+New production code must not introduce pandas dependencies without an explicit architecture decision.
+
+Repository audits should treat unexplained pandas usage as an architectural finding.
+
+Repository audits should separately identify:
+
+* pandas imports and APIs;
+* pandas-to-Polars conversions;
+* Polars eager `DataFrame` construction;
+* premature `.collect()`;
+* repeated dataframe materialisation;
+* dataframe-to-NumPy conversions;
+* dataframe objects crossing SOLUTION/CORE boundaries.
+
+The objective is:
+
+**Polars LazyFrame at the dataframe boundary → explicit materialisation → canonical numerical state in CORE.**
+
 
 ## 14. Determinism and RNG
 

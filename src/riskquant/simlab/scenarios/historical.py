@@ -25,7 +25,14 @@ from dataclasses import dataclass, field
 import numba as nb  # type: ignore[import-untyped]
 import numpy as np
 
-from riskquant.jit import parallel_njit
+from riskquant.jit import (
+    _F32_2D_C,
+    _F32_2D_F,
+    _F64_2D_F,
+    _I32_1D_C,
+    _I8_1D_C,
+    parallel_njit,
+)
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.market_data.risk_factors.shift_types import (
     SHIFT_DIFFERENCE_ID,
@@ -38,10 +45,6 @@ from riskquant.simlab.scenarios.base import (
     ScenarioSetBatch,
 )
 
-_F64_2D_F = nb.float64[::1, :]
-_F32_2D_F = nb.float32[::1, :]
-_I32_1D = nb.int32[::1]
-_I8_1D = nb.int8[::1]
 
 
 # =========================================================================
@@ -49,18 +52,28 @@ _I8_1D = nb.int8[::1]
 # =========================================================================
 
 
-@parallel_njit(
+@parallel_njit([
     nb.void(
         _F64_2D_F,  # values     (T, K_total) F-contig
-        _I32_1D,  # cols       (K_req,)
-        _I8_1D,  # shift_types(K_req,)
-        _I32_1D,  # inv_perm   (K_req,)
+        _I32_1D_C,  # cols       (K_req,)
+        _I8_1D_C,  # shift_types(K_req,)
+        _I32_1D_C,  # inv_perm   (K_req,)
         nb.int64,  # t_start
         nb.int64,  # h
         nb.int64,  # B
         _F32_2D_F,  # out        (B, K_req) F-contig
     ),
-)
+    nb.void(
+        _F64_2D_F,  # values     (T, K_total) F-contig
+        _I32_1D_C,  # cols       (K_req,)
+        _I8_1D_C,  # shift_types(K_req,)
+        _I32_1D_C,  # inv_perm   (K_req,)
+        nb.int64,  # t_start
+        nb.int64,  # h
+        nb.int64,  # B
+        _F32_2D_C,  # out        (B, K_req) F-contig
+    ),
+])
 def _kernel_fused_h_day_shock(
     values,
     cols,
@@ -165,6 +178,18 @@ class HistoricalGenerator(ScenarioGenerator):
             t_end = min(t_max, t_start + batch_size)
             batch_len = t_end - t_start
             shocks_view = shocks_buf[:batch_len, :]
+            # A slice of an F-contiguous buffer along its first axis is only
+            # itself F-contiguous when the slice covers every row; the final
+            # (partial) batch, where batch_len < batch_size, is neither C nor
+            # F contiguous. The kernel's `out` parameter requires genuine
+            # F-contiguity, so materialise a fresh contiguous buffer for that
+            # case rather than passing the non-contiguous view in directly.
+            # (RQ-AUD-017.)
+            kernel_out = (
+                shocks_view
+                if shocks_view.flags["F_CONTIGUOUS"]
+                else np.empty((batch_len, k_req), dtype=np.float32, order="F")
+            )
 
             _kernel_fused_h_day_shock(
                 self.matrix.values,
@@ -174,11 +199,11 @@ class HistoricalGenerator(ScenarioGenerator):
                 np.int64(t_start),
                 np.int64(h),
                 np.int64(batch_len),
-                shocks_view,
+                kernel_out,
             )
 
             yield ScenarioSetBatch(
-                shocks=shocks_view,
+                shocks=kernel_out,
                 required_to_shock_uix=shock_universe.required_to_shock_uix,
                 shock_scale=shock_scale,
                 required_shift_type_id=required_shift_type_id,

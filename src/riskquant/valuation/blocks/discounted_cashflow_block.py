@@ -1,4 +1,4 @@
-# src/riskquant/portfolio/blocks/discounted_cashflow_block.py
+# src/riskquant/valuation/blocks/discounted_cashflow_block.py
 """
 Compiled blocks for discounted cashflows.
 """
