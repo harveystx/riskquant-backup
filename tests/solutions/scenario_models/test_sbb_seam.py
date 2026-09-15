@@ -93,7 +93,11 @@ def test_non_positive_rejection(field, bad) -> None:
         parse_scenario_model_config(_cfg(**{field: bad}))
 
 
-@pytest.mark.parametrize("seed", [7, 0, -3, None])
+# Negative seeds were accepted here historically, but they can never produce a
+# run: numpy's SeedSequence rejects them deep inside the bit generator during
+# iteration. The boundary now bounds seed to >= 0; rejection is asserted in
+# test_rng_semantics.py.
+@pytest.mark.parametrize("seed", [7, 0, None])
 def test_seed_accepts_int_or_none(seed) -> None:
     cfg = parse_scenario_model_config(_cfg(seed=seed))
     assert cfg.seed == seed

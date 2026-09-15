@@ -36,7 +36,7 @@ from riskquant.constants import EWMA_DECAY_FACTOR, MAX_EWMA_VOL_RATIO
 _STRICT = ConfigDict(extra="forbid", protected_namespaces=())
 
 
-def _require_real(value: object, name: str) -> object:
+def _require_real(value: object, name: str) -> float:
     """
     Canonical continuous-input gate for every real-valued scenario-config
     parameter (D038).
@@ -61,7 +61,7 @@ def _require_real(value: object, name: str) -> object:
             f"{name} must be a real number (int, float, or NumPy real scalar); "
             f"got {type(value).__name__}."
         )
-    return value
+    return float(value)
 
 
 class HistoricalGeneratorConfig(BaseModel):
@@ -106,7 +106,14 @@ class SbbGeneratorConfig(BaseModel):
         description="geometric mean block length (continuous, >= 1.0).",
     )
     seed: StrictInt | None = Field(
-        default=None, description="RNG seed; None = OS entropy (not reproducible)."
+        default=None,
+        ge=0,
+        description=(
+            "RNG seed; None = OS entropy (not reproducible). Must be non-negative: "
+            "NumPy's SeedSequence rejects negative seeds, and without this bound the "
+            "failure surfaces deep inside the bit generator during iteration rather "
+            "than at the solution boundary."
+        ),
     )
 
     @field_validator("expected_block_size", mode="before")
@@ -191,7 +198,14 @@ class FilteredBootstrapGeneratorConfig(BaseModel):
         description="vol-amplification cap (>= 1.0).",
     )
     seed: StrictInt | None = Field(
-        default=None, description="RNG seed; None = OS entropy (not reproducible)."
+        default=None,
+        ge=0,
+        description=(
+            "RNG seed; None = OS entropy (not reproducible). Must be non-negative: "
+            "NumPy's SeedSequence rejects negative seeds, and without this bound the "
+            "failure surfaces deep inside the bit generator during iteration rather "
+            "than at the solution boundary."
+        ),
     )
 
     @field_validator("decay_factor", "max_vol_ratio", mode="before")
@@ -270,12 +284,16 @@ class RegimeSwitchingDistribution(BaseModel):
                         "crisis_vol_multipliers must be finite and strictly positive."
                     )
             return out
-        _require_real(v, "crisis_vol_multipliers")
-        if not (v == v and v not in (float("inf"), float("-inf")) and v > 0.0):
+        value = _require_real(v, "crisis_vol_multipliers")
+        if not (
+            value == value
+            and value not in (float("inf"), float("-inf"))
+            and value > 0.0
+        ):
             raise ValueError(
                 "crisis_vol_multipliers must be finite and strictly positive."
             )
-        return v
+        return value
 
 
 ParametricDistributionConfig = Annotated[
@@ -302,7 +320,14 @@ class ParametricGeneratorConfig(BaseModel):
     model: Literal["parametric"]
     total_scenarios: StrictInt = Field(gt=0, description="number of paths to draw.")
     seed: StrictInt | None = Field(
-        default=None, description="RNG seed; None = OS entropy (not reproducible)."
+        default=None,
+        ge=0,
+        description=(
+            "RNG seed; None = OS entropy (not reproducible). Must be non-negative: "
+            "NumPy's SeedSequence rejects negative seeds, and without this bound the "
+            "failure surfaces deep inside the bit generator during iteration rather "
+            "than at the solution boundary."
+        ),
     )
     distribution: ParametricDistributionConfig
 

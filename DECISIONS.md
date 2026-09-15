@@ -1237,3 +1237,147 @@ preserved (no re-baseline); changed-file lint clean; scope diff = `schemas.py`
 plus the new test. D037 remains deferred: archaeology confirms no production or
 demo caller constructs co-seeded independent engines. See
 `SIMLAB_PRODUCTION_CLOSURE.md`.
+
+---
+
+## D039 — seed domain bounded at the solution boundary (amends D032/D035 seed contract); D021 closed as superseded
+
+Raised by the adversarial production audit (`SIMLAB_ADVERSARIAL_PRODUCTION_AUDIT.md`).
+A new decision is recorded because the audit proved the `seed` *contract* itself
+had to change, not merely its implementation.
+
+**Defect.** `seed = -1` parsed successfully, built a generator successfully, then
+crashed during `iter_batches` inside `numpy/random/bit_generator.pyx`
+(`ValueError: expected non-negative integer`). `StrictInt` carried no lower bound,
+so a malformed run failed late instead of at the solution boundary — a fail-fast
+violation.
+
+**Proof no behaviour is lost.** Verified on the pristine tree that a negative seed
+never produced a working run (parse OK -> build OK -> iterate CRASH), and negative
+seeds appear in no caller in the repository. The fix changes only WHERE the error
+is raised.
+
+**Fix.** `Field(ge=0)` on `seed` in `SbbGeneratorConfig`,
+`FilteredBootstrapGeneratorConfig` and `ParametricGeneratorConfig`
+(`scenario_models/schemas.py`). `seed=0` and `seed=None` remain valid; every valid
+seed's stream is bit-identical; D019 goldens unchanged. This also aligns the
+boundary with `SeedSequence`'s own domain, so a future D037 `stream_id` needs no
+further widening.
+
+**Amendment to locked decisions (surfaced, not smuggled).** This tightens the
+`seed` domain recorded in D032 and D035. One existing test,
+`test_sbb_seam.py::test_seed_accepts_int_or_none[-3]`, asserted parse-acceptance of
+a negative seed — it encoded the latent defect and was narrowed to `[7, 0, None]`
+with an explanatory comment; rejection is asserted in the new
+`tests/solutions/scenario_models/test_rng_semantics.py`.
+
+**RNG semantics pinned (new regression suite, 72 tests).** Measured and now locked:
+restart-identical; co-seeded instances identical (NOT independent); `seed=None`
+re-randomizes per `iter_batches` call; batch-invariant across
+{1,2,3,5,7,11,S-1,S,S+50} for every Parametric distribution branch including the
+vector regime form; construction-order independent; no dependence on NumPy global
+state; **bitwise identical across fresh OS processes** (sha256 of the stream) and
+across batch sizes. Reproducibility is bitwise within a pinned environment
+(NumPy 2.4.4 / CPython 3.12.3); cross-NumPy-version bitwise identity is NOT
+guaranteed and must not be promised.
+
+**D037 re-evaluated: CORRECTLY DEFERRED.** No production or demo caller constructs
+co-seeded independent engines; the absence of independent streams is a capability
+gap, not a production limitation. Methodology unrevised.
+
+**D021: CLOSED — SUPERSEDED BY D037.** Methodology RESOLVED (D037); implementation
+DEFERRED; trigger = first co-seeded / parallel / ensemble / replica consumer. The
+stale OPEN state is retired.
+
+**Evidence.** New RNG suite 72 passed; seam suite 476 passed / 2 skipped;
+tests/simlab 281; focused regression + solutions 1636 passed / 4 skipped; E2E
+`ALL CHECKS PASSED`; D019 goldens preserved; changed-file lint clean; scope diff =
+`schemas.py` + the new RNG test + one superseded test case.
+
+**Remaining gap (not closed here).** Run identity: nine categories of
+result-affecting input sit outside the scenario config (historical values and
+column order, ParametricRiskData arrays, proxy/shift/shock_scale, risk-measure
+config, reporting FX, library versions). Verdict is therefore PRODUCTION CAPABLE
+BUT NOT HARDENED; the next increment is the RunManifest defined in the audit.
+
+---
+
+## D040 — Run identity: content-addressed reproducibility contract for a risk run
+
+Closes the run-identity gap left open by the adversarial audit. A new decision is
+warranted because this adds a durable PUBLIC serialized contract (a manifest
+format with its own schema version) that no existing decision covers. D036–D039
+are unchanged and not rewritten. Full evidence:
+`SIMLAB_RUN_IDENTITY_CLOSURE.md`.
+
+**Unit of reproducibility.** The risk run, not the generator and not the scenario
+stream. The identity was derived from a mutation inventory over the real path
+(config -> generator -> `iter_batches` -> `apply_shocks_to_base_levels` ->
+sensitivity P&L -> FX -> `compute_var_es`) BEFORE any manifest was designed.
+
+**Two inventory findings that a "save the config" scheme would have missed.**
+(1) `required_shift_type_id`, `source_factor_ids` and `shock_scale` are arguments
+to `iter_batches`, not fields of the scenario config, and each changes the risk
+number. (2) `batch_size` leaves the scenario stream bitwise invariant (D029) but
+can perturb a downstream BLAS reduction by ~1 ulp (measured 1.4e-13 between
+widths 7 and 16), so it is recorded rather than assumed neutral.
+
+**Contract.** A risk result is reproducible when its run identity and the
+identified input snapshots are available and the environment matches the
+manifest's `engine` section (riskquant / python / numpy versions). Equality is
+then BITWISE for VaR, ES, the scenario stream and the P&L vector. Cross-version
+bitwise identity is NOT GUARANTEED and is not claimed.
+
+**Implementation.** New solution-tier package
+`src/riskquant/solutions/run_identity/` (`hashing.py`, `schemas.py`, `api.py`,
+empty `__init__.py`). `RunManifest` is a frozen Pydantic v2 model
+(`extra="forbid"`) with `manifest_schema_version` (Literal "1", deliberately
+distinct from the engine version) plus `engine`, `scenario_config` (full dump,
+re-parsable through the frozen D036 seam), `data` (kind + digest), `shocks`,
+`pnl`, `reporting`, `risk_measure`, `execution`. Identity is SHA-256
+(`hashlib`, no new dependency) over a canonical serialization: keys sorted, no
+incidental whitespace, tuples normalised, floats written as exact IEEE-754 hex so
+the digest cannot drift with dict order or decimal formatting. `to_json` is a
+separate persistence form that round-trips to the same identity.
+
+**Hashing is CONTENT identity.** dtype, shape and the C-ordered native-endian
+buffer are folded in: copies and F-vs-C views hash equal; transpose, reshape and
+dtype changes do not. factor_ids are hashed as an ORDERED vector, never a set,
+because column order is authoritative. Floats are never rounded or stringified —
+one-ulp differences have different identities. No collision claim is made beyond
+SHA-256's primitive-level assumption.
+
+**Identity vs record.** The manifest carries no timestamp, host, operator or job
+id, so the same computation re-run later on another machine has the same
+identity. Snapshots are identified, not stored: the JSON is ~1 kB regardless of
+matrix size. Rejected as unnecessary: database, ORM, event sourcing, generic
+provenance framework, global context, RunManager, registry, plugin mechanism.
+
+**Fail-fast on substitution.** `verify_run_inputs` re-digests supplied inputs and
+raises `InputMismatchError` naming the first mismatch, so a stale or substituted
+snapshot cannot silently price a different, plausible VaR.
+
+**Core purity (D001).** Manifest code is solution tier, built beside the
+computation from the same inputs, and never passed into a generator, a kernel or
+a Numba signature. `src/riskquant/simlab` is BYTE-IDENTICAL to the pristine dump;
+the entire change is one new `solutions/run_identity` package plus its tests.
+
+**Evidence.** run_identity suite 48 passed (11 result-defining mutations change
+result AND identity; 3 false-positive cases change neither; 10 substitution cases
+detected; 5 malformed-manifest rejections; fresh-process bitwise reproduction of
+VaR/ES via exact float hex). `tests/solutions` + `tests/simlab` 1104 passed / 3
+skipped; focused regression 861 passed / 1 skipped; E2E `ALL CHECKS PASSED`; lint
+clean. Performance: manifest build 1.78 ms vs 21.3 ms scenario generation (8.3%
+one-time) at K=250/S=10k; matrix hash 2.45 ms for a 2 MB matrix; JSON 1.01 kB.
+
+**Documented asymmetry.** The contract forbids "same identity, different result".
+It deliberately permits "different identity, same result": a uniform rescale of
+the whole history is return-neutral for a log-return model yet changes the data
+digest. That conservative direction is asserted by an explicit test.
+
+**Remaining limitations.** Cross-version reproducibility not guaranteed;
+`seed=None` runs carry no reproducibility claim; D037 `stream_id` still deferred
+(it enters `scenario_config` automatically when implemented); the manifest
+identifies snapshots but does not store them; and adoption is caller-side — the
+production runner and E2E demo do not yet build a manifest. Wiring it in is the
+next increment.
