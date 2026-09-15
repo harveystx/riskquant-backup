@@ -896,3 +896,67 @@ modules (`test_copulas`, `test_invariants`, `test_tails`) fail COLLECTION with a
 bare `from canonical_measures import ...` ImportError — pre-existing on the
 pristine dump, not caused by this change. FilteredBootstrap deliberately NOT
 added (Parametric was the requested proof point).
+
+## D035 — Seam extended to FilteredBootstrap (fifth and final model; seam proven complete)
+
+The fifth and final scenario model through the D031–D034 configuration seam. It
+required no new abstraction: one config class, one union tag, one builder
+branch, one test file — the same linear per-model cost as D032/D033. The seam is
+now complete for every SimLab scenario generator.
+
+**Exact config (verified against the constructor, not inferred).**
+`FilteredBootstrapGenerator(matrix: RiskFactorMatrix, total_scenarios: int,
+horizon: int = 1, decay_factor: float = EWMA_DECAY_FACTOR, max_vol_ratio: float =
+MAX_EWMA_VOL_RATIO, seed: int | None = None)`. `FilteredBootstrapGeneratorConfig`
+mirrors this exactly: `model: Literal["filtered_bootstrap"]`; `horizon`,
+`total_scenarios` `StrictInt(gt=0)`; `decay_factor float default EWMA_DECAY_FACTOR,
+gt=0 lt=1 allow_inf_nan=False`; `max_vol_ratio float default MAX_EWMA_VOL_RATIO,
+ge=1 allow_inf_nan=False`; both reject bool via the before-validator;
+`seed StrictInt | None = None`. It is the SBB discrete/seed shape (D032) plus the
+FHS continuous shape (D033) — no `expected_block_size`, no distribution fields.
+
+**Typing follows D032/D033, not D034.** `decay_factor`/`max_vol_ratio` are the
+identical FHS parameters, so they use the established D033 lax-float +
+reject-bool + `allow_inf_nan=False` pattern (rejects bool/NaN/±inf; the known
+string-coercion inconsistency vs D034's strict-real is NOT harmonized here — that
+remains a separate future decision). Discrete fields use `StrictInt` (reject
+bool/float/str). The generator does not bound `decay_factor`/`max_vol_ratio`
+(confirmed in `__post_init__`), so the seam adds that config-domain fail-fast,
+exactly as D033 did.
+
+**Matrix-as-input remains valid; the typed `data` union is sufficient.**
+FilteredBootstrap consumes a `RiskFactorMatrix` like Historical/SBB/FHS. The
+existing `build_scenario_generator(config, *, data: RiskFactorMatrix |
+ParametricRiskData)` absorbed it with one `isinstance` branch and
+`_require_matrix` fail-fast pairing (FilteredBootstrap + `ParametricRiskData` ->
+TypeError). Parametric stays the only heterogeneous-data exception; no
+`ScenarioData`, registry, factory, or new abstraction was needed — the default
+assumption held. Five explicit builder branches remain a plain dispatch.
+
+**Validation split preserved (D031–D034).** Config owns strict types,
+positivity, finiteness, discriminator, foreign-field rejection; builder owns
+data pairing; generator's `__post_init__` stays authoritative for matrix float64
+(D017), positive-int (D026), and history-length (>=3) invariants. No numerical
+logic moved into the schema or builder; no generator validation removed.
+
+**Equivalence & D029.** Direct vs seam identical in scenario count, ordering,
+values, dtype (float32) and layout (F-contiguous). Seeded seam construction is
+deterministic and preserves the D029 batch-size invariant (bs1 == bs7 == full);
+different seeds differ. D021 untouched (still OPEN); no `SeedSequence`, no
+`default_rng` ownership change.
+
+**Evidence.** FilteredBootstrap seam tests 54 passed; all scenario-model seam
+tests 224; tests/simlab 281; focused regression + solutions 1384 passed / 2
+skipped; E2E `ALL CHECKS PASSED`; D019 LOG_RETURN goldens preserved (only the
+known US/NL calendar-order non-determinism); changed-file lint clean; src diff
+scope exactly `scenario_models/schemas.py` + `api.py` + new
+`test_filtered_bootstrap_seam.py`.
+
+**Pre-existing unrelated failure (not this increment).** On the current pristine
+dump, `tests/dependence_stress/test_invariants.py` fails COLLECTION (bare
+`from canonical_measures import ...` ImportError family, unchanged from the D034
+note, now one module rather than three). Untouched here.
+
+**Seam complete.** ScenarioModelConfig = {Historical, Sbb, FilteredHistorical,
+Parametric, FilteredBootstrap}; matrix-backed models -> RiskFactorMatrix,
+Parametric -> ParametricRiskData. No further scenario models outstanding.

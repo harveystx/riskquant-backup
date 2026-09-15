@@ -125,6 +125,53 @@ class FilteredHistoricalGeneratorConfig(BaseModel):
         return value
 
 
+class FilteredBootstrapGeneratorConfig(BaseModel):
+    """
+    Selects the Filtered Bootstrap model: stochastic bootstrap resampling of
+    AR(1)/EWMA-filtered, vol-rescaled residuals.
+
+    Model-specific parameters only, and the exact `FilteredBootstrapGenerator`
+    constructor contract: `horizon` and `total_scenarios` are strict positive
+    integers; `decay_factor` (EWMA memory lambda, open interval (0, 1)) and
+    `max_vol_ratio` (vol-amplification cap, >= 1.0) are finite reals the
+    generator does not itself bound, so the seam fails fast here (same as
+    `filtered_historical`, D033); `seed` is an optional strict integer
+    (None = OS entropy, no reproducibility claim, D029). The generator's
+    `__post_init__` stays authoritative for matrix float64 / history-length /
+    positive-int invariants; this contract does not reproduce the EWMA/AR(1) or
+    bootstrap math.
+    """
+
+    model_config = _STRICT
+
+    model: Literal["filtered_bootstrap"]
+    horizon: StrictInt = Field(gt=0, description="h-day path length.")
+    total_scenarios: StrictInt = Field(gt=0, description="number of paths to draw.")
+    decay_factor: float = Field(
+        default=EWMA_DECAY_FACTOR,
+        gt=0.0,
+        lt=1.0,
+        allow_inf_nan=False,
+        description="EWMA memory lambda in (0, 1).",
+    )
+    max_vol_ratio: float = Field(
+        default=MAX_EWMA_VOL_RATIO,
+        ge=1.0,
+        allow_inf_nan=False,
+        description="vol-amplification cap (>= 1.0).",
+    )
+    seed: StrictInt | None = Field(
+        default=None, description="RNG seed; None = OS entropy (not reproducible)."
+    )
+
+    @field_validator("decay_factor", "max_vol_ratio", mode="before")
+    @classmethod
+    def _reject_bool_real(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("must be a real number, not bool.")
+        return value
+
+
 # Parametric distribution configuration — a nested discriminated union tagged by
 # ``kind``. Each variant carries ONLY its own parameters, so invalid parameter
 # combinations (e.g. standard_normal with a df, or student_t without one) are
@@ -241,12 +288,13 @@ class ParametricGeneratorConfig(BaseModel):
     distribution: ParametricDistributionConfig
 
 
-# Four real models — the discriminated union grows by one tag, no other
+# Five real models — the discriminated union grows by one tag, no other
 # machinery. Callers import this alias, so each new model is a one-line change.
 ScenarioModelConfig = Annotated[
     HistoricalGeneratorConfig
     | SbbGeneratorConfig
     | FilteredHistoricalGeneratorConfig
-    | ParametricGeneratorConfig,
+    | ParametricGeneratorConfig
+    | FilteredBootstrapGeneratorConfig,
     Field(discriminator="model"),
 ]

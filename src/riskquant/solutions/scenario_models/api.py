@@ -18,12 +18,14 @@ from pydantic import TypeAdapter
 
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.simlab.scenarios.base import ScenarioGenerator
+from riskquant.simlab.scenarios.bootstrap_fhs import FilteredBootstrapGenerator
 from riskquant.simlab.scenarios.bootstrap_sbb import StationaryBlockBootstrapGenerator
 from riskquant.simlab.scenarios.historical import HistoricalGenerator
 from riskquant.simlab.scenarios.historical_fhs import FilteredHistoricalGenerator
 from riskquant.simlab.scenarios.parametric import ParametricGenerator
 from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
 from riskquant.solutions.scenario_models.schemas import (
+    FilteredBootstrapGeneratorConfig,
     FilteredHistoricalGeneratorConfig,
     HistoricalGeneratorConfig,
     ParametricGeneratorConfig,
@@ -125,6 +127,15 @@ def build_scenario_generator(
             total_scenarios=config.total_scenarios,
             expected_block_size=config.expected_block_size,
             horizon=config.horizon,
+            seed=config.seed,
+        )
+    if isinstance(config, FilteredBootstrapGeneratorConfig):
+        return FilteredBootstrapGenerator(
+            matrix=_require_matrix(data, config),
+            total_scenarios=config.total_scenarios,
+            horizon=config.horizon,
+            decay_factor=config.decay_factor,
+            max_vol_ratio=config.max_vol_ratio,
             seed=config.seed,
         )
     if isinstance(config, ParametricGeneratorConfig):
