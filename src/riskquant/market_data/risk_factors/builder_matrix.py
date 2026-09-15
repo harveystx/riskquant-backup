@@ -26,7 +26,7 @@ def build_risk_factor_matrix_from_df(
     df: pd.DataFrame,
     name_to_id_map: Mapping[str, int] | None = None,
     use_int32_dates: bool = True,
-    float_dtype: type[np.floating] = np.float32,
+    float_dtype: type[np.floating] = np.float64,
 ) -> RiskFactorMatrix:
     """Construct a RiskFactorMatrix from a wide pandas DataFrame.
 
@@ -41,7 +41,17 @@ def build_risk_factor_matrix_from_df(
         If True convert dates to int32 ordinal representation; otherwise
         keep datetime64[D] dtype.
     float_dtype : numpy floating type
-        dtype used for the `values` array (default: np.float32).
+        dtype used for the `values` array (default: np.float64).
+
+        float64 is the default because the downstream historical-shock
+        kernel (`simlab.scenarios.historical._kernel_fused_h_day_shock`) is
+        dtype-pinned to an F-contiguous float64 `values` array: an h-day
+        shock differences two nearby levels, which is a cancelling
+        operation that must not lose significance before the result is
+        narrowed to the float32 shock buffer. A float32 matrix raises
+        `TypeError: No matching definition` from that kernel, so a float32
+        default silently produced matrices that could not drive the
+        canonical historical generator at all.
 
     Returns
     -------
@@ -142,7 +152,7 @@ def build_risk_factor_matrix_from_xlsx(
     sheet_name: str | int = 0,
     name_to_id_map: Mapping[str, int] | None = None,
     use_int32_dates: bool = True,
-    float_dtype: type[np.floating] = np.float32,
+    float_dtype: type[np.floating] = np.float64,
     as_of_date: pd.Timestamp | None = None,
 ) -> RiskFactorMatrix:
     """Load a RiskFactorMatrix from an Excel workbook/sheet.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import pandas as pd
+import polars as pl
 
 from riskquant.ingest_fixtures.schemas import RiskStaticConfigCurvePointMeta
 from riskquant.ingest_fixtures.utils import validate_column_lengths
@@ -105,13 +105,12 @@ CANONICAL_CURVE_POINT_META_DATA: RiskStaticConfigCurvePointMeta = _get_data()
 
 validate_column_lengths(CANONICAL_CURVE_POINT_META_DATA)
 
-_CANONICAL_CURVE_POINT_META_DF = pd.DataFrame(CANONICAL_CURVE_POINT_META_DATA)
+_CANONICAL_CURVE_POINT_META_DF = pl.DataFrame(CANONICAL_CURVE_POINT_META_DATA)
 
 
 def _debug_print() -> None:
     from riskquant.utils.printer import (
         print_calling_file,
-        print_df,
         print_dict,
         print_success_message,
     )
@@ -124,7 +123,7 @@ def _debug_print() -> None:
     print_dict(CANONICAL_CURVE_POINT_META_DATA)
 
     print("As DataFrame:")
-    print_df(_CANONICAL_CURVE_POINT_META_DF, index=False)
+    print(_CANONICAL_CURVE_POINT_META_DF)
 
     print_success_message(add_space_before=False)
 

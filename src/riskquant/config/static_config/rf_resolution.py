@@ -3,16 +3,26 @@
 Date-sensitive resolution of relative risk-factor names to absolute names.
 
 Examples for as-of=2026-05-23:
-    BRENT[M+0]          ->   BRENT_202607        (NEXT_MONTH, CALENDAR_PERIOD)
-    HYDRO[Y+0]          ->   HYDRO_2026          (ANNUAL_ROLL_APRIL_BGN, ROLL_ON_MMDD)
-    ERCOT[HY+0]         ->   ERCOT_2026_BH       (HALF_YEAR_LABEL, HALF_YEAR_BY_LABEL)
+    BRENT_CRUDE_FWD[M+0]   -> BRENT_CRUDE_FWD_202606   (OFFSET_M,  CALENDAR_PERIOD)
+    CO2_EUA_ANNUAL_FWD[Y+0]-> CO2_EUA_ANNUAL_FWD_2026   (OFFSET_Y,  ROLL_ON_MMDD)
+    POWER_CH_BASELOAD_HY[HY+0] -> POWER_CH_BASELOAD_HY_2026_BH (OFFSET_HY, HALF_YEAR_BY_LABEL)
 
-The public entry point is `build_risk_factor_name_mapping_for_as_of_date`
+Static vs dynamic boundary
+--------------------------
+A curve / surface declares its X-axis resolution convention statically
+(x_axis_kind, roll_method, and the method's parameters, held directly on
+its metadata). This module is the dynamic half: it applies that static
+convention to an as-of date to produce absolute market identifiers. The
+static config never performs resolution; it only stores what the resolver
+needs.
+
+The public entry point is `build_risk_factor_name_mapping_for_as_of_date`,
 which returns a frozen, bidirectionally indexed `RiskFactorAbsToRelNameIdMap`.
 
 Dispatch is a registry keyed by (XAxisKind, RollMethod) — never a
-string-equality ladder. The validator guarantees only allowed pairs
-ever reach the resolver.
+string-equality ladder. The registry key set equals
+ALLOWED_X_AXIS_KIND_ROLL_METHOD_PAIRS (asserted at import), so the resolver
+and the validator cannot drift in their supported-method taxonomy.
 
 Nodes do not resolve: their absolute name equals their declared name
 (node_name). Surface point names follow the same model as curve points
@@ -27,11 +37,12 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import overload
 
-from riskquant.config.enums.roll_methods import RollMethod
-from riskquant.config.enums.x_axis_kinds import XAxisKind
-from riskquant.config.static_config.schema_objects import (
-    SpotRollRule,
+from riskquant.config.enums.roll_methods import (
+    ALLOWED_X_AXIS_KIND_ROLL_METHOD_PAIRS,
+    RollMethod,
+    parse_fh_bh_mmdd,
 )
+from riskquant.config.enums.x_axis_kinds import XAxisKind
 from riskquant.config.static_config.static_config import RiskStaticConfig
 from riskquant.utils.tenors import (
     add_months_to_date_and_return_yyyymm01,
@@ -46,19 +57,30 @@ from riskquant.utils.tenors import (
 
 ResolverFn = Callable[
     ["_ResolverContext"],
-    str,  # absolute date suffix, e.g. "202607" / "2026" / "2026_FH" / "20260630"
+    str,  # absolute date suffix, e.g. "202606" / "2026" / "2026_FH" / "20260630"
 ]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _ResolverContext:
-    """Per-token resolution context. Holds everything the dispatch fn needs."""
+    """
+    Per-token resolution context.
+
+    Carries the container's roll parameters directly — there is no rule
+    object and no rule-name indirection. A resolver reads only the
+    parameters its method requires; the others are None by contract
+    (enforced upstream by the validator).
+    """
 
     container_name: str
     relative_name: str
-    rule: SpotRollRule
     token_offset: int
     as_of_date: date
+
+    anchor_offset: int | None
+    roll_month: int | None
+    roll_day: int | None
+    fh_bh_mmdd: str | None
 
 
 # ============================================================
@@ -66,11 +88,22 @@ class _ResolverContext:
 # ============================================================
 
 
+def _require_anchor_offset(ctx: _ResolverContext) -> int:
+    """CALENDAR_PERIOD requires anchor_offset to be populated."""
+    if ctx.anchor_offset is None:
+        raise ValueError(
+            f"CALENDAR_PERIOD requires anchor_offset but it is absent.\n"
+            f"relative={ctx.relative_name!r}, container={ctx.container_name!r}"
+        )
+    return ctx.anchor_offset
+
+
 def _resolve_offset_m_calendar_period(ctx: _ResolverContext) -> str:
     """OFFSET_M + CALENDAR_PERIOD  ->  '<curve>_YYYYMM'."""
+    anchor_offset = _require_anchor_offset(ctx)
     spot = add_months_to_date_and_return_yyyymm01(
         d=date(ctx.as_of_date.year, ctx.as_of_date.month, 1),
-        months_to_add=ctx.rule.offset_in_tenor_units,
+        months_to_add=anchor_offset,
     )
     target = add_months_to_date_and_return_yyyymm01(
         d=spot, months_to_add=ctx.token_offset
@@ -93,19 +126,22 @@ def _resolve_offset_m_half_year_by_date(ctx: _ResolverContext) -> str:
 
 def _resolve_offset_y_calendar_period(ctx: _ResolverContext) -> str:
     """OFFSET_Y + CALENDAR_PERIOD  ->  '<curve>_YYYY'."""
-    target_year = (
-        ctx.as_of_date.year + ctx.rule.offset_in_tenor_units + ctx.token_offset
-    )
+    anchor_offset = _require_anchor_offset(ctx)
+    target_year = ctx.as_of_date.year + anchor_offset + ctx.token_offset
     return f"{target_year:04d}"
 
 
 def _resolve_offset_y_roll_on_mmdd(ctx: _ResolverContext) -> str:
     """OFFSET_Y + ROLL_ON_MMDD  ->  '<curve>_YYYY' with year picked by roll boundary."""
+    if ctx.roll_month is None or ctx.roll_day is None:
+        raise ValueError(
+            f"ROLL_ON_MMDD requires roll_month and roll_day but one is absent.\n"
+            f"relative={ctx.relative_name!r}, container={ctx.container_name!r}"
+        )
     spot_year = get_spot_year(
         as_of_date=ctx.as_of_date,
-        roll_month=int(ctx.rule.roll_month or 0),
-        roll_day=int(ctx.rule.roll_day or 0),
-        post_roll_shift=ctx.rule.post_roll_shift,
+        roll_month=ctx.roll_month,
+        roll_day=ctx.roll_day,
     )
     return f"{spot_year + ctx.token_offset:04d}"
 
@@ -152,6 +188,15 @@ _OFFSET_RESOLVERS: dict[tuple[XAxisKind, RollMethod], ResolverFn] = {
     ): _resolve_offset_hy_half_year_by_label,
 }
 
+# Drift guard: the dispatch registry and the validator share ONE taxonomy.
+# If a pair is added to ALLOWED_X_AXIS_KIND_ROLL_METHOD_PAIRS without a
+# resolver (or vice versa), import fails loud instead of resolving silently
+# wrong at runtime.
+assert set(_OFFSET_RESOLVERS) == ALLOWED_X_AXIS_KIND_ROLL_METHOD_PAIRS, (
+    "Resolver registry and ALLOWED_X_AXIS_KIND_ROLL_METHOD_PAIRS disagree: "
+    f"{set(_OFFSET_RESOLVERS) ^ ALLOWED_X_AXIS_KIND_ROLL_METHOD_PAIRS}"
+)
+
 
 # ============================================================
 # Half-year helpers
@@ -160,23 +205,12 @@ _OFFSET_RESOLVERS: dict[tuple[XAxisKind, RollMethod], ResolverFn] = {
 
 def _require_fh_bh_mmdd(ctx: _ResolverContext) -> str:
     """Half-year roll methods require fh_bh_mmdd to be populated."""
-    if not ctx.rule.fh_bh_mmdd:
+    if not ctx.fh_bh_mmdd:
         raise ValueError(
-            f"Spot roll rule {ctx.rule.rule_name!r} requires fh_bh_mmdd "
-            f"but it is absent.\n"
+            f"Half-year roll method requires fh_bh_mmdd but it is absent.\n"
             f"relative={ctx.relative_name!r}, container={ctx.container_name!r}"
         )
-    return ctx.rule.fh_bh_mmdd
-
-
-def _parse_fh_bh_mmdd(fh_bh_mmdd: str) -> tuple[int, int, int, int]:
-    """Parse 'MMDD|MMDD' into (fh_month, fh_day, bh_month, bh_day)."""
-    parts = fh_bh_mmdd.split("|")
-    if len(parts) != 2 or len(parts[0]) != 4 or len(parts[1]) != 4:
-        raise ValueError(f"fh_bh_mmdd must be 'MMDD|MMDD', got {fh_bh_mmdd!r}")
-    fh_mm, fh_dd = int(parts[0][:2]), int(parts[0][2:])
-    bh_mm, bh_dd = int(parts[1][:2]), int(parts[1][2:])
-    return fh_mm, fh_dd, bh_mm, bh_dd
+    return ctx.fh_bh_mmdd
 
 
 def _half_year_boundary_by_date(
@@ -193,7 +227,7 @@ def _half_year_boundary_by_date(
     Builds a sorted list of FH/BH boundary dates spanning a window around
     as_of_date, then picks the boundary at (bisect_left index + token_offset).
     """
-    fh_mm, fh_dd, bh_mm, bh_dd = _parse_fh_bh_mmdd(fh_bh_mmdd)
+    fh_mm, fh_dd, bh_mm, bh_dd = parse_fh_bh_mmdd(fh_bh_mmdd)
     as_of_year = as_of_date.year
     look = max(3, abs(token_offset) + 1)
 
@@ -220,7 +254,7 @@ def _half_year_label_suffix(
     token_offset: int,
 ) -> str:
     """Resolve a half-year label suffix (YYYY_FH / YYYY_BH)."""
-    fh_mm, fh_dd, _, _ = _parse_fh_bh_mmdd(fh_bh_mmdd)
+    fh_mm, fh_dd, _, _ = parse_fh_bh_mmdd(fh_bh_mmdd)
     current_half_idx = 0 if as_of_date <= date(as_of_date.year, fh_mm, fh_dd) else 1
     total = (as_of_date.year * 2) + current_half_idx + token_offset
     target_year = total // 2
@@ -413,8 +447,11 @@ def build_risk_factor_name_mapping_for_as_of_date(
             container_name=cm.curve_name,
             container_kind="curve",
             x_axis_kind_name=cm.x_axis_kind,
-            spot_roll_rule_name=cm.spot_roll_rule_name,
-            spot_roll_rule_dict=risk_static_config.spot_roll_rule_dict,
+            roll_method_name=cm.roll_method,
+            anchor_offset=cm.anchor_offset,
+            roll_month=cm.roll_month,
+            roll_day=cm.roll_day,
+            fh_bh_mmdd=cm.fh_bh_mmdd,
             tenor_token=pt.tenor_token,
             relative_name=rel_name,
             as_of_date=as_of_date,
@@ -431,8 +468,11 @@ def build_risk_factor_name_mapping_for_as_of_date(
             container_name=sm.surface_name,
             container_kind="surface",
             x_axis_kind_name=sm.x_axis_kind,
-            spot_roll_rule_name=sm.spot_roll_rule_name,
-            spot_roll_rule_dict=risk_static_config.spot_roll_rule_dict,
+            roll_method_name=sm.roll_method,
+            anchor_offset=sm.anchor_offset,
+            roll_month=sm.roll_month,
+            roll_day=sm.roll_day,
+            fh_bh_mmdd=sm.fh_bh_mmdd,
             tenor_token=pt.x_tenor_token,
             relative_name=rel_name,
             as_of_date=as_of_date,
@@ -453,8 +493,11 @@ def _resolve_curve_or_surface_suffix(
     container_name: str,
     container_kind: str,
     x_axis_kind_name: str,
-    spot_roll_rule_name: str | None,
-    spot_roll_rule_dict: dict[str, SpotRollRule],
+    roll_method_name: str | None,
+    anchor_offset: int | None,
+    roll_month: int | None,
+    roll_day: int | None,
+    fh_bh_mmdd: str | None,
     tenor_token: str,
     relative_name: str,
     as_of_date: date,
@@ -471,16 +514,11 @@ def _resolve_curve_or_surface_suffix(
             )
         return label
 
-    if spot_roll_rule_name is None:
+    if roll_method_name is None:
         raise ValueError(
-            f"OFFSET {container_kind} {container_name!r} has no spot_roll_rule_name."
+            f"OFFSET {container_kind} {container_name!r} has no roll_method."
         )
-    rule = spot_roll_rule_dict.get(spot_roll_rule_name)
-    if rule is None:
-        raise ValueError(
-            f"Unknown spot_roll_rule_name={spot_roll_rule_name!r} for "
-            f"{container_kind} {container_name!r}."
-        )
+    method = RollMethod[roll_method_name]
 
     _, token_offset = parse_bracket_token(tenor_token)
     if token_offset is None:
@@ -489,7 +527,6 @@ def _resolve_curve_or_surface_suffix(
             f"integer offset token, got {tenor_token!r}."
         )
 
-    method = RollMethod[rule.roll_method]
     resolver = _OFFSET_RESOLVERS.get((x_kind, method))
     if resolver is None:
         raise ValueError(
@@ -501,8 +538,11 @@ def _resolve_curve_or_surface_suffix(
         _ResolverContext(
             container_name=container_name,
             relative_name=relative_name,
-            rule=rule,
             token_offset=token_offset,
             as_of_date=as_of_date,
+            anchor_offset=anchor_offset,
+            roll_month=roll_month,
+            roll_day=roll_day,
+            fh_bh_mmdd=fh_bh_mmdd,
         )
     )

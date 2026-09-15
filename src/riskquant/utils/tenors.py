@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Optional, Tuple
 
 
-def parse_bracket_token(tenor_token: str) -> Tuple[str, Optional[int]]:
+def parse_bracket_token(tenor_token: str) -> tuple[str, int | None]:
     """
     "[Y-2]" -> ("Y", -2)
     "[M+0]" -> ("M", 0)
@@ -48,25 +47,24 @@ def get_spot_year(
     as_of_date: date,
     roll_month: int,
     roll_day: int,
-    post_roll_shift: int,
 ) -> int:
     """
     Defines which delivery year corresponds to Y+0 under ROLL_ON_MMDD.
+
+    The roll boundary (roll_month, roll_day) fully determines the spot year:
+    on or after the boundary the spot year is the current year; before it,
+    the previous year.
     """
 
     # Get the roll date,
     roll_date = date(as_of_date.year, roll_month, roll_day)
 
-    # Compare to as-of-date.
-    # As-of-date is on or after the roll date.
+    # As-of-date is on or after the roll date -> current year.
     if as_of_date >= roll_date:
-        return (
-            as_of_date.year + post_roll_shift
-        )  # Current year plus the post_roll_shift amount (in years).
+        return as_of_date.year
 
-    # As-of-date is before the roll date.
-    # Previous year plus the post_roll_shift amount (in years).
-    return (as_of_date.year - 1) + post_roll_shift
+    # As-of-date is before the roll date -> previous year.
+    return as_of_date.year - 1
 
 
 def add_months_to_date_and_return_yyyymm01(

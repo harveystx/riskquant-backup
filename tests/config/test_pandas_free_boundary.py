@@ -22,6 +22,7 @@ fact rather than something that has to be rediscovered by a future audit.
 Do not silence this test by weakening the assertion; either fix the
 package or explicitly mark the test `xfail` with a linked decision record.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -43,30 +44,42 @@ _ISOLATED_DIAGNOSTIC_FILES = {
 def _files_importing_pandas() -> dict[str, str]:
     offenders = {}
     for path in sorted(CONFIG_ROOT.rglob("*.py")):
-        rel = str(path.relative_to(CONFIG_ROOT))
+        rel = path.relative_to(CONFIG_ROOT).as_posix()
         source = path.read_text(encoding="utf-8", errors="replace")
         if "import pandas" in source:
             offenders[rel] = source
     return offenders
 
 
-def test_no_polars_usage_at_all_documents_the_gap():
-    """`riskquant.config` never imports polars anywhere. This is not a
-    failure by itself (a package could legitimately need no dataframe
-    library), but combined with test_config_package_is_pandas_free below,
-    it demonstrates that pandas was never replaced BY polars -- the
-    ingest/validate/compile pipeline is pandas end-to-end, not
-    'pandas at an isolated EDGE adapter converting immediately to Polars'."""
-    polars_files = [
-        str(p.relative_to(CONFIG_ROOT))
+def test_polars_is_now_the_ingest_pipeline_technology():
+    """
+    UPDATED (RQ-AUD-018 remediation, 2026-09-09): pandas has been fully
+    replaced by polars throughout the static_config and proxy_config
+    loader/validate/compile pipelines. This test previously asserted ZERO
+    polars usage (documenting the gap); it now asserts polars is used in
+    every one of the 6 files that previously imported pandas, confirming
+    the migration actually happened rather than merely removing the
+    pandas import without replacing the underlying functionality.
+
+    See test_config_package_is_pandas_free below for the corresponding
+    "pandas is gone" half of this same fact.
+    """
+    expected_polars_files = {
+        "static_config/loader.py",
+        "static_config/validate.py",
+        "static_config/compile.py",
+        "proxy_config/loader.py",
+        "proxy_config/validate.py",
+        "proxy_config/compile.py",
+    }
+    polars_files = {
+        p.relative_to(CONFIG_ROOT).as_posix()
         for p in CONFIG_ROOT.rglob("*.py")
         if "import polars" in p.read_text(encoding="utf-8", errors="replace")
-    ]
-    assert polars_files == [], (
-        "Expected zero polars usage today (documents the current gap); "
-        f"found polars in: {polars_files}. If this now fails because polars "
-        "usage was added, the fix is in progress -- update this test to "
-        "reflect the new (improving) state rather than deleting it."
+    }
+    missing = expected_polars_files - polars_files
+    assert not missing, (
+        f"Expected polars usage in every migrated file; missing from: {sorted(missing)}"
     )
 
 
@@ -96,24 +109,28 @@ def test_isolated_diagnostic_files_have_zero_production_importers():
     (`audit.py` in each sub-package) must remain genuinely isolated: no
     other module in the repository may import them. If a production path
     starts depending on them, the pandas usage stops being an isolated
-    diagnostic and becomes a live constitutional violation."""
-    import subprocess
+    diagnostic and becomes a live constitutional violation.
 
+    Pure-Python text search (no subprocess/`grep` dependency): earlier
+    versions of this test shelled out to the `grep` binary, which is not
+    guaranteed present on every platform/CI runner (notably Windows without
+    a POSIX toolchain). A missing `grep` would make this test fail for a
+    reason entirely unrelated to what it actually checks.
+    """
     repo_src = CONFIG_ROOT.parent.parent  # src/riskquant
     for rel in _ISOLATED_DIAGNOSTIC_FILES:
         module_suffix = rel.replace("/", ".").removesuffix(".py")
         pattern = f"config.{module_suffix}"
-        result = subprocess.run(
-            ["grep", "-rl", pattern, str(repo_src)],
-            capture_output=True,
-            text=True,
-        )
-        importers = [
-            line
-            for line in result.stdout.splitlines()
-            if not line.endswith(rel.replace("/", "/") if "/" in rel else rel)
-            and Path(line).name != Path(rel).name
-        ]
+        this_file_name = Path(rel).name
+
+        importers = []
+        for path in repo_src.rglob("*.py"):
+            if path.name == this_file_name:
+                continue  # skip the file's own definition
+            source = path.read_text(encoding="utf-8", errors="replace")
+            if pattern in source:
+                importers.append(str(path))
+
         assert importers == [], (
             f"{rel} is documented as an isolated diagnostic with zero "
             f"production importers, but found: {importers}. Pandas usage "

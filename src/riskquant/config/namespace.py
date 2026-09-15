@@ -18,6 +18,8 @@ _CURVE_MIN_ID = _BLOCK_SIZE  # [250_000_000, 499_999_999]
 _CURVE_MAX_ID = 2 * _BLOCK_SIZE - 1
 _SURFACE_MIN_ID = 2 * _BLOCK_SIZE  # [500_000_000, 749_999_999]
 _SURFACE_MAX_ID = 3 * _BLOCK_SIZE - 1
+_CUBE_MIN_ID = 3 * _BLOCK_SIZE  # [750_000_000, 999_999_999]
+_CUBE_MAX_ID = 4 * _BLOCK_SIZE - 1
 
 
 class IdNamespaceBounds(NamedTuple):
@@ -33,10 +35,15 @@ assert (
     < _CURVE_MAX_ID
     < _SURFACE_MIN_ID
     < _SURFACE_MAX_ID
+    < _CUBE_MIN_ID
+    < _CUBE_MAX_ID
 ), "ID namespace boundaries must be strictly increasing and non-overlapping."
 
 
-assert max(_NODE_MAX_ID, _CURVE_MAX_ID, _SURFACE_MAX_ID) <= np.iinfo(np.int32).max
+assert (
+    max(_NODE_MAX_ID, _CURVE_MAX_ID, _SURFACE_MAX_ID, _CUBE_MAX_ID)
+    <= np.iinfo(np.int32).max
+)
 
 
 class GlobalIdNamespace:
@@ -56,6 +63,11 @@ class GlobalIdNamespace:
         min_id=_SURFACE_MIN_ID,
         max_id=_SURFACE_MAX_ID,
         name="Surfaces (Containers, dimension = 2)",
+    )
+    CUBES = IdNamespaceBounds(
+        min_id=_CUBE_MIN_ID,
+        max_id=_CUBE_MAX_ID,
+        name="Cubes (Containers, dimension = 3)",
     )
 
 
@@ -86,5 +98,6 @@ if __name__ == "__main__":
         GlobalIdNamespace.NODES,
         GlobalIdNamespace.CURVES,
         GlobalIdNamespace.SURFACES,
+        GlobalIdNamespace.CUBES,
     ]:
         print(f"{namespace.name}: {namespace.min_id:1_.0f} to {namespace.max_id:1_.0f}")

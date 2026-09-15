@@ -4,15 +4,17 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID
 from riskquant.simlab.scenarios.parametric import ParametricGenerator
-
 
 # =========================================================================
 # MOCK PORTFOLIO CONSTANTS
 # =========================================================================
 # These define the 'Universe A' requirements that the tests will pass to iter_batches
 MOCK_REQ_FACTOR_IDS = np.array([101, 202], dtype=np.int32)
-MOCK_REQ_SHIFT_TYPES = np.array([0, 0], dtype=np.int8)  # 0 = SHIFT_LOG_RETURN
+MOCK_REQ_SHIFT_TYPES = np.full(
+    2, SHIFT_LOG_RETURN_ID, dtype=np.int8
+)  # LOG_RETURN (id 1)
 MOCK_REQ_SHOCK_SCALES = np.ones(2, dtype=np.float32)
 
 
@@ -32,9 +34,7 @@ def _iter_batches(generator: ParametricGenerator, batch_size: int):
     )
 
 
-def _collect_shocks(
-    generator: ParametricGenerator, batch_size: int
-) -> np.ndarray:
+def _collect_shocks(generator: ParametricGenerator, batch_size: int) -> np.ndarray:
     return np.concatenate(
         [
             batch.shocks.copy()
@@ -78,9 +78,7 @@ def test_standard_normal_replays_seeded_stream() -> None:
     second_batches = _iter_batches(generator2, batch_size=7)
 
     assert len(first_batches) == len(second_batches)
-    for first_batch, second_batch in zip(
-        first_batches, second_batches, strict=True
-    ):
+    for first_batch, second_batch in zip(first_batches, second_batches, strict=True):
         assert first_batch.shocks.flags["F_CONTIGUOUS"]
         assert first_batch.shocks.dtype == np.float32
         np.testing.assert_array_equal(first_batch.shocks, second_batch.shocks)
@@ -131,9 +129,7 @@ def test_standard_normal_covariance_matches_calibration() -> None:
     empirical_covariance = np.cov(shocks, rowvar=False, ddof=0)
     target_covariance = _expected_covariance(volatilities, correlation)
 
-    np.testing.assert_allclose(
-        empirical_covariance, target_covariance, atol=0.01
-    )
+    np.testing.assert_allclose(empirical_covariance, target_covariance, atol=0.01)
 
 
 def test_student_t_covariance_matches_calibration() -> None:
@@ -152,9 +148,7 @@ def test_student_t_covariance_matches_calibration() -> None:
     empirical_covariance = np.cov(shocks, rowvar=False, ddof=0)
     target_covariance = _expected_covariance(volatilities, correlation)
 
-    np.testing.assert_allclose(
-        empirical_covariance, target_covariance, atol=0.02
-    )
+    np.testing.assert_allclose(empirical_covariance, target_covariance, atol=0.02)
 
 
 def test_regime_switching_covariance_matches_mixture_target() -> None:
@@ -181,6 +175,4 @@ def test_regime_switching_covariance_matches_mixture_target() -> None:
     )
     target_covariance = base_covariance * mixture_multiplier
 
-    np.testing.assert_allclose(
-        empirical_covariance, target_covariance, atol=0.03
-    )
+    np.testing.assert_allclose(empirical_covariance, target_covariance, atol=0.03)

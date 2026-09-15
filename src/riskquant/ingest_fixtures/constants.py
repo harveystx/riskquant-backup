@@ -35,9 +35,12 @@ CANONICAL_HISTORY_BUSINESS_DAYS: Final[int] = 260
 # ==============================================================================
 
 
-# Output dtype for the synthetic history. float32 matches the downstream
-# RiskFactorMatrix default; float64 would be wasted precision.
-HISTORY_DTYPE: Final[type[np.floating]] = np.float32
+# Output dtype for the synthetic history. float64 matches the downstream
+# RiskFactorMatrix default AND the historical-shock kernel, which is
+# dtype-pinned to float64 values: an h-day shock differences two nearby
+# levels, so the precision is load-bearing, not wasted. A float32 history
+# cannot drive `simlab.scenarios.historical.HistoricalGenerator` at all.
+HISTORY_DTYPE: Final[type[np.floating]] = np.float64
 
 
 # ==============================================================================

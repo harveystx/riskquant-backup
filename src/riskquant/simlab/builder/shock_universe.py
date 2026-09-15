@@ -28,6 +28,7 @@ import numpy as np
 import numpy.typing as npt
 
 from riskquant._arrays import unique_first_seen
+from riskquant.market_data.risk_factors.shift_types import VALID_SHIFT_TYPE_IDS
 from riskquant.simlab.shock_plan.plan import (
     ShockComputePlan,
     build_shock_compute_plan,
@@ -163,9 +164,16 @@ def _smoke_test_inputs(
         )
     if required_shift_type_id.size == 0:
         return
-    # The bit-pack uses the low 8 bits and assumes the shift_type_id is
-    # non-negative. int8 can represent up to 127.
-    if required_shift_type_id.min() < 0:
+    # Explicit membership against the canonical valid ids {-1, 1, 2, 3, 4}. A
+    # numeric range check is wrong here: NO_SHIFT is -1 (valid, and it
+    # round-trips through the low-8-bit dedup key: -1 & 0xFF = 255 -> int8 -1),
+    # while 0 is intentionally NOT a valid shift id. Unknown ids fail fast.
+    unique_ids = np.unique(required_shift_type_id)
+    invalid = [
+        int(i) for i in unique_ids.tolist() if int(i) not in VALID_SHIFT_TYPE_IDS
+    ]
+    if invalid:
         raise ValueError(
-            "required_shift_type_id must be >= 0 for the bit-packed dedup key."
+            f"required_shift_type_id contains unknown shift ids {invalid}; "
+            f"valid ids are {sorted(VALID_SHIFT_TYPE_IDS)}."
         )

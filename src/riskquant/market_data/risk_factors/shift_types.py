@@ -12,6 +12,7 @@ class ShiftType(IntEnum):
     LOG_RETURN = 1
     SIMPLE_RETURN = 2
     DIFFERENCE = 3
+    ABSOLUTE_BASE_RETURN = 4
 
 
 # Kernel-friendly int8 constants (avoid repeated casts in hot code)
@@ -19,18 +20,25 @@ SHIFT_NO_SHIFT_ID: np.int8 = np.int8(ShiftType.NO_SHIFT)
 SHIFT_LOG_RETURN_ID: np.int8 = np.int8(ShiftType.LOG_RETURN)
 SHIFT_SIMPLE_RETURN_ID: np.int8 = np.int8(ShiftType.SIMPLE_RETURN)
 SHIFT_DIFFERENCE_ID: np.int8 = np.int8(ShiftType.DIFFERENCE)
+SHIFT_ABSOLUTE_BASE_RETURN_ID: np.int8 = np.int8(ShiftType.ABSOLUTE_BASE_RETURN)
 
 
 # Names tuple
 SHIFT_TYPE_NAMES: tuple[str, ...] = tuple(method.name.upper() for method in ShiftType)
 
 # Registry
-SHIFT_TYPE_NAME_TO_ID_REGISTRY: dict[str, np.int8] = {
-    "NO_SHIFT": SHIFT_NO_SHIFT_ID,
-    "LOG_RETURN": SHIFT_LOG_RETURN_ID,
-    "SIMPLE_RETURN": SHIFT_SIMPLE_RETURN_ID,
-    "DIFFERENCE": SHIFT_DIFFERENCE_ID,
+SHIFT_TYPE_NAME_TO_ID_REGISTRY: dict[str, int] = {
+    "NO_SHIFT": int(SHIFT_NO_SHIFT_ID),
+    "LOG_RETURN": int(SHIFT_LOG_RETURN_ID),
+    "SIMPLE_RETURN": int(SHIFT_SIMPLE_RETURN_ID),
+    "DIFFERENCE": int(SHIFT_DIFFERENCE_ID),
+    "ABSOLUTE_BASE_RETURN": int(SHIFT_ABSOLUTE_BASE_RETURN_ID),
 }
+
+# Canonical set of valid shift-type ids ({-1, 1, 2, 3, 4}). Derived from the
+# enum so it stays the single source of truth. `0` is intentionally NOT a
+# valid id and must fail fast at the boundary.
+VALID_SHIFT_TYPE_IDS: frozenset[int] = frozenset(int(member) for member in ShiftType)
 
 
 def validate_shift_types_dict(shift_types_dict: Mapping[str, int]) -> None:

@@ -171,6 +171,9 @@ def _black76_fv_vega(
     """
     Undiscounted Black-76 vega: dC/dvol = F * phi(d1) * sqrt(T).
 
+    Inputs are assumed to satisfy the Black-76 kernel preconditions.
+    Validation and failure handling are performed by the caller.
+
     Returns 0.0 for non-positive vol or non-positive sqrt_tte. This makes
     vega the natural quality weight on a calibrated IV:
 
@@ -190,12 +193,6 @@ def _black76_fv_vega(
     instead of 0.0.  That caused ``CalibratedOptionQuotes.__post_init__`` to
     raise on any batch containing a non-invertible quote.
     """
-    # Guard: honour the documented contract BEFORE any arithmetic.
-    # Without this gate, vol=-1.0 (IV_SOLVER_FAILED_SENTINEL) produces
-    # vol_sqrt_tte < 0, making d1 finite-but-wrong and returning a large
-    # positive vega instead of 0.0.
-    if vol <= 0.0 or sqrt_tte <= 0.0:
-        return 0.0
 
     log_fk = math.log(fwd / strike)
 

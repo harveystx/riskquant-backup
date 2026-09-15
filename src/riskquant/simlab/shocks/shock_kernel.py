@@ -16,7 +16,7 @@ Memory layout
 
 Hot path discipline
 -------------------
-- Layout-pinned `nb.void(...)` signature: every array dimension is
+- Layout-pinned `_NB_VOID(...)` signature: every array dimension is
   stride-tagged so Numba emits straight-line SIMD with no dynamic
   stride checks at runtime.
 - Branch ladder hoisted out of the B-loop: one `if shift_type` decision
@@ -35,32 +35,55 @@ import math
 import numba as nb  # type: ignore[import-untyped]
 
 from riskquant.jit import (
+    _F32_2D_C,
     _F32_2D_F,
     _F64_1D_C,
     _F64_2D_C,
-    _F64_2D_F,
-    _I32_1D_C,
     _I8_1D_C,
+    _I32_1D_C,
+    _NB_VOID,
     parallel_njit,
 )
 from riskquant.market_data.risk_factors.shift_types import (
+    SHIFT_ABSOLUTE_BASE_RETURN_ID,
     SHIFT_DIFFERENCE_ID,
     SHIFT_LOG_RETURN_ID,
+    SHIFT_NO_SHIFT_ID,
     SHIFT_SIMPLE_RETURN_ID,
 )
 
 # Layout-pinned aliases.
 
 
+# Two `shocks` layouts are accepted, deliberately (RQ-AUD-017, consumer side).
+# The generators yield an F-contiguous `(B, K)` shocks buffer, which is the
+# fast path this kernel is written for. But a trailing batch of exactly ONE
+# scenario -- `(1, K)`, which happens whenever the scenario count is not a
+# multiple of batch_size -- is reported by numpy as BOTH C- and F-contiguous
+# (a single row has only one traversal order), and Numba's dispatcher
+# resolves that ambiguity to 'C'. No amount of `asfortranarray` can remove
+# the ambiguity, so a C overload is registered rather than forcing callers
+# to copy. Column access in the loop body is identical either way; only the
+# stride pattern differs.
 @parallel_njit(
-    nb.void(
-        _F64_1D_C,  # base_levels        (N,)
-        _F32_2D_F,  # shocks             (B, K)  F-contig
-        _I32_1D_C,  # req_to_uix         (N,)
-        _F64_1D_C,  # shock_scale        (N,)
-        _I8_1D_C,  # shift_types        (N,)
-        _F64_2D_C,  # out                (N, B)  C-contig
-    ),
+    [
+        _NB_VOID(
+            _F64_1D_C,  # base_levels        (N,)
+            _F32_2D_F,  # shocks             (B, K)  F-contig
+            _I32_1D_C,  # req_to_uix         (N,)
+            _F64_1D_C,  # shock_scale        (N,)
+            _I8_1D_C,  # shift_types        (N,)
+            _F64_2D_C,  # out                (N, B)  C-contig
+        ),
+        _NB_VOID(
+            _F64_1D_C,  # base_levels        (N,)
+            _F32_2D_C,  # shocks             (B, K)  C-contig / single-row
+            _I32_1D_C,  # req_to_uix         (N,)
+            _F64_1D_C,  # shock_scale        (N,)
+            _I8_1D_C,  # shift_types        (N,)
+            _F64_2D_C,  # out                (N, B)  C-contig
+        ),
+    ],
 )
 def _kernel_apply_shocks(
     base_levels,
@@ -100,3 +123,17 @@ def _kernel_apply_shocks(
         elif st == SHIFT_DIFFERENCE_ID:
             for b in range(b_scn):
                 out_row[b] = base + shock_col[b] * scale
+
+        elif st == SHIFT_ABSOLUTE_BASE_RETURN_ID:
+            # Inverse of r = (v_t - v_{t-1}) / |v_{t-1}|. The increment scales
+            # with |base|, so a negative base (rate/spread) moves in the
+            # direction of the shock rather than inverting. Equals SIMPLE when
+            # base > 0; differs only for base < 0.
+            abs_base = abs(base)
+            for b in range(b_scn):
+                out_row[b] = base + shock_col[b] * scale * abs_base
+
+        elif st == SHIFT_NO_SHIFT_ID:
+            # Held-fixed factor: level is the base level for every scenario.
+            for b in range(b_scn):
+                out_row[b] = base

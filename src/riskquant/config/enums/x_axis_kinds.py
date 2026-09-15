@@ -17,7 +17,8 @@ addresses its position on the time axis:
 
 The X-axis kind defines token grammar only. How an offset resolves to an
 absolute date label (calendar period, roll-on-MMDD, half-year boundary)
-is independent and lives on the spot roll rule via RollMethod. Allowed
+is independent and lives directly on the curve / surface via roll_method
+(RollMethod). Allowed
 (XAxisKind, RollMethod) pairs are enumerated explicitly in
 ALLOWED_X_AXIS_KIND_ROLL_METHOD_PAIRS.
 """
@@ -55,7 +56,7 @@ X_AXIS_TOKEN_EXAMPLE: dict[XAxisKind, str] = {
 
 VALID_X_AXIS_KINDS: frozenset[str] = frozenset(k.name for k in XAxisKind)
 
-# OFFSET kinds require a spot roll rule. LABEL does not (and must not).
+# OFFSET kinds require a roll_method. LABEL does not (and must not).
 X_AXIS_KINDS_REQUIRING_ROLL: frozenset[str] = frozenset(
     k.name for k in (XAxisKind.OFFSET_M, XAxisKind.OFFSET_Y, XAxisKind.OFFSET_HY)
 )

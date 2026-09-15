@@ -15,7 +15,11 @@ import numpy as np
 
 from .permutations import _comonotonic_permutation_unchecked
 from .types import FloatArray, IntArray, TailOrder
-from .validation import validate_probability, validate_rng
+from .validation import (
+    validate_disjoint_tail_counts,
+    validate_probability,
+    validate_rng,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,6 +299,12 @@ class DualTailAlignment:
 
         n_lower = max(1, int(np.ceil(self.lower_probability * s)))
         n_upper = max(1, int(np.ceil(self.upper_probability * s)))
+
+        # Discrete allocation contract. ceil() and the max(1, ...) floor can
+        # make the tail blocks overlap even when the probabilities sum below
+        # one. S is known only here, so the guard runs before any allocation
+        # or write, for both comonotonic and random modes.
+        validate_disjoint_tail_counts(n_lower, n_upper, s)
 
         sorted_indices = np.argsort(
             data,

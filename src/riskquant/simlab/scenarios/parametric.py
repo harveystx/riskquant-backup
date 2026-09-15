@@ -40,6 +40,7 @@ from riskquant.simlab.builder.shock_universe import build_shock_universe
 from riskquant.simlab.scenarios.base import (
     ScenarioGenerator,
     ScenarioSetBatch,
+    require_positive_int,
 )
 
 DistributionKind = Literal[
@@ -99,9 +100,7 @@ class ParametricGenerator(ScenarioGenerator):
         if np.any(volatilities <= 0.0):
             raise ValueError("volatilities must be strictly positive")
 
-        total_scenarios = int(self.total_scenarios)
-        if total_scenarios <= 0:
-            raise ValueError("total_scenarios must be positive")
+        total_scenarios = require_positive_int(self.total_scenarios, "total_scenarios")
 
         if self.seed is not None and not isinstance(self.seed, (int, np.integer)):
             raise TypeError("seed must be an integer or None")
@@ -262,43 +261,77 @@ class ParametricGenerator(ScenarioGenerator):
 
     # ---- Distribution scaling ----
 
-    def _apply_distribution_scaling(
+    def _draw_distribution_aux(
+        self, *, rng: np.random.Generator, n: int
+    ) -> np.ndarray | None:
+        """
+        Draw the per-scenario auxiliary variate for the WHOLE run up front so
+        the RNG stream — hence the scenario stream — is independent of
+        batch_size (F6). Returns ``None`` for ``standard_normal`` (no
+        auxiliary draw). One size-``n`` draw per non-normal kind, same
+        distribution and order a single full-size batch used.
+        """
+        kind = self.distribution_kind
+        if kind == "standard_normal":
+            return None
+
+        if kind == "student_t":
+            assert self.student_t_df is not None
+            return rng.chisquare(df=self.student_t_df, size=n)
+
+        if kind == "laplace":
+            return rng.exponential(scale=1.0, size=n)
+
+        if kind == "variance_gamma":
+            assert self.vg_nu is not None
+            return rng.gamma(shape=1.0 / self.vg_nu, scale=self.vg_nu, size=n)
+
+        if kind == "regime_switching_gmm":
+            assert self.prob_crisis is not None
+            return rng.random(n)
+
+        raise AssertionError(kind)
+
+    def _apply_distribution_aux(
         self,
         *,
-        rng: np.random.Generator,
         shocks: np.ndarray,
+        aux: np.ndarray | None,
         gmm_sliced_multipliers: float | np.ndarray | None,
     ) -> None:
+        """
+        Apply the distribution's row scaling in place using the PRE-DRAWN
+        auxiliary variate (no RNG here). Formulas are unchanged from the fused
+        draw-and-apply this replaced; only the draw was hoisted up front.
+        """
         kind = self.distribution_kind
         if kind == "standard_normal":
             return
 
         if kind == "student_t":
             assert self.student_t_df is not None
-            chi_square = rng.chisquare(df=self.student_t_df, size=shocks.shape[0])
-            row_scale = np.sqrt((self.student_t_df - 2.0) / chi_square)
+            assert aux is not None
+            row_scale = np.sqrt((self.student_t_df - 2.0) / aux)
             np.multiply(shocks, row_scale[:, None], out=shocks)
             return
 
         if kind == "laplace":
-            exponential_mix = rng.exponential(scale=1.0, size=shocks.shape[0])
-            row_scale = np.sqrt(exponential_mix)
+            assert aux is not None
+            row_scale = np.sqrt(aux)
             np.multiply(shocks, row_scale[:, None], out=shocks)
             return
 
         if kind == "variance_gamma":
-            assert self.vg_nu is not None
-            gamma_mix = rng.gamma(
-                shape=1.0 / self.vg_nu, scale=self.vg_nu, size=shocks.shape[0]
-            )
-            row_scale = np.sqrt(gamma_mix)
+            assert aux is not None
+            row_scale = np.sqrt(aux)
             np.multiply(shocks, row_scale[:, None], out=shocks)
             return
 
         if kind == "regime_switching_gmm":
             assert self.prob_crisis is not None
             assert gmm_sliced_multipliers is not None
-            crisis_mask = rng.random(shocks.shape[0]) < self.prob_crisis
+            assert aux is not None
+            crisis_mask = aux < self.prob_crisis
             if crisis_mask.any():
                 shocks[crisis_mask, :] *= gmm_sliced_multipliers
 
@@ -340,8 +373,20 @@ class ParametricGenerator(ScenarioGenerator):
 
         rng = np.random.default_rng(self.seed)
 
-        # ---- Pre-allocate hot-path buffers ONCE ----
-        work = np.empty((batch_size, k_total), dtype=np.float64, order="C")
+        # ---- Draw ALL randomness up front (F6 / D021) ----
+        # The scenario stream must be identical regardless of batch_size, so
+        # every RNG draw happens here, sized to the whole run, in the exact
+        # order a single full-size batch would consume it: all base normals,
+        # then the per-scenario distribution auxiliary. Batching below is pure
+        # slicing of these pre-drawn arrays and never touches the RNG, so it
+        # cannot regroup or reorder the stream.
+        work_all = np.empty(
+            (self.total_scenarios, k_total), dtype=np.float64, order="C"
+        )
+        rng.standard_normal(size=work_all.shape, out=work_all)
+        aux_all = self._draw_distribution_aux(rng=rng, n=self.total_scenarios)
+
+        # ---- Pre-allocate per-batch hot-path buffers ONCE ----
         correlated = np.empty((batch_size, k_req), dtype=np.float64, order="C")
         shocks_buf = np.empty((batch_size, k_req), dtype=np.float32, order="F")
 
@@ -349,20 +394,21 @@ class ParametricGenerator(ScenarioGenerator):
         while scenario_offset < self.total_scenarios:
             scenario_count = min(batch_size, self.total_scenarios - scenario_offset)
 
-            work_view = work[:scenario_count, :]
+            work_view = work_all[scenario_offset : scenario_offset + scenario_count, :]
             correlated_view = correlated[:scenario_count, :]
             shocks_view = shocks_buf[:scenario_count, :]
 
-            # 1. Raw normals → work
-            rng.standard_normal(size=work_view.shape, out=work_view)
-
-            # 2. Correlation induction (B, K_total) @ (K_total, K_req)
+            # 1. Correlation induction (B, K_total) @ (K_total, K_req)
             np.matmul(work_view, l_t_sliced, out=correlated_view)
 
-            # 3. GSM row scaling (in place)
-            self._apply_distribution_scaling(
-                rng=rng,
+            # 2. Distribution row scaling from the pre-drawn auxiliary (no RNG)
+            self._apply_distribution_aux(
                 shocks=correlated_view,
+                aux=(
+                    None
+                    if aux_all is None
+                    else aux_all[scenario_offset : scenario_offset + scenario_count]
+                ),
                 gmm_sliced_multipliers=gmm_mults_sliced,
             )
 

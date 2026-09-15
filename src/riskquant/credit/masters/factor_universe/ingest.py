@@ -26,8 +26,6 @@ One row per factor. Columns:
 
 from __future__ import annotations
 
-import warnings
-
 __all__ = [
     "compile_credit_factor_universe",
 ]
@@ -56,9 +54,7 @@ _REQUIRED_COLS: tuple[str, ...] = (
 _PREVIEW = 10
 
 # Authored kind string -> int8 id (single source of truth = the enum).
-_KIND_NAME_TO_ID: dict[str, np.int8] = {
-    k.name: np.int8(k.value) for k in CreditFactorKind
-}
+_KIND_NAME_TO_ID: dict[str, int] = {k.name: np.int8(k.value) for k in CreditFactorKind}
 
 
 def _check_required_columns(df: pd.DataFrame) -> None:
@@ -221,4 +217,3 @@ def compile_credit_factor_universe(
         factor_beta_alpha=factor_beta_alpha,
         factor_beta_beta=factor_beta_beta,
     )
-

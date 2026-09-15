@@ -49,9 +49,6 @@ def numba_norm_cdf_abrom_steg(x: float) -> float:
 
     pdf = 0.39894228040143267794 * math.exp(-0.5 * ax * ax)
 
-    cdf = 1.0 - pdf * poly
-
     if x < 0.0:
-        return 1.0 - cdf
-
-    return cdf
+        return pdf * poly
+    return 1.0 - pdf * poly

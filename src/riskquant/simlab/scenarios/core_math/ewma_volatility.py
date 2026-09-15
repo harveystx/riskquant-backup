@@ -32,21 +32,22 @@ import math
 
 import numba as nb  # type: ignore[import-untyped]
 
+from riskquant.constants import MIN_EWMA_VARIANCE
 from riskquant.jit import (
+    _F64_2D_C,
     _F64_2D_F,
-    _I32_1D_C,
     _I8_1D_C,
+    _I32_1D_C,
+    _NB_FLOAT64,
+    _NB_VOID,
     inline_njit,
     parallel_njit,
 )
-from riskquant.constants import MIN_EWMA_VARIANCE
 from riskquant.market_data.risk_factors.shift_types import (
     SHIFT_DIFFERENCE_ID,
     SHIFT_LOG_RETURN_ID,
     SHIFT_SIMPLE_RETURN_ID,
 )
-
-
 
 # ============================================================
 # Shared one-column ratio pass given a return-emitter
@@ -132,12 +133,24 @@ def _emit_ratios_residuals(
 
 
 @parallel_njit(
-    nb.void(
-        _F64_2D_F,  # residuals    (T, K_req) F-contig
-        nb.float64,  # decay_factor
-        nb.float64,  # max_vol_ratio
-        _F64_2D_F,  # out_ratios   (T, K_req) F-contig
-    ),
+    [
+        _NB_VOID(
+            _F64_2D_F,  # residuals    (T, K_req) F-contig
+            _NB_FLOAT64,  # decay_factor
+            _NB_FLOAT64,  # max_vol_ratio
+            _F64_2D_F,  # out_ratios   (T, K_req) F-contig
+        ),
+        # K_req == 1 makes residuals/out (T, 1), which NumPy reports as both C-
+        # and F-contiguous; Numba resolves the ambiguity to 'C'. Same class as
+        # D008 / RQ-AUD-017 (there: single-ROW f32 output; here: single-COLUMN
+        # f64 in/out). The per-column reads are stride-correct either way.
+        _NB_VOID(
+            _F64_2D_C,  # residuals    (T, 1) C-contig (single required factor)
+            _NB_FLOAT64,  # decay_factor
+            _NB_FLOAT64,  # max_vol_ratio
+            _F64_2D_C,  # out_ratios   (T, 1) C-contig
+        ),
+    ]
 )
 def kernel_ewma_vol_ratios_from_residuals(
     residuals,
@@ -297,13 +310,13 @@ def _emit_ratios_raw(
 
 
 @parallel_njit(
-    nb.void(
+    _NB_VOID(
         _F64_2D_F,  # values        (T, K_total) F-contig
         _I32_1D_C,  # cols          (K_req,)
         _I8_1D_C,  # shift_types   (K_req,)
-        nb.float64,  # decay_factor
+        _NB_FLOAT64,  # decay_factor
         _F64_2D_F,  # out_ratios    (T, K_req) F-contig
-        nb.float64,  # max_vol_ratio
+        _NB_FLOAT64,  # max_vol_ratio
     ),
 )
 def kernel_ewma_vol_ratios(

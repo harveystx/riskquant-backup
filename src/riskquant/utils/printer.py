@@ -1,7 +1,6 @@
 # src/riskquant/utils/printer.py
 from __future__ import annotations
 
-import math
 from collections.abc import Iterable, Mapping
 from datetime import datetime
 from typing import Any
@@ -395,32 +394,50 @@ def print_dict(
         print()
 
 
+# class _FloatFormatter:
+#     __slots__ = ("_fmt", "_spec", "_zero_tol")
+
+#     def __init__(self, spec: str, zero_tol: float = 0.0) -> None:
+#         self._spec = spec
+#         if "_" in spec:
+#             clean_spec = spec.replace("_", ",")
+#             self._fmt = lambda x, s=clean_spec: f"{x:{s}}".replace(",", "_")
+#         else:
+#             self._fmt = lambda x, s=spec: f"{x:{s}}"
+#         self._zero_tol = float(zero_tol)
+
+#     def __call__(self, x: float) -> str:
+#         if x is None or (isinstance(x, float) and math.isnan(x)):
+#             # Handle NaN alignment for Numpy formats
+#             try:
+#                 width = int(self._spec.split(".")[0].replace(">", "").replace("<", ""))
+#                 return "nan".rjust(width)
+#             except (ValueError, TypeError, IndexError):
+#                 return "nan"
+#         if self._zero_tol and abs(x) < self._zero_tol:
+#             x = 0.0
+#         try:
+#             return self._fmt(x)
+#         except (ValueError, TypeError):
+#             return str(x)
+
+
 class _FloatFormatter:
-    __slots__ = ("_fmt", "_spec", "_zero_tol")
+    __slots__ = ("_spec", "_zero_tol")
 
     def __init__(self, spec: str, zero_tol: float = 0.0) -> None:
-        self._spec = spec
-        if "_" in spec:
-            clean_spec = spec.replace("_", ",")
-            self._fmt = lambda x, s=clean_spec: f"{x:{s}}".replace(",", "_")
-        else:
-            self._fmt = lambda x, s=spec: f"{x:{s}}"
+        spec = spec.strip().removeprefix("{").removesuffix("}")
+        self._spec = spec.removeprefix(":")
         self._zero_tol = float(zero_tol)
 
     def __call__(self, x: float) -> str:
-        if x is None or (isinstance(x, float) and math.isnan(x)):
-            # Handle NaN alignment for Numpy formats
-            try:
-                width = int(self._spec.split(".")[0].replace(">", "").replace("<", ""))
-                return "nan".rjust(width)
-            except (ValueError, TypeError, IndexError):
-                return "nan"
+        if np.isnan(x):
+            return "nan"
+
         if self._zero_tol and abs(x) < self._zero_tol:
             x = 0.0
-        try:
-            return self._fmt(x)
-        except (ValueError, TypeError):
-            return str(x)
+
+        return format(x, self._spec)
 
 
 def print_df(
@@ -463,7 +480,13 @@ def print_df(
         )
 
     if float_format is None:
-        print(df.to_string(index=index, max_rows=max_rows, max_cols=max_cols))
+        print(
+            df.to_string(
+                index=index,
+                max_rows=max_rows,
+                max_cols=max_cols,
+            )
+        )
     else:
         formatter = _FloatFormatter(float_format, zero_tol=zero_tol)
         print(

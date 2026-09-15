@@ -27,6 +27,7 @@ import math
 import numba as nb  # type: ignore[import-untyped]
 
 from riskquant.jit import (
+    _F64_2D_C,
     _F64_2D_F,
     _I8_1D_C,
     _I32_1D_C,
@@ -35,8 +36,10 @@ from riskquant.jit import (
     parallel_njit,
 )
 from riskquant.market_data.risk_factors.shift_types import (
+    SHIFT_ABSOLUTE_BASE_RETURN_ID,
     SHIFT_DIFFERENCE_ID,
     SHIFT_LOG_RETURN_ID,
+    SHIFT_NO_SHIFT_ID,
     SHIFT_SIMPLE_RETURN_ID,
 )
 
@@ -64,6 +67,11 @@ def _ret_diff(curr: float, prev: float) -> float:
     return curr - prev
 
 
+@inline_njit
+def _ret_absolute_base(curr: float, prev: float) -> float:
+    return (curr - prev) / abs(prev)
+
+
 # ============================================================
 # Per-column kernel (one shift-type variant)
 # ============================================================
@@ -82,6 +90,15 @@ def _ar1_one_col(col_vals, col_res, st: int) -> None:
     inner loop straight-line SIMD-friendly.
     """
     t_max = col_vals.shape[0]
+
+    if st == SHIFT_NO_SHIFT_ID:
+        # Held fixed: no return series. Write zero residuals for every t so the
+        # residual column is never left unwritten (the filtered fused kernel
+        # additionally short-circuits NO_SHIFT before reading this column).
+        for i in range(t_max):
+            col_res[i] = 0.0
+        return
+
     if t_max < 2:
         if t_max == 1:
             col_res[0] = 0.0
@@ -99,9 +116,11 @@ def _ar1_one_col(col_vals, col_res, st: int) -> None:
         r = _ret_simple(curr_val, prev_val)
     elif st == SHIFT_DIFFERENCE_ID:
         r = _ret_diff(curr_val, prev_val)
+    elif st == SHIFT_ABSOLUTE_BASE_RETURN_ID:
+        r = _ret_absolute_base(curr_val, prev_val)
     else:
-        # Unknown shift-type: upstream `build_shock_universe` filters
-        # NO_SHIFT, so reaching this branch indicates a contract break.
+        # Unreachable: NO_SHIFT is handled above and `build_shock_universe`
+        # rejects any id outside {-1, 1, 2, 3, 4}. Guard defensively.
         return
 
     col_res[1] = r
@@ -138,10 +157,22 @@ def _ar1_one_col(col_vals, col_res, st: int) -> None:
             sum_yy += r * r
             prev_r = r
             prev_val = curr_val
-    else:  # SHIFT_DIFFERENCE_ID
+    elif st == SHIFT_DIFFERENCE_ID:
         for t in range(2, t_max):
             curr_val = col_vals[t]
             r = _ret_diff(curr_val, prev_val)
+            col_res[t] = r
+            sum_x += prev_r
+            sum_y += r
+            sum_xx += prev_r * prev_r
+            sum_xy += prev_r * r
+            sum_yy += r * r
+            prev_r = r
+            prev_val = curr_val
+    else:  # SHIFT_ABSOLUTE_BASE_RETURN_ID (seed ladder already excluded others)
+        for t in range(2, t_max):
+            curr_val = col_vals[t]
+            r = _ret_absolute_base(curr_val, prev_val)
             col_res[t] = r
             sum_x += prev_r
             sum_y += r
@@ -199,12 +230,32 @@ def _ar1_one_col(col_vals, col_res, st: int) -> None:
 
 
 @parallel_njit(
-    _NB_VOID(
-        _F64_2D_F,  # values            (T, K_total) F-contig
-        _I32_1D_C,  # cols              (K_req,)
-        _I8_1D_C,  # shift_types       (K_req,)
-        _F64_2D_F,  # out_residuals     (T, K_req)   F-contig
-    ),
+    [
+        # Normal multi-factor case: both value and residual matrices are (T, K>1)
+        # genuine F-contiguous.
+        _NB_VOID(
+            _F64_2D_F,  # values            (T, K_total) F-contig
+            _I32_1D_C,  # cols              (K_req,)
+            _I8_1D_C,  # shift_types       (K_req,)
+            _F64_2D_F,  # out_residuals     (T, K_req)   F-contig
+        ),
+        # Single REQUIRED factor from a multi-factor matrix: values is genuine F
+        # (T, K_total>1), but out_residuals is (T, 1) -- C=F ambiguous, resolved
+        # to 'C'. Same class as D008 / RQ-AUD-017 (single-column f64 here).
+        _NB_VOID(
+            _F64_2D_F,  # values            (T, K_total>1) F-contig
+            _I32_1D_C,  # cols              (1,)
+            _I8_1D_C,  # shift_types       (1,)
+            _F64_2D_C,  # out_residuals     (T, 1)   C-contig
+        ),
+        # Single-factor MATRIX (K_total == 1 -> K_req == 1): both are (T, 1) C.
+        _NB_VOID(
+            _F64_2D_C,  # values            (T, 1) C-contig
+            _I32_1D_C,  # cols              (1,)
+            _I8_1D_C,  # shift_types       (1,)
+            _F64_2D_C,  # out_residuals     (T, 1)   C-contig
+        ),
+    ]
 )
 def kernel_ar1_residuals(
     values,

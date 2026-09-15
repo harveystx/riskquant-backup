@@ -46,19 +46,20 @@ from riskquant.jit import (
     _F64_1D_C,
     _F64_2D_C,
     _F64_3D_C,
+    _NB_VOID,
     parallel_njit,
 )
 
 # --- HELPERS ---
 
-_NB_VOID_3D = nb.void(
+_NB_VOID_3D = _NB_VOID(
     _F64_2D_C,  # tenors
     _F64_3D_C,  # values
     _F64_1D_C,  # targets
     _F64_3D_C,  # out
 )
 
-_NB_VOID_2D = nb.void(
+_NB_VOID_2D = _NB_VOID(
     _F64_2D_C,  # pillars
     _F64_3D_C,  # values
     _F64_2D_C,  # targets

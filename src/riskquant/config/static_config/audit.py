@@ -5,7 +5,7 @@ Tabular audit of a compiled RiskStaticConfig.
 Imports Pandas deliberately — auditing is an edge-only diagnostic, not a
 runtime path. Never imported by valuation, simlab, or any kernel.
 
-Layout: one DataFrame per logical table the new 8-table schema exposes,
+Layout: one DataFrame per logical table the 7-table schema exposes,
 plus reverse-mapped derived structures (FX spot lookup, discount-curve
 lookup, dense per-rf attribute arrays). Each section prints `head(n)`
 with a configurable row cap.
@@ -86,19 +86,9 @@ def _audit_holiday_calendars(rsc: RiskStaticConfig, n: int) -> None:
     print(f"  Total calendars: {len(rsc.holiday_calendars_dict)}")
 
 
-def _audit_spot_roll_rules(rsc: RiskStaticConfig, n: int) -> None:
-    _print_subheader("3. Spot roll rules")
-    df = _df_from_dataclass_values(rsc.spot_roll_rule_dict.values())
-    if df.empty:
-        print("(empty)")
-        return
-    print(df.head(n).to_string(index=False))
-    print(f"  Total: {len(rsc.spot_roll_rule_dict)}")
-
-
 def _audit_node_meta(rsc: RiskStaticConfig, n: int) -> None:
     _print_subheader(
-        "4. Node meta (scalar risk factors; FX + equity + credit single names)"
+        "3. Node meta (scalar risk factors; FX + equity + credit single names)"
     )
     df = _df_from_dataclass_values(rsc.node_meta_dict.values())
     if df.empty:
@@ -111,7 +101,7 @@ def _audit_node_meta(rsc: RiskStaticConfig, n: int) -> None:
 
 
 def _audit_curve_meta(rsc: RiskStaticConfig, n: int) -> None:
-    _print_subheader("5. Curve meta (1D functions; discount + non-discount)")
+    _print_subheader("4. Curve meta (1D functions; discount + non-discount)")
     df = _df_from_dataclass_values(rsc.curve_meta_dict.values())
     if df.empty:
         print("(empty)")
@@ -126,7 +116,7 @@ def _audit_curve_meta(rsc: RiskStaticConfig, n: int) -> None:
 
 
 def _audit_curve_point_meta(rsc: RiskStaticConfig, n: int) -> None:
-    _print_subheader("6. Curve point counts (per parent curve)")
+    _print_subheader("5. Curve point counts (per parent curve)")
     counts: dict[int, int] = {}
     for pt in rsc.curve_point_meta_dict.values():
         counts[pt.curve_id] = counts.get(pt.curve_id, 0) + 1
@@ -149,7 +139,7 @@ def _audit_curve_point_meta(rsc: RiskStaticConfig, n: int) -> None:
 
 
 def _audit_surface_meta(rsc: RiskStaticConfig, n: int) -> None:
-    _print_subheader("7. Surface meta (2D functions; vol surfaces)")
+    _print_subheader("6. Surface meta (2D functions; vol surfaces)")
     df = _df_from_dataclass_values(rsc.surface_meta_dict.values())
     if df.empty:
         print("(empty)")
@@ -159,7 +149,7 @@ def _audit_surface_meta(rsc: RiskStaticConfig, n: int) -> None:
 
 
 def _audit_surface_point_meta(rsc: RiskStaticConfig, n: int) -> None:
-    _print_subheader("8. Surface point counts (per parent surface)")
+    _print_subheader("7. Surface point counts (per parent surface)")
     counts: dict[int, int] = {}
     for pt in rsc.surface_point_meta_dict.values():
         counts[pt.surface_id] = counts.get(pt.surface_id, 0) + 1
@@ -188,7 +178,7 @@ def _audit_surface_point_meta(rsc: RiskStaticConfig, n: int) -> None:
 
 
 def _audit_fx_spot_lookup(rsc: RiskStaticConfig, n: int) -> None:
-    _print_subheader("9. FX spot lookup ((base_ccy_id, quote_ccy_id) -> rf_id)")
+    _print_subheader("8. FX spot lookup ((base_ccy_id, quote_ccy_id) -> rf_id)")
     if not rsc.fx_spot_lookup:
         print("(no FX nodes)")
         return
@@ -223,7 +213,7 @@ def _audit_fx_spot_lookup(rsc: RiskStaticConfig, n: int) -> None:
 
 
 def _audit_discount_curves(rsc: RiskStaticConfig, n: int) -> None:
-    _print_subheader("10. Discount-curve lookups")
+    _print_subheader("9. Discount-curve lookups")
 
     # 10a — per-(ccy, basis) full table
     print("\n  (a) (ccy_id, basis_id) -> curve_id")
@@ -275,7 +265,7 @@ def _audit_discount_curves(rsc: RiskStaticConfig, n: int) -> None:
 
 
 def _audit_dense_rf_arrays(rsc: RiskStaticConfig, n: int) -> None:
-    _print_subheader("11. Dense per-rf attribute arrays (head)")
+    _print_subheader("10. Dense per-rf attribute arrays (head)")
     n_total = rsc.max_rf_id + 1
     # Mask out empty slots (rf_id not occupied).
     occupied = rsc.rf_id_to_parent_topology_type >= ContainerTopologyType.NODE.value
@@ -299,7 +289,7 @@ def _audit_dense_rf_arrays(rsc: RiskStaticConfig, n: int) -> None:
 
 
 def _audit_dense_container_arrays(rsc: RiskStaticConfig, n: int) -> None:
-    _print_subheader("12. Per-container attribute arrays (slot-indexed; head)")
+    _print_subheader("11. Per-container attribute arrays (slot-indexed; head)")
     n_total = rsc.num_containers
     occupied = rsc.container_topology_type > ContainerTopologyType.NODE.value
     if not occupied.any():
@@ -309,6 +299,17 @@ def _audit_dense_container_arrays(rsc: RiskStaticConfig, n: int) -> None:
     x_kind_names = [
         XAxisKind(int(k)).name if int(k) >= 0 else "-"
         for k in rsc.container_x_axis_kind
+    ]
+    # roll_method is owned by the curve / surface meta directly; source it
+    # from the meta dicts by container_id (no per-container SoA roll array
+    # exists — nothing in the numerical core consumes one).
+    roll_by_container: dict[int, str] = {}
+    for cm in rsc.curve_meta_dict.values():
+        roll_by_container[int(cm.curve_id)] = cm.roll_method or "-"
+    for sm in rsc.surface_meta_dict.values():
+        roll_by_container[int(sm.surface_id)] = sm.roll_method or "-"
+    roll_method_col = [
+        roll_by_container.get(int(cid), "-") for cid in rsc.container_ids
     ]
     df = pd.DataFrame(
         {
@@ -320,7 +321,7 @@ def _audit_dense_container_arrays(rsc: RiskStaticConfig, n: int) -> None:
             "interp_y_id": rsc.container_interp_y_id,
             "extrap_y_id": rsc.container_extrap_y_id,
             "x_axis_kind": x_kind_names,
-            "spot_roll_rule": rsc.container_spot_roll_rule_name,
+            "roll_method": roll_method_col,
         }
     )
     df = df.loc[occupied].reset_index(drop=True)
@@ -329,7 +330,7 @@ def _audit_dense_container_arrays(rsc: RiskStaticConfig, n: int) -> None:
 
 
 def _audit_tenor_index(rsc: RiskStaticConfig, n: int) -> None:
-    _print_subheader("13. Per-curve tenor index summary")
+    _print_subheader("12. Per-curve tenor index summary")
     rows = []
     for curve_id, idx in rsc.curve_id_to_tenor_index.items():
         cm = rsc.curve_meta_dict[curve_id]
@@ -376,7 +377,6 @@ def audit_risk_static_config(rsc: RiskStaticConfig, n: int = 10) -> None:
     print("Summary:")
     print(f"  Currencies          : {rsc.num_ccys}")
     print(f"  Holiday calendars   : {len(rsc.holiday_calendars_dict)}")
-    print(f"  Spot roll rules     : {len(rsc.spot_roll_rule_dict)}")
     print(f"  Nodes               : {rsc.num_nodes}")
     print(f"  Curves              : {rsc.num_curves}")
     print(f"  Curve points        : {rsc.num_curve_points}")
@@ -390,7 +390,6 @@ def audit_risk_static_config(rsc: RiskStaticConfig, n: int = 10) -> None:
 
     _audit_ccy(rsc, n)
     _audit_holiday_calendars(rsc, n)
-    _audit_spot_roll_rules(rsc, n)
     _audit_node_meta(rsc, n)
     _audit_curve_meta(rsc, n)
     _audit_curve_point_meta(rsc, n)
@@ -410,7 +409,9 @@ if __name__ == "__main__":
 
     print_calling_file()
 
-    DEV_DATA_DIR: str = "C:/Users/mharvey/Documents/code/riskquant/data/canonical_examples"
+    DEV_DATA_DIR: str = (
+        "C:/Users/mharvey/Documents/code/riskquant/data/canonical_examples"
+    )
     DEV_DATA_FILE_NAME_STATIC_CONFIG: str = "canonical_risk_static_config.xlsx"
 
     rsc = compile_risk_static_config_from_xlsx(

@@ -8,21 +8,17 @@ verify that the taxonomy layer in `riskquant.config.enums` is internally
 consistent and will not silently produce an incompatible type collision or
 an unsupported-but-declared enum member in the future.
 """
+
 from __future__ import annotations
 
 import importlib
 import pkgutil
 
-import pytest
-
 
 def _all_enum_module_names() -> list[str]:
     import riskquant.config.enums as enums_pkg
 
-    return [
-        name
-        for _, name, _ in pkgutil.iter_modules(enums_pkg.__path__)
-    ]
+    return [name for _, name, _ in pkgutil.iter_modules(enums_pkg.__path__)]
 
 
 def test_no_duplicate_class_names_across_enum_modules():
@@ -73,14 +69,16 @@ def test_swap_direction_semantics_are_unambiguous_once_fixed():
     updated to assert the single remaining SwapDirection has exactly
     {PAY_FIXED, RECEIVE_FIXED} as members.
     """
-    from riskquant.config.enums.fixing_type import SwapDirection as FixingTiming
+    from riskquant.config.enums.rate_fixing_convention import (
+        RateFixingConvention as FixingTiming,
+    )
     from riskquant.config.enums.swap_direction import SwapDirection as ActualDirection
 
     fixing_members = set(FixingTiming.__members__)
     direction_members = set(ActualDirection.__members__)
 
-    assert fixing_members == {"ADVANCE", "ARREARS"}, (
-        f"fixing_type.SwapDirection members changed: {fixing_members}. "
+    assert fixing_members == {"IN_ADVANCE", "IN_ARREARS"}, (
+        f"rate_fixing_convention.RateFixingConvention members changed: {fixing_members}. "
         "If this module was renamed to something other than SwapDirection, "
         "update this test and delete the duplicate-name test above's "
         "reliance on it."
@@ -132,7 +130,9 @@ def test_every_container_topology_type_has_a_reserved_id_namespace():
         "ContainerTopologyType members with no corresponding "
         "GlobalIdNamespace ID-space reservation (declared taxonomy without "
         "supporting config infrastructure):\n"
-        + "\n".join(f"  {name} (expected GlobalIdNamespace.{attr})" for name, attr in missing)
+        + "\n".join(
+            f"  {name} (expected GlobalIdNamespace.{attr})" for name, attr in missing
+        )
     )
 
 

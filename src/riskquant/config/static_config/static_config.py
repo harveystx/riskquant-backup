@@ -78,7 +78,6 @@ from riskquant.config.static_config.schema_objects import (
     CurvePointMeta,
     HolidayCalendar,
     NodeMeta,
-    SpotRollRule,
     SurfaceMeta,
     SurfacePointMeta,
 )
@@ -142,7 +141,7 @@ def _freeze_dict(d: Mapping) -> MappingProxyType:
 class CurrencyState:
     """Output of currency-layer resolution."""
 
-    ccy_name_to_id: Mapping[str, np.int8]
+    ccy_name_to_id: Mapping[str, int]
     ccy_id_to_name: tuple[str, ...]
     max_ccy_id: int
 
@@ -151,8 +150,8 @@ class CurrencyState:
 class NameLookupState(CurrencyState):
     """+ risk-factor and container name -> id mappings."""
 
-    rel_name_to_rf_id: Mapping[str, np.int32]
-    container_name_to_id: Mapping[str, np.int32]
+    rel_name_to_rf_id: Mapping[str, int]
+    container_name_to_id: Mapping[str, int]
 
 
 @dataclass(frozen=True)
@@ -187,7 +186,6 @@ class ContainerState(RfState):
     container_interp_y_id: npt.NDArray[np.int8]
     container_extrap_y_id: npt.NDArray[np.int8]
     container_ccy_id: npt.NDArray[np.int8]
-    container_spot_roll_rule_name: tuple[str, ...]
     container_x_axis_kind: npt.NDArray[np.int8]
 
 
@@ -202,7 +200,7 @@ class CurveTenorState(ContainerState):
 class FxState(CurveTenorState):
     """+ FX spot lookup table."""
 
-    fx_spot_lookup: Mapping[tuple[np.int8, np.int8], np.int32]
+    fx_spot_lookup: Mapping[tuple[int, int], int]
 
 
 @dataclass(frozen=True)
@@ -217,7 +215,7 @@ class DiscountState(FxMatrixState):
     """+ discount-curve lookup tables.  Terminal state of the pipeline."""
 
     ccy_id_to_default_discount_curve_id: npt.NDArray[np.int32]
-    discount_curve_lookup: Mapping[tuple[np.int8, np.int8], np.int32]
+    discount_curve_lookup: Mapping[tuple[int, int], int]
 
 
 # ============================================================
@@ -287,8 +285,8 @@ def _build_currency_state(ccy_dict: dict[str, Ccy]) -> CurrencyState:
     if not ccy_dict:
         raise ValueError("ccy_dict is empty.")
 
-    ccy_name_to_id: dict[str, np.int8] = {
-        name: np.int8(c.ccy_id) for name, c in ccy_dict.items()
+    ccy_name_to_id: dict[str, int] = {
+        name: int(c.ccy_id) for name, c in ccy_dict.items()
     }
     max_ccy_id = max((int(c.ccy_id) for c in ccy_dict.values()), default=0)
 
@@ -312,12 +310,12 @@ def _build_name_lookup_state(
     surface_point_meta_dict: dict[int, SurfacePointMeta],
 ) -> NameLookupState:
     """Stage 2: Build globally-unique name -> id mappings."""
-    rel_name_to_rf_id: dict[str, np.int32] = {}
-    container_name_to_id: dict[str, np.int32] = {}
+    rel_name_to_rf_id: dict[str, int] = {}
+    container_name_to_id: dict[str, int] = {}
 
     # Nodes: name is the risk-factor name
     for n in node_meta_dict.values():
-        rel_name_to_rf_id[n.node_name] = np.int32(n.node_id)
+        rel_name_to_rf_id[n.node_name] = int(n.node_id)
 
     # Curve points: "{curve_name}{tenor_token}"
     for pt in curve_point_meta_dict.values():
@@ -327,7 +325,7 @@ def _build_name_lookup_state(
                 f"Duplicate relative risk-factor name {rel_name!r} "
                 f"(rf_id {pt.rf_id} collides with {rel_name_to_rf_id[rel_name]})."
             )
-        rel_name_to_rf_id[rel_name] = np.int32(pt.rf_id)
+        rel_name_to_rf_id[rel_name] = int(pt.rf_id)
 
     # Surface points: "{surface_name}{x_tenor_token}[{y_label}]"
     for pt in surface_point_meta_dict.values():
@@ -337,11 +335,11 @@ def _build_name_lookup_state(
                 f"Duplicate relative risk-factor name {rel_name!r} "
                 f"(rf_id {pt.rf_id} collides with {rel_name_to_rf_id[rel_name]})."
             )
-        rel_name_to_rf_id[rel_name] = np.int32(pt.rf_id)
+        rel_name_to_rf_id[rel_name] = int(pt.rf_id)
 
     # Containers: curves and surfaces
     for cm in curve_meta_dict.values():
-        container_name_to_id[cm.curve_name] = np.int32(cm.curve_id)
+        container_name_to_id[cm.curve_name] = int(cm.curve_id)
 
     for sm in surface_meta_dict.values():
         if sm.surface_name in container_name_to_id:
@@ -349,7 +347,7 @@ def _build_name_lookup_state(
                 f"Container name {sm.surface_name!r} declared as both "
                 "curve and surface."
             )
-        container_name_to_id[sm.surface_name] = np.int32(sm.surface_id)
+        container_name_to_id[sm.surface_name] = int(sm.surface_id)
 
     # Cross-namespace disjointness
     overlap = set(rel_name_to_rf_id) & set(container_name_to_id)
@@ -467,7 +465,6 @@ def _build_container_state(
     interp_y = np.full(n, -1, dtype=np.int8)
     extrap_y = np.full(n, -1, dtype=np.int8)
     cont_ccy = np.full(n, -1, dtype=np.int8)
-    roll_rule: list[str] = [""] * n
     x_kind = np.full(n, -1, dtype=np.int8)
 
     ccy_name_to_id = state.ccy_name_to_id
@@ -478,7 +475,6 @@ def _build_container_state(
         interp_x[i] = _resolve_interp_id(cm.x_interp_method)
         extrap_x[i] = _resolve_extrap_id(cm.x_extrap_method)
         cont_ccy[i] = ccy_name_to_id[cm.quote_ccy]
-        roll_rule[i] = cm.spot_roll_rule_name or ""
         x_kind[i] = int(XAxisKind[cm.x_axis_kind])
 
     for sm in surface_meta_dict.values():
@@ -489,7 +485,6 @@ def _build_container_state(
         interp_y[i] = _resolve_interp_id(sm.y_interp_method)
         extrap_y[i] = _resolve_extrap_id(sm.y_extrap_method)
         cont_ccy[i] = ccy_name_to_id[sm.quote_ccy]
-        roll_rule[i] = sm.spot_roll_rule_name or ""
         x_kind[i] = int(XAxisKind[sm.x_axis_kind])
 
     return ContainerState(
@@ -511,7 +506,6 @@ def _build_container_state(
         container_interp_y_id=interp_y,
         container_extrap_y_id=extrap_y,
         container_ccy_id=cont_ccy,
-        container_spot_roll_rule_name=tuple(roll_rule),
         container_x_axis_kind=x_kind,
     )
 
@@ -616,7 +610,6 @@ def _build_curve_tenor_state(
         container_interp_y_id=state.container_interp_y_id,
         container_extrap_y_id=state.container_extrap_y_id,
         container_ccy_id=state.container_ccy_id,
-        container_spot_roll_rule_name=state.container_spot_roll_rule_name,
         container_x_axis_kind=state.container_x_axis_kind,
         curve_id_to_tenor_index=curve_id_to_tenor_index,
     )
@@ -627,7 +620,7 @@ def _build_fx_state(
     node_meta_dict: dict[int, NodeMeta],
 ) -> FxState:
     """Stage 6: Build FX spot lookup table."""
-    out: dict[tuple[np.int8, np.int8], np.int32] = {}
+    out: dict[tuple[int, int], int] = {}
     ccy_name_to_id = state.ccy_name_to_id
 
     for node in node_meta_dict.values():
@@ -635,14 +628,14 @@ def _build_fx_state(
             continue
         base_id = ccy_name_to_id[node.fx_base_ccy]
         quote_id = ccy_name_to_id[node.quote_ccy]
-        key = (base_id, quote_id)
+        key = (int(base_id), int(quote_id))
         if key in out:
             raise ValueError(
                 f"Duplicate FX spot pair "
                 f"(base={node.fx_base_ccy}, quote={node.quote_ccy}): "
                 f"node {node.node_name} collides with another FX node."
             )
-        out[key] = np.int32(node.node_id)
+        out[key] = int(node.node_id)
 
     return FxState(
         ccy_name_to_id=state.ccy_name_to_id,
@@ -663,7 +656,6 @@ def _build_fx_state(
         container_interp_y_id=state.container_interp_y_id,
         container_extrap_y_id=state.container_extrap_y_id,
         container_ccy_id=state.container_ccy_id,
-        container_spot_roll_rule_name=state.container_spot_roll_rule_name,
         container_x_axis_kind=state.container_x_axis_kind,
         curve_id_to_tenor_index=state.curve_id_to_tenor_index,
         fx_spot_lookup=out,
@@ -702,7 +694,6 @@ def _build_fx_matrix_state(
         container_interp_y_id=state.container_interp_y_id,
         container_extrap_y_id=state.container_extrap_y_id,
         container_ccy_id=state.container_ccy_id,
-        container_spot_roll_rule_name=state.container_spot_roll_rule_name,
         container_x_axis_kind=state.container_x_axis_kind,
         curve_id_to_tenor_index=state.curve_id_to_tenor_index,
         fx_spot_lookup=state.fx_spot_lookup,
@@ -719,21 +710,21 @@ def _build_discount_state(
     ccy_name_to_id = state.ccy_name_to_id
 
     default_per_ccy = np.full(max_ccy_id + 1, _NO_DISCOUNT_CURVE_ID, dtype=np.int32)
-    explicit: dict[tuple[np.int8, np.int8], np.int32] = {}
+    explicit: dict[tuple[int, int], int] = {}
 
     for cm in curve_meta_dict.values():
         if cm.discount_basis == DiscountBasis.NOT_A_DISCOUNT_CURVE.name:
             continue
         ccy_id = ccy_name_to_id[cm.quote_ccy]
         basis_id = np.int8(int(DiscountBasis[cm.discount_basis]))
-        key = (ccy_id, basis_id)
+        key = (int(ccy_id), int(basis_id))
         if key in explicit:
             raise ValueError(
                 f"Duplicate discount curve for "
                 f"(ccy={cm.quote_ccy}, basis={cm.discount_basis}): "
                 f"curve {cm.curve_name}."
             )
-        explicit[key] = np.int32(cm.curve_id)
+        explicit[key] = int(cm.curve_id)
 
         if cm.is_default_discount_for_ccy:
             if default_per_ccy[int(ccy_id)] != _NO_DISCOUNT_CURVE_ID:
@@ -762,7 +753,6 @@ def _build_discount_state(
         container_interp_y_id=state.container_interp_y_id,
         container_extrap_y_id=state.container_extrap_y_id,
         container_ccy_id=state.container_ccy_id,
-        container_spot_roll_rule_name=state.container_spot_roll_rule_name,
         container_x_axis_kind=state.container_x_axis_kind,
         curve_id_to_tenor_index=state.curve_id_to_tenor_index,
         fx_spot_lookup=state.fx_spot_lookup,
@@ -805,7 +795,6 @@ def _freeze_state(state: DiscountState) -> DiscountState:
         container_interp_y_id=_freeze_array(state.container_interp_y_id),
         container_extrap_y_id=_freeze_array(state.container_extrap_y_id),
         container_ccy_id=_freeze_array(state.container_ccy_id),
-        container_spot_roll_rule_name=state.container_spot_roll_rule_name,
         container_x_axis_kind=_freeze_array(state.container_x_axis_kind),
         curve_id_to_tenor_index=_freeze_dict(state.curve_id_to_tenor_index),
         fx_spot_lookup=_freeze_dict(state.fx_spot_lookup),
@@ -841,7 +830,6 @@ class RiskStaticConfig:
 
     ccy_dict: dict[str, Ccy] = field(repr=False)
     holiday_calendars_dict: dict[str, HolidayCalendar] = field(repr=False)
-    spot_roll_rule_dict: dict[str, SpotRollRule] = field(repr=False)
 
     node_meta_dict: dict[int, NodeMeta] = field(repr=False)
     curve_meta_dict: dict[int, CurveMeta] = field(repr=False)
@@ -924,7 +912,7 @@ class RiskStaticConfig:
 
     # -- Currency layer --
     @property
-    def ccy_name_to_id(self) -> Mapping[str, np.int8]:
+    def ccy_name_to_id(self) -> Mapping[str, int]:
         return self._state.ccy_name_to_id
 
     @property
@@ -937,11 +925,11 @@ class RiskStaticConfig:
 
     # -- Name lookups --
     @property
-    def rel_name_to_rf_id(self) -> Mapping[str, np.int32]:
+    def rel_name_to_rf_id(self) -> Mapping[str, int]:
         return self._state.rel_name_to_rf_id
 
     @property
-    def container_name_to_id(self) -> Mapping[str, np.int32]:
+    def container_name_to_id(self) -> Mapping[str, int]:
         return self._state.container_name_to_id
 
     # -- Per-rf attributes --
@@ -1030,10 +1018,6 @@ class RiskStaticConfig:
         return self._state.container_ccy_id
 
     @property
-    def container_spot_roll_rule_name(self) -> tuple[str, ...]:
-        return self._state.container_spot_roll_rule_name
-
-    @property
     def container_x_axis_kind(self) -> npt.NDArray[np.int8]:
         return self._state.container_x_axis_kind
 
@@ -1044,7 +1028,7 @@ class RiskStaticConfig:
 
     # -- FX spot lookup --
     @property
-    def fx_spot_lookup(self) -> Mapping[tuple[np.int8, np.int8], np.int32]:
+    def fx_spot_lookup(self) -> Mapping[tuple[int, int], int]:
         return self._state.fx_spot_lookup
 
     @property
@@ -1057,7 +1041,7 @@ class RiskStaticConfig:
         return self._state.ccy_id_to_default_discount_curve_id
 
     @property
-    def discount_curve_lookup(self) -> Mapping[tuple[np.int8, np.int8], np.int32]:
+    def discount_curve_lookup(self) -> Mapping[tuple[int, int], int]:
         return self._state.discount_curve_lookup
 
     # ------------------------------------------------------------------ #
@@ -1098,11 +1082,11 @@ class RiskStaticConfig:
 
     def get_rf_id(self, rel_name: str) -> np.int32:
         """Lookup helper. Raises KeyError with the input name on miss."""
-        return self._state.rel_name_to_rf_id[rel_name]
+        return np.int32(self._state.rel_name_to_rf_id[rel_name])
 
     def get_container_id(self, container_name: str) -> np.int32:
         """Lookup helper. Raises KeyError with the input name on miss."""
-        return self._state.container_name_to_id[container_name]
+        return np.int32(self._state.container_name_to_id[container_name])
 
     def summary(self) -> None:
         """Print a console-friendly overview of the compiled config."""
@@ -1112,7 +1096,6 @@ class RiskStaticConfig:
             "================================",
             f"  Currencies          : {self.num_ccys}",
             f"  Calendars           : {len(self.holiday_calendars_dict)}",
-            f"  Spot roll rules     : {len(self.spot_roll_rule_dict)}",
             f"  Nodes               : {self.num_nodes}",
             f"  Curves              : {self.num_curves}",
             f"  Curve points        : {self.num_curve_points}",

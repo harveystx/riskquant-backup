@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import pandas as pd
+import polars as pl
 
 from riskquant.ingest_fixtures.schemas import RiskStaticConfigCcy
 from riskquant.ingest_fixtures.utils import validate_column_lengths
@@ -23,13 +23,12 @@ CANONICAL_CCY_DATA: RiskStaticConfigCcy = _get_data()
 
 validate_column_lengths(CANONICAL_CCY_DATA)
 
-_CANONICAL_CCY_DF = pd.DataFrame(CANONICAL_CCY_DATA)
+_CANONICAL_CCY_DF = pl.DataFrame(CANONICAL_CCY_DATA)
 
 
 def _debug_print() -> None:
     from riskquant.utils.printer import (
         print_calling_file,
-        print_df,
         print_dict,
         print_success_message,
     )
@@ -38,7 +37,8 @@ def _debug_print() -> None:
 
     print_dict(CANONICAL_CCY_DATA, title="Canonical Currencies Dictionary")
 
-    print_df(_CANONICAL_CCY_DF, index=False, title="Canonical Currencies DataFrame")
+    print("Canonical Currencies DataFrame:")
+    print(_CANONICAL_CCY_DF)
 
     print_success_message(add_space_before=False)
 

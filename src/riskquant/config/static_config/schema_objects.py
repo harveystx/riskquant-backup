@@ -2,25 +2,34 @@
 """
 Immutable value objects for the god-tier static config pipeline.
 
-One dataclass per input table. Every field is non-null in its own table:
-no nullability cascades, no "must be null when this is null" rules. The
-three first-class object kinds (Node, Curve, Surface) each get their own
-metadata table and child point table.
+One dataclass per input table. Every field is non-null in its own table
+unless the domain makes it method-specific: no nullability cascades across
+tables. The three first-class object kinds (Node, Curve, Surface) each get
+their own metadata table and child point table.
 
   NodeMeta              - scalar observable. A node IS its own risk factor.
                           FX rate nodes additionally carry fx_base_ccy.
-  CurveMeta             - 1D function metadata. Optional discount-basis tag
-                          marks IR discount curves.
+  CurveMeta             - 1D function metadata. Owns its X-axis tenor-
+                          resolution convention directly (roll_method plus
+                          method-specific parameters). Optional discount-
+                          basis tag marks IR discount curves.
   CurvePointMeta        - one row per point on a curve. The point's
                           tenor_token is parsed using the parent's
                           x_axis_kind.
-  SurfaceMeta           - 2D function metadata (expiry x strike-axis).
+  SurfaceMeta           - 2D function metadata (expiry x strike-axis). Owns
+                          its X-axis tenor-resolution convention directly,
+                          exactly as CurveMeta does.
   SurfacePointMeta      - one row per point on a surface; x_tenor_token
                           is parsed using the surface's x_axis_kind,
                           y_label using its y_axis_kind.
-  SpotRollRule          - one named rule. PK is the rule name.
   HolidayCalendar       - one calendar with sorted int32 holiday ordinals.
   Ccy                   - one currency with its dense int8 id.
+
+There is no standalone roll-rule table. A curve / surface interprets its
+own X-axis; the resolution convention is part of the container's metadata,
+not a shared entity behind a name reference. See
+``riskquant.config.enums.roll_methods`` for the authoritative RollMethod,
+allowed-pair, and parameter contract.
 
 All system-defined taxonomies (asset class, unit, shift, interp/extrap,
 x/y axis kind, roll method, discount basis) live in riskquant.config.enums
@@ -65,39 +74,6 @@ class HolidayCalendar:
 
 
 # ============================================================
-# SPOT ROLL RULE
-# ============================================================
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class SpotRollRule:
-    """
-    Named spot-roll rule.
-
-    PK is `rule_name`. The rule's `roll_method` determines which
-    parameters are meaningful — the validator checks each parameter
-    against the method:
-
-      CALENDAR_PERIOD   -> uses offset_in_tenor_units
-      ROLL_ON_MMDD      -> uses roll_month, roll_day, post_roll_shift
-      HALF_YEAR_BY_DATE -> uses fh_bh_mmdd
-      HALF_YEAR_BY_LABEL-> uses fh_bh_mmdd
-
-    Unused parameters carry sentinel zeros (offset, post_roll_shift)
-    or None (roll_month, roll_day, fh_bh_mmdd) — these are never read by
-    the resolution code for a non-applicable method.
-    """
-
-    rule_name: str
-    roll_method: str
-    offset_in_tenor_units: int
-    roll_month: int | None
-    roll_day: int | None
-    fh_bh_mmdd: str | None
-    post_roll_shift: int
-
-
-# ============================================================
 # NODE  (scalar; IS its own risk factor)
 # ============================================================
 
@@ -138,10 +114,25 @@ class CurveMeta:
     """
     A 1D function metadata row.
 
-    x_axis_kind contract:
-      LABEL                    -> spot_roll_rule_name is None
-      OFFSET_M / OFFSET_Y /
-      OFFSET_HY                -> spot_roll_rule_name is non-None
+    X-axis tenor-resolution contract (self-describing — no rule table):
+      x_axis_kind == LABEL   -> roll_method and every roll parameter
+                                (anchor_offset, roll_month, roll_day,
+                                fh_bh_mmdd) are None. A LABEL axis does not
+                                depend on the as-of date.
+      x_axis_kind == OFFSET_* -> roll_method is non-None and the
+                                (x_axis_kind, roll_method) pair is in
+                                ALLOWED_X_AXIS_KIND_ROLL_METHOD_PAIRS. Only
+                                the method's required parameters are
+                                populated; the rest are None. See
+                                ROLL_METHOD_REQUIRED_PARAMS.
+
+      Parameter semantics:
+        anchor_offset  CALENDAR_PERIOD only. Offset (months for OFFSET_M,
+                       years for OFFSET_Y) added to the as-of period to form
+                       the spot anchor before the token offset applies.
+        roll_month/roll_day  ROLL_ON_MMDD only. The annual roll boundary.
+        fh_bh_mmdd     HALF_YEAR_BY_DATE / HALF_YEAR_BY_LABEL only. The
+                       'MMDD|MMDD' half-year boundary convention.
 
     discount_basis contract:
       "NOT_A_DISCOUNT_CURVE"   -> non-discount curve (e.g. commodity forward).
@@ -166,7 +157,12 @@ class CurveMeta:
     x_axis_kind: str
     x_interp_method: str
     x_extrap_method: str
-    spot_roll_rule_name: str | None
+
+    roll_method: str | None
+    anchor_offset: int | None
+    roll_month: int | None
+    roll_day: int | None
+    fh_bh_mmdd: str | None
 
     discount_basis: str
     is_default_discount_for_ccy: bool
@@ -190,9 +186,11 @@ class CurvePointMeta:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SurfaceMeta:
     """
-    A 2D function metadata row. Same x_axis_kind / spot_roll_rule
-    contract as CurveMeta. y_axis_kind has no roll-method coupling: the
-    y coordinate is value-typed (a strike, log-strike, moneyness, delta).
+    A 2D function metadata row. Same X-axis tenor-resolution contract as
+    CurveMeta (roll_method plus method-specific parameters, owned directly).
+    The X-axis resolution convention is independent of the Y axis: y_axis_kind
+    has no roll coupling because the y coordinate is value-typed (a strike,
+    log-strike, moneyness, or delta).
     """
 
     surface_id: int
@@ -209,7 +207,12 @@ class SurfaceMeta:
     x_axis_kind: str
     x_interp_method: str
     x_extrap_method: str
-    spot_roll_rule_name: str | None
+
+    roll_method: str | None
+    anchor_offset: int | None
+    roll_month: int | None
+    roll_day: int | None
+    fh_bh_mmdd: str | None
 
     y_axis_kind: str
     y_interp_method: str

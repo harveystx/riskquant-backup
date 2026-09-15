@@ -14,8 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.config.proxy_config.loader import load_proxy_config_xlsx_into_df
 from riskquant.config.proxy_config.proxy_topology import ProxyTopology
@@ -31,21 +30,23 @@ from riskquant.config.static_config.static_config import RiskStaticConfig
 # ============================================================
 
 
-def _build_proxy_map_dict(level_df: pd.DataFrame) -> dict[str, ProxyMap]:
+def _build_proxy_map_dict(level_df: pl.DataFrame) -> dict[str, ProxyMap]:
     """
     Vectorized: extract typed columns from the level-partitioned df and
-    materialize one ProxyMap per row. No iterrows.
+    materialize one ProxyMap per row. No row-by-row iteration.
 
     `level_df` has been validated upstream — required_name uniqueness
     per level is guaranteed, so the dict keyed by required_name has no
     collisions.
     """
-    if level_df.empty:
+    if level_df.is_empty():
         return {}
 
-    required_names = level_df["required_name"].astype(str).str.strip().to_numpy()
-    proxy_names = level_df["proxy_name"].astype(str).str.strip().to_numpy()
-    vol_scales = level_df["vol_scaling_factor"].astype(np.float64).to_numpy()
+    required_names = (
+        level_df["required_name"].cast(pl.Utf8).str.strip_chars().to_numpy()
+    )
+    proxy_names = level_df["proxy_name"].cast(pl.Utf8).str.strip_chars().to_numpy()
+    vol_scales = level_df["vol_scaling_factor"].cast(pl.Float64).to_numpy()
 
     return {
         str(req): ProxyMap(
@@ -63,7 +64,7 @@ def _build_proxy_map_dict(level_df: pd.DataFrame) -> dict[str, ProxyMap]:
 
 
 def compile_proxy_topology_from_df(
-    df: pd.DataFrame,
+    df: pl.DataFrame,
     static_config: RiskStaticConfig,
 ) -> ProxyTopology:
     """
@@ -84,7 +85,7 @@ def compile_proxy_topology_from_df(
     Returns
     -------
     ProxyTopology
-        Fully compiled, Pandas-free runtime topology with dense int32
+        Fully compiled, dataframe-free runtime topology with dense int32
         lookup arrays already materialized.
 
     Raises
@@ -98,7 +99,7 @@ def compile_proxy_topology_from_df(
     # ------------------------------------------------------------------ #
     validate_proxy_config_df(df)
 
-    if df.empty:
+    if df.is_empty():
         # Build a no-op topology: all lookups pass through unchanged.
         return ProxyTopology.build(
             container_proxies={},
@@ -109,9 +110,9 @@ def compile_proxy_topology_from_df(
     # ------------------------------------------------------------------ #
     # Partition by level (vectorized; no row loop)                       #
     # ------------------------------------------------------------------ #
-    level_norm = df["proxying_level"].astype(str).str.upper()
-    container_df = df.loc[level_norm == "CONTAINER"]
-    rf_df = df.loc[level_norm == "RISK_FACTOR"]
+    level_norm = df["proxying_level"].cast(pl.Utf8).str.to_uppercase()
+    container_df = df.filter(level_norm == "CONTAINER")
+    rf_df = df.filter(level_norm == "RISK_FACTOR")
 
     container_proxies = _build_proxy_map_dict(container_df)
     rf_proxies = _build_proxy_map_dict(rf_df)

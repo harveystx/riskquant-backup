@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import pandas as pd
+import polars as pl
 
 from riskquant.ingest_fixtures.schemas import RiskProxyConfigData
 from riskquant.ingest_fixtures.utils import validate_column_lengths
@@ -28,6 +28,17 @@ from riskquant.ingest_fixtures.utils import validate_column_lengths
 # Cross-level check: WTI_CRUDE_FWD, HENRY_HUB_GAS_FWD, POWER_CH_BASELOAD_HY
 # are container-proxied. None of their child rf names appear as
 # rf-level required_names below — no conflict.
+#
+# Coverage note (mirrors the static_config fixture's documented
+# roll-method gap): all 3 container-level rows proxy CURVE containers;
+# no SURFACE container is proxied here, and no surface-point rf_id
+# appears as an rf-level required_name. Both are genuinely supported by
+# the resolver (see audit.py's kind_label mapping, which includes
+# SURFACE and SURFACE_POINT) but are not exercised by this fixture. See
+# demos/config/proxy_config/demo_walkthrough.py for standalone examples
+# of both, and
+# tests/ingest_fixtures/config/risk_proxy_config/test_canonical_fixture.py
+# ::test_documented_proxy_coverage_gap for the tracked, executable pin.
 
 
 def _get_data() -> RiskProxyConfigData:
@@ -73,13 +84,17 @@ CANONICAL_RISK_PROXY_CONFIG_DATA: RiskProxyConfigData = _get_data()
 validate_column_lengths(CANONICAL_RISK_PROXY_CONFIG_DATA)
 
 
-CANONICAL_RISK_PROXY_CONFIG_DF = pd.DataFrame(CANONICAL_RISK_PROXY_CONFIG_DATA)
+# Polars, matching riskquant.config.proxy_config's compile pipeline
+# (riskquant.config.proxy_config.compile.compile_proxy_topology_from_df
+# takes a pl.DataFrame, not pandas -- see RQ-AUD-018).
+CANONICAL_RISK_PROXY_CONFIG_DF: pl.DataFrame = pl.DataFrame(
+    CANONICAL_RISK_PROXY_CONFIG_DATA
+)
 
 
 def _debug_print() -> None:
     from riskquant.utils.printer import (
         print_calling_file,
-        print_df,
         print_dict,
         print_success_message,
     )
@@ -90,13 +105,15 @@ def _debug_print() -> None:
     print_dict(CANONICAL_RISK_PROXY_CONFIG_DATA)
 
     print("\nAs DataFrame:")
-    print_df(CANONICAL_RISK_PROXY_CONFIG_DF, index=False, float_format="{:.2f}")
+    print(CANONICAL_RISK_PROXY_CONFIG_DF)
 
     print_success_message(add_space_before=False)
 
 
 if __name__ == "__main__":
     from pathlib import Path
+
+    import xlsxwriter
 
     _debug_print()
 
@@ -109,12 +126,16 @@ if __name__ == "__main__":
         "canonical_examples",
         "canonical_proxy_config.xlsx",
     )
+    fp.parent.mkdir(parents=True, exist_ok=True)
 
     print(fp)
-    # Save the dict of dataframes into an Excel file for manual inspection, if desired.
-    with pd.ExcelWriter(fp) as writer:
-        CANONICAL_RISK_PROXY_CONFIG_DF.to_excel(
-            writer,
-            sheet_name="proxy_config",
-            index=False,
-        )
+    # Save to a single-sheet Excel workbook for manual inspection, if
+    # desired, via Polars' write_excel (see
+    # ingest_fixtures/config/risk_static_config/canonical_risk_static_config.py
+    # for the equivalent multi-sheet pattern, and RQ-AUD-018 for why this
+    # is Polars rather than pandas.ExcelWriter).
+    workbook = xlsxwriter.Workbook(str(fp))
+    CANONICAL_RISK_PROXY_CONFIG_DF.write_excel(
+        workbook=workbook, worksheet="proxy_config"
+    )
+    workbook.close()

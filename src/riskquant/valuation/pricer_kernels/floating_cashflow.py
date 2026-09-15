@@ -12,12 +12,13 @@ from riskquant.jit import (
     _F64_2D_C,
     _I8_1D_C,
     _I32_1D_C,
+    _NB_VOID,
     parallel_njit,
 )
 
 
 @parallel_njit(
-    nb.void(
+    _NB_VOID(
         # OUTPUT
         _F64_2D_C,  # out
         # MARKET DATA

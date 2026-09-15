@@ -13,11 +13,16 @@ import numba as nb  # type: ignore
 import numpy as np
 import numpy.typing as npt
 
-from riskquant.jit import _F64_1D_C, _F64_2D_C, parallel_njit
+from riskquant.jit import (
+    _F64_1D_C,
+    _F64_2D_C,
+    _NB_VOID,
+    parallel_njit,
+)
 
 
 @parallel_njit(
-    nb.void(
+    _NB_VOID(
         _F64_2D_C,
         _F64_2D_C,
         _F64_1D_C,

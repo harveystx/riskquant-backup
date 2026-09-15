@@ -71,7 +71,7 @@ def _materialize_string_col(
     - RF mapping
     - batch building
     """
-    df[col] = df[col].astype("string", copy=False)
+    df[col] = df[col].astype("string")
 
 
 def _materialize_float_col(
@@ -89,7 +89,7 @@ def _materialize_float_col(
     except Exception as e:
         raise TypeError(f"Failed to materialize float column '{col}': {e}") from e
 
-    df[col] = numeric_ser.astype(np.float64, copy=False)
+    df[col] = numeric_ser.astype(np.float64)
 
 
 def _materialize_int_col(
@@ -135,7 +135,7 @@ def _materialize_int_col(
         bad = ser.iloc[np.flatnonzero(~valid)[:10]].tolist()
         raise TypeError(f"Integer column '{col}' contains non-integer values:\n{bad}")
 
-    df[col] = numeric_ser.astype(np.int64, copy=False)
+    df[col] = numeric_ser.astype(np.int64)
 
 
 def _materialize_nullable_int_col(
@@ -174,7 +174,7 @@ def _materialize_nullable_int_col(
             f"Nullable-int column '{col}' contains non-integer values:\n{bad}"
         )
 
-    df[col] = numeric_ser.astype("Int64", copy=False)
+    df[col] = numeric_ser.astype(np.int64)
 
 
 def _materialize_flag_col(
@@ -235,7 +235,7 @@ def _materialize_flag_col(
         bad = ser[~valid].iloc[:10].tolist()
         raise ValueError(f"Flag column '{col}' contains invalid values:\n{bad}")
 
-    df[col] = numeric_ser.astype(np.float64, copy=False)
+    df[col] = numeric_ser.astype(np.float64)
 
 
 def _materialize_date_col(

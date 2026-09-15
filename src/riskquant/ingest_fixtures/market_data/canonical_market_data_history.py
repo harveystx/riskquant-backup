@@ -19,8 +19,8 @@ The output matrix is allocated F-contiguous so a downstream caller doing
 column-major time-series access reads cache-aligned. `np.cumsum(..., out=...)`
 and `np.exp(..., out=...)` mutate the buffer in place; no intermediates.
 
-Output dtype is `float32` to match `build_risk_factor_matrix_from_df`'s
-default — generating in float64 would just be downcast immediately.
+Output dtype is `float64` to match `build_risk_factor_matrix_from_df`'s
+default and the historical-shock kernel's pinned `float64` values contract.
 
 TODO: split this file into `_parts/{nodes,curves,surfaces}.py` once the
 universe count grows past comfort. The dynamic-build pattern makes the split
@@ -61,11 +61,18 @@ _logger: logging.Logger = logging.getLogger(__name__)
 # Time series setup
 # ==============================================================================
 
-HISTORICAL_DATES: Final[npt.NDArray[np.datetime64]] = np.sort(
-    np.busday_offset(
-        CANONICAL_AS_OF_DATE,
-        -np.arange(CANONICAL_HISTORY_BUSINESS_DAYS - 1, -1, -1),
-    )
+HISTORICAL_DATES: Final[npt.NDArray[np.datetime64]] = np.fromiter(
+    (
+        np.busday_offset(
+            CANONICAL_AS_OF_DATE,
+            int(offset),
+        )
+        for offset in range(
+            -(CANONICAL_HISTORY_BUSINESS_DAYS - 1),
+            1,
+        )
+    ),
+    dtype="datetime64[D]",
 )
 
 
@@ -237,14 +244,14 @@ def _debug_print() -> None:
     )
 
     print_df(
-        CANONICAL_HISTORICAL_MARKET_DATA_DF.iloc[:, :5].head(5),
+        CANONICAL_HISTORICAL_MARKET_DATA_DF.head(5).transpose(),
         title="Head (First 5 Factors)",
         index=True,
         float_format="{:.4f}",
     )
     print_df(
-        CANONICAL_HISTORICAL_MARKET_DATA_DF.iloc[:, :5].tail(5),
-        title="Tail (First 5 Factors)",
+        CANONICAL_HISTORICAL_MARKET_DATA_DF.tail(5).transpose(),
+        title="Tail (Last 5 Factors)",
         index=True,
         float_format="{:.4f}",
     )

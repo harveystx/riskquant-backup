@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.ingest_fixtures.schemas import RiskStaticConfigSurfaceMeta
 from riskquant.ingest_fixtures.utils import validate_column_lengths
@@ -34,12 +34,12 @@ _CANONICAL_SURFACE_IDS = np.arange(
     500_000_000 + _NUM_CANONICAL_SURFACES * 1000,
     step=1000,
     dtype=int,
-)
+).tolist()
 
 
 def _get_data() -> RiskStaticConfigSurfaceMeta:
     return {
-        "surface_id": list(_CANONICAL_SURFACE_IDS),
+        "surface_id": _CANONICAL_SURFACE_IDS,
         "surface_name": CANONICAL_SURFACE_NAMES,
         "quote_ccy": [
             "USD",
@@ -86,8 +86,31 @@ def _get_data() -> RiskStaticConfigSurfaceMeta:
             "FLAT",
             "FLAT",
         ],
-        "spot_roll_rule_name": [
-            "NEXT_MONTH",  # OFFSET_M surface requires roll rule
+        # Each surface owns its X-axis tenor-resolution convention directly,
+        # exactly as curve_meta does. Only the method's required parameter is
+        # populated; the rest are None.
+        "roll_method": [
+            "CALENDAR_PERIOD",  # OFFSET_M surface: monthly calendar roll
+            None,  # LABEL FX vol surface
+            None,  # LABEL equity vol surface
+        ],
+        "anchor_offset": [
+            1,  # spot is next month
+            None,
+            None,
+        ],
+        "roll_month": [
+            None,
+            None,
+            None,
+        ],
+        "roll_day": [
+            None,
+            None,
+            None,
+        ],
+        "fh_bh_mmdd": [
+            None,
             None,
             None,
         ],
@@ -113,13 +136,12 @@ CANONICAL_SURFACE_META_DATA: RiskStaticConfigSurfaceMeta = _get_data()
 
 validate_column_lengths(CANONICAL_SURFACE_META_DATA)
 
-_CANONICAL_SURFACE_META_DF = pd.DataFrame(CANONICAL_SURFACE_META_DATA)
+_CANONICAL_SURFACE_META_DF = pl.DataFrame(CANONICAL_SURFACE_META_DATA)
 
 
 def _debug_print() -> None:
     from riskquant.utils.printer import (
         print_calling_file,
-        print_df,
         print_dict,
         print_success_message,
     )
@@ -128,11 +150,8 @@ def _debug_print() -> None:
 
     print_dict(CANONICAL_SURFACE_META_DATA, title="Canonical Surface Meta Dictionary")
 
-    print_df(
-        _CANONICAL_SURFACE_META_DF.T,
-        index=True,
-        title="Canonical Surface Meta DataFrame (Transposed)",
-    )
+    print("Canonical Surface Meta DataFrame (Transposed):")
+    print(_CANONICAL_SURFACE_META_DF.transpose(include_header=True))
 
     print_success_message(add_space_before=False)
 

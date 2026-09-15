@@ -5,10 +5,13 @@ Single entry-point for building a RiskStaticConfig from source data.
 Pipeline:
     dict_of_dfs  ->  validate  ->  compile (typed scalars)  ->  RiskStaticConfig
 
-The 7 (+ ccy + spot_roll_rule + holiday_calendars = 10) required sheets are:
-    ccy, holiday_calendars, spot_roll_rule,
+The 7 required sheets are:
+    ccy, holiday_calendars,
     node_meta, curve_meta, curve_point_meta,
     surface_meta, surface_point_meta.
+
+There is no spot_roll_rule sheet: each curve / surface owns its
+tenor-resolution convention directly.
 
 All system-defined taxonomy (asset class, unit, shift, interp/extrap,
 x/y axis kind, roll method, discount basis) lives in
@@ -21,10 +24,12 @@ Nothing in this module is imported by the valuation or simlab packages.
 from __future__ import annotations
 
 import math
+from datetime import date
 from pathlib import Path
+from typing import cast
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.config.static_config.loader import (
     load_risk_static_config_xlsx_into_dict,
@@ -35,7 +40,6 @@ from riskquant.config.static_config.schema_objects import (
     CurvePointMeta,
     HolidayCalendar,
     NodeMeta,
-    SpotRollRule,
     SurfaceMeta,
     SurfacePointMeta,
 )
@@ -50,22 +54,23 @@ from riskquant.constants import DATE_EPOCH
 # Deliberately thin — no business logic, just safe type coercion.
 
 
-def _iter(df: pd.DataFrame) -> list[dict]:
+def _iter(df: pl.DataFrame) -> list[dict]:
     """
     Materialize a DataFrame into plain dicts with None for missing values.
 
-    Per-column conversion avoids .where(..., None), which would force
-    every column to object dtype.
+    Per-column conversion avoids forcing every column to a lowest-common
+    Python object type; each column keeps its native dtype until the final
+    per-row dict assembly.
     """
-    if df is None or df.empty:
+    if df is None or df.is_empty():
         return []
 
     cols: dict[str, list] = {}
     for col in df.columns:
-        lst = df[col].tolist()
+        series = df[col]
+        lst = series.to_list()
         cols[col] = [
-            None if (v is pd.NA or (isinstance(v, float) and v != v)) else v
-            for v in lst
+            None if (v is None or (isinstance(v, float) and v != v)) else v for v in lst
         ]
     keys = list(cols.keys())
     return [
@@ -89,18 +94,44 @@ def _opt_str(v: object, *, upper: bool = False) -> str | None:
     return s.upper() if upper else s
 
 
+def _require_integral(v: float) -> int:
+    """Return v as int iff it is integral; raise otherwise. No silent truncation."""
+    if not v.is_integer():
+        raise ValueError(
+            f"Expected an integral numeric value, got {v!r}. "
+            f"Non-integral values are rejected, not truncated."
+        )
+    return int(v)
+
+
 def _int(v: object) -> int:
     if v is None:
         raise ValueError("Expected a non-null int cell, got None.")
-    return int(v)  # type: ignore[arg-type]
+    if isinstance(v, bool):
+        raise ValueError(f"Expected an int cell, got bool {v!r}.")
+    if isinstance(v, float):
+        # An Excel numeric cell materialises as float; accept only when it is
+        # exactly integral (1.0 -> 1) and reject 1.5 rather than truncate it.
+        return _require_integral(v)
+    # `v` is a raw materialised cell value (object) by construction -- the
+    # boundary genuinely cannot narrow it further. `cast` documents that the
+    # runtime behaviour is unchanged: `int(v)` still raises naturally on a
+    # non-numeric value. Narrower than a blanket suppression, which
+    # copilot-instructions.md §16 prohibits. (RQ-AUD-021.)
+    return int(cast("int | str", v))
 
 
 def _opt_int(v: object) -> int | None:
     if v is None:
         return None
-    if isinstance(v, float) and math.isnan(v):
-        return None
-    return int(v)  # type: ignore[arg-type]
+    if isinstance(v, bool):
+        raise ValueError(f"Expected an int cell, got bool {v!r}.")
+    if isinstance(v, float):
+        if math.isnan(v):
+            return None
+        return _require_integral(v)
+    # See _int above: cast documents the boundary, not a behaviour change.
+    return int(cast("int | str", v))
 
 
 def _bool(v: object) -> bool:
@@ -123,7 +154,7 @@ def _bool(v: object) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _compile_ccy(df: pd.DataFrame) -> dict[str, Ccy]:
+def _compile_ccy(df: pl.DataFrame) -> dict[str, Ccy]:
     out: dict[str, Ccy] = {}
     for r in _iter(df):
         name = _str(r["ccy_name"], upper=True)
@@ -131,41 +162,35 @@ def _compile_ccy(df: pd.DataFrame) -> dict[str, Ccy]:
     return out
 
 
-def _compile_holiday_calendars(df: pd.DataFrame) -> dict[str, HolidayCalendar]:
+def _compile_holiday_calendars(df: pl.DataFrame) -> dict[str, HolidayCalendar]:
     out: dict[str, HolidayCalendar] = {}
-    if df is None or df.empty:
+    if df is None or df.is_empty():
         return out
 
-    epoch_ts = pd.Timestamp(DATE_EPOCH)
-    dt_series = pd.to_datetime(df["holiday_date"], format="%Y-%m-%d", errors="raise")
-    work = df.copy()
-    work["_ord"] = (dt_series - epoch_ts).dt.days.astype(np.int32)
+    epoch = DATE_EPOCH if isinstance(DATE_EPOCH, date) else date(1970, 1, 1)
 
-    for cal_name, group in work.groupby("holiday_calendar_name"):
+    holiday_date = df["holiday_date"]
+    if holiday_date.dtype in (pl.Date, pl.Datetime):
+        date_col = holiday_date.cast(pl.Date)
+    else:
+        # Raw fixture / xlsx string cells: parse explicitly rather than
+        # relying on an implicit engine-specific date inference.
+        date_col = holiday_date.cast(pl.Utf8).str.strptime(
+            pl.Date, format="%Y-%m-%d", strict=True
+        )
+
+    ord_col = (date_col - epoch).dt.total_days().cast(pl.Int32)
+    work = df.with_columns(ord_col.alias("_ord"))
+
+    for (cal_name,), group in work.group_by(["holiday_calendar_name"]):
         out[str(cal_name)] = HolidayCalendar(
             holiday_calendar_name=str(cal_name),
-            holiday_dates_ord=np.sort(group["_ord"].unique().astype(np.int32)),
+            holiday_dates_ord=np.sort(group["_ord"].unique().to_numpy()),
         )
     return out
 
 
-def _compile_spot_roll_rule(df: pd.DataFrame) -> dict[str, SpotRollRule]:
-    out: dict[str, SpotRollRule] = {}
-    for r in _iter(df):
-        name = _str(r["rule_name"], upper=True)
-        out[name] = SpotRollRule(
-            rule_name=name,
-            roll_method=_str(r["roll_method"], upper=True),
-            offset_in_tenor_units=_int(r["offset_in_tenor_units"]),
-            roll_month=_opt_int(r.get("roll_month")),
-            roll_day=_opt_int(r.get("roll_day")),
-            fh_bh_mmdd=_opt_str(r.get("fh_bh_mmdd")),
-            post_roll_shift=_int(r["post_roll_shift"]),
-        )
-    return out
-
-
-def _compile_node_meta(df: pd.DataFrame) -> dict[int, NodeMeta]:
+def _compile_node_meta(df: pl.DataFrame) -> dict[int, NodeMeta]:
     out: dict[int, NodeMeta] = {}
     for r in _iter(df):
         node_id = _int(r["node_id"])
@@ -183,7 +208,7 @@ def _compile_node_meta(df: pd.DataFrame) -> dict[int, NodeMeta]:
     return out
 
 
-def _compile_curve_meta(df: pd.DataFrame) -> dict[int, CurveMeta]:
+def _compile_curve_meta(df: pl.DataFrame) -> dict[int, CurveMeta]:
     out: dict[int, CurveMeta] = {}
     for r in _iter(df):
         curve_id = _int(r["curve_id"])
@@ -199,7 +224,11 @@ def _compile_curve_meta(df: pd.DataFrame) -> dict[int, CurveMeta]:
             x_axis_kind=_str(r["x_axis_kind"], upper=True),
             x_interp_method=_str(r["x_interp_method"], upper=True),
             x_extrap_method=_str(r["x_extrap_method"], upper=True),
-            spot_roll_rule_name=_opt_str(r.get("spot_roll_rule_name"), upper=True),
+            roll_method=_opt_str(r.get("roll_method"), upper=True),
+            anchor_offset=_opt_int(r.get("anchor_offset")),
+            roll_month=_opt_int(r.get("roll_month")),
+            roll_day=_opt_int(r.get("roll_day")),
+            fh_bh_mmdd=_opt_str(r.get("fh_bh_mmdd")),
             discount_basis=_str(r["discount_basis"], upper=True),
             is_default_discount_for_ccy=_bool(r.get("is_default_discount_for_ccy")),
         )
@@ -207,7 +236,7 @@ def _compile_curve_meta(df: pd.DataFrame) -> dict[int, CurveMeta]:
 
 
 def _compile_curve_point_meta(
-    df: pd.DataFrame,
+    df: pl.DataFrame,
     curve_meta: dict[int, CurveMeta],
 ) -> dict[int, CurvePointMeta]:
     out: dict[int, CurvePointMeta] = {}
@@ -223,7 +252,7 @@ def _compile_curve_point_meta(
     return out
 
 
-def _compile_surface_meta(df: pd.DataFrame) -> dict[int, SurfaceMeta]:
+def _compile_surface_meta(df: pl.DataFrame) -> dict[int, SurfaceMeta]:
     out: dict[int, SurfaceMeta] = {}
     for r in _iter(df):
         surface_id = _int(r["surface_id"])
@@ -239,7 +268,11 @@ def _compile_surface_meta(df: pd.DataFrame) -> dict[int, SurfaceMeta]:
             x_axis_kind=_str(r["x_axis_kind"], upper=True),
             x_interp_method=_str(r["x_interp_method"], upper=True),
             x_extrap_method=_str(r["x_extrap_method"], upper=True),
-            spot_roll_rule_name=_opt_str(r.get("spot_roll_rule_name"), upper=True),
+            roll_method=_opt_str(r.get("roll_method"), upper=True),
+            anchor_offset=_opt_int(r.get("anchor_offset")),
+            roll_month=_opt_int(r.get("roll_month")),
+            roll_day=_opt_int(r.get("roll_day")),
+            fh_bh_mmdd=_opt_str(r.get("fh_bh_mmdd")),
             y_axis_kind=_str(r["y_axis_kind"], upper=True),
             y_interp_method=_str(r["y_interp_method"], upper=True),
             y_extrap_method=_str(r["y_extrap_method"], upper=True),
@@ -248,7 +281,7 @@ def _compile_surface_meta(df: pd.DataFrame) -> dict[int, SurfaceMeta]:
 
 
 def _compile_surface_point_meta(
-    df: pd.DataFrame,
+    df: pl.DataFrame,
     surface_meta: dict[int, SurfaceMeta],
 ) -> dict[int, SurfacePointMeta]:
     out: dict[int, SurfacePointMeta] = {}
@@ -271,7 +304,7 @@ def _compile_surface_point_meta(
 
 
 def compile_risk_static_config_from_dict_of_dfs(
-    dict_of_dfs: dict[str, pd.DataFrame],
+    dict_of_dfs: dict[str, pl.DataFrame],
 ) -> RiskStaticConfig:
     """
     Validate and compile a dict of DataFrames into a RiskStaticConfig.
@@ -281,12 +314,12 @@ def compile_risk_static_config_from_dict_of_dfs(
     dict_of_dfs
         Sheet-name -> DataFrame produced by the loader. All 8 required
         sheets must be present and well-formed; see REQUIRED_SHEETS in
-        validate.py.
+        validate.py (7 tables).
 
     Returns
     -------
     RiskStaticConfig
-        Fully compiled, Pandas-free runtime config with every derived
+        Fully compiled, dataframe-free runtime config with every derived
         index already built.
     """
     validate_static_config_dfs(dict_of_dfs)
@@ -295,7 +328,6 @@ def compile_risk_static_config_from_dict_of_dfs(
     holiday_calendars_dict = _compile_holiday_calendars(
         dict_of_dfs["holiday_calendars"]
     )
-    spot_roll_rule_dict = _compile_spot_roll_rule(dict_of_dfs["spot_roll_rule"])
     node_meta_dict = _compile_node_meta(dict_of_dfs["node_meta"])
     curve_meta_dict = _compile_curve_meta(dict_of_dfs["curve_meta"])
     curve_point_meta_dict = _compile_curve_point_meta(
@@ -309,7 +341,6 @@ def compile_risk_static_config_from_dict_of_dfs(
     return RiskStaticConfig(
         ccy_dict=ccy_dict,
         holiday_calendars_dict=holiday_calendars_dict,
-        spot_roll_rule_dict=spot_roll_rule_dict,
         node_meta_dict=node_meta_dict,
         curve_meta_dict=curve_meta_dict,
         curve_point_meta_dict=curve_point_meta_dict,
@@ -325,7 +356,7 @@ def compile_risk_static_config_from_xlsx(path: str | Path) -> RiskStaticConfig:
     Parameters
     ----------
     path
-        Path to the Excel workbook with the 8 required sheets.
+        Path to the Excel workbook with the 7 required sheets.
 
     Returns
     -------

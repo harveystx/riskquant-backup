@@ -30,62 +30,84 @@ from dataclasses import dataclass, field
 import numba as nb  # type: ignore[import-untyped]
 import numpy as np
 
+from riskquant.constants import EWMA_DECAY_FACTOR, MAX_EWMA_VOL_RATIO
 from riskquant.jit import (
     _F32_2D_C,
     _F32_2D_F,
+    _F64_2D_C,
     _F64_2D_F,
-    _I32_1D_C,
     _I8_1D_C,
+    _I32_1D_C,
+    _NB_INT64,
+    _NB_VOID,
     parallel_njit,
 )
-from riskquant.constants import EWMA_DECAY_FACTOR, MAX_EWMA_VOL_RATIO
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.market_data.risk_factors.shift_types import (
+    SHIFT_ABSOLUTE_BASE_RETURN_ID,
     SHIFT_DIFFERENCE_ID,
     SHIFT_LOG_RETURN_ID,
+    SHIFT_NO_SHIFT_ID,
     SHIFT_SIMPLE_RETURN_ID,
 )
+from riskquant.simlab.builder.shift_domain import validate_shift_domain
 from riskquant.simlab.builder.shock_universe import build_shock_universe
 from riskquant.simlab.scenarios.base import (
     ScenarioGenerator,
     ScenarioSetBatch,
+    require_float64_values,
+    require_positive_int,
 )
 from riskquant.simlab.scenarios.core_math.ar1_filter import kernel_ar1_residuals
 from riskquant.simlab.scenarios.core_math.ewma_volatility import (
     kernel_ewma_vol_ratios_from_residuals,
 )
 
-
-
 # =========================================================================
 # ZERO-ALLOCATION KERNEL
 # =========================================================================
 
 
-@parallel_njit([
-    nb.void(
-        _F64_2D_F,  # residuals       (T, K_req) F-contig
-        _F64_2D_F,  # vol_ratios      (T, K_req) F-contig
-        _I32_1D_C,  # cols            (K_req,) — kept for shape parity / debug
-        _I8_1D_C,  # shift_types     (K_req,)
-        _I32_1D_C,  # inv_perm        (K_req,)
-        nb.int64,  # t_start
-        nb.int64,  # h
-        nb.int64,  # B
-        _F32_2D_F,  # out             (B, K_req) F-contig
-    ),
-    nb.void(
-        _F64_2D_F,  # residuals       (T, K_req) F-contig
-        _F64_2D_F,  # vol_ratios      (T, K_req) F-contig
-        _I32_1D_C,  # cols            (K_req,) — kept for shape parity / debug
-        _I8_1D_C,  # shift_types     (K_req,)
-        _I32_1D_C,  # inv_perm        (K_req,)
-        nb.int64,  # t_start
-        nb.int64,  # h
-        nb.int64,  # B
-        _F32_2D_C,  # out             (B, K_req) F-contig
-    ),
-])
+@parallel_njit(
+    [
+        _NB_VOID(
+            _F64_2D_F,  # residuals       (T, K_req) F-contig
+            _F64_2D_F,  # vol_ratios      (T, K_req) F-contig
+            _I32_1D_C,  # cols            (K_req,) — kept for shape parity / debug
+            _I8_1D_C,  # shift_types     (K_req,)
+            _I32_1D_C,  # inv_perm        (K_req,)
+            _NB_INT64,  # t_start
+            _NB_INT64,  # h
+            _NB_INT64,  # B
+            _F32_2D_F,  # out             (B, K_req) F-contig
+        ),
+        _NB_VOID(
+            _F64_2D_F,  # residuals       (T, K_req) F-contig
+            _F64_2D_F,  # vol_ratios      (T, K_req) F-contig
+            _I32_1D_C,  # cols            (K_req,) — kept for shape parity / debug
+            _I8_1D_C,  # shift_types     (K_req,)
+            _I32_1D_C,  # inv_perm        (K_req,)
+            _NB_INT64,  # t_start
+            _NB_INT64,  # h
+            _NB_INT64,  # B
+            _F32_2D_C,  # out             (B, K_req) F-contig
+        ),
+        # K_req == 1: residuals/vol_ratios are (T, 1) and out is (B, 1); all three
+        # are C=F ambiguous and resolve to 'C'. Same class as D008 (single-column
+        # f64 inputs alongside the already-handled single-row f32 output).
+        _NB_VOID(
+            _F64_2D_C,  # residuals       (T, 1) C-contig
+            _F64_2D_C,  # vol_ratios      (T, 1) C-contig
+            _I32_1D_C,  # cols            (1,)
+            _I8_1D_C,  # shift_types     (1,)
+            _I32_1D_C,  # inv_perm        (1,)
+            _NB_INT64,  # t_start
+            _NB_INT64,  # h
+            _NB_INT64,  # B
+            _F32_2D_C,  # out             (B, 1) C-contig
+        ),
+    ]
+)
 def _kernel_fused_filtered_h_day_shock(
     residuals,
     vol_ratios,
@@ -104,10 +126,17 @@ def _kernel_fused_filtered_h_day_shock(
     for k in nb.prange(k_cols):
         st = shift_types[k]
         out_col = inv_perm[k]
+        out_col_vals = out[:, out_col]
+
+        if st == SHIFT_NO_SHIFT_ID:
+            # Held fixed: short-circuit to zero shock WITHOUT reading the
+            # residual / vol-ratio inputs.
+            for b in range(batch_len):
+                out_col_vals[b] = np.float32(0.0)
+            continue
 
         col_res = residuals[:, k]
         col_vols = vol_ratios[:, k]
-        out_col_vals = out[:, out_col]
 
         base_t = t_start - h + 1
 
@@ -137,6 +166,19 @@ def _kernel_fused_filtered_h_day_shock(
                     t1 = path_start + step
                     cum_diff += col_res[t1] * col_vols[t1]
                 out_col_vals[b] = np.float32(cum_diff)
+
+        elif st == SHIFT_ABSOLUTE_BASE_RETURN_ID:
+            # Sign-robust SIMPLE_RETURN: aggregate the vol-scaled residuals
+            # multiplicatively (identical to the SIMPLE branch, fed
+            # absolute-base residuals) so positive levels reduce to SIMPLE
+            # exactly, for every horizon.
+            for b in range(batch_len):
+                cum_ret = 1.0
+                path_start = base_t + b
+                for step in range(h):
+                    t1 = path_start + step
+                    cum_ret *= 1.0 + col_res[t1] * col_vols[t1]
+                out_col_vals[b] = np.float32(cum_ret - 1.0)
 
 
 # =========================================================================
@@ -169,6 +211,10 @@ class FilteredHistoricalGenerator(ScenarioGenerator):
     _cache_signature: tuple | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        require_float64_values(self.matrix.values)
+        object.__setattr__(
+            self, "horizon", require_positive_int(self.horizon, "horizon")
+        )
         if self.matrix.values.shape[0] < 3:
             raise ValueError("History too short for EWMA calculation.")
         s_total = self.matrix.values.shape[0] - self.horizon
@@ -240,6 +286,12 @@ class FilteredHistoricalGenerator(ScenarioGenerator):
             available_factor_ids=self.matrix.factor_ids,
         )
         plan = shock_universe.compute_plan
+        validate_shift_domain(
+            values=self.matrix.values,
+            cols_sorted=plan.cols_sorted,
+            shift_type_ids=plan.shift_types_sorted,
+            factor_ids=self.matrix.factor_ids,
+        )
         k_req = plan.cols_sorted.shape[0]
 
         self._ensure_filter_caches(plan.cols_sorted, plan.shift_types_sorted)

@@ -13,7 +13,7 @@ Implementation
   exposes a view sized to the current batch.
 - F-contiguous shocks layout — the apply-shocks kernel reads down
   columns with unit stride.
-- Pinned `nb.void(...)` signature, positional kernel call.
+- Pinned `_NB_VOID(...)` signature, positional kernel call.
 """
 
 from __future__ import annotations
@@ -28,52 +28,73 @@ import numpy as np
 from riskquant.jit import (
     _F32_2D_C,
     _F32_2D_F,
+    _F64_2D_C,
     _F64_2D_F,
-    _I32_1D_C,
     _I8_1D_C,
+    _I32_1D_C,
+    _NB_INT64,
+    _NB_VOID,
     parallel_njit,
 )
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.market_data.risk_factors.shift_types import (
+    SHIFT_ABSOLUTE_BASE_RETURN_ID,
     SHIFT_DIFFERENCE_ID,
     SHIFT_LOG_RETURN_ID,
+    SHIFT_NO_SHIFT_ID,
     SHIFT_SIMPLE_RETURN_ID,
 )
+from riskquant.simlab.builder.shift_domain import validate_shift_domain
 from riskquant.simlab.builder.shock_universe import build_shock_universe
 from riskquant.simlab.scenarios.base import (
     ScenarioGenerator,
     ScenarioSetBatch,
+    require_float64_values,
+    require_positive_int,
 )
-
-
 
 # =========================================================================
 # ZERO-ALLOCATION KERNEL
 # =========================================================================
 
 
-@parallel_njit([
-    nb.void(
-        _F64_2D_F,  # values     (T, K_total) F-contig
-        _I32_1D_C,  # cols       (K_req,)
-        _I8_1D_C,  # shift_types(K_req,)
-        _I32_1D_C,  # inv_perm   (K_req,)
-        nb.int64,  # t_start
-        nb.int64,  # h
-        nb.int64,  # B
-        _F32_2D_F,  # out        (B, K_req) F-contig
-    ),
-    nb.void(
-        _F64_2D_F,  # values     (T, K_total) F-contig
-        _I32_1D_C,  # cols       (K_req,)
-        _I8_1D_C,  # shift_types(K_req,)
-        _I32_1D_C,  # inv_perm   (K_req,)
-        nb.int64,  # t_start
-        nb.int64,  # h
-        nb.int64,  # B
-        _F32_2D_C,  # out        (B, K_req) F-contig
-    ),
-])
+@parallel_njit(
+    [
+        _NB_VOID(
+            _F64_2D_F,  # values     (T, K_total) F-contig
+            _I32_1D_C,  # cols       (K_req,)
+            _I8_1D_C,  # shift_types(K_req,)
+            _I32_1D_C,  # inv_perm   (K_req,)
+            _NB_INT64,  # t_start
+            _NB_INT64,  # h
+            _NB_INT64,  # B
+            _F32_2D_F,  # out        (B, K_req) F-contig
+        ),
+        _NB_VOID(
+            _F64_2D_F,  # values     (T, K_total) F-contig
+            _I32_1D_C,  # cols       (K_req,)
+            _I8_1D_C,  # shift_types(K_req,)
+            _I32_1D_C,  # inv_perm   (K_req,)
+            _NB_INT64,  # t_start
+            _NB_INT64,  # h
+            _NB_INT64,  # B
+            _F32_2D_C,  # out        (B, K_req) F-contig
+        ),
+        # Single-factor matrix (K_total == 1 -> K_req == 1): values is (T, 1) and
+        # out is (B, 1); both C=F ambiguous and resolve to 'C'. Same class as
+        # D008 (single-column f64 input; single-row f32 output already handled).
+        _NB_VOID(
+            _F64_2D_C,  # values     (T, 1) C-contig
+            _I32_1D_C,  # cols       (1,)
+            _I8_1D_C,  # shift_types(1,)
+            _I32_1D_C,  # inv_perm   (1,)
+            _NB_INT64,  # t_start
+            _NB_INT64,  # h
+            _NB_INT64,  # B
+            _F32_2D_C,  # out        (B, 1) C-contig
+        ),
+    ]
+)
 def _kernel_fused_h_day_shock(
     values,
     cols,
@@ -99,7 +120,11 @@ def _kernel_fused_h_day_shock(
         t1 = t_start
         t0 = t_start - h
 
-        if st == SHIFT_LOG_RETURN_ID:
+        if st == SHIFT_NO_SHIFT_ID:
+            # Held fixed: zero shock for every scenario.
+            for b in range(batch_len):
+                out_col_vals[b] = np.float32(0.0)
+        elif st == SHIFT_LOG_RETURN_ID:
             for b in range(batch_len):
                 v1 = col_vals[t1]
                 v0 = col_vals[t0]
@@ -118,6 +143,13 @@ def _kernel_fused_h_day_shock(
                 v1 = col_vals[t1]
                 v0 = col_vals[t0]
                 out_col_vals[b] = np.float32(v1 - v0)
+                t1 += 1
+                t0 += 1
+        elif st == SHIFT_ABSOLUTE_BASE_RETURN_ID:
+            for b in range(batch_len):
+                v1 = col_vals[t1]
+                v0 = col_vals[t0]
+                out_col_vals[b] = np.float32((v1 - v0) / abs(v0))
                 t1 += 1
                 t0 += 1
 
@@ -139,6 +171,10 @@ class HistoricalGenerator(ScenarioGenerator):
     available_factor_ids: np.ndarray = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        require_float64_values(self.matrix.values)
+        object.__setattr__(
+            self, "horizon", require_positive_int(self.horizon, "horizon")
+        )
         s_total = self.matrix.values.shape[0] - self.horizon
         if s_total <= 0:
             raise ValueError(
@@ -166,6 +202,12 @@ class HistoricalGenerator(ScenarioGenerator):
             available_factor_ids=self.matrix.factor_ids,
         )
         plan = shock_universe.compute_plan
+        validate_shift_domain(
+            values=self.matrix.values,
+            cols_sorted=plan.cols_sorted,
+            shift_type_ids=plan.shift_types_sorted,
+            factor_ids=self.matrix.factor_ids,
+        )
         k_req = plan.cols_sorted.shape[0]
 
         # Single pre-allocation for the streaming buffer. Tail batch

@@ -26,7 +26,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.config.enums.container_topology import ContainerTopologyType
 from riskquant.config.proxy_config.schema_objects import ProxyMap
@@ -60,12 +60,12 @@ REQUIRED_COLUMNS: frozenset[str] = frozenset(
 # ============================================================
 
 
-def _check_no_blank_strings(df: pd.DataFrame, col: str) -> None:
+def _check_no_blank_strings(df: pl.DataFrame, col: str) -> None:
     if col not in df.columns:
         return
-    blanks = df[col].astype(str).str.strip() == ""
+    blanks = df[col].cast(pl.Utf8).str.strip_chars() == ""
     if blanks.any():
-        idx = df.index[blanks].tolist()[:10]
+        idx = [i for i, v in enumerate(blanks.to_list()) if v][:10]
         raise ValueError(
             f"proxy_config.{col}: blank string at rows {idx}. "
             "Loader fills null cells with the empty string; the validator "
@@ -78,7 +78,7 @@ def _check_no_blank_strings(df: pd.DataFrame, col: str) -> None:
 # ============================================================
 
 
-def validate_proxy_config_df(df: pd.DataFrame) -> None:
+def validate_proxy_config_df(df: pl.DataFrame) -> None:
     """
     Validate an active-filtered proxy DataFrame.
 
@@ -101,7 +101,7 @@ def validate_proxy_config_df(df: pd.DataFrame) -> None:
     ValueError
         On the first violation encountered, with a descriptive message.
     """
-    if df.empty:
+    if df.is_empty():
         return  # An empty proxy map is valid: no proxies applied.
 
     # --- 1. required columns ---
@@ -113,72 +113,77 @@ def validate_proxy_config_df(df: pd.DataFrame) -> None:
         )
 
     # --- 2. no nulls in required columns ---
-    null_mask = df[list(REQUIRED_COLUMNS)].isnull().any()
-    if null_mask.any():
-        null_cols = null_mask[null_mask].index.tolist()
+    null_counts = {
+        col: df[col].null_count() for col in sorted(REQUIRED_COLUMNS)
+    }
+    null_cols = [col for col, n in null_counts.items() if n > 0]
+    if null_cols:
         raise ValueError(
             f"proxy_config has null values in required column(s): {null_cols}."
         )
 
-    # --- 3. no blank strings (loader fills nulls with "" which would slip past .isnull) ---
+    # --- 3. no blank strings (loader fills nulls with "" which would slip past null checks) ---
     for col in ("proxying_level", "required_name", "proxy_name"):
         _check_no_blank_strings(df, col)
 
     # --- 4. proxying_level domain ---
     # Coerce to uppercase before set membership (loader leaves case as-is).
-    level_norm = df["proxying_level"].astype(str).str.upper()
-    invalid = ~level_norm.isin(VALID_PROXYING_LEVELS)
+    level_norm = df["proxying_level"].cast(pl.Utf8).str.to_uppercase()
+    invalid = ~level_norm.is_in(list(VALID_PROXYING_LEVELS))
     if invalid.any():
-        bad = sorted(level_norm[invalid].unique().tolist())
+        bad = sorted(set(level_norm.filter(invalid).to_list()))
         raise ValueError(
             f"proxy_config has invalid proxying_level value(s): {bad}.\n"
             f"Must be one of: {sorted(VALID_PROXYING_LEVELS)} (case-insensitive)."
         )
 
     # --- 5. vol_scaling_factor range ---
-    scale = df["vol_scaling_factor"].astype(np.float64)
+    scale = df["vol_scaling_factor"].cast(pl.Float64)
+    scale_np = scale.to_numpy()
     bad_scale = (
-        ~np.isfinite(scale.to_numpy())
-        | (scale <= _VOL_SCALE_MIN_EXCLUSIVE)
-        | (scale > _VOL_SCALE_MAX_INCLUSIVE)
+        ~np.isfinite(scale_np)
+        | (scale_np <= _VOL_SCALE_MIN_EXCLUSIVE)
+        | (scale_np > _VOL_SCALE_MAX_INCLUSIVE)
     )
     if bad_scale.any():
-        offending = df.loc[
-            bad_scale, ["required_name", "proxy_name", "vol_scaling_factor"]
-        ]
+        offending = df.filter(pl.Series(bad_scale)).select(
+            ["required_name", "proxy_name", "vol_scaling_factor"]
+        )
         raise ValueError(
             f"proxy_config has vol_scaling_factor outside "
             f"({_VOL_SCALE_MIN_EXCLUSIVE}, {_VOL_SCALE_MAX_INCLUSIVE}]:\n"
-            f"{offending.to_string(index=False)}"
+            f"{offending}"
         )
 
     # --- 6. (proxying_level, required_name) composite uniqueness ---
-    work = df.assign(
-        _level=level_norm,
-        _required=df["required_name"].astype(str).str.strip(),
-    )
-    dupes_mask = work.duplicated(subset=["_level", "_required"], keep=False)
-    if dupes_mask.any():
-        offending = df.loc[
-            dupes_mask, ["proxying_level", "required_name", "proxy_name"]
+    work = df.with_columns(
+        [
+            level_norm.alias("_level"),
+            df["required_name"].cast(pl.Utf8).str.strip_chars().alias("_required"),
         ]
+    )
+    dupes_mask = work.select(["_level", "_required"]).is_duplicated()
+    if dupes_mask.any():
+        offending = df.filter(dupes_mask).select(
+            ["proxying_level", "required_name", "proxy_name"]
+        )
         raise ValueError(
             "proxy_config has duplicate (proxying_level, required_name) rows. "
             "A required_name can be proxied at most once per level.\n"
-            f"Conflicting rows:\n{offending.to_string(index=False)}"
+            f"Conflicting rows:\n{offending}"
         )
 
     # --- 7. self-reference ---
     self_ref = (
-        df["required_name"].astype(str).str.strip()
-        == df["proxy_name"].astype(str).str.strip()
+        df["required_name"].cast(pl.Utf8).str.strip_chars()
+        == df["proxy_name"].cast(pl.Utf8).str.strip_chars()
     )
     if self_ref.any():
-        offending = df.loc[self_ref, ["proxying_level", "required_name"]]
+        offending = df.filter(self_ref).select(["proxying_level", "required_name"])
         raise ValueError(
             "proxy_config has self-referencing entries "
             "(required_name == proxy_name):\n"
-            f"{offending.to_string(index=False)}"
+            f"{offending}"
         )
 
 

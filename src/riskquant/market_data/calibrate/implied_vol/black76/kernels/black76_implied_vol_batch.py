@@ -11,7 +11,11 @@ from __future__ import annotations
 import numba as nb
 import numpy as np
 
-from riskquant.jit import _F64_1D_C, parallel_njit
+from riskquant.jit import (
+    _F64_1D_C,
+    _NB_VOID,
+    parallel_njit,
+)
 from riskquant.market_data.calibrate.implied_vol.black76.kernels.black76_implied_vol_scalar import (
     _solver_black76_iv_from_undiscounted_call_prices_brent,
 )
@@ -19,7 +23,7 @@ from riskquant.valuation.pricing_models.black76.model import _black76_fv_vega
 
 
 @parallel_njit(
-    nb.void(
+    _NB_VOID(
         _F64_1D_C,  # forward price
         _F64_1D_C,  # strike
         _F64_1D_C,  # time to expiry

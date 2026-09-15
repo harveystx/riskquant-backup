@@ -95,6 +95,51 @@ def validate_rng(
     return rng
 
 
+def validate_disjoint_tail_counts(
+    n_lower: int,
+    n_upper: int,
+    s: int,
+) -> None:
+    """
+    Validate that discrete lower and upper tail blocks fit disjointly.
+
+    The lower block occupies slots ``0 .. n_lower-1`` and the upper block
+    occupies slots ``s - n_upper .. s-1``. The two blocks tile the scenario
+    space without overlap if and only if ``n_lower + n_upper <= s``. Equality
+    is valid: the blocks exactly fill the ``s`` slots and leave no middle
+    block. A strict inequality leaves a middle block.
+
+    This contract is distinct from the probability-level sum check on
+    ``lower_probability + upper_probability``. Discrete tail sizes derive from
+    ``max(1, ceil(p * s))``, so the ceiling and the ``max(1, ...)`` floor can
+    push ``n_lower + n_upper`` above ``s`` even when the probabilities sum to
+    strictly less than one. ``s`` is known only at transformation time, which
+    is why this check lives here and not in a dataclass ``__post_init__``.
+
+    Parameters
+    ----------
+    n_lower : int
+        Discrete lower tail block size.
+
+    n_upper : int
+        Discrete upper tail block size.
+
+    s : int
+        Number of scenarios, the observation-axis length.
+
+    Raises
+    ------
+    ValueError
+        If ``n_lower + n_upper > s``. The counts are never repaired, clipped,
+        or shrunk; overlap is a hard contract violation.
+    """
+    if n_lower + n_upper > s:
+        raise ValueError(
+            "discretized lower and upper tail sizes overlap; "
+            f"got n_lower={n_lower}, n_upper={n_upper}, S={s}."
+        )
+
+
 # ==============================================================================
 # MATRIX CONTRACTS
 # ==============================================================================
@@ -367,8 +412,7 @@ def validate_marginal_preservation(
 
     if stressed_matrix.shape != base_matrix.shape:
         raise ValueError(
-            f"expected stressed shape {base_matrix.shape}; "
-            f"got {stressed_matrix.shape}."
+            f"expected stressed shape {base_matrix.shape}; got {stressed_matrix.shape}."
         )
 
     return bool(
@@ -416,8 +460,7 @@ def validate_transformation(
 
     if stressed_matrix.shape != base_matrix.shape:
         raise ValueError(
-            f"expected stressed shape {base_matrix.shape}; "
-            f"got {stressed_matrix.shape}."
+            f"expected stressed shape {base_matrix.shape}; got {stressed_matrix.shape}."
         )
 
     permutation_matrix = validate_permutation_matrix(

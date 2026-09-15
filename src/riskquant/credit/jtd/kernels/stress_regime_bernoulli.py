@@ -16,7 +16,7 @@ from riskquant.jit import (
 
 
 @parallel_njit(
-    nb.void(
+    _NB_VOID(
         _F64_2D_C,  # out (N, S)
         _F64_2D_C,  # latent_factors (F, S)
         _F64_2D_C,  # ead (N, S)

@@ -182,455 +182,198 @@ def main(profile: str | None = None):
             rq_project_directory / "scripts",
             # TESTS
             rq_project_directory / "tests",
+            # OTHER
+            rq_project_directory / "pyproject.toml",
         ],
-        "simlab": [
-            rq_src_path / "simlab",
-            rq_src_path / "market_data" / "state.py",
-            rq_src_path / "market_data" / "risk_factors",
-            rq_src_path / "config",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-            rq_src_path / "constants.py",
+        #######
+        # NEW #
+        #######
+        "riskquant_config": [
+            "C:/Users/mharvey/Documents/code/riskquant/scripts/demos/config",
+            "C:/Users/mharvey/Documents/code/riskquant/scripts/solutions/config",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/_arrays.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/enums/asset_classes.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/enums/container_topology.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/enums/discount_basis.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/enums/quote_types.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/enums/roll_methods.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/enums/x_axis_kinds.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/enums/y_axis_kinds.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/namespace.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/proxy_config/compile.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/proxy_config/loader.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/proxy_config/proxy_topology.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/proxy_config/schema_objects.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/proxy_config/validate.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/static_config/compile.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/static_config/loader.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/static_config/schema_objects.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/static_config/static_config.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/static_config/validate.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/constants.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/exceptions.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/market_data/curves/extrap_methods.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/market_data/curves/interp_methods.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/market_data/risk_factors/shift_types.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/utils/printer.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/utils/tenors.py",
+            "C:/Users/mharvey/Documents/code/riskquant/tests/config",
         ],
-        "simlab_reduced": [
-            rq_src_path / "simlab",
-            rq_src_path / "constants.py",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
+        "riskquant_dependence": [
+            "C:/Users/mharvey/Documents/code/riskquant/scripts/demos/dependence",
+            "C:/Users/mharvey/Documents/code/riskquant/scripts/solutions/dependence",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/constants.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/dependence/_kernels/_kendall_tau_b.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/dependence/_kernels/_symmetry.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/dependence/_matrix.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/dependence/contracts.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/dependence/estimators/pearson.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/dependence/taxonomy.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/jit.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/observations/_kernels.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/observations/_validate.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/observations/arrays.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/observations/compile.py",
+            "C:/Users/mharvey/Documents/code/riskquant/tests/dependence",
         ],
-        "simlab_extended": [
-            rq_src_path / "simlab",
-            rq_src_path / "portfolio",
-            rq_src_path / "market_data",
-            rq_src_path / "valuation",
-            rq_src_path / "config",
-            rq_src_path / "constants.py",
-            rq_src_path / "utils",
-            rq_src_path / "pnl" / "results.py",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
+        "riskquant_dependence_stress": [
+            # "C:/Users/mharvey/Documents/code/riskquant/scripts/demos/dependence_stress",
+            # "C:/Users/mharvey/Documents/code/riskquant/scripts/solutions/dependence_stress",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/dependence_stress",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/solutions/dependence_stress",
+            # "C:/Users/mharvey/Documents/code/riskquant/tests/dependence_stress",
         ],
-        "valuation": [
-            rq_src_path / "market_data" / "state.py",
-            rq_src_path / "utils",
-            rq_src_path / "valuation",
-            rq_src_path / "_arrays.py",
-            rq_src_path / "constants.py",
-            rq_src_path / "exceptions.py",
-            rq_src_path / "jit.py",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
+        "riskquant_sensitivities": [
+            # "C:/Users/mharvey/Documents/code/riskquant/scripts/demos/sensitivities",
+            # "C:/Users/mharvey/Documents/code/riskquant/scripts/solutions/sensitivities",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/constants.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/jit.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/market_data/state.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/portfolio/compiled.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/sensitivities/result.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/sensitivities/sensitizer_kernels/spot.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/sensitivities/sensitizer_registry.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/sensitivities/sensitizers/spot.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/solutions/sensitivity_pnl/api.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/universe.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/blocks/_base_block.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/blocks/block_type.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/blocks/spot_block.py",
+            # "C:/Users/mharvey/Documents/code/riskquant/tests/sensitivities",
         ],
-        "pricers": [
-            rq_src_path / "valuation",
-            rq_src_path / "constants.py",
-            rq_project_directory / "scripts" / "demos" / "valuation",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
+        "riskquant_config_static_config": [
+            # "C:/Users/mharvey/Documents/code/riskquant/scripts/demos/config/static_config",
+            # "C:/Users/mharvey/Documents/code/riskquant/scripts/solutions/config/static_config",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/_arrays.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/enums/asset_classes.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/enums/container_topology.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/enums/discount_basis.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/enums/quote_types.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/enums/roll_methods.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/enums/x_axis_kinds.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/enums/y_axis_kinds.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/namespace.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/static_config/compile.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/static_config/loader.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/static_config/schema_objects.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/static_config/static_config.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/static_config/validate.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/constants.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/exceptions.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/market_data/curves/extrap_methods.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/market_data/curves/interp_methods.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/market_data/risk_factors/shift_types.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/utils/printer.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/utils/tenors.py",
+            # "C:/Users/mharvey/Documents/code/riskquant/tests/config/static_config",
         ],
-        "pricer_kernels": [
-            rq_src_path / "valuation" / "kernels",
-            rq_project_directory / "scripts" / "demos" / "valuation",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
+        "riskquant_valuation": [
+            "C:/Users/mharvey/Documents/code/riskquant/scripts/demos/valuation",
+            "C:/Users/mharvey/Documents/code/riskquant/scripts/solutions/valuation",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/_arrays.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/constants.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/jit.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/market_data/state.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/market_data/surfaces/y_axes_types.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/portfolio/compiled.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/blocks/_base_block.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/blocks/block_type.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/blocks/discounted_cashflow_block.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/blocks/spot_block.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/blocks/vanilla_european_option_block.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/blocks/vanilla_forward_block.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricer_kernels/fixed_cashflow.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricer_kernels/floating_cashflow.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricer_kernels/principal_cashflow.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricer_kernels/spot.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricer_kernels/vanilla_european_option.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricer_kernels/vanilla_forward.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricer_registry.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricers/fixed_cashflow.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricers/floating_cashflow.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricers/principal_cashflow.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricers/spot.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricers/vanilla_european_option.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricers/vanilla_forward.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricing_models/black76/kernels.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricing_models/black76/model.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricing_models/math.py",
+            "C:/Users/mharvey/Documents/code/riskquant/tests/valuation",
         ],
-        "config": [
-            rq_src_path / "config",
-            rq_src_path / "utils" / "tenors.py",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
+        "riskquant_valuation_light": [
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/blocks/_base_block.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/blocks/block_type.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/blocks/discounted_cashflow_block.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/blocks/spot_block.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/blocks/vanilla_european_option_block.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/blocks/vanilla_forward_block.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricer_kernels/fixed_cashflow.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricer_kernels/floating_cashflow.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricer_kernels/principal_cashflow.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricer_kernels/spot.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricer_kernels/vanilla_european_option.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricer_kernels/vanilla_forward.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricer_registry.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricers/fixed_cashflow.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricers/floating_cashflow.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricers/principal_cashflow.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricers/spot.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricers/vanilla_european_option.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricers/vanilla_forward.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricing_models/black76/kernels.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricing_models/black76/model.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/pricing_models/math.py",
         ],
-        "config_static": [
-            rq_src_path / "config" / "enums",
-            rq_src_path / "config" / "static_config",
-            rq_src_path / "market_data" / "curves",
-            rq_src_path / "utils" / "tenors.py",
-            rq_src_path / "constants.py",
-            rq_src_path / "exceptions.py",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
+        "riskquant_simlab": [
+            "C:/Users/mharvey/Documents/code/riskquant/scripts/demos/simlab",
+            "C:/Users/mharvey/Documents/code/riskquant/scripts/solutions/simlab",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/_arrays.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/proxy_config/proxy_topology.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/config/static_config/static_config.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/constants.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/jit.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/market_data/assemble.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/market_data/risk_factors/matrix.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/market_data/risk_factors/shift_types.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/market_data/risk_factors/snapshot.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/pnl/results.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/portfolio/compiled.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/proxy_resolver/proxy.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/simlab/builder/shock_universe.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/simlab/scenarios/base.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/simlab/scenarios/core_math/ar1_filter.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/simlab/scenarios/core_math/ewma_volatility.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/simlab/scenarios/core_math/sbb_block_generator.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/simlab/shock_plan/plan.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/simlab/shocks/apply.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/simlab/shocks/shock_kernel.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/universe.py",
+            "C:/Users/mharvey/Documents/code/riskquant/src/riskquant/valuation/engine.py",
+            "C:/Users/mharvey/Documents/code/riskquant/tests/simlab",
         ],
-        "config_proxy": [
-            rq_src_path / "config" / "enums",
-            rq_src_path / "config" / "proxy_config",
-            rq_src_path / "market_data" / "curves",
-            rq_src_path / "utils" / "tenors.py",
-            rq_src_path / "constants.py",
-            rq_src_path / "exceptions.py",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "ce_jtd": [
-            rq_src_path / "portfolio",
-            rq_src_path / "simlab" / "scenarios" / "base.py",
-            rq_src_path / "valuation",
-            rq_src_path / "constants.py",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "ingest": [
-            rq_src_path / "config",
-            # rq_path / "credit",
-            rq_src_path / "ingest_fixtures",
-            rq_src_path / "market_data",
-            rq_src_path / "pnl",
-            rq_src_path / "portfolio",
-            rq_src_path / "proxy_resolver",
-            rq_src_path / "scenario_metrics",
-            rq_src_path / "simlab",
-            rq_src_path / "utils",
-            rq_src_path / "valuation",
-            rq_src_path / "_arrays.py",
-            rq_src_path / "constants.py",
-            rq_src_path / "exceptions.py",
-            rq_src_path / "jit.py",
-            # rq_path / "synthetic_level_generators.py",
-            rq_src_path / "universe.py",
-            # SCRIPTS
-            # base_dir_parent / "scripts" / "demos" / "config",
-            # base_dir_parent / "scripts" / "demos" / "credit",
-            # base_dir_parent / "scripts" / "demos" / "e2e",
-            # base_dir_parent / "scripts" / "demos" / "market_data",
-            # base_dir_parent / "scripts" / "demos" / "misc",
-            # base_dir_parent / "scripts" / "demos" / "simlab",
-            # base_dir_parent / "scripts" / "demos" / "valuation",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "ingest_fixtures": [
-            rq_src_path / "ingest_fixtures",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "ingest_fixtures_market_data": [
-            rq_src_path / "ingest_fixtures" / "config",
-            rq_src_path / "ingest_fixtures" / "market_data",
-            rq_src_path / "market_data",
-            rq_project_directory
-            / "scripts"
-            / "demos"
-            / "market_data"
-            / "risk_factors"
-            / "demo_snapshot.py",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "ingest_fixtures_risk_static_config": [
-            rq_src_path / "ingest_fixtures" / "config" / "risk_static_config",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "risk_quant": [
-            # rq_path / "portfolio" / "ingest" / "schema.py",
-            # rq_path / "portfolio" / "ingest" / "canonicalize.py",
-            # rq_path / "portfolio" / "ingest" / "materialize.py",
-            # rq_path / "portfolio" / "ingest" / "validate.py",
-            # rq_path / "portfolio" / "ingest" / "build.py",
-            rq_src_path / "config",
-            rq_src_path / "ingest_fixtures",
-            rq_src_path / "market_data",
-            rq_src_path / "portfolio",
-            # rq_path / "portfolio" / "ingest",
-            # rq_path / "portfolio" / "blocks.py",
-            # rq_path / "portfolio" / "compilers.py",
-            # rq_path / "portfolio" / "instruments.py",
-            rq_src_path / "valuation" / "pricers",
-            rq_src_path / "valuation" / "engine.py",
-            rq_src_path / "simlab",
-            rq_src_path / "utils",
-            rq_src_path / "constants.py",
-            rq_src_path / "exceptions.py",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "risk_quant_adhoc": [
-            rq_src_path / "ingest_fixtures",
-            rq_src_path / "portfolio",
-            rq_src_path / "valuation" / "pricers",
-            rq_src_path / "valuation" / "engine.py",
-            rq_src_path / "constants.py",
-            rq_src_path / "exceptions.py",
-            rq_src_path / "utils",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        # "pricers": [
-        #     rq_path / "valuation" / "pricers",
-        #     rq_path / "valuation" / "engine.py",
-        # ],
-        "market_data_only": [
-            # rq_path / "config",
-            # rq_path / "ingest_fixtures",
-            rq_src_path / "market_data",
-            # rq_path / "utils",
-            # rq_path / "valuation",
-            # rq_path / "_arrays.py",
-            # rq_path / "constants.py",
-            # rq_path / "exceptions.py",
-            # rq_path / "jit.py",
-            # rq_path / "universe.py",
-            # # SCRIPTS
-            # base_dir_parent / "scripts" / "demos" / "market_data",
-            # # TESTS
-            # base_dir_parent / "tests" / "market_data",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "portfolio_only": [
-            # rq_path / "config",
-            rq_src_path / "portfolio",
-            # rq_path / "utils",
-            # rq_path / "valuation",
-            # rq_path / "_arrays.py",
-            # rq_path / "jit.py",
-            # rq_path / "constants.py",
-            # rq_path / "exceptions.py",
-            # rq_path / "universe.py",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "solutions_credit_var": [
-            rq_src_path / "solutions" / "credit_var",
-            rq_project_directory / "scripts" / "solutions" / "credit_var",
-            rq_lab_src_path,
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "solutions_credit_exposure": [
-            rq_src_path / "solutions" / "credit_exposure",
-            rq_project_directory / "scripts" / "solutions" / "credit_exposure",
-            rq_lab_src_path,
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "market_data_reduced": [
-            rq_src_path / "market_data",
-            # rq_path / "ingest_fixtures",
-            # rq_path / "config",
-            rq_src_path / "valuation" / "kernels" / "_math.py",
-            rq_src_path / "utils",
-            rq_src_path / "_arrays.py",
-            rq_src_path / "jit.py",
-            rq_src_path / "constants.py",
-            rq_src_path / "exceptions.py",
-            rq_src_path / "universe.py",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "market_data_calibrate": [
-            rq_src_path / "market_data" / "calibrate",
-            rq_src_path / "ingest_fixtures",
-            rq_src_path / "jit.py",
-            rq_src_path / "constants.py",
-            # SCRIPTS
-            rq_project_directory / "scripts" / "demos" / "market_data" / "calibrate",
-            # TESTS
-            rq_project_directory / "tests" / "market_data" / "calibrate",
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "credit": [
-            # SOURCE CODE
-            rq_src_path / "credit",
-            # rq_path / "config",
-            rq_src_path / "ingest_fixtures" / "credit",
-            rq_src_path / "ingest_fixtures" / "as_of.py",
-            rq_src_path / "ingest_fixtures" / "constants.py",
-            rq_src_path / "ingest_fixtures" / "rng.py",
-            rq_src_path / "ingest_fixtures" / "schemas.py",
-            rq_src_path / "ingest_fixtures" / "utils.py",
-            # rq_path / "market_data",
-            # rq_path / "portfolio",
-            # rq_path / "valuation" / "pricers",
-            # rq_path / "valuation" / "engine.py",
-            # rq_path / "simlab",
-            rq_src_path / "solutions" / "credit_var",
-            rq_src_path / "utils",
-            rq_src_path / "scenario_metrics",
-            rq_src_path / "_arrays.py",
-            rq_src_path / "constants.py",
-            rq_src_path / "exceptions.py",
-            rq_src_path / "jit.py",
-            rq_src_path / "universe.py",
-            # SCRIPTS
-            rq_project_directory / "scripts" / "demos" / "credit" / "exposure",
-            rq_project_directory / "scripts" / "demos" / "credit" / "jtd",
-            # # base_dir_parent / "scripts" / "reporting" / "credit_risk" / "stress_tests",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "credit_jtd": [
-            rq_src_path / "credit" / "factors",
-            rq_src_path / "credit" / "jtd",
-            rq_src_path / "utils",
-            rq_src_path / "_arrays.py",
-            rq_src_path / "jit.py",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "credit_jtd_kernels": [
-            rq_src_path / "credit" / "jtd" / "blocks",
-            rq_src_path / "credit" / "jtd" / "kernels",
-            rq_src_path / "credit" / "jtd" / "evaluators",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "credit_exposure": [
-            rq_src_path / "credit" / "exposure",
-            rq_src_path / "constants.py",
-            rq_src_path / "jit.py",
-            # SCRIPTS
-            rq_project_directory / "scripts" / "demos" / "credit" / "exposure",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "basel": [
-            rq_src_path / "basel",
-            rq_src_path / "utils",
-            rq_src_path / "_arrays.py",
-            rq_src_path / "jit.py",
-            # SCRIPTS
-            rq_project_directory / "scripts" / "demos" / "basel",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "credit_reduced": [
-            # SOURCE CODE
-            rq_src_path / "credit",
-            # rq_path / "config",
-            # rq_path / "ingest_fixtures" / "credit",
-            # rq_path / "ingest_fixtures" / "as_of.py",
-            # rq_path / "ingest_fixtures" / "constants.py",
-            # rq_path / "ingest_fixtures" / "rng.py",
-            # rq_path / "ingest_fixtures" / "schemas.py",
-            # rq_path / "ingest_fixtures" / "utils.py",
-            # rq_path / "market_data",
-            # rq_path / "portfolio",
-            # rq_path / "valuation" / "pricers",
-            # rq_path / "valuation" / "engine.py",
-            # rq_path / "simlab",
-            rq_src_path / "solutions" / "credit_var",
-            # rq_path / "utils",
-            # rq_path / "scenario_metrics",
-            # rq_path / "_arrays.py",
-            # rq_path / "constants.py",
-            # rq_path / "exceptions.py",
-            # rq_path / "jit.py",
-            # rq_path / "universe.py",
-            # SCRIPTS
-            # base_dir_parent / "scripts" / "demos" / "credit" / "exposure",
-            # base_dir_parent / "scripts" / "demos" / "credit" / "jtd",
-            # # base_dir_parent / "scripts" / "reporting" / "credit_risk" / "stress_tests",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "credit_jtd": [
-            # SOURCE CODE
-            rq_src_path / "credit" / "factors",
-            rq_src_path / "credit" / "jtd",
-            rq_src_path / "credit" / "masters",
-            rq_src_path / "ingest_fixtures" / "credit" / "credit_factors",
-            rq_src_path / "ingest_fixtures" / "credit" / "jtd",
-            rq_src_path / "ingest_fixtures" / "as_of.py",
-            rq_src_path / "ingest_fixtures" / "constants.py",
-            rq_src_path / "ingest_fixtures" / "rng.py",
-            rq_src_path / "ingest_fixtures" / "schemas.py",
-            rq_src_path / "ingest_fixtures" / "utils.py",
-            rq_src_path / "utils",
-            rq_src_path / "_arrays.py",
-            rq_src_path / "jit.py",
-            rq_src_path / "constants.py",
-            rq_src_path / "exceptions.py",
-            rq_src_path / "universe.py",
-            # SCRIPTS
-            rq_project_directory / "scripts" / "demos" / "credit" / "exposure",
-            rq_project_directory / "scripts" / "demos" / "credit" / "jtd",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "portfolio": [
-            rq_src_path / "config",
-            rq_src_path / "portfolio",
-            rq_src_path / "utils",
-            rq_src_path / "valuation",
-            rq_src_path / "_arrays.py",
-            rq_src_path / "jit.py",
-            rq_src_path / "constants.py",
-            rq_src_path / "exceptions.py",
-            rq_src_path / "universe.py",
-            # TESTS
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "scenario_metrics": [
-            # CODE
-            rq_src_path / "scenario_metrics",
-            rq_src_path / "_arrays.py",
-            rq_src_path / "jit.py",
-            rq_src_path / "constants.py",
-            rq_src_path / "exceptions.py",
-            # SCRIPTS
-            rq_project_directory / "scripts" / "demos" / "scenario_metrics",
-            rq_project_directory / "scripts" / "tests" / "scenario_metrics",
-            # TESTS
-            rq_project_directory / "tests" / "scenario_metrics",
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "sensitivity_pnl": [
-            # CODE
-            rq_src_path / "sensitivity_pnl",
-            rq_src_path / "_arrays.py",
-            rq_src_path / "jit.py",
-            rq_src_path / "constants.py",
-            rq_src_path / "exceptions.py",
-            rq_src_path / "scenario_metrics",
-            rq_lab_src_path / "fixtures",
-            # SCRIPTS
-            rq_project_directory / "scripts" / "demos" / "sensitivity_pnl",
-            # TESTS
-            rq_project_directory / "tests" / "sensitivity_pnl",
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "solutions_sensitivity_pnl": [
-            rq_src_path / "solutions" / "sensitivity_pnl",
-            # SCRIPTS
-            rq_project_directory / "scripts" / "solutions" / "sensitivity_pnl",
-            rq_src_path / "scenario_metrics",
-            rq_lab_src_path / "fixtures",
-            # TESTS
-            rq_project_directory / "tests" / "solutions" / "sensitivity_pnl",
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "dependence_stress": [
-            # SOURCE CODE
-            rq_src_path / "dependence_stress",
-            rq_src_path / "jit.py",
-            rq_src_path / "constants.py",
-            # SCRIPTS
-            rq_project_directory / "scripts" / "demos" / "dependence_stress",
-            rq_project_directory / "scripts" / "tests" / "dependence_stress",
-            # TESTS
-            rq_project_directory / "tests" / "dependence_stress",
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
-        "dependence": [
-            # SOURCE CODE
-            rq_src_path / "dependence",
-            rq_src_path / "market_state",
-            rq_src_path / "observations",
-            rq_src_path / "jit.py",
-            rq_src_path / "constants.py",
-            # SCRIPTS
-            rq_project_directory / "scripts" / "demos" / "dependence",
-            rq_project_directory / "scripts" / "demos" / "market_state",
-            rq_project_directory / "scripts" / "demos" / "observations",
-            rq_project_directory / "scripts" / "tests" / "dependence",
-            rq_project_directory / "scripts" / "tests" / "market_state",
-            rq_project_directory / "scripts" / "tests" / "observations",
-            # TESTS
-            rq_project_directory / "tests" / "dependence",
-            rq_project_directory / "tests" / "market_state",
-            rq_project_directory / "tests" / "observations",
-            rq_project_directory / "tests" / "test_architecture.py",
-        ],
+        #######
+        # OLD #
+        #######
         "github": [
             rq_project_directory / ".github",
         ],
@@ -667,6 +410,7 @@ def main(profile: str | None = None):
     valid_files: list[Path] = []
 
     for path in target_paths:
+        path = Path(path)
         if not path.exists():
             print(f"Warning: Path not found: {path}")
             continue
@@ -685,6 +429,9 @@ def main(profile: str | None = None):
                 and subpath not in valid_files
                 and not subpath.name.startswith(".")  # Exclude hidden files
                 and not subpath.parent.name.startswith("_deprecated")
+                and not subpath.parent.name.startswith(".deprecated")
+                and "_deprecated" not in subpath.parts
+                and ".deprecated" not in subpath.parts
             ):
                 valid_files.append(subpath)
 
@@ -718,11 +465,24 @@ def main(profile: str | None = None):
             "- CPU efficiency matters\n"
             "- Memory efficiency matters\n"
             "- Correctness over cleverness\n"
+            "- Fail fast on invalid inputs at boundaries/ingest\n"
             "- Kernels do not contain policy - they are purely computational\n"
             "- Compilers are responsible for policy and orchestration; they must fail fast on invalid inputs\n"
             "- Avoid unnecessary branching in hot paths\n"
             "- Skip '__init__.py' files (they are always empty)\n"
-            "- Polars over Pandas for DataFrames\n\n"
+            "- Polars over Pandas for DataFrames\n"
+            "- `riskquant.jit` is the single source of truth for Numba policy and types\n\n"
+            "Numba rules - NON-NEGOTIABLE:\n"
+            "- ALWAYS use canonical decorators from `riskquant.jit`: `njit`, `parallel_njit`, `stable_math_parallel_njit`, `inline_njit`\n"
+            "- NEVER use raw `@nb.njit` or define local Numba compiler configurations\n"
+            "- ALWAYS use canonical `_NB_*` scalar types in signatures (`_NB_VOID`, `_NB_FLOAT64`, `_NB_FLOAT32`, `_NB_INT64`, `_NB_INT32`, `_NB_INT8`, `_NB_BOOL`)\n"
+            "- NEVER use raw `nb.void`, `nb.float64`, `nb.int32`, etc. when a canonical alias exists\n"
+            "- ALWAYS use canonical array aliases (`_F64_*`, `_F32_*`, `_I64_*`, `_I32_*`, `_I8_*`, `_BOOL_*`) with the correct `_C`, `_F`, and `_RO` contract\n"
+            "- NEVER replace canonical aliases with ad-hoc `nb_types.Array` or generic strided signatures\n"
+            "- Read-only inputs MUST use `_RO`; preserve C/F contiguity\n"
+            "- If a required Numba type or configuration is missing, extend `riskquant.jit`; do NOT create a local workaround\n"
+            "- Raw `numba` usage is allowed only where `riskquant.jit` has no equivalent abstraction (e.g. `nb.prange`)\n"
+            "- Existing code is not precedent; do not propagate violations of these rules\n\n"
             "When proposing code:\n"
             "- Preserve existing SoA layouts\n"
             "- Avoid object-heavy designs in hot paths\n"
@@ -805,40 +565,15 @@ def main(profile: str | None = None):
 
 if __name__ == "__main__":
     main(profile="riskquant_all")
-    # main(profile="config")
-    # main(profile="config_static")
-    # main(profile="config_proxy")
-    # main(profile="valuation")
-    # main(profile="simlab")
-    # main(profile="simlab_reduced")
-    # main(profile="simlab_extended")
-    main(profile="ingest")
-    main(profile="market_data_only")
-    main(profile="portfolio_only")
-    main(profile="credit")
-    main(profile="credit_jtd")
-    main(profile="credit_jtd_kernels")
-    main(profile="credit_exposure")
-    main(profile="basel")
-    main(profile="sensitivity_pnl")
-    # SOLUTIONS
-    main(profile="solutions_credit_var")
-    main(profile="solutions_credit_exposure")
-    main(profile="solutions_sensitivity_pnl")
-    # main(profile="ce_jtd")
-    # main(profile="risk_quant")
-    # main(profile="risk_quant_adhoc")
-    # main(profile="pricers")
-    # main(profile="market_data")
-    # main(profile="market_data_reduced")
-    # main(profile="market_data_calibrate")
-    # main(profile="credit_jtd")
-    # main(profile="credit_reduced")
-    # main(profile="ingest_fixtures")
-    # main(profile="ingest_fixtures_risk_static_config")
-    # main(profile="ingest_fixtures_market_data")
-    # main(profile="pricer_kernels")
-    main(profile="scenario_metrics")
-    main(profile="dependence_stress")
-    main(profile="dependence")
-    main(profile="github")
+    main(profile="riskquant_config")
+    main(profile="riskquant_config_static_config")
+    main(profile="riskquant_sensitivities")
+    main(profile="riskquant_simlab")
+    main(profile="riskquant_valuation")
+    main(profile="riskquant_valuation_light")
+    main(profile="riskquant_dependence")
+    main(profile="riskquant_dependence_stress")
+    # main(profile="scenario_metrics")
+    # main(profile="sensitivity_pnl")
+    # main(profile="solutions_sensitivity_pnl")
+    # main(profile="github")

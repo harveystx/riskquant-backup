@@ -1,6 +1,6 @@
 # src/riskquant/config/proxy_config/loader.py
 """
-Loads proxy configuration from an Excel workbook into a clean DataFrame.
+Loads proxy configuration from an Excel workbook into a clean Polars DataFrame.
 
 The workbook MUST carry an `active` column. Rows with active=True are
 returned; the `active` column is dropped from the result. If `active`
@@ -17,8 +17,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
+import polars as pl
+
+# NOTE: pl.read_excel()'s default "calamine" engine requires the
+# `fastexcel` package (>= 0.7.0) as an explicit runtime dependency --
+# it is NOT bundled with a bare `pip install polars`. If this module
+# raises ImportError mentioning fastexcel, add it to the project's
+# dependency manifest (pyproject.toml / requirements). Polars itself
+# raises a clear, actionable error in this case (see
+# polars.io.spreadsheet.functions, `import_optional("fastexcel", ...)`
+# ); this comment exists so the fix is a one-line dependency add, not
+# a debugging session.
 
 # "active" column is not a hard requirement.
 _REQUIRED_COLS: frozenset[str] = frozenset(
@@ -43,7 +52,7 @@ def load_proxy_config_xlsx_into_df(
     *,
     path: str | Path,
     sheet_name: str | None = None,
-) -> pd.DataFrame:
+) -> pl.DataFrame:
     """
     Load the proxy-config sheet and return active rows only.
 
@@ -56,7 +65,7 @@ def load_proxy_config_xlsx_into_df(
 
     Returns
     -------
-    pd.DataFrame
+    pl.DataFrame
         Columns: proxying_level, required_name, proxy_name,
         vol_scaling_factor. `active` is consumed and dropped.
 
@@ -68,15 +77,18 @@ def load_proxy_config_xlsx_into_df(
     """
     path_str = str(path)
 
-    with pd.ExcelFile(path_str, engine="openpyxl") as xls:
-        available = list(xls.sheet_names)
-        if sheet_name is not None and sheet_name not in available:
+    available_sheets = list(pl.read_excel(path_str, sheet_id=0).keys())
+    if sheet_name is not None:
+        if sheet_name not in available_sheets:
             raise ValueError(
                 f"Missing required sheet {sheet_name!r} in {path_str!r}. "
-                f"Available sheets: {available}"
+                f"Available sheets: {available_sheets}"
             )
-        _sheet: str = str(sheet_name) if sheet_name is not None else str(available[0])
-        df: pd.DataFrame = pd.read_excel(xls, sheet_name=_sheet)
+        _sheet: str = sheet_name
+    else:
+        _sheet = available_sheets[0]
+
+    df: pl.DataFrame = pl.read_excel(path_str, sheet_name=_sheet)
 
     # --- required columns: explicit (no silent active fallback) ---
     missing = _REQUIRED_COLS - set(df.columns)
@@ -89,19 +101,25 @@ def load_proxy_config_xlsx_into_df(
 
     # --- active filter ---
     if "active" in df.columns:
-        mask = df["active"].fillna(False).astype(bool)
-        df = df.loc[mask, list(_POST_FILTER_COLS)].reset_index(drop=True)
+        mask = df["active"].fill_null(False).cast(pl.Boolean)
+        df = df.filter(mask).select(list(_POST_FILTER_COLS))
     else:
-        df = df[list(_POST_FILTER_COLS)].reset_index(drop=True)
+        df = df.select(list(_POST_FILTER_COLS))
 
     # --- type coercions ---
     # String columns: strip whitespace, leave nulls as nulls (validator
-    # rejects both null and blank; loader does NOT fillna to "").
-    for col in ("proxying_level", "required_name", "proxy_name"):
-        df[col] = df[col].astype("string").str.strip()
+    # rejects both null and blank; loader does NOT fill nulls with "").
+    df = df.with_columns(
+        [
+            pl.col(col).cast(pl.Utf8).str.strip_chars()
+            for col in ("proxying_level", "required_name", "proxy_name")
+        ]
+    )
 
     # vol_scaling_factor: float64 with missing -> 1.0 (identity).
-    df["vol_scaling_factor"] = df["vol_scaling_factor"].fillna(1.0).astype(np.float64)
+    df = df.with_columns(
+        pl.col("vol_scaling_factor").fill_null(1.0).cast(pl.Float64)
+    )
 
     return df
 
@@ -124,20 +142,14 @@ if __name__ == "__main__":
     print(f"Project directory: {project_dir}")
 
     # 2. Build the path dynamically relative to the current script.
-    # NOTE: You may need to add .parent if this script is nested deeper.
-    # For example: current_dir.parent / "data" / "dev"
     DEV_DATA_DIR = project_dir / "data" / "dev"
     DEV_DATA_FILE_NAME = "dev_risk_base_proxy_config_v01.xlsx"
 
-    # Combine them using the / operator (a handy feature of pathlib)
     full_path = DEV_DATA_DIR / DEV_DATA_FILE_NAME
-    print(f"\nFull path to Excel file: {full_path}")
 
-    # Convert the Path object back to a string just in case
-    # load_proxy_config_xlsx_into_df strictly requires a string
     df = load_proxy_config_xlsx_into_df(path=str(full_path))
 
     print(f"\nLoaded proxy config DataFrame (shape: {df.shape}):")
-    print(df.to_string(index=False))
+    print(df)
 
     print_success_message()

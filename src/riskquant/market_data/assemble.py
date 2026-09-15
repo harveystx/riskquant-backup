@@ -384,8 +384,8 @@ def build_universe_mapping(
         surface_interp_x_methods=np.empty(0, dtype=np.int8),
         surface_extrap_x_methods=np.empty(0, dtype=np.int8),
         surface_y_axis_type_ids=np.empty(0, dtype=np.int8),
-        raw_vol_surface_tenors=np.empty(0, dtype=np.float64),
-        raw_vol_surface_strikes=np.empty(0, dtype=np.float64),
+        raw_vol_surface_tenors=np.empty((0, 0), dtype=np.float64),
+        raw_vol_surface_strikes=np.empty((0, 0), dtype=np.float64),
         surface_ids=np.empty(0, dtype=np.int32),
     )
 

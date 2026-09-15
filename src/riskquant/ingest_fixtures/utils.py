@@ -20,7 +20,6 @@ from riskquant.ingest_fixtures.schemas import (
     RiskStaticConfigData,
     RiskStaticConfigHolidayCalendar,
     RiskStaticConfigNodeMeta,
-    RiskStaticConfigSpotRollRule,
     RiskStaticConfigSurfaceMeta,
     RiskStaticConfigSurfacePointMeta,
     StressRegimeBernoulliJTDIngestData,
@@ -39,7 +38,6 @@ _DATA = (
     | NettingSetMasterIngestData
     | CreditFactorUniverseIngestData
     # Risk Static Config
-    | RiskStaticConfigSpotRollRule
     | RiskStaticConfigData
     | RiskStaticConfigCcy
     | RiskStaticConfigHolidayCalendar

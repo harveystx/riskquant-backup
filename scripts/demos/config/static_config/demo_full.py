@@ -15,15 +15,23 @@ from riskquant.ingest_fixtures.config.risk_static_config.canonical_risk_static_c
 from riskquant.utils.printer import (
     print_array,
     print_calling_file,
-    print_dict_of_dfs,
     print_success_message,
 )
 
 
 def main():
+    from riskquant_lab.polars_display import configure_polars_display
+
+    configure_polars_display()
     print_calling_file()
 
-    print_dict_of_dfs(CANONICAL_RISK_STATIC_CONFIG_DICT_OF_DFS)
+    # CANONICAL_RISK_STATIC_CONFIG_DICT_OF_DFS is dict[str, polars.DataFrame]
+    # (riskquant.config.static_config is Polars-based; see RQ-AUD-018).
+    # print_dict_of_dfs in riskquant.utils.printer is pandas-typed, so each
+    # sheet is printed directly via Polars' own clean table formatting.
+    for sheet_name, df in CANONICAL_RISK_STATIC_CONFIG_DICT_OF_DFS.items():
+        print(f"Sheet: {sheet_name}  (rows={df.height})")
+        print(df)
 
     rsc = compile_risk_static_config_from_dict_of_dfs(
         CANONICAL_RISK_STATIC_CONFIG_DICT_OF_DFS
@@ -37,7 +45,9 @@ def main():
 
     print_success_message()
 
-    
 
 if __name__ == "__main__":
+    from riskquant_lab.polars_display import configure_polars_display
+
+    configure_polars_display()
     main()

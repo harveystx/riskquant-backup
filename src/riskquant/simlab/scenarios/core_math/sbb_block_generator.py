@@ -28,17 +28,18 @@ import numpy as np
 from riskquant.jit import (
     _I32_1D_C,
     _I32_2D_C,
+    _NB_INT32,
+    _NB_VOID,
     parallel_njit,
 )
 
 
-
 @parallel_njit(
-    nb.void(
+    _NB_VOID(
         _I32_1D_C,  # block_lengths        (max_blocks,)
         _I32_1D_C,  # start_indices        (max_blocks,)
         _I32_2D_C,  # out                  (B, h)  C-contig
-        nb.int32,  # max_valid_length     T - 1
+        _NB_INT32,  # max_valid_length     T - 1
     ),
 )
 def _kernel_stitch_sbb_paths(

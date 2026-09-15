@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.ingest_fixtures.schemas import RiskStaticConfigCurveMeta
 from riskquant.ingest_fixtures.utils import validate_column_lengths
@@ -49,12 +49,12 @@ _CANONICAL_CURVE_IDS = np.arange(
     250_000_000 + _NUM_CANONICAL_CURVES * 1_000,
     step=1_000,
     dtype=int,
-)
+).tolist()
 
 
 def _get_data() -> RiskStaticConfigCurveMeta:
     return {
-        "curve_id": list(_CANONICAL_CURVE_IDS),
+        "curve_id": _CANONICAL_CURVE_IDS,
         "curve_name": CANONICAL_CURVE_NAMES,
         "quote_ccy": [
             "USD",
@@ -191,8 +191,14 @@ def _get_data() -> RiskStaticConfigCurveMeta:
             "FLAT",
             "FLAT",
         ],
-        "spot_roll_rule_name": [
-            # LABEL curves have no roll rule.
+        # Each curve owns its tenor-resolution convention directly. Only the
+        # method's required parameter is populated; every other roll field is
+        # None (validate._validate_roll_params rejects meaningless params).
+        #   LABEL (0-7)                -> all None (no as-of dependence)
+        #   OFFSET_M  CALENDAR_PERIOD  -> anchor_offset (months) only
+        #   OFFSET_Y  ROLL_ON_MMDD     -> roll_month + roll_day only
+        #   OFFSET_HY HALF_YEAR_BY_LABEL -> fh_bh_mmdd only
+        "roll_method": [
             None,
             None,
             None,
@@ -201,14 +207,74 @@ def _get_data() -> RiskStaticConfigCurveMeta:
             None,
             None,
             None,
-            # Monthly commodities use NEXT_MONTH.
-            "NEXT_MONTH",
-            "NEXT_MONTH",
-            "NEXT_MONTH",
-            # Annual carbon uses April-begin annual roll.
-            "ANNUAL_ROLL_APRIL_BGN",
-            # Half-year power uses the label-form half-year roll.
-            "HALF_YEAR_LABEL_APR_OCT",
+            "CALENDAR_PERIOD",
+            "CALENDAR_PERIOD",
+            "CALENDAR_PERIOD",
+            "ROLL_ON_MMDD",
+            "HALF_YEAR_BY_LABEL",
+        ],
+        "anchor_offset": [
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            # Monthly commodities: spot is next month (offset in months).
+            1,
+            1,
+            1,
+            None,
+            None,
+        ],
+        "roll_month": [
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            # Annual carbon rolls on 1 April.
+            4,
+            None,
+        ],
+        "roll_day": [
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            1,
+            None,
+        ],
+        "fh_bh_mmdd": [
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            # Half-year power: first-half 1 Apr, back-half 1 Oct.
+            "0401|1001",
         ],
         "discount_basis": [
             # IR discount curves carry a real basis.
@@ -250,13 +316,12 @@ CANONICAL_CURVE_META_DATA: RiskStaticConfigCurveMeta = _get_data()
 
 validate_column_lengths(CANONICAL_CURVE_META_DATA)
 
-_CANONICAL_CURVE_META_DF = pd.DataFrame(CANONICAL_CURVE_META_DATA)
+_CANONICAL_CURVE_META_DF = pl.DataFrame(CANONICAL_CURVE_META_DATA)
 
 
 def _debug_print() -> None:
     from riskquant.utils.printer import (
         print_calling_file,
-        print_df,
         print_dict,
         print_success_message,
     )
@@ -265,11 +330,8 @@ def _debug_print() -> None:
 
     print_dict(CANONICAL_CURVE_META_DATA, title="Canonical Curve Meta Dictionary")
 
-    print_df(
-        _CANONICAL_CURVE_META_DF.T,
-        index=True,
-        title="Canonical Curve Meta DataFrame (Transposed)",
-    )
+    print("Canonical Curve Meta DataFrame (Transposed):")
+    print(_CANONICAL_CURVE_META_DF.transpose(include_header=True))
 
     print_success_message(add_space_before=False)
 

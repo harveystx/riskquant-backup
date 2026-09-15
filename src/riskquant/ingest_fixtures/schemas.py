@@ -40,21 +40,6 @@ class RiskStaticConfigHolidayCalendar(TypedDict):
 
 
 # ============================================================
-# SPOT ROLL RULE
-# ============================================================
-
-
-class RiskStaticConfigSpotRollRule(TypedDict):
-    rule_name: Sequence[str]
-    roll_method: Sequence[str]
-    offset_in_tenor_units: Sequence[int]
-    roll_month: Sequence[int | None]
-    roll_day: Sequence[int | None]
-    fh_bh_mmdd: Sequence[str | None]
-    post_roll_shift: Sequence[int]
-
-
-# ============================================================
 # NODE  (scalar; IS its own risk factor)
 # ============================================================
 
@@ -88,7 +73,11 @@ class RiskStaticConfigCurveMeta(TypedDict):
     x_axis_kind: Sequence[str]
     x_interp_method: Sequence[str]
     x_extrap_method: Sequence[str]
-    spot_roll_rule_name: Sequence[str | None]
+    roll_method: Sequence[str | None]
+    anchor_offset: Sequence[int | None]
+    roll_month: Sequence[int | None]
+    roll_day: Sequence[int | None]
+    fh_bh_mmdd: Sequence[str | None]
     discount_basis: Sequence[str]
     is_default_discount_for_ccy: Sequence[bool]
 
@@ -116,7 +105,11 @@ class RiskStaticConfigSurfaceMeta(TypedDict):
     x_axis_kind: Sequence[str]
     x_interp_method: Sequence[str]
     x_extrap_method: Sequence[str]
-    spot_roll_rule_name: Sequence[str | None]
+    roll_method: Sequence[str | None]
+    anchor_offset: Sequence[int | None]
+    roll_month: Sequence[int | None]
+    roll_day: Sequence[int | None]
+    fh_bh_mmdd: Sequence[str | None]
     y_axis_kind: Sequence[str]
     y_interp_method: Sequence[str]
     y_extrap_method: Sequence[str]
@@ -137,7 +130,6 @@ class RiskStaticConfigSurfacePointMeta(TypedDict):
 class RiskStaticConfigData(TypedDict):
     ccy: RiskStaticConfigCcy
     holiday_calendars: RiskStaticConfigHolidayCalendar
-    spot_roll_rule: RiskStaticConfigSpotRollRule
     node_meta: RiskStaticConfigNodeMeta
     curve_meta: RiskStaticConfigCurveMeta
     curve_point_meta: RiskStaticConfigCurvePointMeta
