@@ -960,3 +960,191 @@ note, now one module rather than three). Untouched here.
 **Seam complete.** ScenarioModelConfig = {Historical, Sbb, FilteredHistorical,
 Parametric, FilteredBootstrap}; matrix-backed models -> RiskFactorMatrix,
 Parametric -> ParametricRiskData. No further scenario models outstanding.
+
+## D036 — Final scenario-model seam audit: SEAM FROZEN
+
+Adversarial whole-system audit of the config -> data -> builder -> generator
+seam after D031–D035. No production defect found; one additive cross-model
+completeness test added. The seam is declared FROZEN.
+
+**Architecture (final).**
+```
+ScenarioModelConfig (discriminated union on `model`, 5 tags)
+  Historical | Sbb | FilteredHistorical | FilteredBootstrap | Parametric
+        |                                           (Parametric.distribution:
+        |                                            nested union on `kind`)
+        v
+build_scenario_generator(config, *, data: RiskFactorMatrix | ParametricRiskData)
+  5 explicit isinstance branches; _require_matrix / _require_parametric_data pair
+        v
+ScenarioGenerator (Protocol) -> iter_batches(...) -> Iterator[ScenarioSetBatch]
+```
+
+**Model / config / data / generator matrix.**
+| model | config | data | generator | callers |
+|---|---|---|---|---|
+| historical | HistoricalGeneratorConfig | RiskFactorMatrix | HistoricalGenerator | demo + tests |
+| sbb | SbbGeneratorConfig | RiskFactorMatrix | StationaryBlockBootstrapGenerator | tests |
+| filtered_historical | FilteredHistoricalGeneratorConfig | RiskFactorMatrix | FilteredHistoricalGenerator | tests |
+| filtered_bootstrap | FilteredBootstrapGeneratorConfig | RiskFactorMatrix | FilteredBootstrapGenerator | tests |
+| parametric | ParametricGeneratorConfig | ParametricRiskData | ParametricGenerator | tests |
+
+**Validation-ownership matrix (no ambiguous duplication).**
+- Pydantic config: discriminator, strict discrete ints (StrictInt), continuous
+  domains (gt/lt/ge), finiteness (allow_inf_nan=False), bool rejection,
+  foreign-field rejection (extra="forbid"), nested distribution variant selection.
+- ParametricRiskData: intrinsic data invariants only — dtype, ndim, layout
+  (C-contig), square, K-coupling, sorted+unique factor_ids, finiteness, vol
+  positivity. No model semantics.
+- Builder: config/data pairing only (matrix-backed -> RiskFactorMatrix;
+  parametric -> ParametricRiskData); TypeError on mismatch.
+- Generator __post_init__: matrix float64 (D017), positive-int (D026), history
+  length, model/runtime invariants. Overlap with config on positivity/finiteness
+  is intentional independent tier defense: the generators are independently
+  constructed by direct callers (tests), so their guards are not redundant with
+  the config's boundary checks. No rule was removed.
+- Kernels: none — dumb math only.
+
+**Adversarial findings.**
+1. Config/data separation — SOUND. Full pairing matrix fails fast: every
+   matrix-backed config rejects ParametricRiskData; parametric rejects a
+   RiskFactorMatrix. No invalid (config, data) pair is representable.
+2. Validation ownership — SOUND. Each rule has a clear owner; the config/generator
+   overlap is deliberate tier defense, not accidental duplication.
+3. Strict typing — GENUINE, KNOWN, NON-BLOCKING INCONSISTENCY. D032/D033/D035
+   continuous params (`expected_block_size`, `decay_factor`, `max_vol_ratio`)
+   use lax Pydantic `float`, which coerces a numeric STRING ("0.9" -> 0.9); D034
+   uses strict-real, which rejects it. Confirmed empirically. It is not a
+   fail-fast hole — no invalid VALUE passes (domain, bool, NaN, ±inf are all
+   rejected on both paths); only a string REPRESENTATION of a valid value is
+   coerced on the lax path. It is a uniformity gap against "typed to the nth
+   degree." Per D035 and the audit scope it is NOT harmonized here; it is
+   recorded as a deferred, separate future decision (harmonize all continuous
+   scenario-config params to strict-real). Does not block FREEZE.
+4. Parametric distribution union — SOUND. Five variants, no nullable
+   cross-variant fields; each rejects foreign params (student_t+vg_nu,
+   standard_normal+df) and missing/invalid values.
+5. ParametricRiskData — SOUND. Holds only the three arrays + their invariants;
+   docstring and fields carry no model semantics. Location
+   `simlab/scenarios/parametric_data.py` is D001-correct (SimLab core owns the
+   contract; solution/tests import it downward).
+6. Builder complexity — SOUND. Five explicit isinstance branches remain the
+   smallest, clearest design; no registry/factory warranted.
+7. Protocol sufficiency — SOUND. All five nominally subclass ScenarioGenerator
+   and share the identical iter_batches signature and Iterator[ScenarioSetBatch]
+   return; no model-specific type leaks downstream. (The Protocol is not
+   @runtime_checkable — an intentional detail; dispatch is on config type, not
+   generator type, so no runtime isinstance on the protocol is needed. Left
+   unchanged.)
+8. Boundary purity — SOUND. The builder passes only primitives and typed NumPy
+   arrays into generators (config.<attr>, pdata.<array>); no Pydantic object,
+   dict, or model-name string is handed to a generator constructor, and no
+   string reaches a kernel (the distribution_kind string dies at the generator's
+   dispatch, above the kernel).
+9. Bypass audit — SOUND. Generators are constructed only inside
+   `build_scenario_generator` (api.py) in production; the E2E demo uses the seam;
+   all other direct constructions are in tests exercising the generators
+   themselves (legitimate).
+
+**Genuine defects vs accepted design choices.** Zero genuine defects. One
+accepted-and-deferred inconsistency (finding 3, strict-vs-lax typing), already
+flagged in D034/D035, tracked for a future dedicated decision. The
+non-runtime_checkable Protocol (finding 7) is an accepted design choice.
+
+**Change made.** Test-only, additive: new
+`tests/solutions/scenario_models/test_seam_completeness.py` asserting, across all
+five models as one matrix: tag discrimination, the full correct/incorrect
+config/data pairing matrix (closing the previously-implicit SBB+ParametricRiskData
+and FHS+ParametricRiskData cases), and uniform ScenarioSetBatch yield. No
+production change; `src/` byte-identical to the pristine dump.
+
+**Evidence.** completeness audit 21 passed; all scenario-model seam tests 245;
+tests/simlab 281; focused regression + solutions 1405 passed / 2 skipped; E2E
+`ALL CHECKS PASSED`; D019 goldens preserved; changed-file lint clean; scope diff
+= the one new test file only. Pre-existing unrelated failure unchanged:
+`tests/dependence_stress/test_invariants.py` fails COLLECTION (bare
+`from canonical_measures import ...` ImportError), not touched by this work.
+
+**Conclusion — SCENARIO MODEL SEAM = FROZEN.** No invalid combinations, no
+hidden ownership ambiguity, no accidental abstraction, no bypassed boundary, no
+model-specific leakage, no unexplained duplication. The only open item is the
+deferred strict-typing harmonization (finding 3), which is a separate future
+decision and does not affect the freeze. D021 (RNG ownership / co-seeded
+independence) remains OPEN and is the next increment — not started here.
+
+## D037 — RNG ownership / co-seeded independence (methodology RESOLVED; implementation DEFERRED)
+
+Final canonicalization of D021. Methodology only; no production edits, no tests.
+Full memo: `D037_RNG_OWNERSHIP_DECISION.md`. This entry supersedes the earlier
+D037 draft: the derived-stream formula is now the direct
+`SeedSequence(seed, spawn_key=(stream_id,))`, not `spawn(stream_id)[stream_id-1]`.
+
+**Current architecture (re-verified).** SBB, FilteredBootstrap, Parametric each
+rebuild `np.random.default_rng(self.seed)` at the top of every `iter_batches`,
+draw all randomness upfront at full run size, then slice into batches (D029
+mechanism). No `SeedSequence` anywhere in `src/`. Historical/FilteredHistorical
+are deterministic. `seed=int` -> deterministic restart + batch-invariant +
+cross-instance IDENTICAL; `seed=None` -> entropy, no reproducibility.
+
+**Gap (D021).** `seed` conflates reproducibility with stream identity, so streams
+cannot be both reproducible and independent; co-seeded engines/replicas/workers
+are perfectly correlated. Genuine but LATENT (no co-seeded consumer today).
+
+**Canonical semantics.** Two orthogonal value ints on the stochastic generators:
+`seed` = reproducibility root (public name UNCHANGED; `None` = OS entropy) and
+`stream_id: int >= 0` = explicit stream identity (default 0). Derivation:
+
+```
+seed is None    -> default_rng()                                            # entropy, unchanged
+stream_id == 0  -> default_rng(seed)                                        # LEGACY STREAM (exact back-compat anchor)
+stream_id  > 0  -> default_rng(SeedSequence(seed, spawn_key=(stream_id,)))  # DERIVED STREAM (directly addressable)
+```
+
+Contract: for fixed model, construction data, model parameters, seed, stream_id,
+scenario_count, the concatenated stream is deterministic and batch-invariant;
+same seed + same stream_id -> identical; same seed + different stream_id ->
+practically independent; stream_id=0 -> exact legacy stream; seed=None -> no
+reproducibility (stream_id irrelevant).
+
+**Empirically confirmed.** `spawn_key=(stream_id,)` is deterministic and directly
+addressable (stream 7 needs no enumeration of 1..6); `stream_id=0` ==
+`default_rng(seed)` EXACTLY while `spawn_key=(0,)` DIFFERS from it (so the stream-0
+special case is required, not incidental); different stream_ids differ;
+construction order does not matter (7-then-1 == 1-then-7 per stream); same
+`(seed, stream_id)` yields the SAME stream across DIFFERENT models (so identity is
+NOT auto-independent across consumers — callers pick distinct stream_ids).
+
+**Independence claim.** Reproducible + practically independent under NumPy's
+SeedSequence/PRNG design. NOT provably-disjoint state spaces; independence is
+never asserted merely because two arrays differ.
+
+**Rejected.** `seed`->independent (destroys restart/goldens); enumeration
+`spawn(k)[k-1]` (couples identity to spawn count; not addressable); construction-
+order `spawn()` (identity depends on build order/scheduling — parallelism bug);
+live `Generator` field (mutable/consumed -> breaks restart+D029, non-value,
+non-serializable); model tag in the derivation by default (would move the
+stream_id=0 legacy anchor — complexity unjustified; cross-consumer independence
+comes from distinct stream_ids); renaming `seed`->`master_seed` (needless compat
+surface).
+
+**Implementation (deferred; describe only).** Add `stream_id: int = 0` to the
+three stochastic generators; replace `default_rng(self.seed)` with a shared
+`build_rng(seed, stream_id)` helper implementing the derivation above; downstream
+draw-all-upfront/slice unchanged. Helper lives in the SimLab scenarios layer
+(e.g. `simlab/scenarios/rng.py` or `core_math/`), NOT `riskquant.jit` (RNG
+orchestration is not a Numba/kernel concern, D003). `stream_id` boundary is
+D026-consistent StrictInt (int/np.integer accepted; bool/negative/float/string
+rejected; canonical int persisted).
+
+**D029 preservation.** Structural: the derivation changes only RNG
+initialization; draw order/count, distribution algorithm, and slice order are
+untouched, and `batch_size` never enters the draw path. `stream_id=0` is exactly
+`default_rng(seed)`, so existing exact-equality tests pass with NO golden
+re-baseline. A future increment adds batch-invariance coverage for `stream_id>0`
+without pinning absolute values.
+
+**Verdict — METHODOLOGY RESOLVED / IMPLEMENTATION DEFERRED.** The current `seed`
+semantics are correct and preserved; the single-seed API simply cannot express
+co-seeded independence. Contract fixed here; implement additively when the first
+co-seeded/parallel/ensemble consumer appears. D036 seam remains FROZEN and
+untouched. Next: D038 — continuous-config strictness harmonization.

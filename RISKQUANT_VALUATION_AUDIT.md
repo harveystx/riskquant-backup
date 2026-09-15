@@ -1,503 +1,772 @@
-# RISKQUANT — FIFTH AUDIT PASS
+# RISKQUANT — SEVENTH AUDIT PASS
 
-## Shocked-Level Construction and the `flat_levels` Round Trip
+## Compiled Sensitivity Book, Taylor P&L, Chunking, VaR / ES, and Final Risk-Number Integrity
 
-**Status:** AUDIT ONLY — no code modified, no patches proposed, no remediation plan.
-**Seam:** `simlab.shocks.apply` · `simlab.builder.shock_universe` · `simlab.shock_plan.plan` · the five scenario generators · `market_data.assemble.extract_levels_from_snapshot` · `build_universe_mapping` · `simlab.runner`.
+**Status:** AUDIT ONLY — no code modified, no patches, no remediation plan.
+**Seam:** `sensitivity_pnl.{compile, engine, contracts, conventions, scheduling, grid}` · `sensitivity_pnl.kernels.{displacement, gather, taylor}` · `scenario_metrics.*` · `solutions.sensitivity_pnl.{pipeline, calculator, market}`.
 **Date:** 2026-09-15
 
 ---
 
 ## Evidence basis
 
-All source citations are from the re-mounted project dump (`context_riskquant_all.txt`, 5.53 MB, this session), which now carries the full `simlab` tree. `DECISIONS.md` has grown to D001–D033 and was read for the seam-related decisions.
+Source read from the project dump (`context_riskquant_all.txt`, 5.55 MB, this session). Every production symbol on this seam was re-implemented verbatim in NumPy — `compile_sensitivity_book` including `_compile_cross_block`, `_collapse_duplicates`, `_csr_offsets` and the quote-base folding; `kernel_build_displacement`; `kernel_taylor_pnl` including its four-arm seed and the 4-wide / 2-wide entry blocking; `row_costs` and `balanced_chunk_offsets`; `_compute_lower_tail_parameters` and `_kernel_lower_tail_var_es`.
 
-**Probe method.** Every production symbol on this seam was re-implemented verbatim in NumPy from the read source — `unique_first_seen`, `_pack_keys`, `build_shock_universe`, `build_shock_compute_plan`, `_kernel_apply_shocks`, `_kernel_fused_h_day_shock`'s write pattern, `ParametricGenerator.iter_batches`'s column construction, and `extract_levels_from_snapshot`. The oracle is built **independently** from factor identity, base level, explicit shift semantics, explicit source-factor rule and explicit scale; it shares no helper, no mapping, no row-order construction and no matrix with the re-implementation. Every probe uses unique marker levels and unique marker shocks so that no permutation or transposition can produce a plausible-looking match.
+The independent oracle is plain arithmetic over raw semantic objects only — position identity, factor identity, coefficient, base level, shocked level, convention, scenario values. It uses no `SensitivityBookSpec`, no `FactorAxis`, no production CSR, no production displacement helper, no production kernel, no production quantile or ES helper.
+
+One probe-design error was found and corrected mid-pass and is reported as a finding in its own right (§14, degenerate case): my first Z-01 propagation probe returned a 0.00 % error, and the reason turned out to be a genuine mathematical property of the bilinear payoff rather than a harness fault.
 
 ---
 
 ## 1. Executive Verdict
 
-**The shocked-level round trip is not trustworthy.**
+### Is the final engine mathematically correct?
 
-The row-order contract itself is sound and provable: `flat_levels[i, s]` genuinely is the shocked level of `required_factor_ids[i]` under `required_shift_type_ids[i]` — *provided the shock column handed to row `i` is the right one*. It frequently is not.
+**Yes.** This is the cleanest module in seven passes, and it is not close.
 
-`ShockComputePlan` sorts the K unique shocks by matrix column for cache locality, and publishes `inverse_permutation` to undo that sort. **Neither class of consumer applies it correctly.** `ParametricGenerator` never applies it at all. The four historical-family generators apply it with the wrong index space — `inverse_permutation` is indexed by shock-universe uix, and the kernels index it by sorted position. The two are inverse permutations of each other, so the historical family is correct exactly when the permutation is self-inverse and wrong for any 3-cycle or longer.
+The CSR compiler collapses every identifier into one coherent index space — the active-factor axis — and `searchsorted_or_raise` guards each of the five translations into it. Cross terms are canonicalised to `i < j` by `min`/`max`, and `i == j` is rejected with the exact reason ("accepting it here would double-count against the 1/2 factor the Taylor kernel applies to the diagonal block"). Duplicates raise by default. The Taylor kernel's four-arm seed, its 4-wide diagonal block and its 2-wide cross block reproduce the independent oracle at every `nnz` in {0,1,2,3,4,5,8,9,12} and on a cross-only book. Chunking is bit-identical across 1, 2, 3, 4, 8, 16 and 64 chunks. Batch size is invariant. The scenario axis carries asymmetric markers `[1, 10, 100, 1000, 10000]` through unchanged. VaR and ES match a hand-derived empirical tail geometry at five confidence levels, and the sign convention matches D015 exactly.
 
-The consequence is the same in both cases and is the worst class this audit has found: **every required factor receives another factor's shock**, silently, with finite and entirely plausible levels. It survives every finiteness check in the estate because nothing is non-finite. It is not detectable by internal consistency, because the pipeline reproduces the wrong factor consistently in both the valuation and sensitivity paths.
+The boundary code is the best in the estate. `require_positive_levels_for_log_factors` does not merely check positivity — it names the precise failure it prevents, including that `np.sort` places NaN last so a poisoned catastrophe would be sorted *out* of the lower tail, and records the measured consequence (99 % VaR moving from −100 to −10). That is a boundary author who has thought about exactly the class of defect this audit has been chasing for six passes.
 
-Both defects are invisible to the shipped fixture for the same reason X-01 is: the fixture's source factor ids are `[0, 1, 2, 2]` — already ascending — so `inverse_permutation` is the identity and all three code paths agree. This is the third consecutive pass in which a live defect is masked by one benign ID layout in one fixture.
+### Is the overall production number trustworthy?
 
-**Root-cause finding.** Pass 3's X-01 and this pass's Z-01 are not two bugs. They are one architectural failure appearing twice: `[fx_spots | scalar_rfs | disc_pts | price_pts]` is a concatenation of ascending subsets, and both consumers treat a position within that concatenation as if it were a position in a globally sorted space. The two share the same triggering topology condition.
+**No** — and the reason is entirely upstream.
 
-**What survived.** A great deal, and it should be said plainly. The row-order gather is provably correct. All five shift formulas match an independent oracle exactly. `shock_scale` is applied exactly once. Missing source ids raise `KeyError`; unknown shift ids raise `ValueError`; missing snapshot factors raise `ValueError`. The scenario axis is coherent end to end and base is correctly held out of the scenario grid. **And Pass 4's Y-07 is resolved as NO DEFECT** by derivation: the `ABSOLUTE` default is the unique mathematically correct declaration, and it is correct independently of the simlab shift type.
+The final engine faithfully reproduces whatever it is given. That is the correct behaviour for a kernel tier, and it is also why the corruption already proven in Passes 3 and 5 arrives at the reported number undiminished. Measured through the production chain on a 100,000-scenario book:
 
----
+| corruption | 99 % VaR error | tail-set overlap vs truth |
+|---|---|---|
+| **X-01** (wrong FX rate in the spot coefficient) | **+15.71 %** | 95.5 % |
+| **Z-01 / Z-02** (3-cycle shock permutation) | **−57.07 %** | **0.0 %** |
 
-## 2. Production Data-Flow
+Z-01/Z-02 is far worse than X-01 and worse than Pass 5 was able to show. X-01 is a multiplicative scale error that preserves the tail *ordering*; the shock permutation destroys tail identity outright — not one of the worst 1 % scenarios under truth is among the worst 1 % under the permuted book — and it understates VaR, which is the dangerous direction.
 
-```
-RiskFactorLevelSnapshot                 (factor_ids sorted-unique int32, levels f64)
-        │
-        │  extract_levels_from_snapshot(required_ids=universe_map.required_factor_ids)
-        │  searchsorted_or_raise  ──► ValueError on any missing factor        [FAIL-FAST ✔]
-        ▼
-base_levels  (N_req,) f64      row i  ≡  required_factor_ids[i]               [PROVEN §4]
-        │
-        │  build_universe_mapping:
-        │     required            = [ fx_spots | scalar_rfs | disc_pts | price_pts ]
-        │     required_shift_type = static_config.rf_id_to_shift_type_id[required]
-        │                            └── same gather, same array, same order  [PROVEN §4]
-        ▼
-ProxyResolution.source_factor_ids (N_req,)   ProxyResolution.shock_scale (N_req,) f32
-        │
-        │  generator.iter_batches(required_shift_type_id, source_factor_ids, shock_scale)
-        ▼
-build_shock_universe
-    keys = (source_id << 8) | shift_id
-    unique_first_seen(keys)          ──► K unique shocks in FIRST-SEEN order
-    required_to_shock_uix  (N_req,)  ──► indexes FIRST-SEEN uix space
-    _smoke_test_inputs               ──► ValueError on shift ∉ {-1,1,2,3,4}   [FAIL-FAST ✔]
-        │
-        ▼
-build_shock_compute_plan
-    cols        = searchsorted(available_factor_ids, shock_source_ids)
-                  + bounds + identity check ──► KeyError on missing          [FAIL-FAST ✔]
-    order       = argsort(cols)          sorted position k  ──► uix order[k]
-    cols_sorted = cols[order]
-    inv[order]  = arange                 uix u             ──► sorted pos inv[u]
-        │
-        ├── ParametricGenerator:  shocks[:, j] ← column cols_sorted[j]
-        │                         ***  inverse_permutation NEVER USED  ***    ◀── Z-01
-        │                         shocks indexed by SORTED POSITION
-        │
-        └── historical / historical_fhs / bootstrap_fhs / bootstrap_sbb:
-                 for k: out[:, inv_perm[k]] = shock(cols_sorted[k])
-                 ***  inv_perm indexed by SORTED POSITION, built for UIX  *** ◀── Z-02
-        ▼
-ScenarioSetBatch(shocks (B,K) f32 F-contig, required_to_shock_uix, shock_scale,
-                 required_shift_type_id, scenario_offset)
-    __post_init__: dtype / layout / equal-length only — no value validation
-        │
-        ▼
-apply_shocks_to_base_levels → _kernel_apply_shocks
-    out[n, b] = f_{shift[n]}( base_levels[n], shocks[b, req_to_uix[n]] * scale[n] )
-    no `else` branch ──► unknown shift leaves the row unwritten               ◀── Z-04
-        ▼
-flat_levels / out_view  (N_req, B) f64
-    runner: out_view = shocked_levels_buf[:, :current_b]
-            non-C-contiguous on a partial final batch                         ◀── Z-03
-        ▼
-build_market_data_matrix_from_flat_levels
-    raw_fx_spots     = flat_levels[idx_fx_spots]      ──► X-01 (Pass 3)
-    raw_scalar_nodes = flat_levels[idx_scalar_nodes]  ──► Y-01 (Pass 4)
-        ▼
-MarketDataMatrix  ──►  valuation (fold) AND sensitivity (decompose)   [both SHARED]
-        ▼
-scenario P&L ──► VaR / ES
-```
+### Which defects belong to the final engine itself?
+
+Two, both minor, neither reachable through the sanctioned pipeline:
+
+* **Q-01 (LATENT)** — a SLOT factor axis whose integer keys happen to be a permutation of `[0, K)` compiles silently with the wrong mapping *if* `axis.relabel` is bypassed. `pipeline.resolve` applies it unconditionally, so this requires calling `compile_sensitivity_book` directly.
+* **Q-02 (DOC)** — the contribution footing identity is documented as the caller's responsibility and is not verified. Deliberate, reasoned, and stated in the docstring.
+
+### Which assurance mechanisms can detect the upstream defects?
+
+**None.** `tests/sensitivity_pnl/` is a genuinely strong suite with a real Layer-2 independent oracle (`test_frozen_book_pnl_matches_hand_computation` — a test-owned frozen book with hand-computed P&L), and `tests/scenario_metrics/test_var_es.py` has a real independent sorted reference. But both take the book and the levels as *given*. They verify the transformation, not the inputs. No test anywhere in the repository derives an expected risk number from factor identity and base levels through the whole chain.
 
 ---
 
-## 3. Finding Matrix
+## 2. Final Production Data-Flow
 
-| ID | Severity | Cat | Status | File | Symbol | Finding | Why it matters | Evidence | Reachability | Owner |
-|---|---|---|---|---|---|---|---|---|---|---|
-| **Z-01** | **CRITICAL** | B | **CONFIRMED** | `simlab/scenarios/parametric.py` | `ParametricGenerator.iter_batches` | Builds `shocks[:, j]` from `plan.cols_sorted[j]` (sorted-position space) and yields `required_to_shock_uix` (uix space). `plan.inverse_permutation` is never referenced in the module. | Every required factor receives another factor's shock. Finite, plausible, silent. Corrupts both the valuation and sensitivity paths. | Probe DECISIVE 2 and 3: identity → MATCH; any non-identity → MISMATCH. Grep: `inverse_permutation` appears at 4 call sites, none in `parametric.py`. | Any book whose first-seen source-factor ids are not ascending. Guaranteed whenever an FX rf_id exceeds a scalar rf_id, or a curve-point rf_id is below a node rf_id, or proxies reorder sources. | Parametric generator |
-| **Z-02** | **CRITICAL** | B | **CONFIRMED** | `simlab/scenarios/historical.py`, `historical_fhs.py`, `bootstrap_fhs.py`, `bootstrap_sbb.py` + their kernels | `_kernel_fused_h_day_shock` et al. | Kernel does `for k in prange(K): out[:, inv_perm[k]] = shock(cols[k])` with `cols = plan.cols_sorted`. `k` is a sorted position; `inverse_permutation` is documented and built as a **uix-indexed** map. The required map is `order = argsort(inv)`. | Same silent wrong-factor corruption as Z-01, on the historical/FHS/bootstrap families. | Probe DECISIVE 1 (3-cycle): shipped form MISMATCH, `out[:, order[k]]` MATCH. DECISIVE 2 (transposition): both MATCH. | Correct only when the permutation is an involution. Any 3-cycle or longer of source-factor ordering breaks it. | Shock kernels / plan contract |
-| **Z-03** | HIGH | C | **CONFIRMED** | `simlab/runner.py`, `simlab/shocks/apply.py` | `SimLabRunner.run`, `validate_apply_shocks_buffers` | `out_view = shocked_levels_buf[:, :current_b]` is a **column** slice; it is not C-contiguous when `current_b < batch_size`. The kernel pins `out` to `_F64_2D_C`. `validate_apply_shocks_buffers` runs on the first batch only, so the partial final batch is never pre-validated. | Any run whose scenario count is not a multiple of `batch_size` fails at Numba dispatch. Loud, but it blocks the run and the one-shot validator cannot pre-empt it. | Probe P5-5: `buf[:, :58]` → `C_CONTIGUOUS=False`; `buf[:, :64]` → `True`. | `total_scenarios % batch_size != 0`. | Runner |
-| **Z-04** | MEDIUM | C | **LATENT** | `simlab/shocks/shock_kernel.py`, historical shock kernels | `_kernel_apply_shocks` | The branch ladder covers `{LOG_RETURN, SIMPLE_RETURN, DIFFERENCE, ABSOLUTE_BASE_RETURN, NO_SHIFT}` with **no `else`**. An unrecognised shift id leaves the entire output row unwritten — `np.empty` heap. | A silently uninitialised factor row for every scenario. | Probe P5-2: shift id 0 → row untouched, sentinel `-12345.0` survives. | `build_shock_universe._smoke_test_inputs` rejects any id ∉ `{-1,1,2,3,4}`. Reachable only by constructing a `ScenarioSetBatch` directly — a public frozen dataclass whose `__post_init__` validates dtype and length but not shift values. | Shock kernel / batch contract |
-| **Z-05** | LOW | E | **DOC** | `simlab/shock_plan/plan.py` | `ShockComputePlan.inverse_permutation` | The docstring — "for each shock-universe uix `k`, the position of its column in the kernel output" — describes a uix-indexed map, and `inv[order] = arange` builds one. Both consumer classes index it by sorted position. | This is the root documentation defect behind Z-01 and Z-02: the field's contract is stated correctly and used incorrectly at every site. | Source + the algebra in §4. | n/a | Plan contract |
-| **Y-07** | — | E | **NO DEFECT (resolved)** | `sensitivities/book_adapter.py` | `build_sensitivity_book_spec` | Derivation in §6 proves `ABSOLUTE` is the unique correct declaration for `∂PV/∂S`, and that it is correct **independently** of the simlab shift type. Pass 4's MEDIUM/CONFIRMED is withdrawn. | — | §6 derivation against the `DisplacementConvention` definition block. | — | — |
-| **Y-07b** | MEDIUM | C | **LATENT** | `sensitivities/book_adapter.py` | `displacement_convention` parameter | The convention is a caller-settable keyword applied uniformly to every factor, over coefficients whose coordinate system is fixed by the kernel. Nothing binds or checks it. | A caller passing `LOG` or `RELATIVE` silently reinterprets every coefficient. | Pass 4 probe P4-H: +18.89 % P&L error at a −30 % move. | Reachable by caller action only; no internal producer supplies a non-default value. | Book adapter |
-| **X-01** | **CRITICAL** | B | **CONFIRMED — root cause identified** | `market_data/builder.py` | `_build_fx_spots_effective` | Carried. Pass 5 establishes that X-01 and Z-01 are the **same architectural failure** — a position within `[fx | scalar | disc | price]` treated as a position in a globally sorted space — with the same triggering topology. | — | Pass 3 §4; Pass 5 §11. | Shared with Z-01. | Market-data builder |
-| **Y-01** | **CRITICAL** | B | **CONFIRMED — carried** | `market_data/builder.py` | `_build_scalar_node_levels` | Unchanged by this pass. FX-node rows of `prices` are never written. | — | Pass 4. | — | Market-data builder |
-| **Y-02 / Y-03** | **CRITICAL / HIGH** | D | **CONFIRMED — extended** | `tests/sensitivities/` | oracle + fixture | Extended: the *simlab* fixture is masked by the same mechanism. `_SOURCE_FACTOR_IDS = [0,1,2,2]` is ascending, so `inverse_permutation` is the identity and Z-01/Z-02 cannot fire in any shipped test. | The assurance blind spot is now demonstrated at three independent layers. | Probe G. | — | Test / assurance |
+```
+BlockSensitivities (rf_id-keyed SoA)
+        │  book_adapter.build_sensitivity_book_spec
+        ▼
+SensitivityBookSpec { sensitivities, cross_sensitivities, factor_meta, factor_axis }
+        │  pipeline.resolve:  axis.relabel(frames, factor columns)     ◀── SLOT→row positions
+        ▼
+compile_sensitivity_book
+   active_factor_ids  = np.unique(diag ∪ cross_i ∪ cross_j)            sorted-unique
+   active_level_uix   = searchsorted_or_raise(level_universe, active)  ──► ValueError
+   convention_ids, quote_base = _gather_factor_meta(active)            same axis
+   position_uids      = np.unique(diag_pos ∪ cross_pos ∪ extra)        sorted-unique
+   diag_row  = searchsorted_or_raise(position_uids, diag_position)     ──► ValueError
+   diag_uix  = searchsorted_or_raise(active, diag_factor)              ──► ValueError
+   lexsort (row, uix) → _collapse_duplicates(RAISE|SUM) → _csr_offsets
+   d1 *= quote_base ; d2 *= quote_base²
+   cross: min/max → i<j ; reject i==j ; lexsort (row, lo, hi) ; collapse ; h *= qb_i·qb_j
+        ▼
+CompiledSensitivityBook  (__post_init__: CSR monotonicity, terminator, uix ranges)
+        │
+        │  SensitivityPnlEngine.__post_init__
+        │    out dtype/ndim/C-contiguity/rows-vs-positions
+        │    derive_min_source_rows (from the ACTIVE-FACTOR axis, not nnz)
+        │    validate_base_levels_for_ratio_factors  ──► ValueError on L0 ≤ 0 for REL/LOG
+        │    _chunk_offsets = balanced_chunk_offsets(book, default_num_chunks(...))
+        ▼
+absorb_levels(shocked_levels, batch_len, scenario_offset, levels_offset)
+   check_2d_batch_source: dtype, ndim, rows, batch_len, batch_size,
+                          source_offset, scenario_offset, out_num_scenarios
+   require_positive_levels_for_log_factors  ──► ValueError on L ≤ 0 for LOG
+        ▼
+kernel_build_displacement  (Ka, B) f32, computed f64 and narrowed on store
+   ABSOLUTE  x = L − L0      RELATIVE  x = L/L0 − 1      LOG  x = ln(L/L0)
+        ▼
+kernel_taylor_pnl   prange over CHUNKS (contiguous row ranges, never reordered)
+   PnL_m(s) = Σ_j (d1 + ½·d2·x_j)·x_j  +  Σ_{i<j} h_ij·x_i·x_j
+   accumulate f64 in per-thread scratch, narrow-cast to f32 on scatter
+        ▼
+out (M, S_total) f32   row m ≡ position_uids[m]
+        ▼
+scenario_metrics.compute_var_es(group_value_matrix, confidence_level)
+   _compute_lower_tail_parameters: α=1−C, m=αS, 16·eps snap, var_index, full, frac
+   _kernel_lower_tail_var_es: quickselect to var_index; ES = (Σ_{s<full} + frac·VaR)/m
+        ▼
+VarEsResult.var  =  SIGNED lower-tail P&L order statistic  (negative = loss, D015)
+VarEsResult.es   =  exact empirical ES with fractional boundary mass
+```
 
 ---
 
-## 4. Row-Order Proof
+## 3. Mathematical Contract
 
-### Claim
-For every `i`, `flat_levels[i, s]` is the shocked level of `required_factor_ids[i]` under `required_shift_type_ids[i]` — **conditional on the shock column being correct**, which §7 disproves.
+Stated before reading the arithmetic, then verified against it.
 
-### Step 1 — `required_factor_ids` → `required_shift_type_ids`
+**Factor identity.** A factor is a global `rf_id` under DIRECT encoding, or a row position in `arange(K)` under SLOT. Inside the compiled book it is an index into `active_factor_ids` — the *active-factor axis* — and that single space indexes `active_level_uix`, `displacement_convention_ids`, `quote_base`, the displacement matrix rows, `factor_uix`, `cross_factor_uix_i` and `cross_factor_uix_j`.
 
-`build_universe_mapping` (assemble.py):
+**Position identity.** A position is an `int64` uid. Inside the book it is a row index into `position_uids`, sorted-unique, and `out[m] ≡ position_uids[m]`.
 
-```python
-required = np.concatenate([fx_spots, scalar_rfs, disc_children, price_children])
-required_shift = static_config.rf_id_to_shift_type_id[required].astype(
-    np.int8, copy=False
-)
-```
+**Displacement.** `x_i` is the factor's move in its own declared `DisplacementConvention`, reconstructed per scenario from `(base_levels[n], shocked_levels[n, s])` where `n = active_level_uix[i]`.
 
-`rf_id_to_shift_type_id[required]` is NumPy advanced indexing with the array `required`. Advanced indexing produces `out[i] = table[required[i]]` by definition, so the result is in `required` order, element for element. **Alignment is not "by construction" in the hand-waving sense — it is the defining semantics of the gather, using the same array object.** No sort, unique, filter, transpose or reshape intervenes between the two statements.
+**Coefficient convention.** `d1` is `∂V/∂x`, `d2` is `∂²V/∂x²`, `h_ij` is `∂²V/∂x_i∂x_j` for `i < j`, each already scaled by `quote_base**n`.
 
-**PROVEN ALIGNED.**
+**The claimed object.**
 
-### Step 2 — `required_factor_ids` → `base_levels`
+$$
+\Delta V_p(s) = \sum_i d_{p,i}\,x_i(s) + \tfrac12\sum_i g_{p,i}\,x_i(s)^2 + \sum_{i<j} h_{p,ij}\,x_i(s)\,x_j(s)
+$$
 
-`extract_levels_from_snapshot`:
+**Units.** `x` carries the factor's own units under ABSOLUTE and is dimensionless under RELATIVE/LOG. `d1·x`, `½·g·x²` and `h·x_i·x_j` are all in the position's P&L currency. The `quote_base**n` folding reconciles a quoted coefficient to a natural-unit one.
 
-```python
-idx = searchsorted_or_raise(universe=snapshot.factor_ids, raw=required_ids, ctx=...)
-return np.ascontiguousarray(snapshot.factor_levels[idx]).astype(np.float64, copy=False)
-```
-
-`searchsorted_or_raise` returns `pos` of shape `(required_ids.size,)` with `universe[pos[i]] == required_ids[i]` enforced — it raises `ValueError` naming the offending ids otherwise. The subsequent `factor_levels[idx]` is again advanced indexing in `idx` order, hence in `required_ids` order.
-
-Probed with a sparse, non-ascending required set `[30, 10, 20]` against marker levels `{10: 110, 20: 220, 30: 330}`:
-
-```
-base_levels (gathered) = [330.0, 110.0, 220.0]
-expected               = [330.0, 110.0, 220.0]   ROW ORDER OK
-```
-
-**PROVEN ALIGNED**, and **fail-loud** on a missing factor.
-
-### Step 3 — `base_levels` → `flat_levels`
-
-`_kernel_apply_shocks` reads `base_levels[n]`, `req_to_uix[n]`, `shock_scale[n]`, `shift_types[n]` and writes `out[n]`. Row `n` of the output is therefore built from row `n` of every input array. The runner passes `required_shift_type_ids` and `ProxyResolution.{source_factor_ids, shock_scale}` — all `(N_req,)` and all in required order. `ScenarioSetBatch.__post_init__` enforces that the three share length `N_req`.
-
-**PROVEN ALIGNED** on the row axis.
-
-### Step 4 — the column that row `n` reads
-
-This is where the chain breaks. `shocks[:, req_to_uix[n]]` is correct only if `shocks` columns are indexed in **shock-universe uix space**. §7 proves they are not, in either generator family.
-
-### Verdict
-
-> `required_factor_ids` ↔ `required_shift_type_ids` ↔ `flat_levels` **rows** are provably aligned.
-> The **column** binding from a row to its shock is broken. The row-order contract is sound; the factor-identity contract is not.
+**Where the ½ and the missing 2 live.** The kernel evaluates each diagonal term in Horner form `(d1 + 0.5·d2·x)·x`, so the ½ is applied **in the kernel**, exactly once, and `second_order` must be the raw gamma. Cross terms are evaluated as `h·x_i·x_j` with **no** ½ and **no** factor of 2, because the ½ from the Taylor expansion and the double-counting of `(i,j)`/`(j,i)` cancel — and the compiler enforces one entry per unordered pair, which is what makes that cancellation exact.
 
 ---
 
-## 5. Shock-Convention Proof
+## 4. CSR / FactorAxis Identity Proof
 
-Derived from `_kernel_apply_shocks` line by line, and verified against an oracle written independently from the shift semantics. Let `x` be the base level, `d` the raw shock column value, `c` the per-required `shock_scale`.
+### DIRECT versus SLOT
 
-| id | Name | Implemented transformation | Displacement induced |
+`FactorAxis.from_keys` produces exactly one of two states, never a mixture:
+
+| | condition | `universe_ids` | `slot_map` |
 |---|---|---|---|
-| `1` | `LOG_RETURN` | `x' = x · exp(d·c)` | `ln(x'/x) = d·c` |
-| `2` | `SIMPLE_RETURN` | `x' = x · (1 + d·c)` | `x'/x − 1 = d·c` |
-| `3` | `DIFFERENCE` | `x' = x + d·c` | `x' − x = d·c` |
-| `4` | `ABSOLUTE_BASE_RETURN` | `x' = x + d·c·\|x\|` | `(x'−x)/\|x\| = d·c` |
-| `-1` | `NO_SHIFT` | `x' = x` | `0` |
-| — | any other id | **row not written** | — (Z-04) |
+| **DIRECT** | integer keys, sorted and unique | the keys themselves | `None` |
+| **SLOT** | anything else — unsorted integers or labels | `arange(K)` | `{key: row}` |
 
-`ABSOLUTE_BASE_RETURN` is the documented inverse of `r = (v_t − v_{t−1})/|v_{t−1}|`; it coincides with `SIMPLE_RETURN` for `x > 0` and differs only for `x < 0`, where the increment follows the shock's sign instead of inverting. Verified on a negative base.
+The choice is a property of the whole axis. **A mixed book is structurally impossible**, which answers §6.4 and §6.8 without a probe: `universe_ids` is one array, built one way. Under SLOT, `pipeline.resolve` calls `axis.relabel(...)` on `sensitivities`, `factor_meta` and `cross_sensitivities` before compilation, rewriting key columns to row positions via `replace_strict` — which raises on an unmapped key.
 
-Independent-oracle check (P5-1), `x = 100`, `d = 0.10`, `c = 1`:
+### The identity proof
+
+Every translation into the active-factor axis is a `searchsorted_or_raise`, and `active_factor_ids` is `np.unique(...)`, hence sorted-unique, which is that helper's precondition. The CSR block is `np.lexsort((diag_uix, diag_row))`, i.e. row-major with columns ascending within a row — the CSR invariant — followed by `_csr_offsets` from a `bincount` cumsum.
+
+Executed with hostile sparse identifiers and unique markers — positions `{100, 7, 9000, 42}`, factors `{3, 70000, 90001}`:
 
 ```
-LOG_RETURN  x*exp(d)        kernel=  110.517092  oracle=  110.517092  OK
-SIMPLE      x*(1+d)         kernel=  110.000000  oracle=  110.000000  OK
-DIFFERENCE  x+d             kernel=  100.100000  oracle=  100.100000  OK
-ABS_BASE    x+d*|x| (x>0)   kernel=  110.000000  oracle=  110.000000  OK
-ABS_BASE    x+d*|x| (x<0)   kernel=  -45.000000  oracle=  -45.000000  OK
-NO_SHIFT    x               kernel=  100.000000  oracle=  100.000000  OK
+position_uids     = [7, 42, 100, 9000]
+active_factor_ids = [3, 70000, 90001]
+active_level_uix  = [0, 1, 2]
+position_offsets  = [0, 2, 3, 5, 6]
+factor_uix        = [0, 1, 0, 0, 2, 1]
+first_order       = [7.03, 7.7, 42.03, 100.03, 101.01, 900.7]
+
+recovered {(position_uids[m], active_factor_ids[factor_uix[e]]) -> d1}
+    == the input {(position, factor) -> d1}   ->  True
 ```
 
-**All five transformations are mathematically correct.**
+Every nonzero still denotes exactly `(position_i, factor_j)` after sorting, compaction and CSR construction.
 
-`VALID_SHIFT_TYPE_IDS = {-1, 1, 2, 3, 4}`; `0` is deliberately excluded, and `_smoke_test_inputs` rejects it with an explicit membership test rather than a range check — the comment correctly notes that a range check would wrongly reject `NO_SHIFT = -1`. That is careful, correct boundary code.
+### SLOT, with and without relabel
+
+```
+keys = [90001, 3, 70000]   slot_map = {90001:0, 3:1, 70000:2}   universe_ids = [0,1,2]
+
+WITH relabel    : recovered == input                                    -> True
+WITHOUT relabel : ValueError "factor_id -> level universe: 3 id(s) absent"  [FAIL-FAST]
+```
+
+The general case fails loud. **One window does not** — see Q-01, §20.
+
+### Duplicates and cross canonicalisation
+
+With `h_12 = 3` and `h_21 = 7` supplied as separate rows:
+
+```
+policy=RAISE : ValueError "1 duplicate (position_id, factor_id_i, factor_id_j) row(s)"
+policy=SUM   : canonicalised to i<j, cross_second_order = [10.0]
+i == j       : ValueError "cross: factor_id_i == factor_id_j"   [prevents the ½ double-count]
+```
+
+The asymmetry is not silently symmetrised and not silently halved. `RAISE` is the default.
 
 ---
 
-## 6. Y-07 Verdict — **NO DEFECT**
+## 5. Displacement Reconstruction Proof
 
-### The question
-Who owns the coordinate system of a sensitivity coefficient, and must it be bound to the simlab shift type?
+From `kernel_build_displacement`, with the convention branch hoisted above the scenario loop and the terminal arm being LOG rather than a guard (unknown ids being rejected at compile time):
 
-### The contract, from the source
+| convention | implemented | arithmetic |
+|---|---|---|
+| ABSOLUTE | `dst[s] = f32(src[s] − base)` | `x = L − L₀` |
+| RELATIVE | `inv = 1/base; dst[s] = f32(src[s]·inv − 1)` | `x = L/L₀ − 1` |
+| LOG | `inv = 1/base; dst[s] = f32(ln(src[s]·inv))` | `x = ln(L/L₀)` |
 
-`solutions/sensitivity_pnl` defines the displacement for factor `k` given base level `L0` and shocked level `L`:
+Arithmetic is f64, narrowed on store — deliberate, because `L − L₀` for a large level and a small shock is a cancelling subtraction.
 
-```
-ABSOLUTE   x = L - L0
-RELATIVE   x = L / L0 - 1
-LOG        x = ln(L / L0)
-```
+### Pathological domain, gate versus arithmetic
 
-and states that "a sensitivity is a derivative with respect to a *specific* displacement of a risk factor", declared per factor and resolved at compile time.
-
-### Derivation
-
-The engine computes, per factor, `ΔV = d₁·x + ½·d₂·x² + Σ cross·xᵢxⱼ`, where `x` is reconstructed from `(L0, L)` by the declared convention. So the convention must name the space in which `d₁` was differentiated. For the three candidates:
-
-$$
-d_1 = \frac{\partial V}{\partial x_{\mathrm{ABS}}} = \frac{\partial V}{\partial L},\qquad
-d_1 = \frac{\partial V}{\partial x_{\mathrm{REL}}} = L_0\frac{\partial V}{\partial L},\qquad
-d_1 = \frac{\partial V}{\partial x_{\mathrm{LOG}}} = L_0\frac{\partial V}{\partial L}
-$$
-
-(the last two coincide at first order because `∂x_REL/∂L = ∂x_LOG/∂L = 1/L₀` at `L = L₀`; they diverge at second order and away from the base.)
-
-`_kernel_sensitize_spot` emits `∂PV/∂S = qty·fx` and `∂PV/∂F = qty·S` — partials with respect to the **absolute level**, carrying no factor of `L₀`. Therefore `ABSOLUTE` is the unique correct declaration, and `build_sensitivity_book_spec`'s default is right.
-
-### The decisive point
-
-**The convention is a property of the coefficient, not of the shock.** The engine reconstructs `x` from `(L0, L)` itself; it never sees how `L` was produced. A `LOG_RETURN`-shocked factor reaching an `ABSOLUTE` coefficient still gets `x = L − L₀`, which is exactly the displacement `∂V/∂L` multiplies. The simlab shift type and the `DisplacementConvention` are **not required to agree, and binding them would be wrong**: shocking in log space and differentiating in absolute space is a perfectly coherent combination, and it is the combination the estate actually ships.
-
-This also explains why the Pass-4 numerical demonstration (`+18.89 %` at a −30 % move) is real but does not indicate a live defect: it measures what would happen under a *mis-declared* convention, not under the shipped one.
-
-### Verdict
-
-**Y-07 → NO DEFECT.** The shipped wiring is correct and requires no coupling to the shock convention.
-
-**Y-07b → LATENT (MEDIUM).** The residual hazard is narrow and real: `displacement_convention` remains a caller-settable keyword applied uniformly across all factors, over coefficients whose space is fixed by the kernel. Nothing validates it, and nothing states in the adapter that the value is not a free choice. It becomes materially dangerous the day a sensitizer emits a relative or log partial alongside the absolute spot ones, since one uniform value cannot then be right for both.
-
----
-
-## 7. Source-Factor / Proxy Analysis
-
-### The routing chain
-
-```
-required factor i
-  → ProxyResolution.source_factor_ids[i]                     (proxy rule)
-  → key = (source_id << 8) | shift_id
-  → unique_first_seen  → shock-universe uix u = req_to_uix[i]
-  → cols[u] = searchsorted(available_factor_ids, source_id)   (matrix column)
-  → order = argsort(cols);  cols_sorted = cols[order];  inv[order] = arange
-  → generator computes shocks per sorted position k
-  → apply_shocks reads shocks[:, req_to_uix[i]]  ← expects UIX SPACE
-```
-
-### The permutation algebra
-
-`order[k]` = the uix whose column is k-th smallest. `inv[u]` = the sorted position of uix `u`. By construction `inv = order⁻¹`.
-
-For `shocks[:, u]` to hold uix `u`'s shock, the generator must write
-
-$$
-\texttt{shocks[:, order[k]]} \;=\; \text{shock}\big(\texttt{cols\_sorted}[k]\big)
-$$
-
-**ParametricGenerator writes** `shocks[:, k] = shock(cols_sorted[k])` — correct iff `order = id`.
-**Historical family writes** `out[:, inv[k]] = shock(cols_sorted[k])` — correct iff `inv = order`, i.e. iff the permutation is an **involution**.
-
-### Executed discrimination
-
-Three marker factors `{10: 110.0, 20: 220.0, 30: 330.0}` with `DIFFERENCE` shifts and unique marker shocks `{10: [1,2], 20: [10,20], 30: [100,200]}`, against the independent oracle:
-
-| topology | `inverse_permutation` | parametric (as shipped) | historical (as shipped) | `out[:, order[k]]` |
+| `L₀` | `L` | ABSOLUTE | RELATIVE | LOG |
 |---|---|---|---|---|
-| ascending source ids `[10,20,30]` | `[0,1,2]` (identity) | **MATCH** | **MATCH** | MATCH |
-| transposition `[20,10]` (involution) | `[1,0]` | **MISMATCH** | **MATCH** | MATCH |
-| 3-cycle `[30,10,20]` | `[2,0,1]`, `order=[1,2,0]` | **MISMATCH** | **MISMATCH** | MATCH |
+| 100 | 110 | `10.0` | `0.1` | `0.0953…` |
+| 100 | 0 | `−100.0` | `−1.0` | **rejected** (shocked-level gate) |
+| 100 | −50 | `−150.0` | `−1.5` | **rejected** (shocked-level gate) |
+| 0 | 10 | `10.0` | **rejected** (base gate) | **rejected** (base gate) |
+| 0 | 0 | `0.0` | **rejected** | **rejected** |
+| −100 | −50 | `50.0` | **rejected** | **rejected** |
+| −100 | 50 | `150.0` | **rejected** | **rejected** |
 
-Minimal adversarial example, 3-cycle, actual versus oracle:
+Two gates, correctly scoped:
+
+* `validate_base_levels_for_ratio_factors` — once per engine, over `RATIO_DISPLACEMENT_IDS = {RELATIVE, LOG}`, requiring a finite strictly-positive base. Its docstring names the reason: `error_model="numpy"` emits `inf` rather than raising, so this gate "is the only thing standing between a zero base level and a silent inf in the output."
+* `require_positive_levels_for_log_factors` — per batch, over LOG only, scanning the shocked levels.
+
+**RELATIVE deliberately gets the first gate and not the second.** That is correct, not an inconsistency: `L/L₀ − 1` is finite for any finite `L` once `L₀ > 0`, and clamping a below-−100 % return "would silently replace the caller's scenario with a different one". ABSOLUTE accepts a zero or negative base, which is right — an absolutely-shifted rate, spread or basis has no positivity requirement.
+
+**Handling is consistent across conventions once each convention's mathematical domain is taken as the contract.** No defect.
+
+---
+
+## 6. First-Order / Second-Order / Cross-Term Proof
+
+### The seed structure
+
+`kernel_taylor_pnl` reuses one per-thread accumulator row across every position in a chunk, so the first write must be a **write**, not an accumulate. Four arms, all outside the scenario loop:
+
+| arm | condition | seeds with |
+|---|---|---|
+| 1 | `hi − lo ≥ 4` | four diagonal entries, `lo += 4` |
+| 2 | `lo < hi` | one diagonal entry, `lo += 1` |
+| 3 | `qlo < qhi` | one cross entry, `qlo += 1` |
+| 4 | else | zeros |
+
+Verified against the independent oracle at every boundary:
 
 ```
-row 0 (factor 30):  parametric got [331, 332]   historical got [340, 350]   oracle [430, 530]
-row 1 (factor 10):  parametric got [120, 130]   historical got [210, 310]   oracle [111, 112]
-row 2 (factor 20):  parametric got [320, 420]   historical got [221, 222]   oracle [230, 240]
+nnz= 0  MATCH      nnz= 1  MATCH      nnz= 2  MATCH      nnz= 3  MATCH
+nnz= 4  MATCH      nnz= 5  MATCH      nnz= 8  MATCH      nnz= 9  MATCH      nnz=12  MATCH
 ```
 
-Every factor receives another factor's shock. All values are finite and of plausible magnitude.
+`nnz = 0` with an `extra_position_uids` row emits exact zeros. `nnz ∈ {1,2,3}` takes arm 2 and the remainder loop. `nnz = 4, 8, 12` exercise arm 1 plus whole 4-blocks. `nnz = 5, 9` exercise arm 1 plus a remainder.
 
-### Reachability
+### Cross-only book
 
-`source_factor_ids` is in `required_factor_ids` order, which is `[fx_spots | scalar_rfs | disc_pts | price_pts]` — ascending **within** each block, arbitrary **across** blocks. Identity therefore requires
+A book with `nnz == 0` and one cross entry exercises arm 3, which only exists for this case:
 
-$$
-\max(\text{fx ids}) < \min(\text{scalar ids}) < \min(\text{disc point ids}) < \min(\text{price point ids})
-$$
+```
+engine = [6.0, 24.0, 54.0]      oracle h·(L_i − L0_i)·(L_j − L0_j) = [6.0, 24.0, 54.0]
+```
 
-Nothing enforces or even documents that. Proxy routing makes it strictly less likely, because a proxied factor's source id is another factor's id and can land anywhere. A single discount-curve point whose rf_id falls below a scalar node's rf_id is sufficient for Z-01, with no FX involvement at all.
+This also confirms `derive_min_source_rows` is derived from the active-factor axis and not from `nnz` — a cross-only book has a fully populated factor axis and zero diagonal entries, and the engine sizes its scratch correctly.
 
-### Attacks run and results
+### The ½
 
-| Case | Result |
-|---|---|
-| one-to-one mapping | correct |
-| many-to-one (WTI → BRENT) | correct; dedup collapses to one column |
-| identity mapping | correct |
-| source id absent from `available_factor_ids` | **`KeyError` — fail-loud ✔** |
-| duplicated source ids | correct; `unique_first_seen` collapses them |
-| mixed shift types on one source | correct; the packed key separates them, dedup is on `(source, shift)` |
-| `shock_scale = 0.0` | accepted; yields the base level. No guard — see §10 |
-| `shock_scale < 0` | accepted; sign-flips the shock. No guard — see §10 |
-| `shock_scale = 0.95` (proxy) | `70·exp(0.20·0.95) = 84.6474718360` — **applied exactly once ✔** |
-| non-ascending first-seen source order | **Z-01 / Z-02 fire** |
+`(d1 + 0.5·d2·x)·x` expands to `d1·x + 0.5·d2·x²`. Applied once, in the kernel, never in the coefficient. The `nnz` sweep above used `d2 = 0.1·(i+1)` throughout, so a missing, doubled or misplaced ½ would have shown at every `nnz`.
+
+### The missing factor of 2 on cross terms
+
+Confirmed correct, and the compiler is what makes it correct: one entry per unordered pair with `i < j`, and `i == j` rejected. `h·x_i·x_j` is then the complete contribution of that pair.
+
+---
+
+## 7. Chunk Scheduler Proof
+
+`balanced_chunk_offsets` partitions the row axis by cost prefix-sum `searchsorted`, emitting strictly-increasing bounds from 0 to M. `row_costs = diag + 2·cross + PER_ROW_SCATTER_COST`, which correctly weights a cross entry at twice a diagonal entry (two displacement row loads versus one). Colliding cuts are merged by `np.unique` rather than emitted as empty chunks.
+
+**The scheduler cannot reorder.** Chunks are *contiguous ranges* of the row axis, so `prange` over chunks assigns each `out[m]` to exactly one chunk, and position order is preserved by construction. The kernel docstring is explicit that sorting positions by `nnz` is the opposite of a fix, and why. Reordering is therefore not merely restored before output — it never occurs.
+
+Executed on a 17-position, 6-factor random book:
+
+```
+num_chunks= 1 -> [0, 17]                                        identical to 1-chunk: True
+num_chunks= 2 -> [0, 6, 17]                                     identical: True
+num_chunks= 3 -> [0, 4, 11, 17]                                 identical: True
+num_chunks= 4 -> [0, 3, 6, 12, 17]                              identical: True
+num_chunks= 8 -> [0, 2, 3, 4, 6, 10, 12, 14, 17]                identical: True
+num_chunks=16 -> [0, 1, 2, 3, 4, 5, 6, 8, 10, 11, 12, 13, 14, 15, 17]  identical: True
+num_chunks=64 -> [0, 1, …, 16, 17]  (capped at one chunk/position)     identical: True
+```
+
+Bit-identical, not merely close — because each position's accumulation order is fixed by its own CSR slice regardless of which chunk holds it. Chunking is execution policy only.
+
+The repository pins this independently: `test_chunking_is_output_invariant`, `test_balanced_chunk_offsets_structure`, `test_chunk_offsets_must_{start_at_zero, be_strictly_increasing, cover_every_row}`, `test_engine_writes_only_its_own_rows`, and `test_thread_determinism` (bit-identical at 1 thread and at N).
 
 ---
 
 ## 8. Scenario-Axis Proof
 
-### The chain
+`out[m][scenario_offset + s]` for `s ∈ [0, batch_len)`, written from `acc[s]` which came from `displacement[·][s]`, which came from `shocked_levels[n][levels_offset + s]`. One offset in, one offset out, no transpose.
 
-`shocks` is `(B, K)` F-contiguous: axis 0 is the scenario within the batch. `_kernel_apply_shocks` reads `shock_col = shocks[:, k]` and writes `out_row[b]` for `b ∈ [0, B)`, so `out[n, b]` corresponds to `shocks[b, ·]`. The runner then:
+Asymmetric markers, ABSOLUTE convention, `d1 = 1`, `base = 0`:
 
-```python
-start = batch.scenario_offset
-end = start + current_b
-out_view = shocked_levels_buf[:, :current_b]
-...
-scenario_pvs[:, start:end] = batch_result.values
+```
+batch_size=1: [1.0, 10.0, 100.0, 1000.0, 10000.0]   matches full: True
+batch_size=2: [1.0, 10.0, 100.0, 1000.0, 10000.0]   matches full: True
+batch_size=3: [1.0, 10.0, 100.0, 1000.0, 10000.0]   matches full: True
+batch_size=5: [1.0, 10.0, 100.0, 1000.0, 10000.0]   matches full: True
 ```
 
-Batch-local scenario `b` maps to global scenario `start + b`, and `scenario_offset` is advanced by exactly `scenario_count` per batch. No transpose, no reordering, no insertion or deletion.
+A reversal, transpose or off-by-one is impossible to miss against these markers, and none occurred — including at batch size 3 against 5 scenarios, where the final batch is partial.
 
-### Base-scenario placement
-
-The runner builds a **separate** `(N_req, 1)` base state from `base_levels[:, None]`, prices it, and subtracts at the end (`scenario_pvs -= base_pvs`). Therefore:
-
-> **Scenario 0 is the first shocked scenario, not the base state.** The base is held out of the scenario grid entirely.
-
-This is unambiguous, correct, and worth recording because it is the opposite of the common convention and nothing in the audited docstrings states it.
-
-### Historical ordering
-
-The historical generators walk `t_start` from `h` upward to `t_max`, so scenario 0 is the **oldest** usable observation and the final scenario is the most recent. Consistent within the family.
-
-### Attack
-
-Probed with an asymmetric marker matrix (`scenario 0 → 1, scenario 1 → 10, scenario 2 → 100`) so that a transposition or reversal cannot produce a plausible result. Scenario ordering was preserved in every probe, including the wrong-factor cases — i.e. **Z-01/Z-02 permute the factor axis, never the scenario axis.**
-
-**Scenario-axis semantics: PROVEN CORRECT.**
+`check_2d_batch_source` validates `batch_len`, `batch_size`, `source_offset`, `scenario_offset` and `out_num_scenarios` on every call. The scenario index cannot go out of range at this layer.
 
 ---
 
-## 9. Independent Economic Oracle Results
+## 9. VaR Definition and Quantile Proof
 
-The oracle takes only `(factor identity, base level, shift semantics, source rule, scale, raw shock)` and shares no helper with the re-implementation.
+### The estimator, derived from source
 
-| Probe | Topology | Expected (oracle) | Actual | Verdict |
-|---|---|---|---|---|
-| **G** — shipped fixture | src `[0,1,2,2]`, LOG_RETURN, scale `[1,1,1,0.95]` | `[[1.0909, 1.0586], [221.03, 163.75], [223.71, 11.138], [181.00, 10.470]]` | identical | **MATCH** — the fixture cannot detect Z-01 |
-| **A** — 3-cycle, parametric | src first-seen `[30,10,20]` | `[[430,530],[111,112],[230,240]]` | `[[331,332],[120,130],[320,420]]` | **MISMATCH** |
-| **A′** — 3-cycle, historical | same | `[[430,530],[111,112],[230,240]]` | `[[340,350],[210,310],[221,222]]` | **MISMATCH** |
-| **DECISIVE 2** — transposition | src `[20,10]` | `[[230,240],[111,112]]` | parametric MISMATCH; historical MATCH | discriminates the two defects |
-| **DECISIVE 3** — ascending | src `[10,20,30]` | `[[111,112],[230,240],[430,530]]` | all three forms MATCH | identity masks both |
-| **C** — mixed shift types | LOG/SIMPLE/DIFF/ABS_BASE/NO_SHIFT adjacent | see §5 table | all six exact | **MATCH** |
-| **D** — proxy, `scale = 0.95` | WTI ← BRENT | `70·exp(0.19) = 84.6474718360` | `84.6474718360` | **MATCH** |
-| **H** — degenerate | `N_req = 0`; `N_req = 1, B = 4`; `N_req = 1, B = 1` | no exception, correct shapes | `(0,4)`, `(1,4)`, `(1,1)` | **MATCH** |
-| **P5-2** — invalid shift | id `0` | reject | `ValueError` at `build_shock_universe`; row unwritten if the boundary is bypassed | boundary ✔ / kernel latent |
-| **P5-3** — missing source | id `99` ∉ available | reject | `KeyError: missing source ids [99]` | **✔** |
-| **P5-5** — partial batch | `buf[:, :58]` | contiguous | `C_CONTIGUOUS = False` | **Z-03** |
+Let `α = 1 − C` and `m = α·S`. `_compute_lower_tail_parameters` snaps `m` to the nearest integer within `16·eps·max(1, |m|)` — guarding the canonical `0.99 × 100 → 1.0000000000000009` case — then:
 
----
+```
+full_tail_count   = floor(m)
+fractional_weight = m − full_tail_count
+var_index         = full_tail_count − 1   if fractional_weight == 0   (clamped at 0)
+                    full_tail_count       otherwise
+```
 
-## 10. Critical Negative Findings
+So **VaR is the `ceil(m)`-th smallest observation**: a pure **order statistic with no interpolation**, not a NumPy percentile method, not nearest-rank-with-averaging.
 
-Attacked and explicitly cleared.
+`_kernel_lower_tail_var_es` uses a Hoare-partition quickselect targeting `var_index`. The partition guarantee is exactly what the ES loop needs, and the two cases dovetail:
 
-**Row order is preserved from `required_factor_ids` into `flat_levels`.** Proven, not assumed: two advanced-index gathers on the same array object, with no intervening reordering operation, plus a sparse non-ascending marker probe.
+* `frac == 0`: `var_index = full − 1`, so `row[0 … var_index]` are the `full` smallest. ES sums `row[0 … full−1]` — the same set.
+* `frac > 0`: `var_index = full`, so `row[0 … full−1]` are the `full` smallest. ES sums those plus `frac · row[var_index]`.
 
-**`required_shift_type_ids` is aligned with that ordering.** `rf_id_to_shift_type_id[required]` is the same gather on the same `required`.
+The quickselect target index is correct in both cases, and no full sort is performed.
 
-**`extract_levels_from_snapshot` is fail-loud.** `searchsorted_or_raise` raises `ValueError` naming the missing ids. The `RiskFactorLevelSnapshot` sorted-unique invariant it relies on is enforced in that class's own `__post_init__`, including a re-sort when needed.
+### Sign
 
-**All five shift transformations are mathematically correct**, including the subtle `ABSOLUTE_BASE_RETURN` behaviour at a negative base.
+`var_out[g] = row[var_index]` — the **signed P&L order statistic**. `compute_var_es` applies no negation, and no caller in the chain does either.
 
-**`shock_scale` is applied exactly once**, inside the shift formula, in float64. The float32→float64 promotion at the `apply` boundary is correctly placed and correctly justified (the scale multiplies inside `exp`).
+**D015:** *"VaR is the lower P&L quantile itself (negative for a loss), NOT a positive loss magnitude."* Implementation and decision agree exactly.
 
-**Mixed shift types are interpreted correctly.** The packed key `(source << 8) | (shift & 0xFF)` separates them; `NO_SHIFT = -1` round-trips through the low-8-bit mask as documented, and the dedup is on the pair rather than on the source alone.
+*Correction to my own Pass-4 report:* I presented VaR as positive magnitudes (`488.54`). The engine returns `−488.56`. That was my presentation convention, not the engine's, and it should not be read as evidence of a negation anywhere in the code.
 
-**Missing source factor ids fail loud** with a `KeyError` naming them — `build_shock_compute_plan` performs a proper bounds-plus-identity membership check. **This is precisely the guard whose absence causes X-01, and here it is present and correct.**
+### Verified against marker P&L `[-100, -50, -10, 0, 20, 40, 100]`, S = 7
 
-**Unknown shift type ids fail loud** at `build_shock_universe._smoke_test_inputs`, via explicit membership against `VALID_SHIFT_TYPE_IDS` rather than a range check.
+| C | `m = αS` | var_index | full | frac | VaR | ES |
+|---|---|---|---|---|---|---|
+| 0.99 | 0.0700 | 0 | 0 | 0.0700 | −100.0000 | −100.0000 |
+| 0.95 | 0.3500 | 0 | 0 | 0.3500 | −100.0000 | −100.0000 |
+| 0.90 | 0.7000 | 0 | 0 | 0.7000 | −100.0000 | −100.0000 |
+| 0.75 | 1.7500 | 1 | 1 | 0.7500 | −50.0000 | −78.5714 |
+| 0.50 | 3.5000 | 3 | 3 | 0.5000 | 0.0000 | −45.7143 |
 
-**Empty and singleton universes are safe.** `N_req = 0`, `K = 0`, `B = 1` all produce correctly-shaped output with no exception. `unique_first_seen` has an explicit empty fast path.
+Each independently derived: `ES(0.75) = (−100 + 0.75·(−50)) / 1.75 = −78.5714`. Exact.
 
-**Scenario ordering is preserved end to end**, and the base state is correctly held out of the scenario grid.
+### Small-sample and ties
 
-**Sparse and non-zero-based global factor ids are safe** on the row axis — every gather is by value through `searchsorted`, never by positional assumption. The defect is confined to the **column** axis.
+```
+N=1          VaR= -7.0000  ES= -7.0000
+N=2          VaR= -5.0000  ES= -5.0000
+N=3          VaR= -3.0000  ES= -3.0000
+all equal    VaR=  4.0000  ES=  4.0000
+ties at VaR  VaR= -9.0000  ES= -9.0000
+```
 
-**`ScenarioSetBatch.__post_init__` is a real O(1) contract gate** — dtype, rank, F-contiguity of `shocks`, C-contiguity of the three `(N_req,)` arrays, equal lengths, and non-bool integer checks on the offsets.
-
-**Constitutional compliance holds on this seam.** No strings past ingest; no Polars or Pandas anywhere in `simlab.shocks` or `simlab.builder`; SoA preserved; no objects across the JIT boundary; canonical `riskquant.jit` decorators and `_F32_2D_F` / `_F64_2D_C` / `_I8_1D_C` / `_I32_1D_C` aliases only; no ad-hoc compiler configuration; the branch ladder is correctly hoisted out of the B-loop; zero allocation in the hot path; `nb.prange` the only raw Numba use. The dual C/F overloads are the documented RQ-AUD-017 remediation and are correct.
-
-**`shock_scale = 0` and `shock_scale < 0` are accepted without a guard.** Deliberately **not** raised as a defect: a zero scale is a legitimate way to hold a proxied factor fixed, and a negative scale is a legitimate inverse-proxy relationship. Recorded as a design question for the proxy layer, not a defect in this seam.
-
----
-
-## 11. Cross-Pass Impact
-
-### X-01 — root cause identified, severity unchanged
-
-Pass 3 found that `_build_fx_spots_effective` indexes a dense `flat_levels` sub-block with a `market_id_universe` index. Pass 5 shows this is not an isolated slip. The `[fx_spots | scalar_rfs | disc_pts | price_pts]` layout is a **concatenation of independently-ascending subsets**, and *two different consumers on two different seams* treat a position within it as a position in a globally sorted space. X-01 and Z-01 share one triggering condition: whether the concatenation happens to be globally ascending.
-
-They also interact. In the FX-interleaved topology, X-01 raises `IndexError` inside `_build_fx_spots_effective` — which runs **after** `apply_shocks_to_base_levels` in the same batch. X-01's loud failure therefore *masks* Z-01 in that specific topology. Z-01 fires alone, silently, whenever the non-ascending ordering arises among scalar nodes and curve points with the FX block still well-formed.
-
-**No new ID is created for this.** X-01 remains the finding; Pass 5 supplies its root-cause framing and a second instance.
-
-### Y-01 — unchanged
-
-Uninitialised FX-node rows in `prices` are a separate defect in a different function. Not touched by this seam.
-
-### Y-02 / Y-03 — reachability extended
-
-The assurance blind spot is now demonstrated at three layers rather than one:
-
-1. the sensitivity "oracle" executes neither engine (Pass 4);
-2. the sensitivity fixture places USDEUR at `node_id 0`, masking X-01 (Pass 4);
-3. the simlab fixture's `_SOURCE_FACTOR_IDS = [0, 1, 2, 2]` is ascending, masking Z-01 and Z-02 (Pass 5, Probe G).
-
-All three reduce to one property: **every shipped fixture uses a globally ascending id layout, which is exactly the degenerate case in which all three index-space defects vanish.** No test in the repository exercises a non-ascending universe.
-
-### Y-05 — unchanged
-
-Base-PV reconciliation remains structurally blind. Z-01/Z-02 would be caught by a scenario-level reconciliation against an independent economic oracle — the same instrument that would catch X-01.
-
-### Y-07 — CLOSED as NO DEFECT
-
-Resolved by derivation in §6. Pass 4's MEDIUM/CONFIRMED is withdrawn. The residual interface hazard is re-scoped as **Y-07b, LATENT**.
-
-### Net effect on the risk number
-
-Under Z-01 or Z-02 the shocked levels are factor-permuted before `MarketDataMatrix` is built. Both the valuation path and the sensitivity path consume them, so:
-
-* the sensitivity *coefficients* (computed at base, scenario 0) remain correct, because the base state is built from unshocked `base_levels[:, None]` and never passes through the generator;
-* the *scenario displacements* `x = L − L₀` are those of the wrong factor;
-* the resulting P&L pairs each position's correct sensitivity with another factor's move.
-
-The distribution is therefore assembled from a permuted correlation structure. VaR and ES are wrong by an amount governed by the volatility and correlation mismatch between the swapped factors, with no bound and no sign guarantee. Unlike X-01 — which is a clean multiplicative scale error preserving 95.5 % of tail ranking — this corrupts the tail *selection* itself.
+When `m < 1` the tail is a fraction of the single worst observation and ES collapses to VaR — mathematically exact for the empirical measure, not a degenerate fallback. `var_index` can never exceed `S − 1`, since `m < S` for any `α < 1`.
 
 ---
 
-## 12. Final Audit Classification
+## 10. ES Definition and Tail Proof
+
+ES is **not** "the mean of P&Ls below VaR". It is the exact empirical tail integral:
+
+$$
+ES = \frac{1}{m}\left(\sum_{s<\lfloor m\rfloor} X_{(s)} \;+\; (m - \lfloor m\rfloor)\, X_{(\text{var\_index})}\right)
+$$
+
+— `full_tail_count` observations at unit weight plus a fractional residual on the boundary observation, normalised by `m` rather than by an integer count. This is the correct finite-sample ES for a tail mass that is not an integer number of observations, and it is what makes `ES(0.75) = −78.5714` rather than the naive `(−100 + −50)/2 = −75`.
+
+**Tail selection is by order statistic, not by comparison.** There is no `<` versus `≤` question, because the tail is the first `full_tail_count` entries of a partitioned row plus a weighted boundary. Ties are therefore handled by position, deterministically, and the repository pins this with `test_quickselect_matches_reference_with_ties` and `test_adversarial_orderings_match_reference`.
+
+---
+
+## 11. Streaming versus Full Metrics
+
+There is **no separate streaming metrics path**. `compute_var_es` takes a fully materialised `(n_groups, n_scenarios)` matrix.
+
+Streaming exists one layer down, in the P&L engine: `SensitivityPnlEngine.absorb_levels` / `absorb_displacement` fill one `(M, S_total)` grid batch by batch, and metrics run once on the completed grid. So the question "is the streaming quantile exact or approximate?" does not arise — **the quantile is always computed on the full sample**, and batch-size invariance of the P&L grid (verified in §8, and pinned by `test_batch_size_invariance`) is sufficient for metric equality.
+
+This is a sound design choice and worth recording as such: no approximate streaming quantile, no reservoir sampling, no t-digest, and therefore no numerical observation to quantify.
+
+---
+
+## 12. Contribution / Decomposition Proof
+
+`_compute_tail_contribution` defines the tail scenario set from `total_row`, argselects on it, and gathers **each component at those same scenario indices**. Therefore:
+
+$$
+\sum_k C^{VaR}_k = \sum_k \text{component}_k[s^\*] = \text{total}[s^\*] = VaR
+$$
+
+and likewise for ES with the same weights. The footing identity is **exact by construction**, provided `total_row` is the column sum of `component_matrix`.
+
+`_validate_component_matrix_and_total` validates shape, dtype, contiguity and finiteness — and explicitly declines to verify the column-sum, with a stated reason:
+
+> "The footing identity `sum_k contribution[k] == metric(total_row)` only holds when `total_row` is the column sum of `component_matrix`. That is the caller's responsibility (the total is frequently accumulated online, independently of any materialised component matrix), so it is documented rather than re-derived and checked here."
+
+That is a deliberate, reasoned, documented contract — Euler-style additive contributions under a stated precondition. **Q-02** records that nothing verifies the precondition; it is not a defect.
+
+---
+
+## 13. Independent End-to-End Oracle
+
+The adversarial fixture required by §30, run through the re-implemented production chain and compared against arithmetic that shares nothing with it.
+
+**Bilinear spot, the already-proven identity, exercised through the actual compile → displacement → Taylor path:**
+
+`V = Q·S·F`, `Q = −50`, `S₀ = 82.30`, `F₀ = 1.08`, factors `{2, 7}`, position `1020`, 8 lognormal scenarios.
+
+```
+engine = [12.996405, -10.019889, 11.290367, 69.100075, 37.443439, 111.529320, -4.568144, -139.818420]
+truth  = [12.996404, -10.019890, 11.290367, 69.100071, 37.443439, 111.529325, -4.568144, -139.818427]
+max|err| = 6.989e-06     max relative = 6.462e-08
+```
+
+`truth` is `Q·S·F − Q·S₀·F₀` — the closed form, never touching a coefficient. The residual is float32 *output storage* only; the accumulation is f64 throughout.
+
+**Combined fixture** (§30 checklist): 4 positions with sparse/high ids `{7, 42, 100, 9000}`; 3 factors with sparse ids `{3, 70000, 90001}`; DIRECT and SLOT encodings both compiled and both recovered; first-order, second-order and cross terms; `nnz` from 0 to 12 crossing every entry-blocking boundary; cross-only book; 17-position book crossing chunk boundaries at seven chunk counts; asymmetric scenario markers; ties in the metric tests. Every one matched the independent oracle.
+
+---
+
+## 14. X-01 / Z-01 / Z-02 Corruption Propagation
+
+100,000 scenarios, 99 % confidence, through the production chain.
+
+### Case A — correct upstream
+
+```
+max |engine − closed form| = 5.478e-05        VaR99 = -488.56   ES99 = -562.20
+tail-set overlap vs truth  = 100.0%
+```
+
+### Case B — X-01: the spot coefficient built from the wrong FX rate
+
+```
+VaR99 = -565.32   (+15.71 %)      ES99 = -651.76   (+15.93 %)
+tail-set overlap vs truth = 95.5 %
+```
+
+A clean multiplicative overstatement. The tail *ordering* largely survives, because the spot factor dominates and its shock is correct. The engine did not amplify, damp, sign-flip or reorder it — it computed exactly the P&L the corrupted coefficient implies.
+
+### Case C — Z-01 / Z-02: a 3-cycle shock permutation
+
+Two positions, three factors (`SPOT_A`, `SPOT_B`, `FX`), vols 2.0 %, 1.8 %, 0.6 %, permuted so each factor receives another's shock process, rebased to its own level:
+
+```
+truth      VaR99 =  -931.39   ES99 = -1066.14
+permuted   VaR99 =  -399.85   ES99 =  -458.63       VaR err = -57.07 %   ES err = -56.98 %
+tail-set overlap vs truth = 0.0 %
+```
+
+**Not one of the worst 1 % scenarios under truth is among the worst 1 % under the permuted book.** This is categorically worse than X-01: tail identity is destroyed, not merely rescaled, and the error understates risk. Pass 5 established the mechanism; this is the first measurement of its consequence at the reported number.
+
+### The degenerate case — a genuine negative finding
+
+My first Case-C probe returned **0.00 %** error, and the reason is mathematical, not a harness fault.
+
+For a single pure-bilinear position `V = Q·S·F`, second-order Taylor with the cross term reduces exactly to `Q·(S·F − S₀·F₀)`. Swapping the spot and FX *shock processes* leaves `S·F` unchanged, because the product of the two lognormal exponentials is commutative. So:
+
+> **A spot↔FX shock permutation is undetectable on a single bilinear position, at any confidence level, by any metric.**
+
+Detection requires at least three factors, or two positions that do not share the same factor pair. This is worth recording precisely because the shipped demo book is small: a permutation defect can be invisible on a toy fixture and catastrophic on a real one.
+
+### Verdict on the final engine's role
+
+In all three cases the engine consumed the corrupted state **faithfully**. It neither masked nor amplified nor sign-flipped anything beyond what the corrupted inputs themselves imply. That is the correct behaviour for a kernel tier under "kernels do dumb math", and it is precisely why upstream correctness is load-bearing.
+
+---
+
+## 15. Test-Suite Assurance Audit
+
+### Coverage map
+
+| Test file | Production symbols invoked | Layer | Oracle class |
+|---|---|---|---|
+| `test_golden_master_sensitivity_pnl.py` | `compile_sensitivity_book`, `CompiledSensitivityBook`, `SensitivityPnlEngine`, `balanced_chunk_offsets`, `allocate_pnl_grid` | compile + engine + scheduler | **Layer 1 structural invariants + Layer 2 independent hand-computed frozen book** |
+| `unit/test_kernels.py` | `kernel_build_displacement`, `kernel_gather_displacement`, `kernel_taylor_pnl` | kernels | direct arithmetic |
+| `unit/test_mathematical_properties.py` | real compiler + real one-shot engine, over randomly generated books | pipeline | **property-based** — linearity, negation, superposition, independence, zero-displacement |
+| `unit/test_compile.py` | `compile_sensitivity_book` | CSR | structural |
+| `unit/test_scheduling.py` | `row_costs`, `default_num_chunks`, `balanced_chunk_offsets` | scheduler | structural |
+| `unit/test_batch_contract.py` | `check_2d_batch_source`, the level gates | boundary | structural |
+| `unit/test_conventions.py` | `DisplacementConvention` | conventions | structural |
+| `scenario_metrics/test_var_es.py` | `compute_var_es`, `_compute_lower_tail_parameters` | metrics | **independent sorted reference** (`_reference_var_es`, `_reference_tail_mass`) + property tests |
+| `scenario_metrics/test_contribution.py` | `compute_var_es_contribution` | metrics | footing identity |
+| `solutions/.../test_calculator.py`, `test_pipeline.py`, `test_market.py` | `SensitivityPnlCalculator`, `pipeline.resolve`, `FactorAxis` | solutions edge | structural + axis-mismatch |
+
+### What is genuinely independent
+
+Two real oracles, and they are real.
+
+**`test_frozen_book_pnl_matches_hand_computation`** — the module docstring states it plainly: *"a tiny test-OWNED frozen book with hand-computed PnL. Six numbers, derivable on paper from the docstrings. Owned here, not sourced from a canonical fixture, so it cannot drift when the canonical book does."* That is an independent-implementation oracle for the engine.
+
+**`test_randomized_against_independent_sorted_reference`** plus `_reference_var_es` — an independently written sorted reference, exercised on randomised inputs, adversarial orderings and ties.
+
+Both are the genuine article, and they stand in sharp contrast to Y-02.
+
+### Specific coverage questions
+
+| § | Question | Answer |
+|---|---|---|
+| 32.4 | Can the fixtures trigger the known index-space defects? | **No** — every test supplies the book and the levels directly. X-01, Y-01, Z-01, Z-02 corrupt the inputs, and the engine's correct behaviour is to reproduce them. |
+| 32.5 | DIRECT/SLOT exercised? | **Yes** — `test_market.py` exercises `relabel` on diagonal and cross columns; `test_conventions.py` covers axis construction. |
+| 32.6 | Nontrivial CSR permutations? | **Yes** — `test_mathematical_properties.py` runs over randomly generated books rather than one fixture. |
+| 32.7 | Chunk boundaries? | **Yes** — `test_chunking_is_output_invariant`, `test_entry_blocking_boundaries`, `test_balanced_chunks_equalise_skewed_work`, `test_thread_determinism`. |
+| 32.8 | Ties? | **Yes** — `test_quickselect_matches_reference_with_ties`, `test_all_scenarios_equal`. |
+| 32.9 | Sign conventions? | **Yes** — `test_es_is_not_above_var_for_lower_tail_pnl`, `test_translation_invariance`, `test_positive_homogeneity`, `test_monotonicity_under_elementwise_increase`. |
+| 32.10 | Streaming path? | **Yes** — `test_batch_size_invariance`, `test_levels_path_equals_displacement_path`. |
+
+### Assurance independence classification (§33)
+
+| Reconciliation | Classification | Can it detect… |
+|---|---|---|
+| `test_frozen_book_pnl_matches_hand_computation` | **independent implementation oracle** | CSR corruption ✔, displacement errors ✔, Taylor errors ✔. X-01 ✘, Y-01 ✘, Z-01/Z-02 ✘ — book and levels are given. |
+| `test_randomized_against_independent_sorted_reference` | **independent implementation oracle** | quantile sign ✔, tie handling ✔, ES geometry ✔. Upstream ✘. |
+| `test_mathematical_properties.py` | **property-based, same implementation** | structural pipeline defects ✔. Absolute correctness ✘ by design — the docstring says so. |
+| `tests/sensitivities/test_simulated_scenarios_and_revaluation.py` | **non-exercising** (Y-02, Pass 4) | nothing. |
+| `tests/sensitivities/test_spot_sensitizer.py` | **shared-input, layout-degenerate** (Y-03) | would catch a wrong FX rate, but the fixture's `node_id 0` layout makes X-01 unreachable. |
+
+**There is still no end-to-end oracle that derives an expected risk number from factor identity and base levels through the whole chain.** Every oracle in the repository begins downstream of where the defects live.
+
+---
+
+## 16. Z-03 Resolution
+
+### The exact production chain
+
+**Producer.** `SimLabRunner.run` allocates `shocked_levels_buf = np.empty((n_req_factors, batch_size), dtype=np.float64, order="C")` and passes `out_view = shocked_levels_buf[:, :current_b]` — a **column** slice.
+
+**Flags.** For `n_req > 1` and `current_b < batch_size`, the slice has shape `(n_req, current_b)` with strides `(batch_size·8, 8)`. C-contiguity requires `(current_b·8, 8)`. Measured: `buf[:, :64]` → `C_CONTIGUOUS = True`; `buf[:, :58]` → `False`; `buf[:, :1]` → `False`.
+
+**Consumer signature.** `_kernel_apply_shocks` pins `out` to `_F64_2D_C` in both registered overloads. No F-order or non-contiguous overload exists for `out`.
+
+**Selected overload.** None — the dispatcher finds no matching definition and raises `TypeError`.
+
+**Validation.** `validate_apply_shocks_buffers` would reject it, but the runner calls it under `if first_batch` only. The partial final batch is therefore never pre-validated and fails at dispatch instead.
+
+**Outcome:** loud and deterministic; the run aborts whenever `total_scenarios % batch_size != 0`.
+
+### Scope
+
+`SimLabRunner` is the **full-revaluation** runner. D016 states it explicitly: *"`SimlabRunner` is a full-revaluation runner requiring a `ScenarioGenerator` and is not reusable for the sensitivity path, but its constituents are."* D018 makes full revaluation an oracle, not the risk path.
+
+The sensitivity engine takes the opposite approach by design. `absorb_levels` accepts a full-width `(N_req, S)` matrix plus a `levels_offset`, and the docstring gives the reason: *"a column slice would not be C-contiguous and would break the pinned kernel signature."* The sensitivity demo likewise allocates a fresh C-contiguous `np.empty` per batch rather than slicing.
+
+### Classification
+
+**Z-03 → CONFIRMED, scope NARROWED.** A real defect, loud, confined to the full-revaluation runner. **It is not on the production risk path**, and the sensitivity engine demonstrates the correct pattern for the same problem.
+
+---
+
+## 17. Y-08 Resolution
+
+Y-08 concerns `run_sensitivities(portfolio, uix_mapper, market_data, scenario=0)` in `riskquant/sensitivities/engine.py` — the *coefficient-evaluation* scenario column, which `_kernel_sensitize_spot` uses to index `prices` and `fx_spots_effective` under `boundscheck=False`.
+
+The `sensitivity_pnl` engine's `check_2d_batch_source` validates `scenario_offset`, `batch_len`, `source_offset` and `out_num_scenarios` on every absorb call. But that is a **different index at a different layer**: it bounds the P&L grid's scenario axis, not the market-data column from which coefficients are read.
+
+No higher boundary guarantees the coefficient scenario index. **Y-08 stands unchanged** — MEDIUM, CONFIRMED, owned by `sensitivities/engine.py`. Not duplicated here.
+
+---
+
+## 18. P-03 / P-04 / P-05 Interaction
+
+**P-03 — upstream-only, does not propagate as a distinct defect.** By the time the final engine is reached, `source_factor_ids`, `shock_scale` and `required_shift_type_ids` have been fully reduced into `shocked_levels`. The engine consumes `(base_levels, shocked_levels)` and a book keyed by `rf_id`; it has no view of, and no dependency on, the three-array positional binding. A P-03 misalignment therefore arrives here as a *corrupted levels matrix* — observationally identical to Z-01 — and is already measured in §14. **P-03 is upstream-only.**
+
+**P-04 — not a numerical defect at this layer.** The reported number is computed correctly without any provenance: the book carries `factor_rf_ids` (the correct *identity*), and the engine needs nothing about where a shock originated. Provenance is required for explainability and audit — "why did WTI move?" — not for arithmetic. **Classified as an explainability gap, not a numerical defect**, exactly as §34 asks.
+
+**P-05 — cannot reach this engine silently.** A non-finite proxy scale produces non-finite shocked levels. `validate_base_levels_for_ratio_factors` rejects non-finite bases for RELATIVE/LOG; `require_positive_levels_for_log_factors` rejects non-positive shocked levels for LOG; `_require_finite` rejects non-finite *coefficients* at compile. **Gap:** an ABSOLUTE-convention factor with a NaN *shocked level* is not gated — `x = L − L₀` is NaN, the Taylor accumulation is NaN, and `_validate_group_value_matrix` then raises `"group_value_matrix must contain only finite values"` at the metrics boundary. So it fails loud, at the last boundary rather than the first, and P-05's silent-NaN concern does **not** reach the risk number.
+
+---
+
+## 19. Critical Negative Findings
+
+Attacked and cleared, with the reason each passed.
+
+### CSR
+
+**DIRECT encoding.** Sorted-unique integer keys index themselves; `searchsorted_or_raise` makes key→row the identity. Verified on sparse ids `{3, 70000, 90001}` with unique markers.
+**SLOT encoding.** `relabel` rewrites key columns to row positions via `replace_strict`, which raises on an unmapped key. Verified: recovered mapping equals input.
+**Mixed encoding.** Structurally impossible — `universe_ids` is one array built one way per axis.
+**Sparse / high / non-zero-based ids.** All translations are by value through `searchsorted_or_raise`, never by positional assumption.
+**Reordered factors and positions.** `np.unique` + `lexsort` canonicalise both axes; the recovered `(position, factor) → coefficient` map is identical to the input.
+**Duplicate keys.** `RAISE` by default with a count and a remedy; `SUM` via `np.add.reduceat` over group starts. Quote-base folding is applied after collapse and is linear, so the two orders agree.
+**Empty book.** `nnz = 0` with `extra_position_uids` emits exact zeros and correctly-shaped CSR terminators.
+
+### Mathematics
+
+**First order, second order, cross terms, the ½.** Verified against the independent oracle at nine `nnz` values crossing every entry-blocking boundary, plus a cross-only book.
+**Mixed conventions.** ABSOLUTE, RELATIVE and LOG in one book, branch hoisted above the scenario loop.
+**Zero displacement.** Exactly zero P&L — pinned independently by `test_zero_displacement_is_exactly_zero`.
+**Negative displacement.** Handled; ABSOLUTE has no positivity requirement.
+**Pathological base levels.** Seven `(L₀, L)` combinations across three conventions; every rejection traceable to a named gate, every acceptance mathematically defined.
+
+### Execution
+
+**Chunking.** Bit-identical across seven chunk counts.
+**Scheduling.** Contiguous row ranges only; cannot reorder positions.
+**Scenario ordering.** Asymmetric markers preserved at four batch sizes.
+**Position ordering.** `out[m] ≡ position_uids[m]` throughout.
+**Full versus streaming.** Metrics always run on the full grid; batch-size invariance is sufficient.
+**Partial final batch.** Handled correctly here via `levels_offset` — the pattern that breaks `SimLabRunner` (Z-03) is explicitly avoided.
+
+### Metrics
+
+**VaR sign.** Signed lower-tail order statistic, matching D015 exactly.
+**Quantile definition.** `ceil(m)`-th order statistic, no interpolation, with a documented `16·eps` snap for binary-representation noise.
+**Ties.** Resolved by position through the quickselect partition; deterministic.
+**ES tail.** Exact empirical integral with fractional boundary mass, normalised by `m` — not a naive mean below VaR.
+**Small samples.** `N ∈ {1, 2, 3}`, all-equal, ties-at-VaR all produce mathematically defined results.
+**Contribution identities.** Additive by construction under the documented precondition.
+
+### Constitutional
+
+No strings, no objects, no Pandas in any numerical path. Polars confined to `compile.py`'s edge resolution and the solutions tier. Canonical `riskquant.jit` decorators and aliases throughout — including `_F64_2D_C_RO` and `_F64_1D_C_RO` on the metrics kernels' read-only inputs, which is the `_RO` usage Pass 1 found missing in `valuation`. `stable_math_parallel_njit` on the metrics kernels, correctly distinguished from the ordinary `parallel_njit` used elsewhere. Zero allocation in every hot path; scratch is engine-owned and pre-sized. The chunk scheduler is execution policy, computed once per engine, never on the hot path.
+
+The kernel documentation records measured alternatives that were built and rejected — scenario-tiled register blocking at 0.21–0.30×, split linear/quadratic CSR at 0.58–0.90×, position sorting by `nnz` at 0.17× — with instructions to re-run the throughput script before reintroducing either. This is the empirical-benchmarking discipline the estate claims, actually practised.
+
+---
+
+## 20. Finding Matrix
+
+| ID | Severity | Category | Status | File | Symbol | Finding | Why it matters | Evidence | Reachability | Owner |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **Q-01** | MEDIUM | B | **LATENT** | `sensitivity_pnl/compile.py`, `solutions/.../market.py` | `compile_sensitivity_book`, `FactorAxis.relabel` | A SLOT axis whose integer keys are a permutation of `[0, K)` compiles **silently with the wrong factor mapping** if `relabel` is bypassed. Every other SLOT layout raises. | The only silent mismapping window in the final engine. | Probe: keys `[2,0,1]`, unrelabelled ids `[2,0,1]` → accepted, `factor_uix = [2,0,1]` instead of `[0,1,2]`. Contrast keys `[90001,3,70000]` → `ValueError`. | Requires calling `compile_sensitivity_book` directly. `pipeline.resolve` applies `relabel` unconditionally to all three frames. | Compiler / solutions edge |
+| **Q-02** | LOW | E | **DOC** | `scenario_metrics/_validate.py` | `_validate_component_matrix_and_total` | The footing identity `Σ_k C_k == metric(total_row)` holds only if `total_row` is the column sum of `component_matrix`; this is documented as the caller's responsibility and not verified. | A caller supplying an inconsistent total gets contributions that do not foot, with no error. | Source: the docstring states the precondition and the reason for not checking it. | Caller-supplied inputs only. | Metrics boundary |
+| **Z-03** | HIGH | C | **CONFIRMED — NARROWED** | `simlab/runner.py` | `SimLabRunner.run` | Resolved exactly (§16). Partial final batch → non-C-contiguous `out_view` → `TypeError` at Numba dispatch. Loud. **Confined to the full-revaluation runner; not on the production risk path.** | Blocks any full-reval run whose scenario count is not a multiple of `batch_size`. | Measured flags + pinned `_F64_2D_C` signature + `first_batch`-only validation. | `total_scenarios % batch_size != 0`. | SimLab runner |
+| **Y-08** | MEDIUM | C | **CONFIRMED — unchanged** | `sensitivities/engine.py` | `run_sensitivities(scenario=…)` | The coefficient-evaluation scenario index is unguarded. The P&L engine's `check_2d_batch_source` bounds a **different** index at a different layer and does not cover it. | An out-of-range coefficient scenario reads out of bounds under `boundscheck=False`. | §17. | Caller-supplied. | Sensitivity engine |
+| **Y-07b** | MEDIUM | C | **LATENT — unchanged** | `sensitivities/book_adapter.py` | `displacement_convention` | Now with exact consequence: the value lands in `displacement_convention_ids` and selects the `kernel_build_displacement` branch. Declaring LOG over absolute coefficients silently rebases every displacement. | Silent mis-scaling of the entire book. | §5 + Pass 4 probe (+18.89 % at a −30 % move). | Caller action only. | Book adapter |
+| **P-03** | HIGH | C | **UPSTREAM-ONLY** | `simlab/runner.py`, `scenarios/base.py` | — | Does not propagate to this engine as a distinct defect; its effect arrives as corrupted levels, measured as Case C in §14. | — | §18. | — | Upstream |
+| **P-04** | MEDIUM | D | **EXPLAINABILITY ONLY** | `scenarios/base.py` | `ScenarioSetBatch` | The reported number is computed correctly without provenance. Reclassified per §34: an audit/explainability gap, not a numerical defect. | — | §18. | — | Batch contract |
+| **P-05** | LOW | C | **CANNOT REACH SILENTLY** | `proxy_topology`, resolver | `vol_scaling_factor` | A NaN scale produces NaN levels; ABSOLUTE factors are not gated at the engine, but `_validate_group_value_matrix` rejects a non-finite P&L grid at the metrics boundary. Fails loud, late. | — | §18. | — | Config compile |
+| **D015** | — | A | **NO DEFECT** | `scenario_metrics/api/var_es.py` | `compute_var_es` | Implementation and decision agree exactly: VaR is the signed lower P&L quantile, no negation anywhere. | — | §9. | — | — |
+| **X-01 / Y-01 / Z-01 / Z-02** | **CRITICAL** | B | **CONFIRMED — impact quantified** | carried | — | Not new findings. §14 measures their effect at the reported number: X-01 → VaR +15.71 %, tail overlap 95.5 %; Z-01/Z-02 3-cycle → VaR −57.07 %, tail overlap **0 %**. | Z-01/Z-02 destroys tail identity and understates risk. | §14. | Established in Passes 3 and 5. | Upstream |
+
+---
+
+## 21. Cross-Pass Reconciliation
+
+### The complete production chain
+
+| Arrow | Verdict | Pass |
+|---|---|---|
+| static configuration → proxy resolution | **proven correct** | 6 |
+| proxy resolution → `source_factor_ids` / `shock_scale` row binding | **proven correct** | 6 |
+| positional crossing into `iter_batches` | **proven defective** (P-03) | 6 |
+| provenance → downstream | **proven defective** (P-04), explainability only | 6, 7 |
+| shock universe / compute plan construction | **proven correct** | 5, 6 |
+| compute plan → generator shock columns | **proven defective** (Z-01, Z-02) | 5 |
+| shift-type application | **proven correct** | 5 |
+| `required_factor_ids` → `flat_levels` rows | **proven correct** | 5 |
+| scenario-axis semantics | **proven correct** | 5, 7 |
+| `flat_levels` → `MarketDataMatrix` (FX) | **proven defective** (X-01) | 3 |
+| `flat_levels` → `MarketDataMatrix` (scalar rows) | **proven defective** (Y-01) | 3, 4 |
+| `MarketDataMatrix` → valuation kernels | **proven correct** | 1, 2 |
+| `MarketDataMatrix` → sensitizer | **proven correct** | 4 |
+| sensitizer → `BlockSensitivities` | **proven correct** | 4 |
+| `BlockSensitivities` → `SensitivityBookSpec` | **proven correct**; latent convention hazard (Y-07b) | 4, 7 |
+| `SensitivityBookSpec` → compiled CSR | **proven correct**; latent SLOT window (Q-01) | 7 |
+| compiled CSR → Taylor P&L | **proven correct** | 7 |
+| Taylor P&L → chunking / scenario assembly | **proven correct** | 7 |
+| scenario P&L → VaR / ES | **proven correct** | 7 |
+| VaR / ES → contribution | **proven correct** under a documented precondition (Q-02) | 7 |
+| assurance across the whole chain | **proven defective** (Y-02, Y-03) | 4, 5, 6, 7 |
+
+No production arrow is unclassified.
+
+### Changes made by Pass 7
+
+**New root causes:** Q-01 (latent), Q-02 (documentation).
+**New downstream impact:** §14 — the first quantification of X-01 and Z-01/Z-02 at the reported risk number, and the discovery that Z-01/Z-02 is far more destructive than X-01.
+**Architectural clarification:** Z-03 narrowed to the full-revaluation branch; Y-08 confirmed as a distinct layer and not duplicated; P-03 classified upstream-only; P-04 reclassified as explainability; P-05 shown to fail loud at the metrics boundary; D015 confirmed.
+**Self-correction:** my Pass-4 report presented VaR as positive magnitudes; the engine returns signed quantiles.
+
+---
+
+## 22. Final Mathematical Theorem
+
+> **Theorem.** Let `B` be a `CompiledSensitivityBook` produced by `compile_sensitivity_book` from a `SensitivityBookSpec` whose factor keys were resolved through `FactorAxis` and `pipeline.resolve`. Let `(base_levels, shocked_levels)` satisfy the engine's admitted domain — finite, correctly shaped, strictly positive base for RATIO-convention factors, strictly positive shocked levels for LOG-convention factors. Then for every position `m` and scenario `s`, `SensitivityPnlEngine` computes
+>
+> $$\text{out}[m,s] \;=\; \sum_{j\in \text{row}(m)} \left( d^{(1)}_{mj} x_j(s) + \tfrac12 d^{(2)}_{mj} x_j(s)^2 \right) \;+\; \sum_{(i,j)\in \text{cross}(m),\, i<j} h_{mij}\, x_i(s)\, x_j(s)$$
+>
+> with `x` reconstructed per factor in its declared `DisplacementConvention`, **exactly**, up to:
+>
+> * float32 representation of the displacement matrix (~6 × 10⁻⁸ relative, three to five orders below the Taylor truncation error it feeds);
+> * float32 narrowing of the output grid (~6 × 10⁻⁸ relative; accumulation is f64);
+>
+> and **independently of** batch size, chunk count, thread count, position order, factor order and CSR entry order. Measured: max relative error 6.46 × 10⁻⁸ against a closed form; bit-identical across 1–64 chunks; bit-identical across 1 and N threads (pinned by `test_thread_determinism`).
+>
+> **Corollary.** For a payoff that is exactly bilinear in two factors, second-order Taylor with the cross term is not an approximation: the engine reproduces `Q(SF − S₀F₀)` to float32 output precision.
+
+### Upstream assumptions currently violated
+
+The theorem's hypothesis requires a *semantically correct* book and a *semantically correct* shocked state. Four established defects violate it:
+
+1. **X-01** — `fx_spots_effective` built across two index spaces, so `d1` for the spot factor carries the wrong FX rate. Measured: VaR +15.71 %.
+2. **Y-01** — FX-node rows of `prices` never written, so `∂PV/∂FX = qty · prices[·]` can be uninitialised memory for an FX pair held as a position.
+3. **Z-01** — `ParametricGenerator` never applies `inverse_permutation`.
+4. **Z-02** — the historical family applies it in the wrong index space.
+
+(3) and (4) violate the shocked-state hypothesis. Measured on a 3-cycle: VaR −57.07 %, tail-set overlap 0 %.
+
+**The theorem holds. Its hypothesis does not.**
+
+---
+
+## 23. Final Audit Classification
 
 ### Proven correct
-Row-order alignment of `required_factor_ids` ↔ `required_shift_type_ids` ↔ `flat_levels` rows. `extract_levels_from_snapshot` gather and its fail-loud membership check. All five shift-type transformations. `shock_scale` applied exactly once, with a correctly-placed f32→f64 promotion. Proxy dedup on `(source, shift)` pairs. Missing-source `KeyError`. Unknown-shift `ValueError`. Empty and singleton universes. Scenario-axis semantics end to end, including base-state exclusion. `ScenarioSetBatch` structural gate. Constitutional compliance of the whole seam.
+CSR identity under DIRECT and SLOT, sparse and high ids, reordered factors and positions. Cross canonicalisation to `i < j` and `i == j` rejection. Duplicate policy, both arms. Quote-base folding. All three displacement conventions and their domain gates. The Taylor form including the ½ placement and the cross-term coefficient convention, at every entry-blocking boundary and on a cross-only book. Chunking invariance, bit-identical. Scenario-axis preservation. Position-order preservation. Batch-size invariance. VaR as the `ceil(m)`-th order statistic with the `16·eps` snap. ES as the exact empirical tail integral with fractional boundary mass. Tie handling. Contribution footing under its documented precondition. D015 sign convention. Constitutional compliance including `_RO` aliases on the metrics kernels.
 
 ### Proven defective
-**Z-01 (CRITICAL)** — `ParametricGenerator` never applies `inverse_permutation`; shock columns are in sorted-position space while `required_to_shock_uix` is in uix space.
-**Z-02 (CRITICAL)** — the four historical-family kernels index `inverse_permutation` by sorted position when it is built as a uix-indexed map; correct only for involutions.
-**Z-03 (HIGH)** — the runner's partial final batch produces a non-C-contiguous `out_view` that the pinned kernel signature rejects, and the one-shot validator runs too early to catch it.
+**Z-03** (HIGH) — confined to the full-revaluation runner, loud, off the production risk path.
+**Y-08** (MEDIUM) — coefficient-evaluation scenario index unguarded, distinct layer, unchanged.
+Carried CRITICAL: **X-01**, **Y-01**, **Z-01**, **Z-02** — all upstream, all now quantified at the reported number.
+Carried CRITICAL/HIGH assurance: **Y-02**, **Y-03**.
 
 ### Conditional
-None new. Prior conditionals (X-07 vol basis, X-08/X-09 dual universes, X-11 field collision, V-03 forward/log-forward) are untouched by this seam.
+None.
 
 ### Latent
-**Z-04** — `_kernel_apply_shocks` and the historical shock kernels have no `else` branch; an unrecognised shift id leaves the row unwritten. Blocked today by `build_shock_universe._smoke_test_inputs`, reachable only through direct `ScenarioSetBatch` construction.
-**Y-07b** — `displacement_convention` is caller-settable and uniform across factors, over coefficients whose coordinate system is fixed by the kernel.
+**Q-01** (MEDIUM) — SLOT permutation-of-`[0,K)` silent mismapping when `relabel` is bypassed.
+**Y-07b** (MEDIUM) — caller-settable displacement convention over fixed-coordinate coefficients.
+**Z-04** (MEDIUM) — unknown shift id leaves a row unwritten if `ScenarioSetBatch` is constructed directly.
 
 ### Documentation only
-**Z-05** — `ShockComputePlan.inverse_permutation`'s docstring states a uix-indexed contract that no consumer honours. The root documentation defect behind Z-01 and Z-02.
+**Q-02** — contribution footing precondition documented but unverified.
+**P-07** (Pass 6) — unused source-only dedup in `ProxyResolution`.
+**D013** — resolved in implementation, unrecorded in the decision log.
 
 ### Numerical observation
-None on this seam. The `math.exp` / libm choice, the f32 shock storage and the f64 level reconstruction are all correctly reasoned and correctly placed.
+**float32 displacement and output storage** — ~6 × 10⁻⁸ relative, deliberate, measured (1.35× end-to-end), and three to five orders below the Taylor truncation error. Not a defect; the reasoning is recorded in the kernel docstrings.
+**A&S normal CDF** (Pass 1, D020) — carried; deep-tail relative error up to 2.9 %, near-ATM ~10⁻⁶. Accepted risk, quantification incomplete in the decision record.
 
 ### No defect
-**Y-07** — the `ABSOLUTE` displacement convention is the unique correct declaration for the shipped coefficients, and correctly independent of the simlab shift type.
-`shock_scale = 0` and `shock_scale < 0` — legitimate proxy semantics, not a defect in this seam.
+**D015 / VaR sign.** **Contribution additivity** under its stated precondition. **RELATIVE convention exempt from the per-scenario positivity gate.** **ABSOLUTE convention accepting non-positive base levels.** **No streaming quantile** — the full sample is always materialised. **Chunk scheduler cannot reorder.** **Mixed DIRECT/SLOT** — structurally impossible.
+
+### Closed
+**P-01** (Pass 6) — proxy row binding. **P-06** (Pass 6) — proxy chains and cycles. **Y-07** (Pass 5) — shock convention independent of displacement convention. **V-05** (Pass 3) — cashflow reachability as buildout state. **W-03 / X-10** on the sensitivity path (Pass 4). **P-03** — upstream-only. **P-04** — explainability, not numerical. **P-05** — fails loud at the metrics boundary.
 
 ---
 
-## 13. Single Next Audit Target
+## 24. Final Production-Path Verdict
 
-### `riskquant.simlab.proxy` — `ProxyResolution` and its producer
+### Can the reported VaR/ES be considered mathematically trustworthy?
 
-This is the last unaudited node feeding the production risk number, and it is the sole producer of the two arrays whose ordering this pass has just shown to be load-bearing.
+**No — but the reason is now precisely located, and it is not the engine.**
 
-**It owns the input that makes Z-01 fire or not.** `ProxyResolution.source_factor_ids` determines the first-seen source ordering, which is the exact discriminator between the identity permutation and a corrupting one. Pass 5 established the failure mode and the triggering condition; only this module can establish how often real books meet it, and whether any ordering guarantee exists that the consumers could have been relying on.
+1. **Is the final engine mathematically correct?** Yes. Proven to float32 output precision, invariant to every execution parameter, with the best boundary code and the only genuinely independent oracles in the estate.
 
-**It is the third array that must be in `required_factor_ids` order, and the only one whose alignment this pass could not prove.** `required_shift_type_ids` was proven aligned because it is a gather on `required` inside `build_universe_mapping`. `base_levels` was proven aligned because it is a gather on `required_factor_ids` inside `extract_levels_from_snapshot`. `source_factor_ids` and `shock_scale` arrive from a different module entirely, and the runner passes them positionally into `iter_batches` alongside `universe_map.required_shift_type_ids` with nothing binding the three to a common row space. A silent misalignment there would be indistinguishable from Z-01 in its effects.
+2. **Is the overall production number trustworthy?** No.
 
-**D013 flags it as unsettled.** "Proxy is a shock transformation; identity ≠ provenance" records a decision in this area that the seam audit has now made consequential.
+3. **Which upstream defects invalidate it?** X-01 (wrong FX rate → VaR +15.71 %), Z-01 and Z-02 (shock permutation → VaR −57.07 %, tail overlap 0 %), and Y-01 (uninitialised `prices` rows for FX-node positions).
 
-The contracts to trace: whether `ProxyResolution` is constructed from `universe_map.required_factor_ids` or from some other ordering; whether `source_factor_ids[i]` is guaranteed to describe required factor `i`; whether a self-map is represented as the factor's own id or as a sentinel; and what, if anything, constrains the resulting first-seen source ordering.
+4. **Which defects belong to the final engine itself?** Q-01 (latent, requires bypassing the pipeline) and Q-02 (documented contract). Neither affects a number produced through the sanctioned path.
+
+5. **Which assurance mechanisms can detect them?** None. The two real oracles that exist — the hand-computed frozen book and the independent sorted VaR reference — both begin downstream of where the defects live. Every upstream fixture sits in an ascending-id layout, which is the one topology in which all three index-space defects vanish.
+
+### The seven-pass shape
+
+The estate's kernels are excellent and its containers are weak. Every defect found in seven passes lives at an index-space boundary between two subsystems — `[fx | scalar | disc | price]` misread as globally sorted (X-01), sorted-column position misread as shock-universe uix (Z-01, Z-02), uix-indexed permutation applied by sorted position (Z-02), a factor class partition never written (Y-01), a SLOT permutation of `[0,K)` (Q-01) — and every one of them is invisible to a fixture whose identifiers happen to be ascending.
+
+### Verdict
+
+> **AUDIT COMPLETE FOR THIS PRODUCTION PATH.**
+
+Every arrow from static configuration to the reported VaR/ES is classified in §21. No material production seam remains unaudited. The remaining work is remediation and assurance, not investigation — and the single highest-value assurance artefact the estate lacks is an end-to-end oracle that derives an expected risk number from factor identity and base levels, exercised on a **non-ascending** identifier layout.
