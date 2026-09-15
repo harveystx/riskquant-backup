@@ -98,11 +98,12 @@ from riskquant.sensitivities.book_adapter import build_sensitivity_book_spec
 from riskquant.sensitivities.engine import run_sensitivities
 from riskquant.simlab.builder.shock_universe import build_shock_universe
 from riskquant.simlab.scenarios.base import ScenarioSetBatch
-from riskquant.simlab.scenarios.historical import HistoricalGenerator
 from riskquant.simlab.shocks.apply import (
     apply_shocks_to_base_levels,
     validate_apply_shocks_buffers,
 )
+from riskquant.solutions.scenario_models.api import build_scenario_generator
+from riskquant.solutions.scenario_models.schemas import HistoricalGeneratorConfig
 from riskquant.solutions.sensitivity_pnl.api import (
     FactorAxis,
     SensitivityPnlCalculator,
@@ -122,206 +123,192 @@ from riskquant.valuation.result import ValuationResult
 # MINIMAL RISK STATIC CONFIG INPUTS
 # =============================================================================
 
-_CCY_DF = pl.DataFrame(
-    {
-        "ccy_name": ["EUR", "USD"],
-        "ccy_id": [1, 2],
-    }
-)
+_CCY_DF = pl.DataFrame({
+    "ccy_name": ["EUR", "USD"],
+    "ccy_id": [1, 2],
+})
 
-_HOLIDAY_CALENDARS_DF = pl.DataFrame(
-    {
-        "holiday_calendar_name": [
-            "NL",
-            "NL",
-            "US",
-            "US",
-        ],
-        "holiday_date": [
-            "2027-01-01",
-            "2027-01-25",
-            "2027-01-01",
-            "2027-01-25",
-        ],
-    }
-)
+_HOLIDAY_CALENDARS_DF = pl.DataFrame({
+    "holiday_calendar_name": [
+        "NL",
+        "NL",
+        "US",
+        "US",
+    ],
+    "holiday_date": [
+        "2027-01-01",
+        "2027-01-25",
+        "2027-01-01",
+        "2027-01-25",
+    ],
+})
 
-_NODE_META_DF = pl.DataFrame(
-    {
-        "node_id": [0, 1, 2, 3],
-        "node_name": [
-            "USDEUR",
-            "AAPL_EQ",
-            "BRENT_CRUDE",
-            "WTI_CRUDE",
-        ],
-        "quote_ccy": [
-            "EUR",
-            "USD",
-            "USD",
-            "USD",
-        ],
-        "asset_class": [
-            "FX",
-            "EQUITY",
-            "COMMODITY",
-            "COMMODITY",
-        ],
-        "asset_subclass": [
-            "FX_G10",
-            "EQ_SINGLE_NAME",
-            "CM_OIL",
-            "CM_OIL",
-        ],
-        "quote_type": [
-            "FX_RATE",
-            "PRICE",
-            "PRICE",
-            "PRICE",
-        ],
-        "unit_scale": [
-            "DECIMAL",
-            "DECIMAL",
-            "DECIMAL",
-            "DECIMAL",
-        ],
-        "shift_type": [
-            "LOG_RETURN",
-            "LOG_RETURN",
-            "LOG_RETURN",
-            "LOG_RETURN",
-        ],
-        "fx_base_ccy": [
-            "USD",
-            None,
-            None,
-            None,
-        ],
-    }
-)
+_NODE_META_DF = pl.DataFrame({
+    "node_id": [0, 1, 2, 3],
+    "node_name": [
+        "USDEUR",
+        "AAPL_EQ",
+        "BRENT_CRUDE",
+        "WTI_CRUDE",
+    ],
+    "quote_ccy": [
+        "EUR",
+        "USD",
+        "USD",
+        "USD",
+    ],
+    "asset_class": [
+        "FX",
+        "EQUITY",
+        "COMMODITY",
+        "COMMODITY",
+    ],
+    "asset_subclass": [
+        "FX_G10",
+        "EQ_SINGLE_NAME",
+        "CM_OIL",
+        "CM_OIL",
+    ],
+    "quote_type": [
+        "FX_RATE",
+        "PRICE",
+        "PRICE",
+        "PRICE",
+    ],
+    "unit_scale": [
+        "DECIMAL",
+        "DECIMAL",
+        "DECIMAL",
+        "DECIMAL",
+    ],
+    "shift_type": [
+        "LOG_RETURN",
+        "LOG_RETURN",
+        "LOG_RETURN",
+        "LOG_RETURN",
+    ],
+    "fx_base_ccy": [
+        "USD",
+        None,
+        None,
+        None,
+    ],
+})
 
 # The validator requires every active quote currency to have at least one
 # discount curve. These are the smallest curves needed to satisfy that
 # invariant while keeping the demo independent of the canonical fixture.
-_CURVE_META_DF = pl.DataFrame(
-    {
-        "curve_id": [250000000, 250001000],
-        "curve_name": [
-            "EUR_ESTR_OIS",
-            "USD_SOFR_OIS",
-        ],
-        "quote_ccy": [
-            "EUR",
-            "USD",
-        ],
-        "asset_class": [
-            "IR",
-            "IR",
-        ],
-        "asset_subclass": [
-            "IR_OIS",
-            "IR_OIS",
-        ],
-        "quote_type": [
-            "RATE",
-            "RATE",
-        ],
-        "unit_scale": [
-            "PERCENT",
-            "PERCENT",
-        ],
-        "shift_type": [
-            "DIFFERENCE",
-            "DIFFERENCE",
-        ],
-        "x_axis_kind": [
-            "LABEL",
-            "LABEL",
-        ],
-        "x_interp_method": [
-            "LINEAR",
-            "LINEAR",
-        ],
-        "x_extrap_method": [
-            "FLAT",
-            "FLAT",
-        ],
-        "roll_method": [
-            None,
-            None,
-        ],
-        "anchor_offset": [
-            None,
-            None,
-        ],
-        "roll_month": [
-            None,
-            None,
-        ],
-        "roll_day": [
-            None,
-            None,
-        ],
-        "fh_bh_mmdd": [
-            None,
-            None,
-        ],
-        "discount_basis": [
-            "OIS",
-            "OIS",
-        ],
-        "is_default_discount_for_ccy": [
-            True,
-            True,
-        ],
-    }
-)
+_CURVE_META_DF = pl.DataFrame({
+    "curve_id": [250000000, 250001000],
+    "curve_name": [
+        "EUR_ESTR_OIS",
+        "USD_SOFR_OIS",
+    ],
+    "quote_ccy": [
+        "EUR",
+        "USD",
+    ],
+    "asset_class": [
+        "IR",
+        "IR",
+    ],
+    "asset_subclass": [
+        "IR_OIS",
+        "IR_OIS",
+    ],
+    "quote_type": [
+        "RATE",
+        "RATE",
+    ],
+    "unit_scale": [
+        "PERCENT",
+        "PERCENT",
+    ],
+    "shift_type": [
+        "DIFFERENCE",
+        "DIFFERENCE",
+    ],
+    "x_axis_kind": [
+        "LABEL",
+        "LABEL",
+    ],
+    "x_interp_method": [
+        "LINEAR",
+        "LINEAR",
+    ],
+    "x_extrap_method": [
+        "FLAT",
+        "FLAT",
+    ],
+    "roll_method": [
+        None,
+        None,
+    ],
+    "anchor_offset": [
+        None,
+        None,
+    ],
+    "roll_month": [
+        None,
+        None,
+    ],
+    "roll_day": [
+        None,
+        None,
+    ],
+    "fh_bh_mmdd": [
+        None,
+        None,
+    ],
+    "discount_basis": [
+        "OIS",
+        "OIS",
+    ],
+    "is_default_discount_for_ccy": [
+        True,
+        True,
+    ],
+})
 
-_CURVE_POINT_META_DF = pl.DataFrame(
-    {
-        "rf_id": [1000, 2000],
-        "curve_id": [250000000, 250001000],
-        "tenor_token": [
-            "[3M]",
-            "[3M]",
-        ],
-    }
-)
+_CURVE_POINT_META_DF = pl.DataFrame({
+    "rf_id": [1000, 2000],
+    "curve_id": [250000000, 250001000],
+    "tenor_token": [
+        "[3M]",
+        "[3M]",
+    ],
+})
 
 # Surface risk factors are not needed for this demo, but the production
 # static-config contract still includes both surface tables.
-_SURFACE_META_DF = pl.DataFrame(
-    {
-        "surface_id": pl.Series([], dtype=pl.Int64),
-        "surface_name": pl.Series([], dtype=pl.String),
-        "quote_ccy": pl.Series([], dtype=pl.String),
-        "asset_class": pl.Series([], dtype=pl.String),
-        "asset_subclass": pl.Series([], dtype=pl.String),
-        "quote_type": pl.Series([], dtype=pl.String),
-        "unit_scale": pl.Series([], dtype=pl.String),
-        "shift_type": pl.Series([], dtype=pl.String),
-        "x_axis_kind": pl.Series([], dtype=pl.String),
-        "x_interp_method": pl.Series([], dtype=pl.String),
-        "x_extrap_method": pl.Series([], dtype=pl.String),
-        "roll_method": pl.Series([], dtype=pl.String),
-        "anchor_offset": pl.Series([], dtype=pl.Int32),
-        "roll_month": pl.Series([], dtype=pl.Int32),
-        "roll_day": pl.Series([], dtype=pl.Int32),
-        "fh_bh_mmdd": pl.Series([], dtype=pl.String),
-        "y_axis_kind": pl.Series([], dtype=pl.String),
-        "y_interp_method": pl.Series([], dtype=pl.String),
-        "y_extrap_method": pl.Series([], dtype=pl.String),
-    }
-)
+_SURFACE_META_DF = pl.DataFrame({
+    "surface_id": pl.Series([], dtype=pl.Int64),
+    "surface_name": pl.Series([], dtype=pl.String),
+    "quote_ccy": pl.Series([], dtype=pl.String),
+    "asset_class": pl.Series([], dtype=pl.String),
+    "asset_subclass": pl.Series([], dtype=pl.String),
+    "quote_type": pl.Series([], dtype=pl.String),
+    "unit_scale": pl.Series([], dtype=pl.String),
+    "shift_type": pl.Series([], dtype=pl.String),
+    "x_axis_kind": pl.Series([], dtype=pl.String),
+    "x_interp_method": pl.Series([], dtype=pl.String),
+    "x_extrap_method": pl.Series([], dtype=pl.String),
+    "roll_method": pl.Series([], dtype=pl.String),
+    "anchor_offset": pl.Series([], dtype=pl.Int32),
+    "roll_month": pl.Series([], dtype=pl.Int32),
+    "roll_day": pl.Series([], dtype=pl.Int32),
+    "fh_bh_mmdd": pl.Series([], dtype=pl.String),
+    "y_axis_kind": pl.Series([], dtype=pl.String),
+    "y_interp_method": pl.Series([], dtype=pl.String),
+    "y_extrap_method": pl.Series([], dtype=pl.String),
+})
 
-_SURFACE_POINT_META_DF = pl.DataFrame(
-    {
-        "rf_id": pl.Series([], dtype=pl.Int64),
-        "surface_id": pl.Series([], dtype=pl.Int64),
-        "x_tenor_token": pl.Series([], dtype=pl.String),
-        "y_label": pl.Series([], dtype=pl.String),
-    }
-)
+_SURFACE_POINT_META_DF = pl.DataFrame({
+    "rf_id": pl.Series([], dtype=pl.Int64),
+    "surface_id": pl.Series([], dtype=pl.Int64),
+    "x_tenor_token": pl.Series([], dtype=pl.String),
+    "y_label": pl.Series([], dtype=pl.String),
+})
 
 _RISK_STATIC_CONFIG_DICT_OF_DFS: dict[str, pl.DataFrame] = {
     "ccy": _CCY_DF,
@@ -356,22 +343,20 @@ def _run_risk_static_config() -> RiskStaticConfig:
 # MINIMAL PROXY TOPOLOGY
 # =============================================================================
 
-_PROXY_CONFIG_DF = pl.DataFrame(
-    {
-        "proxying_level": [
-            "RISK_FACTOR",
-        ],
-        "required_name": [
-            "WTI_CRUDE",
-        ],
-        "proxy_name": [
-            "BRENT_CRUDE",
-        ],
-        "vol_scaling_factor": [
-            0.95,
-        ],
-    }
-)
+_PROXY_CONFIG_DF = pl.DataFrame({
+    "proxying_level": [
+        "RISK_FACTOR",
+    ],
+    "required_name": [
+        "WTI_CRUDE",
+    ],
+    "proxy_name": [
+        "BRENT_CRUDE",
+    ],
+    "vol_scaling_factor": [
+        0.95,
+    ],
+})
 
 
 def _run_proxy_topology(rsc: RiskStaticConfig) -> ProxyTopology:
@@ -405,15 +390,13 @@ def _run_proxy_topology(rsc: RiskStaticConfig) -> ProxyTopology:
 # Human-readable edge representation: two SPOT positions. Names resolve to
 # rf_ids inside the ingest pipeline (`compile_raw_df_into_ingest_batch`);
 # nothing downstream of that call touches a string again.
-_POSITIONS_DF = pd.DataFrame(
-    {
-        "uid": [1_010, 1_020, 1_030],
-        "instrument": ["SPOT", "SPOT", "SPOT"],
-        "quantity": [100.0, -50.0, 75.0],
-        "underlying": ["AAPL_EQ", "BRENT_CRUDE", "WTI_CRUDE"],
-        "settlement_ccy": ["USD", "EUR", "USD"],
-    }
-)
+_POSITIONS_DF = pd.DataFrame({
+    "uid": [1_010, 1_020, 1_030],
+    "instrument": ["SPOT", "SPOT", "SPOT"],
+    "quantity": [100.0, -50.0, 75.0],
+    "underlying": ["AAPL_EQ", "BRENT_CRUDE", "WTI_CRUDE"],
+    "settlement_ccy": ["USD", "EUR", "USD"],
+})
 
 
 def _run_portfolio(rsc: RiskStaticConfig) -> tuple[CompiledPortfolio, UixMapper]:
@@ -644,14 +627,12 @@ def _run_sensitivities(
     # never sees a risk-factor name.
     rf_id_to_name = {v: k for k, v in rsc.rel_name_to_rf_id.items()}
 
-    display = pl.DataFrame(
-        {
-            "position_id": sensitivities.position_uids,
-            "factor_id": sensitivities.factor_rf_ids,
-            "first_order": sensitivities.first_order,
-            "second_order": sensitivities.second_order,
-        }
-    ).with_columns(
+    display = pl.DataFrame({
+        "position_id": sensitivities.position_uids,
+        "factor_id": sensitivities.factor_rf_ids,
+        "first_order": sensitivities.first_order,
+        "second_order": sensitivities.second_order,
+    }).with_columns(
         pl.col("factor_id").replace_strict(rf_id_to_name).alias("factor_name")
     )
     print_df(
@@ -662,14 +643,12 @@ def _run_sensitivities(
     )
 
     if sensitivities.num_cross_entries:
-        cross_display = pl.DataFrame(
-            {
-                "position_id": sensitivities.cross_position_uids,
-                "factor_id_i": sensitivities.cross_factor_rf_ids_i,
-                "factor_id_j": sensitivities.cross_factor_rf_ids_j,
-                "cross_second_order": sensitivities.cross_second_order,
-            }
-        ).with_columns(
+        cross_display = pl.DataFrame({
+            "position_id": sensitivities.cross_position_uids,
+            "factor_id_i": sensitivities.cross_factor_rf_ids_i,
+            "factor_id_j": sensitivities.cross_factor_rf_ids_j,
+            "cross_second_order": sensitivities.cross_second_order,
+        }).with_columns(
             pl.col("factor_id_i").replace_strict(rf_id_to_name).alias("factor_name_i"),
             pl.col("factor_id_j").replace_strict(rf_id_to_name).alias("factor_name_j"),
         )
@@ -836,22 +815,18 @@ def _run_proxy_resolved_levels(
 
     rf_id_to_name = {v: k for k, v in rsc.rel_name_to_rf_id.items()}
     print_df(
-        pd.DataFrame(
-            {
-                "required_factor": [
-                    rf_id_to_name[int(rf)] for rf in required_factor_ids
-                ],
-                "base_level": base_levels,
-                "source_factor": [
-                    rf_id_to_name[int(rf)] for rf in proxy_resolution.source_factor_ids
-                ],
-                "shock_scale": proxy_resolution.shock_scale,
-                "resolution": [
-                    _RESOLUTION_CODE_NAMES[int(code)]
-                    for code in proxy_resolution.resolution_code
-                ],
-            }
-        ),
+        pd.DataFrame({
+            "required_factor": [rf_id_to_name[int(rf)] for rf in required_factor_ids],
+            "base_level": base_levels,
+            "source_factor": [
+                rf_id_to_name[int(rf)] for rf in proxy_resolution.source_factor_ids
+            ],
+            "shock_scale": proxy_resolution.shock_scale,
+            "resolution": [
+                _RESOLUTION_CODE_NAMES[int(code)]
+                for code in proxy_resolution.resolution_code
+            ],
+        }),
         title="Proxy resolution (exposure identity vs shock provenance)",
         float_format="_.4f",
     )
@@ -1081,7 +1056,10 @@ def _run_simulated_scenarios(
     )
 
     matrix = _build_historical_matrix(rsc)
-    generator = HistoricalGenerator(matrix=matrix, horizon=_HISTORY_HORIZON)
+    generator = build_scenario_generator(
+        HistoricalGeneratorConfig(model="historical", horizon=_HISTORY_HORIZON),
+        matrix=matrix,
+    )
 
     shocked_chunks: list[npt.NDArray[np.float64]] = []
     for batch in generator.iter_batches(
@@ -1339,13 +1317,11 @@ def _run_reporting_currency_golden_checks(
     # Aggregation must happen AFTER conversion, never before.
     naive_total = settlement_pnl.sum(axis=0)
     mixed_currency_diff = float(np.max(np.abs(reporting.portfolio_pnl - naive_total)))
-    checks.append(
-        (
-            "portfolio total is NOT a raw mixed-currency sum",
-            mixed_currency_diff > 1e-6,
-            f"max_abs_diff_vs_naive={mixed_currency_diff:.6f}",
-        )
-    )
+    checks.append((
+        "portfolio total is NOT a raw mixed-currency sum",
+        mixed_currency_diff > 1e-6,
+        f"max_abs_diff_vs_naive={mixed_currency_diff:.6f}",
+    ))
 
     # USD-settled rows must be untouched by conversion (identity route).
     for position, uid in enumerate(uids):

@@ -622,3 +622,66 @@ typed (D026); batch-size invariance intact (D029, 4/4 distributions); the
 
 Evidence: 3 R6 tests; tests/simlab 281; focused regression 1441 (+2 skipped);
 changed file lint-clean; scope diff — src byte-identical (no production change).
+
+## D031 — Scenario-model configuration seam (Historical, smallest increment)
+
+Archaeology. Only the E2E demo constructs a generator, and it does so directly
+(`HistoricalGenerator(matrix=..., horizon=...)`); the runner consumes the
+`ScenarioGenerator` protocol and never selects a model. Constructor parameters
+are genuinely heterogeneous — Historical(horizon); FHS(+decay,max_vol);
+SBB(+total_scenarios,expected_block_size,seed); FilteredBootstrap(+total_scenarios,
+decay,max_vol,seed); Parametric(cholesky,vols,factor_ids,total_scenarios,
+distribution_kind,+dist params,seed) — and Parametric does not even take a
+matrix. Data (matrix/cholesky) is market-data input, not user config. The credit
+tier has a string-keyed `*/catalog.py` model catalog and Pydantic `schemas.py`
+(`ConfigDict(extra="forbid")`), but nothing selects/constructs scenario
+generators — so no existing abstraction already provides this seam.
+
+Decision. Introduce the smallest typed seam in the SOLUTION tier (Pydantic lives
+here, never in the NumPy/Numba core), mirroring the existing schema pattern:
+`solutions/scenario_models/schemas.py` + `api.py`.
+- Per-model config carries ONLY that model's parameters (no nullable blob).
+  `HistoricalGeneratorConfig`: `model: Literal["historical"]` discriminator +
+  `horizon: StrictInt = Field(gt=0)`. `extra="forbid"` rejects any parameter
+  belonging to another model (total_scenarios, expected_block_size, seed, …);
+  the `Literal` rejects an unknown model; `StrictInt` rejects float/bool.
+- `ScenarioModelConfig` is a one-member alias today; it becomes
+  `Annotated[HistoricalGeneratorConfig | <Next>, Field(discriminator="model")]`
+  when a second model is wired — callers import the alias, so the promotion is
+  source-compatible. No `GeneratorFactory`/`ModelRegistry` (a single isinstance
+  dispatch in `build_scenario_generator` suffices for one model and extends by
+  one branch per model).
+- `build_scenario_generator(config, *, matrix) -> ScenarioGenerator` constructs
+  the concrete generator; the generator's own `__post_init__` validation runs
+  unchanged (no duplicated model logic, e.g. the `T - horizon` count check stays
+  in the generator). Data is passed separately from config.
+
+Why justified over existing abstractions: the parameter heterogeneity makes a
+single shared config a nullable blob (a stated anti-goal); a per-model typed
+config with a discriminator is the minimal typed selector, and it reuses the
+established Pydantic `extra="forbid"` idiom rather than inventing a new one. A
+discriminated union is deferred until the second model exists (single-member
+unions are not expressible in Pydantic), but the shape is prepared.
+
+Scope / migration. `src/` gains ONLY the new `solutions/scenario_models` package
+— no existing production file changed. The demo is wired through the seam
+(`build_scenario_generator(HistoricalGeneratorConfig(model="historical",
+horizon=_HISTORY_HORIZON), matrix=matrix)`); it constructs the identical
+generator, so demo output is unchanged (only the pre-existing non-deterministic
+holiday-calendar diagnostic row order differs, per D026). Downstream still
+consumes `ScenarioGenerator`; no parallel interface, no kernel/RNG/layout/shift
+change. D021 (co-seeded independence) remains open and is unaffected.
+
+Tests: `tests/solutions/scenario_models/test_scenario_model_seam.py` — valid
+selection; unknown-model rejection; required-parameter and foreign-parameter
+rejection; strict-int and positivity; seed-is-not-a-historical-parameter; build
+returns HistoricalGenerator with the propagated horizon; the seam still runs the
+generator's own validation; and direct-vs-seam equivalence in value, ordering,
+dtype, layout, and count. Evidence: 23 seam tests; tests/simlab 281; focused
+regression + solutions 1464 (+2 skipped); E2E `ALL CHECKS PASSED`, D019 goldens
+unchanged; changed files lint-clean; scope diff — only the new package in src.
+
+Deferred (next increments, not this one): wiring the stochastic generators
+(SBB / FilteredBootstrap / Parametric) — at which point `ScenarioModelConfig`
+becomes a real discriminated union and seed propagation gets a live test on a
+seeded model (Historical is deterministic and has no seed to propagate).
