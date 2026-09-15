@@ -685,3 +685,60 @@ Deferred (next increments, not this one): wiring the stochastic generators
 (SBB / FilteredBootstrap / Parametric) — at which point `ScenarioModelConfig`
 becomes a real discriminated union and seed propagation gets a live test on a
 seeded model (Historical is deterministic and has no seed to propagate).
+
+## D032 — Seam extended to SBB (second real model; discriminated union now justified)
+
+Second proof point for the D031 seam: the Stationary Block Bootstrap, wired with
+no new abstraction. D031 boundaries re-verified first — `solutions.scenario_models`
+imports only downward (pydantic, `market_data`, `simlab` core); no demo/edge/
+sibling-solution leak; `HistoricalGeneratorConfig` stays model-specific.
+
+New schema type. `SbbGeneratorConfig` (model-specific only, no nullable blob):
+`model: Literal["sbb"]`; `horizon` and `total_scenarios` `StrictInt(gt=0)`;
+`expected_block_size: float = Field(default=1.0, ge=1.0, allow_inf_nan=False)`
+with a `before` validator rejecting bool (continuous mean block length per D026 —
+int or float accepted, bool and non-finite rejected); `seed: StrictInt | None =
+None` (strict optional; None = OS entropy, no reproducibility claim, D029).
+Configuration-domain validation only — the generator's `__post_init__` stays
+authoritative for runtime/model invariants (float64 matrix, T>=2, canonical
+int/float persistence).
+
+Discriminated union — now justified. With two genuinely implemented configs,
+`ScenarioModelConfig` is promoted from a one-member alias to
+`Annotated[HistoricalGeneratorConfig | SbbGeneratorConfig, Field(discriminator=
+"model")]`. This is not speculative: the second real tag requires a real
+discriminator. No registry/factory — `build_scenario_generator` dispatches with
+one `isinstance` branch per model (two now), which is the minimal extension
+point.
+
+Construction API — matrix-as-input still viable (for SBB). SBB consumes a
+`RiskFactorMatrix`, exactly like Historical (and FHS/FilteredBootstrap), so
+`build_scenario_generator(config, *, matrix) -> ScenarioGenerator` extends
+cleanly with an SBB branch and no signature change. matrix-as-input is viable for
+four of five models. The exception is Parametric, whose data contract is
+different (`cholesky_matrix`, `volatilities`, `available_factor_ids`, no matrix);
+it is NOT solved here. When Parametric is wired, the build's data-passing — not
+the config union — will need generalisation (per-model data arguments or a small
+data protocol); baking `matrix=` as a universal construction input is the one
+place the current signature would strain. Flagged, deferred.
+
+Equivalence & invariance. Direct construction vs seam are identical in scenario
+count, ordering, values, dtype (float32), and layout (F-contiguous). A seeded SBB
+built through the seam reproduces the direct stream exactly AND stays batch-size
+invariant across bs∈{1,7,full} (D029 preserved through the seam). Cross-model
+leakage is rejected both directions: SBB config rejects `decay_factor`,
+`max_vol_ratio`, `distribution_kind`, `student_t_df`, `vg_nu`, `cholesky_matrix`;
+Historical config rejects `total_scenarios`/`expected_block_size`/`seed`. No
+optional `df=None`/`decay=None`/… fields anywhere.
+
+Scope. Only `scenario_models/schemas.py` and `api.py` changed in `src/`; new test
+`tests/solutions/scenario_models/test_sbb_seam.py`. No change to the
+`ScenarioGenerator` protocol, SBB kernels/RNG, D029, shift semantics, layout
+contracts, P3, Parametric, FilteredHistorical, or FilteredBootstrap. The demo is
+untouched this increment (still Historical through the seam). Evidence: 45 SBB +
+23 Historical seam tests (68); tests/simlab 281; focused regression + solutions
+1509 (+2 skipped); E2E `ALL CHECKS PASSED`, D019 goldens unchanged; changed files
+lint-clean.
+
+Remaining architectural concern: the Parametric data-contract divergence above —
+to be resolved when (and only when) Parametric is wired. Third model deferred.

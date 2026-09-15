@@ -17,9 +17,11 @@ from pydantic import TypeAdapter
 
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.simlab.scenarios.base import ScenarioGenerator
+from riskquant.simlab.scenarios.bootstrap_sbb import StationaryBlockBootstrapGenerator
 from riskquant.simlab.scenarios.historical import HistoricalGenerator
 from riskquant.solutions.scenario_models.schemas import (
     HistoricalGeneratorConfig,
+    SbbGeneratorConfig,
     ScenarioModelConfig,
 )
 
@@ -49,4 +51,12 @@ def build_scenario_generator(
     """
     if isinstance(config, HistoricalGeneratorConfig):
         return HistoricalGenerator(matrix=matrix, horizon=config.horizon)
+    if isinstance(config, SbbGeneratorConfig):
+        return StationaryBlockBootstrapGenerator(
+            matrix=matrix,
+            total_scenarios=config.total_scenarios,
+            expected_block_size=config.expected_block_size,
+            horizon=config.horizon,
+            seed=config.seed,
+        )
     raise TypeError(f"Unsupported scenario-model config: {type(config).__name__}")
