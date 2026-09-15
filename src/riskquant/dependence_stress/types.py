@@ -9,7 +9,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 FloatArray = NDArray[np.float64]
-IntArray = NDArray[np.int64]
+IntArray = NDArray[np.int32]
 
 StressMethod = Literal[
     "gaussian_copula",
@@ -34,7 +34,7 @@ class DependenceStressResult:
     Attributes
     ----------
     permutations:
-        K x S read-only int64 C-contiguous matrix. Each row is a
+        K x S read-only int32 C-contiguous matrix. Each row is a
         permutation of ``0 .. S-1``. THE PERMUTATION IS THE DEPENDENCE
         STRESS: it is the exact mathematical description of which
         original observation from each marginal was placed into each
@@ -84,7 +84,7 @@ class DependenceStressResult:
     def __post_init__(self) -> None:
         permutations = np.array(
             self.permutations,
-            dtype=np.int64,
+            dtype=np.int32,
             order="C",
             copy=True,
         )

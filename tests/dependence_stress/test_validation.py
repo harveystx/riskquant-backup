@@ -11,7 +11,7 @@ import pytest
 
 from riskquant.dependence_stress.validation import (
     CORRELATION_MIN_EIGENVALUE,
-    canonicalize_owned_matrix,
+    # canonicalize_owned_matrix,
     validate_correlation,
     validate_marginal_preservation,
     validate_observation_matrix,
@@ -87,27 +87,27 @@ def test_observation_matrix_never_transposes() -> None:
     assert validate_observation_matrix(wide).shape == (2, 500)
 
 
-# ======================================================================
-# Ownership
-# ======================================================================
+# # ======================================================================
+# # Ownership
+# # ======================================================================
 
 
-def test_canonicalize_owned_matrix_decouples_from_source() -> None:
-    source = GOOD.copy()
+# def test_canonicalize_owned_matrix_decouples_from_source() -> None:
+#     source = GOOD.copy()
 
-    owned = canonicalize_owned_matrix(source)
+#     owned = canonicalize_owned_matrix(source)
 
-    source[0, 0] = -999.0
+#     source[0, 0] = -999.0
 
-    assert owned[0, 0] == 1.0
-    assert not owned.flags.writeable
+#     assert owned[0, 0] == 1.0
+#     assert not owned.flags.writeable
 
 
-def test_canonicalize_owned_matrix_is_read_only() -> None:
-    owned = canonicalize_owned_matrix(GOOD)
+# def test_canonicalize_owned_matrix_is_read_only() -> None:
+#     owned = canonicalize_owned_matrix(GOOD)
 
-    with pytest.raises(ValueError):
-        owned[0, 0] = 0.0
+#     with pytest.raises(ValueError):
+#         owned[0, 0] = 0.0
 
 
 # ======================================================================

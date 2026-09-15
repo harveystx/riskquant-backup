@@ -143,6 +143,8 @@ class GaussianCopula:
         self,
         data: FloatArray,
         rng: np.random.Generator | None = None,
+        *,
+        data_order: IntArray | None = None,
     ) -> IntArray:
         """
         Build the Gaussian-copula rank permutation.
@@ -157,7 +159,7 @@ class GaussianCopula:
         Returns
         -------
         IntArray
-            K x S int64 row-wise permutation matrix.
+            K x S int32 row-wise permutation matrix.
         """
         generator = validate_rng(rng)
 
@@ -175,6 +177,7 @@ class GaussianCopula:
         return _build_rank_permutation_unchecked(
             data,
             scores,
+            data_order=data_order,
         )
 
     def _generate_scores(
@@ -267,6 +270,8 @@ class TCopula:
         self,
         data: FloatArray,
         rng: np.random.Generator | None = None,
+        *,
+        data_order: IntArray | None = None,
     ) -> IntArray:
         """
         Build the t-copula rank permutation.
@@ -281,7 +286,7 @@ class TCopula:
         Returns
         -------
         IntArray
-            K x S int64 row-wise permutation matrix.
+            K x S int32 row-wise permutation matrix.
         """
         generator = validate_rng(rng)
 
@@ -299,6 +304,7 @@ class TCopula:
         return _build_rank_permutation_unchecked(
             data,
             scores,
+            data_order=data_order,
         )
 
     def _generate_scores(

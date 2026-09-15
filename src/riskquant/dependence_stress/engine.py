@@ -12,9 +12,17 @@ aggregate.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
+
+from riskquant.observations.compile import (
+    CompiledSample,
+    RankRepresentation,
+    compile_ranks,
+    compile_sample,
+)
+from riskquant.observations.orientation import ObservationOrientation
 
 from . import diagnostics as diag
 from . import validation as val
@@ -47,7 +55,7 @@ class DependenceStressEngine:
 
     Every transformation returns exactly two first-class outputs:
 
-        permutations    K x S int64   the dependence stress itself
+        permutations    K x S int32   the dependence stress itself
         portfolio_pnl   S   float64   sum_k over the rearranged rows
 
     THE PERMUTATION IS THE DEPENDENCE STRESS.
@@ -80,13 +88,21 @@ class DependenceStressEngine:
     """
 
     data: FloatArray
+    sample: CompiledSample = field(init=False)
+    rank_representation: RankRepresentation = field(init=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "data",
-            val.canonicalize_owned_matrix(self.data),
+        # observations.compile is the canonical observation/rank gate. It
+        # validates, canonicalizes to owned read-only float64, and builds
+        # the shared int32 sort_order once, here, for every transformation.
+        sample = compile_sample(
+            self.data,
+            orientation=ObservationOrientation.VARIABLES_ON_ROWS,
         )
+        object.__setattr__(self, "sample", sample)
+        object.__setattr__(self, "rank_representation", compile_ranks(sample))
+        # .data remains the owned, read-only observation matrix.
+        object.__setattr__(self, "data", sample.observations)
 
     # ==================================================================
     # Shape
@@ -275,9 +291,9 @@ class DependenceStressEngine:
         Execute one transformation on the trusted engine matrix.
 
         The engine entered the trusted core at construction: ``data``
-        was validated and canonicalized once by
-        ``canonicalize_owned_matrix`` and is read-only, so no call path
-        can invalidate it. Re-validating on every transformation would
+        was validated and canonicalized once by ``compile_sample``
+        at engine construction and is read-only, so no call path can
+        invalidate it. Re-validating on every transformation would
         pay an O(K S) finiteness scan for a property that cannot have
         changed.
         """
@@ -286,6 +302,7 @@ class DependenceStressEngine:
             transformer,
             rng,
             audit=audit,
+            sort_order=self.rank_representation.sort_order,
         )
 
     # ==================================================================
@@ -362,6 +379,7 @@ class DependenceStressEngine:
             rng,
             n_realizations=n_realizations,
             audit=audit,
+            sort_order=self.rank_representation.sort_order,
         )
 
     # ==================================================================

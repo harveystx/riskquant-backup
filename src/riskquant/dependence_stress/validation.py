@@ -5,7 +5,7 @@ Public input/output contracts for the dependence-stress package.
 
 This module is the single boundary between untrusted caller data and the
 trusted computational core. Functions here canonicalize to float64 /
-int64 C-contiguous arrays and raise loudly on any violation.
+int32 C-contiguous arrays and raise loudly on any violation.
 
 Nothing in this module repairs, clips, projects, or transposes input.
 Repair is a policy decision and does not belong in a contract gate.
@@ -198,38 +198,6 @@ def validate_observation_matrix(
     return np.ascontiguousarray(matrix)
 
 
-def canonicalize_owned_matrix(
-    data: FloatArray,
-    *,
-    read_only: bool = True,
-) -> FloatArray:
-    """
-    Validate an observation matrix and return an owned copy.
-
-    Use at ownership boundaries such as engine construction. A frozen
-    dataclass does not freeze array contents, so the engine must hold
-    memory that no caller can mutate.
-
-    Parameters
-    ----------
-    read_only:
-        If True, clear the write flag on the returned copy.
-    """
-    matrix = validate_observation_matrix(data)
-
-    owned = np.array(
-        matrix,
-        dtype=np.float64,
-        order="C",
-        copy=True,
-    )
-
-    if read_only:
-        owned.setflags(write=False)
-
-    return owned
-
-
 def validate_correlation(
     correlation: FloatArray,
     k: int | None = None,
@@ -345,7 +313,7 @@ def validate_permutation_matrix(
     Returns
     -------
     IntArray
-        C-contiguous int64 matrix.
+        C-contiguous int32 matrix.
     """
     matrix = np.asarray(permutations)
 
@@ -385,7 +353,7 @@ def validate_permutation_matrix(
 
     return np.ascontiguousarray(
         matrix,
-        dtype=np.int64,
+        dtype=np.int32,
     )
 
 

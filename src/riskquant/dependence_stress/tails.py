@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .permutations import _comonotonic_permutation_unchecked
+from .permutations import _comonotonic_permutation_unchecked, _resolve_data_order
 from .types import FloatArray, IntArray, TailOrder
 from .validation import (
     validate_disjoint_tail_counts,
@@ -99,6 +99,8 @@ class LowerTailAlignment:
         self,
         data: FloatArray,
         rng: np.random.Generator | None = None,
+        *,
+        data_order: IntArray | None = None,
     ) -> IntArray:
         """
         Construct the lower-tail-alignment permutation.
@@ -114,7 +116,7 @@ class LowerTailAlignment:
         Returns
         -------
         IntArray
-            K x S int64 row-wise permutation matrix.
+            K x S int32 row-wise permutation matrix.
 
         Notes
         -----
@@ -131,15 +133,11 @@ class LowerTailAlignment:
             int(np.ceil(self.tail_probability * s)),
         )
 
-        sorted_indices = np.argsort(
-            data,
-            axis=1,
-            kind="stable",
-        ).astype(np.int64, copy=False)
+        sorted_indices = _resolve_data_order(data, data_order)
 
         permutations = np.empty(
             (k, s),
-            dtype=np.int64,
+            dtype=np.int32,
             order="C",
         )
 
@@ -153,7 +151,7 @@ class LowerTailAlignment:
             # loop of rng.permutation over K rows (K=100, n_tail=250:
             # 257us vs 1145us vs 506us; K=100, n_tail=2500: 3.1ms vs
             # 18.5ms vs 3.6ms). It is the fastest of the three at every
-            # size measured, allocates one int64 block instead of a
+            # size measured, allocates one int32 block instead of a
             # K x n_tail float64 key matrix, and reads more directly.
             permutations[:, :n_tail] = generator.permuted(
                 tail_block,
@@ -211,18 +209,16 @@ class UpperTailAlignment:
         self,
         data: FloatArray,
         rng: np.random.Generator | None = None,
+        *,
+        data_order: IntArray | None = None,
     ) -> IntArray:
 
         k, s = data.shape
         n_tail = max(1, int(np.ceil(self.tail_probability * s)))
 
-        sorted_indices = np.argsort(
-            data,
-            axis=1,
-            kind="stable",
-        ).astype(np.int64, copy=False)
+        sorted_indices = _resolve_data_order(data, data_order)
 
-        permutations = np.empty((k, s), dtype=np.int64, order="C")
+        permutations = np.empty((k, s), dtype=np.int32, order="C")
 
         # Upper tail occupies the last n_tail slots
         tail_block = sorted_indices[:, s - n_tail :]
@@ -293,6 +289,8 @@ class DualTailAlignment:
         self,
         data: FloatArray,
         rng: np.random.Generator | None = None,
+        *,
+        data_order: IntArray | None = None,
     ) -> IntArray:
 
         k, s = data.shape
@@ -306,13 +304,9 @@ class DualTailAlignment:
         # or write, for both comonotonic and random modes.
         validate_disjoint_tail_counts(n_lower, n_upper, s)
 
-        sorted_indices = np.argsort(
-            data,
-            axis=1,
-            kind="stable",
-        ).astype(np.int64, copy=False)
+        sorted_indices = _resolve_data_order(data, data_order)
 
-        permutations = np.empty((k, s), dtype=np.int64, order="C")
+        permutations = np.empty((k, s), dtype=np.int32, order="C")
 
         # 1. Lower Tail Block
         lower_block = sorted_indices[:, :n_lower]
@@ -379,10 +373,12 @@ class Comonotonic:
         self,
         data: FloatArray,
         rng: np.random.Generator | None = None,
+        *,
+        data_order: IntArray | None = None,
     ) -> IntArray:
         """
         Construct the deterministic comonotonic permutation.
 
         ``rng`` is accepted for protocol uniformity and ignored.
         """
-        return _comonotonic_permutation_unchecked(data)
+        return _comonotonic_permutation_unchecked(data, data_order=data_order)

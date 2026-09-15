@@ -20,6 +20,9 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
+from riskquant.observations.compile import compile_ranks, compile_sample
+from riskquant.observations.orientation import ObservationOrientation
+
 from .types import DependenceStressResult, FloatArray, IntArray
 from .validation import (
     validate_observation_matrix,
@@ -55,6 +58,8 @@ class DependenceTransformer(Protocol):
         self,
         data: FloatArray,
         rng: np.random.Generator | None = None,
+        *,
+        data_order: IntArray | None = None,
     ) -> IntArray:
         """
         Construct a K x S row-wise permutation matrix.
@@ -120,6 +125,8 @@ def _validate_score_matrix(
 def _build_rank_permutation_unchecked(
     matrix: FloatArray,
     score_matrix: FloatArray,
+    *,
+    data_order: IntArray | None = None,
 ) -> IntArray:
     """
     Transfer the row-wise rank structure of scores onto observations.
@@ -149,11 +156,7 @@ def _build_rank_permutation_unchecked(
     retain ascending scenario order, which makes the construction
     deterministic for a fixed score matrix.
     """
-    data_order = np.argsort(
-        matrix,
-        axis=1,
-        kind="stable",
-    ).astype(np.int64, copy=False)
+    data_order = _resolve_data_order(matrix, data_order)
 
     score_order = np.argsort(
         score_matrix,
@@ -163,7 +166,7 @@ def _build_rank_permutation_unchecked(
 
     permutations = np.empty(
         matrix.shape,
-        dtype=np.int64,
+        dtype=np.int32,
         order="C",
     )
 
@@ -200,7 +203,7 @@ def build_rank_permutation(
     Returns
     -------
     IntArray
-        K x S C-contiguous int64 row-wise permutation matrix.
+        K x S C-contiguous int32 row-wise permutation matrix.
 
     Notes
     -----
@@ -221,17 +224,36 @@ def build_rank_permutation(
     )
 
 
+def _resolve_data_order(
+    matrix: FloatArray,
+    data_order: IntArray | None = None,
+) -> IntArray:
+    """
+    Return the canonical stable ascending sort order of each row.
+
+    When the caller already owns the estate-canonical
+    ``RankRepresentation.sort_order`` (int32) for the fixed empirical
+    ``matrix``, it is threaded in as ``data_order`` and reused verbatim,
+    so the invariant data sort is computed once per matrix rather than
+    once per realisation. When absent (a direct, one-shot caller), the
+    stable argsort is computed here and returned as int32. The two are
+    bitwise identical: ``compile_ranks`` builds ``sort_order`` with the
+    same ``np.argsort(..., kind=\"stable\")``.
+    """
+    if data_order is not None:
+        return data_order
+    return np.argsort(matrix, axis=1, kind="stable").astype(np.int32, copy=False)
+
+
 def _comonotonic_permutation_unchecked(
     matrix: FloatArray,
+    *,
+    data_order: IntArray | None = None,
 ) -> IntArray:
     """
     Comonotonic permutation of an already-validated matrix.
     """
-    return np.argsort(
-        matrix,
-        axis=1,
-        kind="stable",
-    ).astype(np.int64, copy=False)
+    return _resolve_data_order(matrix, data_order)
 
 
 def comonotonic_permutation(
@@ -246,7 +268,7 @@ def comonotonic_permutation(
     Returns
     -------
     IntArray
-        K x S C-contiguous int64 permutation matrix.
+        K x S C-contiguous int32 permutation matrix.
     """
     return _comonotonic_permutation_unchecked(
         validate_observation_matrix(data),
@@ -449,6 +471,7 @@ def _transform_trusted(
     rng: np.random.Generator | None,
     *,
     audit: bool,
+    sort_order: IntArray | None = None,
 ) -> DependenceStressResult:
     """
     Trusted transformation path.
@@ -472,6 +495,7 @@ def _transform_trusted(
     permutations = transformer.build_permutation(
         matrix,
         rng,
+        data_order=sort_order,
     )
 
     portfolio_pnl = _aggregate_portfolio_unchecked(
@@ -534,7 +558,7 @@ def transform_empirical_matrix(
     Returns
     -------
     DependenceStressResult
-        Read-only ``permutations`` (K x S int64) and ``portfolio_pnl``
+        Read-only ``permutations`` (K x S int32) and ``portfolio_pnl``
         (S float64). The stressed K x S matrix is not returned; call
         ``reconstruct_stressed`` if row-level stressed observations are
         genuinely needed.
@@ -549,11 +573,18 @@ def transform_empirical_matrix(
     RuntimeError
         If ``audit`` is True and the transformation fails an invariant.
     """
+    sample = compile_sample(
+        data,
+        orientation=ObservationOrientation.VARIABLES_ON_ROWS,
+    )
+    ranks = compile_ranks(sample)
+
     return _transform_trusted(
-        validate_observation_matrix(data),
+        sample.observations,
         transformer,
         rng,
         audit=audit,
+        sort_order=ranks.sort_order,
     )
 
 
@@ -617,14 +648,19 @@ def iter_transform_empirical_matrix(
         If a stochastic transformer receives a missing or malformed
         ``rng``.
     """
-    matrix = validate_observation_matrix(data)
+    sample = compile_sample(
+        data,
+        orientation=ObservationOrientation.VARIABLES_ON_ROWS,
+    )
+    ranks = compile_ranks(sample)
 
     return _iter_transform_trusted(
-        matrix,
+        sample.observations,
         transformer,
         rng,
         n_realizations=n_realizations,
         audit=audit,
+        sort_order=ranks.sort_order,
     )
 
 
@@ -635,6 +671,7 @@ def _iter_transform_trusted(
     *,
     n_realizations: int,
     audit: bool,
+    sort_order: IntArray | None = None,
 ) -> Iterator[DependenceStressResult]:
     """
     Trusted streaming path. ``matrix`` must already be canonical.
@@ -661,6 +698,7 @@ def _iter_transform_trusted(
                 transformer,
                 rng,
                 audit=audit,
+                sort_order=sort_order,
             )
 
     return _generate()
