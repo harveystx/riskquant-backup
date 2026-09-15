@@ -8,12 +8,9 @@ import re
 
 import numpy as np
 import pytest
+from canonical_measures import lower_tail_lambda_mean, spearman_matrix
 
 from riskquant.dependence_stress.copulas import GaussianCopula, TCopula
-from riskquant.dependence_stress.diagnostics import (
-    empirical_lower_tail_cooccurrence,
-    spearman_correlation,
-)
 from riskquant.dependence_stress.permutations import (
     reconstruct_stressed,
     transform_empirical_matrix,
@@ -30,7 +27,6 @@ def stressed(base: FloatArray, result: DependenceStressResult) -> FloatArray:
     exactly what a production audit consumer does.
     """
     return reconstruct_stressed(base, result.permutations)
-
 
 
 def _equi(k: int, rho: float) -> FloatArray:
@@ -254,7 +250,7 @@ def test_positive_latent_correlation_creates_positive_rank_dependence(
 
     result = transform_empirical_matrix(base, copula, np.random.default_rng(3))
 
-    assert _mean_off_diagonal(spearman_correlation(stressed(base, result))) > 0.6
+    assert _mean_off_diagonal(spearman_matrix(stressed(base, result))) > 0.6
 
 
 def test_negative_latent_correlation_creates_negative_rank_dependence() -> None:
@@ -264,7 +260,7 @@ def test_negative_latent_correlation_creates_negative_rank_dependence() -> None:
     copula = GaussianCopula(latent_correlation=_equi(2, -0.8))
     result = transform_empirical_matrix(data, copula, np.random.default_rng(4))
 
-    assert _mean_off_diagonal(spearman_correlation(stressed(data, result))) < -0.6
+    assert _mean_off_diagonal(spearman_matrix(stressed(data, result))) < -0.6
 
 
 def test_identity_latent_correlation_creates_no_systematic_structure(
@@ -275,7 +271,7 @@ def test_identity_latent_correlation_creates_no_systematic_structure(
 
     values = [
         _mean_off_diagonal(
-            spearman_correlation(
+            spearman_matrix(
                 stressed(
                     base,
                     transform_empirical_matrix(
@@ -292,7 +288,7 @@ def test_identity_latent_correlation_creates_no_systematic_structure(
     assert abs(float(np.mean(values))) < 0.05
 
 
-def test_lower_nu_increases_symmetric_tail_cooccurrence() -> None:
+def test_lower_nu_increases_lower_tail_dependence() -> None:
     """Averaged over seeds so the assertion is statistical, not brittle."""
     rng = np.random.default_rng(9)
     data = rng.standard_normal((4, 3000))
@@ -301,24 +297,20 @@ def test_lower_nu_increases_symmetric_tail_cooccurrence() -> None:
     def mean_tail(nu: float) -> float:
         copula = TCopula(latent_correlation=correlation, degrees_of_freedom=nu)
         return float(
-            np.mean(
-                [
-                    _mean_off_diagonal(
-                        empirical_lower_tail_cooccurrence(
-                            stressed(
-                                data,
-                                transform_empirical_matrix(
-                                    data,
-                                    copula,
-                                    np.random.default_rng(seed),
-                                ),
-                            ),
-                            0.05,
-                        )
-                    )
-                    for seed in range(15)
-                ]
-            )
+            np.mean([
+                lower_tail_lambda_mean(
+                    stressed(
+                        data,
+                        transform_empirical_matrix(
+                            data,
+                            copula,
+                            np.random.default_rng(seed),
+                        ),
+                    ),
+                    0.05,
+                )
+                for seed in range(15)
+            ])
         )
 
     assert mean_tail(1.5) > mean_tail(100.0)

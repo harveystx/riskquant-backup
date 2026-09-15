@@ -44,7 +44,6 @@ def stressed(base: FloatArray, result: DependenceStressResult) -> FloatArray:
     return reconstruct_stressed(base, result.permutations)
 
 
-
 def _executable_source(path: str) -> str:
     """
     Return module source with comments and docstrings removed.
@@ -110,7 +109,7 @@ def test_engine_is_frozen(base: FloatArray) -> None:
 
 
 def test_engine_rejects_invalid_data() -> None:
-    with pytest.raises(ValueError, match="NaN or infinite"):
+    with pytest.raises(ValueError, match="must be finite"):
         DependenceStressEngine(data=np.array([[1.0, np.nan], [1.0, 2.0]]))
 
 
@@ -156,7 +155,7 @@ def test_result_shapes_and_dtypes(base: FloatArray) -> None:
     result = DependenceStressEngine(data=base).apply_comonotonic()
 
     assert result.permutations.shape == (k, s)
-    assert result.permutations.dtype == np.int64
+    assert result.permutations.dtype == np.int32
     assert result.permutations.flags.c_contiguous
 
     assert result.portfolio_pnl.shape == (s,)
@@ -330,13 +329,11 @@ def test_hand_verifiable_portfolio_aggregation() -> None:
     Scenario 3: A[2]=1, B[4]=6, C[0]=1  ->  8
     Scenario 4: A[4]=4, B[1]=4, C[4]=9  ->  17
     """
-    data = np.array(
-        [
-            [2.0, 5.0, 1.0, 7.0, 4.0],
-            [3.0, 4.0, 8.0, 2.0, 6.0],
-            [1.0, 6.0, 2.0, 5.0, 9.0],
-        ]
-    )
+    data = np.array([
+        [2.0, 5.0, 1.0, 7.0, 4.0],
+        [3.0, 4.0, 8.0, 2.0, 6.0],
+        [1.0, 6.0, 2.0, 5.0, 9.0],
+    ])
     permutations = np.array(
         [
             [1, 3, 0, 2, 4],
@@ -391,9 +388,7 @@ def test_engine_has_no_rng_field(base: FloatArray) -> None:
 
 
 def test_comonotonic_needs_no_rng(base: FloatArray) -> None:
-    parameters = inspect.signature(
-        DependenceStressEngine.apply_comonotonic
-    ).parameters
+    parameters = inspect.signature(DependenceStressEngine.apply_comonotonic).parameters
 
     assert "rng" not in parameters
 
@@ -478,37 +473,43 @@ def test_audit_flag_is_off_by_default(base: FloatArray) -> None:
         "apply_lower_tail_alignment",
         "apply_transformer",
     ):
-        parameter = inspect.signature(
-            getattr(DependenceStressEngine, name)
-        ).parameters["audit"]
+        parameter = inspect.signature(getattr(DependenceStressEngine, name)).parameters[
+            "audit"
+        ]
 
         assert parameter.default is False
 
 
-def test_diagnostics_delegate(base: FloatArray) -> None:
-    from riskquant.dependence_stress import diagnostics as diag
-
-    stress_engine = DependenceStressEngine(data=base)
-
-    assert np.array_equal(
-        stress_engine.pearson_correlation(),
-        diag.pearson_correlation(base),
+def test_engine_public_surface_is_transformation_only() -> None:
+    """
+    Phase 3: measurement is owned by riskquant.dependence. The engine exposes
+    no correlation / tail-dependence methods; it is a transformation and
+    orchestration facade only.
+    """
+    removed = (
+        "pearson_correlation",
+        "spearman_correlation",
+        "empirical_lower_tail_cooccurrence",
+        "empirical_upper_tail_cooccurrence",
     )
-    assert np.array_equal(
-        stress_engine.spearman_correlation(),
-        diag.spearman_correlation(base),
-    )
-    assert np.array_equal(
-        stress_engine.empirical_lower_tail_cooccurrence(threshold=0.05),
-        diag.empirical_lower_tail_cooccurrence(base, 0.05),
-    )
+    for name in removed:
+        assert not hasattr(DependenceStressEngine, name), name
 
 
-def test_diagnostics_accept_an_explicit_matrix(base: FloatArray) -> None:
+def test_measurement_runs_through_the_canonical_estate_estimator(
+    base: FloatArray,
+) -> None:
+    """
+    A comonotonic stress has unit Spearman rank correlation, measured with the
+    canonical riskquant.dependence estimator on the engine's compiled sample --
+    not with any package-local statistic.
+    """
+    from canonical_measures import spearman_matrix
+
     stress_engine = DependenceStressEngine(data=base)
     comonotonic = stress_engine.stressed_matrix(stress_engine.apply_comonotonic())
 
-    assert np.allclose(stress_engine.spearman_correlation(comonotonic), 1.0)
+    assert np.allclose(spearman_matrix(comonotonic), 1.0)
 
 
 def test_marginal_preservation_helper(base: FloatArray) -> None:

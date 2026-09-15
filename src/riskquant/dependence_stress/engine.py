@@ -24,7 +24,6 @@ from riskquant.observations.compile import (
 )
 from riskquant.observations.orientation import ObservationOrientation
 
-from . import diagnostics as diag
 from . import validation as val
 from .copulas import GaussianCopula, TCopula
 from .permutations import (
@@ -411,49 +410,6 @@ class DependenceStressEngine:
         )
 
         return _apply_permutation_unchecked(self.data, permutations)
-
-    # ==================================================================
-    # Diagnostics
-    # ==================================================================
-
-    def pearson_correlation(
-        self,
-        data: FloatArray | None = None,
-    ) -> FloatArray:
-        """
-        Pearson correlation of the base matrix or of a supplied matrix.
-        """
-        return diag.pearson_correlation(
-            self.data if data is None else data,
-        )
-
-    def spearman_correlation(
-        self,
-        data: FloatArray | None = None,
-    ) -> FloatArray:
-        """
-        Spearman rank correlation of the base or a supplied matrix.
-        """
-        return diag.spearman_correlation(
-            self.data if data is None else data,
-        )
-
-    def empirical_lower_tail_cooccurrence(
-        self,
-        data: FloatArray | None = None,
-        *,
-        threshold: float = 0.05,
-    ) -> FloatArray:
-        """
-        Finite-sample empirical lower-tail co-occurrence.
-
-        This is not the asymptotic copula lower-tail dependence
-        coefficient.
-        """
-        return diag.empirical_lower_tail_cooccurrence(
-            self.data if data is None else data,
-            threshold,
-        )
 
     # ==================================================================
     # Audit

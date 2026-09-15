@@ -8,13 +8,13 @@ import re
 
 import numpy as np
 import pytest
-
-from riskquant.dependence_stress.diagnostics import (
-    empirical_lower_tail_cooccurrence,
-    empirical_upper_tail_cooccurrence,
-    pearson_correlation,
-    spearman_correlation,
+from canonical_measures import (
+    lower_tail_lambda,
+    pearson_matrix,
+    spearman_matrix,
+    upper_tail_lambda,
 )
+
 from riskquant.dependence_stress.permutations import (
     reconstruct_stressed,
     transform_empirical_matrix,
@@ -195,9 +195,9 @@ def test_tail_alignment_maximizes_lower_tail_cooccurrence(
         LowerTailAlignment(tail_probability=Q),
     )
 
-    cooccurrence = empirical_lower_tail_cooccurrence(stressed(base, result), Q)
+    lam, mask = lower_tail_lambda(stressed(base, result), Q)
 
-    assert np.allclose(cooccurrence, 1.0)
+    assert np.allclose(lam[mask], 1.0)
 
 
 def test_upper_tail_alignment_maximizes_upper_tail_cooccurrence(
@@ -208,9 +208,9 @@ def test_upper_tail_alignment_maximizes_upper_tail_cooccurrence(
         UpperTailAlignment(tail_probability=Q),
     )
 
-    cooccurrence = empirical_upper_tail_cooccurrence(stressed(base, result), Q)
+    lam, mask = upper_tail_lambda(stressed(base, result), Q)
 
-    assert np.allclose(cooccurrence, 1.0)
+    assert np.allclose(lam[mask], 1.0)
 
 
 def test_comonotonic_tail_matches_severity(base: FloatArray) -> None:
@@ -264,9 +264,9 @@ def test_random_mode_still_occupies_the_same_tail_slots(base: FloatArray) -> Non
         np.random.default_rng(3),
     )
 
-    cooccurrence = empirical_lower_tail_cooccurrence(stressed(base, result), Q)
+    lam, mask = lower_tail_lambda(stressed(base, result), Q)
 
-    assert np.allclose(cooccurrence, 1.0)
+    assert np.allclose(lam[mask], 1.0)
     assert n_tail >= 1
 
 
@@ -395,7 +395,7 @@ def test_comonotonic_idempotent(base: FloatArray) -> None:
 def test_comonotonic_unit_spearman(base: FloatArray) -> None:
     comonotonic = stressed(base, transform_empirical_matrix(base, Comonotonic()))
 
-    assert np.allclose(spearman_correlation(comonotonic), 1.0, atol=1e-12)
+    assert np.allclose(spearman_matrix(comonotonic), 1.0, atol=1e-12)
 
 
 def test_comonotonic_pearson_is_maximal_not_unit(base: FloatArray) -> None:
@@ -406,7 +406,7 @@ def test_comonotonic_pearson_is_maximal_not_unit(base: FloatArray) -> None:
     invariant is maximality over row-wise permutations (rearrangement
     inequality), not equality with 1.
     """
-    comonotonic = pearson_correlation(
+    comonotonic = pearson_matrix(
         stressed(base, transform_empirical_matrix(base, Comonotonic()))
     )
 
@@ -419,7 +419,7 @@ def test_comonotonic_pearson_is_maximal_not_unit(base: FloatArray) -> None:
             np.argsort(rng.random(base.shape), axis=1),
             axis=1,
         )
-        assert np.all(pearson_correlation(shuffled) <= comonotonic + 1e-12)
+        assert np.all(pearson_matrix(shuffled) <= comonotonic + 1e-12)
 
 
 def test_comonotonic_pearson_is_unit_for_affine_rows() -> None:
@@ -434,7 +434,7 @@ def test_comonotonic_pearson_is_unit_for_affine_rows() -> None:
 
     comonotonic = stressed(data, transform_empirical_matrix(data, Comonotonic()))
 
-    assert np.allclose(pearson_correlation(comonotonic), 1.0)
+    assert np.allclose(pearson_matrix(comonotonic), 1.0)
 
 
 def test_comonotonic_ignores_rng(base: FloatArray) -> None:
