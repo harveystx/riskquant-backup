@@ -1058,7 +1058,7 @@ def _run_simulated_scenarios(
     matrix = _build_historical_matrix(rsc)
     generator = build_scenario_generator(
         HistoricalGeneratorConfig(model="historical", horizon=_HISTORY_HORIZON),
-        matrix=matrix,
+        data=matrix,
     )
 
     shocked_chunks: list[npt.NDArray[np.float64]] = []

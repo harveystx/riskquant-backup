@@ -43,13 +43,14 @@ _REPO_SRC = Path(__file__).resolve().parents[3] / "src"
 if _REPO_SRC.is_dir():
     sys.path.insert(0, str(_REPO_SRC))
 
-from riskquant.dependence_stress.copulas import GaussianCopula, TCopula  # noqa: E402
-from riskquant.dependence_stress.diagnostics import (  # noqa: E402
-    empirical_lower_tail_cooccurrence,
-    empirical_upper_tail_cooccurrence,
+from _canonical_measures import (  # noqa: E402
+    lower_tail_dependence,
     pearson_correlation,
     spearman_correlation,
+    upper_tail_dependence,
 )
+
+from riskquant.dependence_stress.copulas import GaussianCopula, TCopula  # noqa: E402
 from riskquant.dependence_stress.engine import DependenceStressEngine  # noqa: E402
 from riskquant.dependence_stress.types import (  # noqa: E402
     DependenceStressResult,
@@ -303,21 +304,30 @@ def measure(matrix: FloatArray, tail_q: float = TAIL_Q) -> Diagnostics:
     return Diagnostics(
         pearson=pearson_correlation(matrix),
         spearman=spearman_correlation(matrix),
-        tail=empirical_lower_tail_cooccurrence(matrix, tail_q),
-        upper_tail=empirical_upper_tail_cooccurrence(matrix, tail_q),
+        tail=lower_tail_dependence(matrix, tail_q),
+        upper_tail=upper_tail_dependence(matrix, tail_q),
     )
 
 
 def assert_diagnostic_shape(diagnostics: Diagnostics, label: str) -> None:
-    """Assert symmetry and unit diagonals for all measures."""
+    """Assert shape, unit diagonals, and symmetry where it applies.
+
+    Pearson and Spearman are symmetric correlation matrices. The tail measures
+    are the canonical DIRECTIONAL lambda_hat and are not symmetric; only their
+    shape and unit self-conditioning diagonal are asserted.
+    """
     for name, matrix in (
         ("Pearson", diagnostics.pearson),
         ("Spearman", diagnostics.spearman),
-        ("lower-tail co-occurrence", diagnostics.tail),
-        ("upper-tail co-occurrence", diagnostics.upper_tail),
     ):
         assert matrix.shape == (K, K), f"{label} {name} shape"
         assert np.allclose(matrix, matrix.T, atol=1e-12), f"{label} {name} symmetry"
+        assert np.allclose(np.diag(matrix), 1.0, atol=1e-12), f"{label} {name} diagonal"
+    for name, matrix in (
+        ("lower-tail dependence", diagnostics.tail),
+        ("upper-tail dependence", diagnostics.upper_tail),
+    ):
+        assert matrix.shape == (K, K), f"{label} {name} shape"
         assert np.allclose(np.diag(matrix), 1.0, atol=1e-12), f"{label} {name} diagonal"
 
 
@@ -450,13 +460,11 @@ def section_hand_check() -> None:
 
     labels = ("X", "Y", "Z")
 
-    small = np.array(
-        [
-            [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
-            [6.0, 5.0, 4.0, 3.0, 2.0, 1.0],
-            [2.0, 4.0, 1.0, 6.0, 3.0, 5.0],
-        ]
-    )
+    small = np.array([
+        [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        [6.0, 5.0, 4.0, 3.0, 2.0, 1.0],
+        [2.0, 4.0, 1.0, 6.0, 3.0, 5.0],
+    ])
 
     heading("Original matrix")
     print_square(
@@ -667,11 +675,6 @@ def section_data(latent: FloatArray) -> Diagnostics:
     check("raw matrix has the expected shape", BASE_DATA.shape == (K, NUM_SCENARIOS))
     check("raw Pearson symmetric", bool(np.allclose(raw.pearson, raw.pearson.T)))
     check("raw Spearman symmetric", bool(np.allclose(raw.spearman, raw.spearman.T)))
-    check("raw lower-tail matrix symmetric", bool(np.allclose(raw.tail, raw.tail.T)))
-    check(
-        "raw upper-tail matrix symmetric",
-        bool(np.allclose(raw.upper_tail, raw.upper_tail.T)),
-    )
     pearson_diagonal_error = float(np.abs(np.diag(raw.pearson) - 1.0).max())
     spearman_diagonal_error = float(np.abs(np.diag(raw.spearman) - 1.0).max())
 
@@ -845,8 +848,8 @@ def section_lower_tail(
 
     outcome = apply_stress(
         engine,
-        f"LowerTailAlignment(q={TAIL_Q})",
-        engine.apply_lower_tail_alignment(TAIL_Q),
+        f"LowerTailComonotone(q={TAIL_Q})",
+        engine.apply_lower_tail_comonotone(TAIL_Q),
     )
 
     report_stress(outcome, raw)
@@ -920,7 +923,7 @@ def section_upper_tail(
 
             n_tail = max(1, ceil({TAIL_Q} * {NUM_SCENARIOS})) = {n_tail}
 
-        UpperTailAlignment functions identically to LowerTailAlignment but
+        UpperTailComonotone functions identically to LowerTailComonotone but
         operates on the highest values in the distribution. This ensures
         co-occurrence of right-tail extremes, which is critical when
         applying stresses to risk factors (where portfolio exposure can
@@ -930,8 +933,8 @@ def section_upper_tail(
 
     outcome = apply_stress(
         engine,
-        f"UpperTailAlignment(q={TAIL_Q})",
-        engine.apply_upper_tail_alignment(TAIL_Q),
+        f"UpperTailComonotone(q={TAIL_Q})",
+        engine.apply_upper_tail_comonotone(TAIL_Q),
     )
 
     report_stress(outcome, raw)
@@ -981,7 +984,7 @@ def section_dual_tail(
 
             n_lower = n_upper = max(1, ceil({TAIL_Q} * {NUM_SCENARIOS})) = {n_tail}
 
-        DualTailAlignment enforces extreme co-occurrence at BOTH ends
+        DualTailComonotone enforces extreme co-occurrence at BOTH ends
         of the marginal distributions simultaneously. It groups the lowest
         observations into a shared left-tail block, and the highest into a
         shared right-tail block, leaving the center independent.
@@ -990,8 +993,8 @@ def section_dual_tail(
 
     outcome = apply_stress(
         engine,
-        f"DualTailAlignment(q={TAIL_Q})",
-        engine.apply_dual_tail_alignment(TAIL_Q, TAIL_Q),
+        f"DualTailComonotone(q={TAIL_Q})",
+        engine.apply_dual_tail_comonotone(TAIL_Q, TAIL_Q),
     )
 
     report_stress(outcome, raw)
@@ -1446,7 +1449,7 @@ def section_portfolio(
 
     heading("The connection to a downstream charge")
 
-    tail_outcome = dict(outcomes)[f"LowerTailAlignment(q={TAIL_Q})"]
+    tail_outcome = dict(outcomes)[f"LowerTailComonotone(q={TAIL_Q})"]
     raw_q05 = float(np.quantile(raw_portfolio, 0.05))
     tail_q05 = float(np.quantile(tail_outcome.result.portfolio_pnl, 0.05))
 
@@ -1647,9 +1650,9 @@ def main() -> int:
 
     outcomes = [
         ("Comonotonic", comonotonic),
-        (f"LowerTailAlignment(q={TAIL_Q})", lower_tail),
-        (f"UpperTailAlignment(q={TAIL_Q})", upper_tail),
-        (f"DualTailAlignment(q={TAIL_Q})", dual_tail),
+        (f"LowerTailComonotone(q={TAIL_Q})", lower_tail),
+        (f"UpperTailComonotone(q={TAIL_Q})", upper_tail),
+        (f"DualTailComonotone(q={TAIL_Q})", dual_tail),
         ("GaussianCopula", gaussian),
         ("TCopula(nu=30)", t_high),
         ("TCopula(nu=3)", t_low),

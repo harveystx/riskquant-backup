@@ -167,7 +167,7 @@ def test_build_returns_sbb_generator() -> None:
     cfg = SbbGeneratorConfig(
         model="sbb", horizon=2, total_scenarios=12, expected_block_size=2.0, seed=7
     )
-    gen = build_scenario_generator(cfg, matrix=m)
+    gen = build_scenario_generator(cfg, data=m)
     assert isinstance(gen, StationaryBlockBootstrapGenerator)
     assert gen.total_scenarios == 12 and gen.horizon == 2
     assert gen.expected_block_size == 2.0 and gen.seed == 7
@@ -186,7 +186,7 @@ def test_build_runs_generator_own_validation() -> None:
     )
     cfg = SbbGeneratorConfig(model="sbb", horizon=2, total_scenarios=5, seed=1)
     with pytest.raises(TypeError, match="must be float64"):
-        build_scenario_generator(cfg, matrix=bad)
+        build_scenario_generator(cfg, data=bad)
 
 
 @pytest.mark.parametrize("horizon", [1, 3])
@@ -204,7 +204,7 @@ def test_seam_equivalent_to_direct_construction(horizon) -> None:
             expected_block_size=2.0,
             seed=7,
         ),
-        matrix=m,
+        data=m,
     )
     rd, rs = _drive(direct), _drive(seamed)
     assert rd.shape == rs.shape
@@ -222,7 +222,7 @@ def test_same_seed_through_seam_preserves_d029_stream() -> None:
         SbbGeneratorConfig(
             model="sbb", horizon=2, total_scenarios=12, expected_block_size=2.0, seed=42
         ),
-        matrix=m,
+        data=m,
     )
     direct = StationaryBlockBootstrapGenerator(
         matrix=m, total_scenarios=12, expected_block_size=2.0, horizon=2, seed=42
@@ -244,7 +244,7 @@ def test_different_seed_through_seam_differs() -> None:
                 expected_block_size=2.0,
                 seed=seed,
             ),
-            matrix=m,
+            data=m,
         )
 
     assert not np.array_equal(_drive(_seam(1)), _drive(_seam(2)))

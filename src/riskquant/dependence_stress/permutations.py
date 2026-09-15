@@ -27,6 +27,7 @@ from .types import DependenceStressResult, FloatArray, IntArray
 from .validation import (
     validate_observation_matrix,
     validate_permutation_matrix,
+    validate_realization_count,
     validate_rng,
     validate_transformation,
 )
@@ -253,7 +254,15 @@ def _comonotonic_permutation_unchecked(
     """
     Comonotonic permutation of an already-validated matrix.
     """
-    return _resolve_data_order(matrix, data_order)
+    order = _resolve_data_order(matrix, data_order)
+    if data_order is not None:
+        # The injected order aliases a shared, read-only
+        # RankRepresentation.sort_order. A result must own its permutation
+        # buffer exclusively, so copy into a fresh owned int32 array. This
+        # O(K S) memcpy still avoids the O(K S log S) re-sort the injection
+        # eliminates; the non-injected branch already owns a fresh argsort.
+        order = np.array(order, dtype=np.int32, order="C", copy=True)
+    return order
 
 
 def comonotonic_permutation(
@@ -518,9 +527,13 @@ def _transform_trusted(
                 "match the reconstructed stressed matrix."
             )
 
-    return DependenceStressResult(
-        permutations=permutations,
-        portfolio_pnl=portfolio_pnl,
+    # Both buffers are freshly owned, C-contiguous, and already canonical
+    # (int32 permutation from build_permutation, float64 accumulator from
+    # _aggregate_portfolio_unchecked). Skip the public constructor's
+    # defensive copy; the trusted constructor only freezes them.
+    return DependenceStressResult._from_owned(
+        permutations,
+        portfolio_pnl,
     )
 
 
@@ -573,6 +586,12 @@ def transform_empirical_matrix(
     RuntimeError
         If ``audit`` is True and the transformation fails an invariant.
     """
+    if not isinstance(transformer, DependenceTransformer):
+        raise TypeError(
+            "transformer must implement the DependenceTransformer protocol "
+            "(requires_rng, build_permutation)."
+        )
+
     sample = compile_sample(
         data,
         orientation=ObservationOrientation.VARIABLES_ON_ROWS,
@@ -648,6 +667,12 @@ def iter_transform_empirical_matrix(
         If a stochastic transformer receives a missing or malformed
         ``rng``.
     """
+    if not isinstance(transformer, DependenceTransformer):
+        raise TypeError(
+            "transformer must implement the DependenceTransformer protocol "
+            "(requires_rng, build_permutation)."
+        )
+
     sample = compile_sample(
         data,
         orientation=ObservationOrientation.VARIABLES_ON_ROWS,
@@ -681,12 +706,7 @@ def _iter_transform_trusted(
     argument fails at the call site instead of somewhere downstream in
     the consumer's loop.
     """
-    count = int(n_realizations)
-
-    if count < 0:
-        raise ValueError(
-            f"n_realizations must be non-negative; got {n_realizations!r}."
-        )
+    count = validate_realization_count(n_realizations)
 
     if transformer.requires_rng:
         rng = validate_rng(rng)

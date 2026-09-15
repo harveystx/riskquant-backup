@@ -177,7 +177,7 @@ def test_transformer_contract(
     assert stressed(base, result).shape == base.shape
     assert result.permutations.shape == base.shape
     assert stressed(base, result).dtype == np.float64
-    assert result.permutations.dtype == np.int64
+    assert result.permutations.dtype == np.int32
     assert stressed(base, result).flags.c_contiguous
     assert result.permutations.flags.c_contiguous
 

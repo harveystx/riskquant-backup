@@ -140,6 +140,54 @@ def validate_disjoint_tail_counts(
         )
 
 
+def validate_realization_count(
+    value: object,
+    *,
+    name: str = "n_realizations",
+) -> int:
+    """
+    Strict non-negative discrete-count gate for the streaming API.
+
+    Mirrors the estate ``require_positive_int`` convention -- reject ``bool`` and
+    any non-integer type, canonicalize a NumPy integer to a Python ``int`` -- but
+    permits zero, because a zero realization count is the valid no-output case.
+    The boundary fails fast instead of silently coercing (``3.7 -> 3``,
+    ``True -> 1``).
+
+    Parameters
+    ----------
+    value:
+        The requested realization count.
+
+    name:
+        Argument name used in the error message.
+
+    Returns
+    -------
+    int
+        The canonical Python int.
+
+    Raises
+    ------
+    TypeError
+        If ``value`` is a ``bool`` or is not an ``int`` / ``np.integer``.
+
+    ValueError
+        If ``value`` is integral but negative.
+    """
+    if isinstance(value, bool):
+        raise TypeError(f"{name} must be an integer, not bool.")
+    if not isinstance(value, (int, np.integer)):
+        raise TypeError(
+            f"{name} must be an integer (int or np.integer), got "
+            f"{type(value).__name__}."
+        )
+    canonical = int(value)
+    if canonical < 0:
+        raise ValueError(f"{name} must be non-negative; got {canonical}.")
+    return canonical
+
+
 # ==============================================================================
 # MATRIX CONTRACTS
 # ==============================================================================

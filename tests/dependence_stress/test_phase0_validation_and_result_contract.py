@@ -19,16 +19,18 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from phase0_support import (  # type: ignore[import-not-found]
+    equicorrelation,
+    heterogeneous_matrix,
+)
 
+from riskquant.dependence_stress.benchmarks import Comonotonic, LowerTailComonotone
+from riskquant.dependence_stress.copulas import GaussianCopula
 from riskquant.dependence_stress.engine import DependenceStressEngine
 from riskquant.dependence_stress.permutations import (
     iter_transform_empirical_matrix,
     transform_empirical_matrix,
 )
-from riskquant.dependence_stress.tails import Comonotonic, LowerTailAlignment
-from riskquant.dependence_stress.copulas import GaussianCopula
-
-from phase0_support import equicorrelation, heterogeneous_matrix  # type: ignore[import-not-found]
 
 _DATA = heterogeneous_matrix(4, 100)
 
@@ -37,9 +39,9 @@ _DATA = heterogeneous_matrix(4, 100)
 @pytest.mark.parametrize(
     "bad,match",
     [
-        (np.full((4, 100), np.nan), "NaN or infinite"),
-        (np.full((4, 100), np.inf), "NaN or infinite"),
-        (np.zeros((1, 100)), "at least 2 rows"),
+        (np.full((4, 100), np.nan), "must be finite"),
+        (np.full((4, 100), np.inf), "must be finite"),
+        (np.zeros((1, 100)), "at least 2 variables"),
         (np.zeros((4, 1)), "at least 2 observations"),
         (np.zeros((4,)), "2-dimensional"),
     ],
@@ -52,13 +54,15 @@ def test_observation_matrix_rejected(bad, match):
 @pytest.mark.parametrize("bad_rng", [42, "rng", np.random.RandomState(0)])
 def test_stochastic_rejects_malformed_rng(bad_rng):
     with pytest.raises(TypeError):
-        transform_empirical_matrix(_DATA, GaussianCopula(latent_correlation=equicorrelation(4)), bad_rng)
+        transform_empirical_matrix(
+            _DATA, GaussianCopula(latent_correlation=equicorrelation(4)), bad_rng
+        )
 
 
 @pytest.mark.parametrize("bad_q", [0.0, 1.0, -0.5, 2.0, np.nan, np.inf])
 def test_invalid_tail_probability(bad_q):
     with pytest.raises(ValueError, match="probability"):
-        LowerTailAlignment(tail_probability=bad_q)
+        LowerTailComonotone(tail_probability=bad_q)
 
 
 def test_invalid_correlation_not_pd():
@@ -81,20 +85,46 @@ def test_malformed_transformer_rejected_by_engine():
         engine.apply_transformer(NotATransformer())
 
 
-@pytest.mark.xfail(strict=True, reason="P3 (new): n_realizations is int()-coerced, not rejected")
-@pytest.mark.parametrize("bad_count", [3.7, True])
-def test_non_integer_realization_count_should_be_rejected(bad_count):
-    with pytest.raises((TypeError, ValueError)):
-        list(iter_transform_empirical_matrix(_DATA, Comonotonic(), n_realizations=bad_count))
+@pytest.mark.parametrize(
+    "bad_count, exc",
+    [
+        (3.7, TypeError),
+        (True, TypeError),
+        ("3", TypeError),
+        (-1, ValueError),
+    ],
+)
+def test_invalid_realization_count_is_rejected(bad_count, exc):
+    """Phase 5: n_realizations fails fast; no silent int() coercion."""
+    with pytest.raises(exc):
+        list(
+            iter_transform_empirical_matrix(
+                _DATA, Comonotonic(), n_realizations=bad_count
+            )
+        )
 
 
-@pytest.mark.xfail(strict=True, reason="P3 (new): free-fn entry raises AttributeError, not TypeError")
-def test_free_function_rejects_malformed_transformer_explicitly():
+@pytest.mark.parametrize("good_count", [0, 1, 3, np.int64(3)])
+def test_valid_realization_count_is_accepted(good_count):
+    results = list(
+        iter_transform_empirical_matrix(_DATA, Comonotonic(), n_realizations=good_count)
+    )
+    assert len(results) == int(good_count)
+
+
+def test_free_functions_reject_malformed_transformer_explicitly():
+    """Phase 5: both free-function entries reject with TypeError, not AttributeError."""
+
     class NotATransformer:
         pass
 
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="DependenceTransformer"):
         transform_empirical_matrix(_DATA, NotATransformer())
+
+    with pytest.raises(TypeError, match="DependenceTransformer"):
+        list(
+            iter_transform_empirical_matrix(_DATA, NotATransformer(), n_realizations=1)
+        )
 
 
 # ---- §11 result contract -----------------------------------------------------
@@ -103,8 +133,8 @@ def test_result_shapes_dtypes_layout_and_readonly():
     k, s = _DATA.shape
     assert result.permutations.shape == (k, s)
     assert result.portfolio_pnl.shape == (s,)
-    # CURRENT dtype contract (int64); Phase 2 flips permutations -> int32
-    assert result.permutations.dtype == np.int64
+    # Phase 2: permutations migrated to canonical estate int32
+    assert result.permutations.dtype == np.int32
     assert result.portfolio_pnl.dtype == np.float64
     assert result.permutations.flags.c_contiguous
     assert result.portfolio_pnl.flags.c_contiguous

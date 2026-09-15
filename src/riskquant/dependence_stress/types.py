@@ -11,13 +11,6 @@ from numpy.typing import NDArray
 FloatArray = NDArray[np.float64]
 IntArray = NDArray[np.int32]
 
-StressMethod = Literal[
-    "gaussian_copula",
-    "t_copula",
-    "lower_tail_alignment",
-    "comonotonic",
-]
-
 TailOrder = Literal[
     "comonotonic",
     "random",
@@ -119,6 +112,38 @@ class DependenceStressResult:
 
         object.__setattr__(self, "permutations", permutations)
         object.__setattr__(self, "portfolio_pnl", portfolio_pnl)
+
+    @classmethod
+    def _from_owned(
+        cls,
+        permutations: IntArray,
+        portfolio_pnl: FloatArray,
+    ) -> DependenceStressResult:
+        """
+        Trusted constructor for internally-owned buffers: no copy, no re-validation.
+
+        The trusted core (``permutations._transform_trusted``) allocates both
+        buffers fresh, owned, C-contiguous, and in the canonical dtypes:
+        ``permutations`` is the int32 matrix from ``build_permutation`` (a fresh
+        ``np.empty`` fill, or -- for the comonotonic benchmark -- an owned copy of
+        the injected order), and ``portfolio_pnl`` is the float64 accumulator from
+        ``_aggregate_portfolio_unchecked``. This path therefore skips the public
+        constructor's defensive copy and its shape/dtype validation, and only
+        clears the write flag.
+
+        This is NOT a public construction escape hatch. Callers holding untrusted
+        arrays must use the ordinary constructor, which copies, canonicalizes,
+        validates, and freezes. The trusted constructor assumes every result
+        invariant is already met -- 2-D int32 C-contiguous ``permutations``, 1-D
+        float64 C-contiguous ``portfolio_pnl`` of matching length ``S``, both
+        exclusively owned -- and establishes only ``write=False``.
+        """
+        result = object.__new__(cls)
+        permutations.setflags(write=False)
+        portfolio_pnl.setflags(write=False)
+        object.__setattr__(result, "permutations", permutations)
+        object.__setattr__(result, "portfolio_pnl", portfolio_pnl)
+        return result
 
     @property
     def num_rows(self) -> int:

@@ -167,13 +167,11 @@ def test_correlation_rejects_shape_mismatch() -> None:
 
 def test_correlation_rejects_psd_not_pd() -> None:
     """Rank-deficient but positive semi-definite input is rejected."""
-    matrix = np.array(
-        [
-            [1.0, 1.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-        ]
-    )
+    matrix = np.array([
+        [1.0, 1.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ])
 
     with pytest.raises(ValueError, match="positive definite"):
         validate_correlation(matrix)
@@ -198,7 +196,7 @@ def test_correlation_threshold_boundary() -> None:
 def test_permutation_accepts_valid() -> None:
     out = validate_permutation_matrix(np.array([[0, 1, 2], [2, 0, 1]]))
 
-    assert out.dtype == np.int64
+    assert out.dtype == np.int32
     assert out.flags.c_contiguous
 
 

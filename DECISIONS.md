@@ -742,3 +742,157 @@ lint-clean.
 
 Remaining architectural concern: the Parametric data-contract divergence above —
 to be resolved when (and only when) Parametric is wired. Third model deferred.
+
+## D033 — Seam extended to FilteredHistorical (third model; union stays clean)
+
+Third real model through the D031/D032 seam, proving the discriminated union
+absorbs materially different model-specific parameters while keeping the shared
+`RiskFactorMatrix` construction-data contract.
+
+New schema type. `FilteredHistoricalGeneratorConfig` (model-specific only):
+`model: Literal["filtered_historical"]`; `horizon: StrictInt(gt=0)`;
+`decay_factor: float = Field(default=EWMA_DECAY_FACTOR, gt=0.0, lt=1.0,
+allow_inf_nan=False)` — the EWMA memory lambda's valid open unit interval;
+`max_vol_ratio: float = Field(default=MAX_EWMA_VOL_RATIO, ge=1.0,
+allow_inf_nan=False)` — the vol-amplification cap. Both reject bool (before
+validator) and non-finite. Defaults import the repository constants so seam
+construction with defaults reproduces the generator's own defaults exactly.
+No `seed` / `total_scenarios` / `expected_block_size` / `distribution_kind`
+fields; `extra="forbid"` rejects them.
+
+Config-domain vs generator validation. FHS's `__post_init__` validates the
+matrix (float64), horizon (strict positive int) and history length, but does
+NOT bound `decay_factor` or `max_vol_ratio` at all. The seam therefore adds the
+missing config-domain fail-fast (lambda in (0,1); cap >= 1.0; finite; non-bool)
+without touching numerical production code and without duplicating the EWMA/AR(1)
+math — the generator stays authoritative for matrix/history invariants.
+
+Architecture — matrix-as-input confirmed for this model. FHS consumes a
+`RiskFactorMatrix` exactly like Historical and SBB, so `build_scenario_generator
+(config, *, matrix)` extends with a third `isinstance` branch and no signature
+change. The union grows by one tag:
+`Annotated[HistoricalGeneratorConfig | SbbGeneratorConfig |
+FilteredHistoricalGeneratorConfig, Field(discriminator="model")]`. No registry,
+no factory, no nullable data blob, no data protocol. Per-model cost stayed
+linear: one config class + one union tag + one build branch + one test file.
+
+Equivalence & determinism. Direct vs seam identical in scenario count, ordering,
+values, dtype (float32) and layout (F-contiguous), for explicit and default
+parameters. FHS is deterministic (no seed), so the seam-built stream is
+repeatable run to run. Cross-model leakage rejected both directions.
+
+Scope. Only `scenario_models/schemas.py` and `api.py` changed in `src/`; new test
+`tests/solutions/scenario_models/test_filtered_historical_seam.py`. No change to
+the `ScenarioGenerator` protocol, any numerical kernel, RNG, D029, shift
+semantics, layout contracts, P3, Parametric, or the construction-data API. Demo
+untouched. Evidence: 40 FHS + 45 SBB + 23 Historical seam tests (108);
+tests/simlab 281; focused regression + solutions 1549 (+2 skipped); E2E
+`ALL CHECKS PASSED`, D019 goldens unchanged; changed files lint-clean.
+
+Seam verdict for three heterogeneous configs: CLEAN. Genuinely different
+parameter sets coexist with no blob, no leakage, no factory. The single open
+architectural question is unchanged and deferred: Parametric's construction data
+(`cholesky`, vols, factor ids — no matrix) will force a decision on the
+construction-data API, NOT on the config union. Parametric remains unwired by
+deliberate choice.
+
+---
+
+## D034 — Parametric through the seam: heterogeneous construction data (typed data union + nested distribution union)
+
+The proof point for heterogeneous construction data. Parametric consumes
+`(available_factor_ids, cholesky_matrix, volatilities)` plus distribution
+parameters — not a `RiskFactorMatrix`. Resolved by separating two concerns: a
+typed construction-data object and a nested distribution config union, wired
+through one build entry point. No production change to `ParametricGenerator`.
+
+**Archaeology.** Parametric has no production/demo caller — only two test
+fixtures construct it, and there is no in-repo producer of Cholesky/vols. The
+three data inputs are dimensionally coupled by K and form one coherent bundle.
+No existing typed structure represents them (`RiskFactorMatrix` is a T×N level
+time-series — unrelated). The generator resolves Cholesky columns / vols / GMM
+multipliers by `searchsorted` on `available_factor_ids`, so sorted-ascending +
+unique ids are an implicit, previously-unenforced requirement.
+
+**Construction data — `ParametricRiskData` (SimLab core, new).**
+`simlab/scenarios/parametric_data.py`: `@dataclass(frozen=True, slots=True)` over
+NumPy (no Pydantic in core). Owns DATA invariants only, rejected never coerced:
+`factor_ids` int32 1-D C-contig non-empty sorted-ascending unique;
+`cholesky_matrix` float64 2-D (K,K) square C-contig finite; `volatilities`
+float64 1-D length-K C-contig finite strictly-positive. Placement proven from
+architecture, not origin: SimLab already owns typed-array data contracts
+(`ScenarioSetBatch`), the contract's shape is dictated by the SimLab generator's
+`searchsorted` need, and keeping it in SimLab avoids forcing a market_data
+dependency or a cycle. Rejected placing it in `market_data` merely because the
+values originate there.
+
+**Configuration — nested distribution discriminated union.** `schemas.py`:
+`ParametricDistributionConfig = Annotated[StandardNormalDistribution |
+LaplaceDistribution | StudentTDistribution{df} | VarianceGammaDistribution{nu} |
+RegimeSwitchingDistribution{prob_crisis, crisis_vol_multipliers}, Field(
+discriminator="kind")]`. Each variant carries only its own parameters, so
+invalid combinations are unrepresentable (standard_normal cannot carry `df`;
+student_t cannot omit it; a foreign parameter is rejected by `extra="forbid"`).
+`ParametricGeneratorConfig(model="parametric", total_scenarios StrictInt gt=0,
+seed StrictInt|None, distribution)`. Outer union grows to four tags. Q8 answer:
+one generator class, but the distribution kinds are best modelled as separate
+config variants.
+
+**Strict real typing.** Lax Pydantic `float` admits strings ("2.0"->2.0). A
+`_require_real` before-validator (reject bool and non-numeric incl. str) plus
+`allow_inf_nan=False` gives: real int|float accepted, bool/str/NaN/±inf rejected,
+each parameter's domain preserved (df>2, nu>0, prob_crisis in [0,1], multipliers
+strictly positive scalar-or-per-factor). NOTE: D032/D033 use lax `float` +
+reject-bool only, so they still admit strings; those decisions are LOCKED and
+were not retrofitted. Inconsistency flagged for a future harmonization.
+
+**Build API — B (typed data union), matrix->data.**
+`build_scenario_generator(config, *, data: RiskFactorMatrix | ParametricRiskData)`.
+Confirmed as the smallest long-term seam: one entry point, one typed union, no
+nullable blob. `_require_matrix` / `_require_parametric_data` enforce fail-fast
+pairing (Historical/SBB/FHS require a matrix; Parametric requires the data
+object; a mismatch raises TypeError at the solution boundary). `_build_parametric`
+maps the nested distribution variant onto the generator's flat kwargs; the
+generator re-validates unchanged. Rejected: nullable data args (A — forbidden,
+invalid combos representable), a `ScenarioData` protocol (C — disproven: the two
+data types share no behavioural interface, so a protocol abstracts nothing; a
+union + isinstance is strictly smaller), and separate per-data build functions
+(fragments the entry point).
+
+**Validation split (no duplicate validation).** `ParametricRiskData` owns data
+invariants; `ParametricGenerator` stays authoritative for model semantics
+(total_scenarios, seed, distribution selection, distribution parameters, and the
+per-factor `crisis_vol_multipliers` length-vs-K check, which is data-coupled and
+only knowable at construction). The generator's own array checks remain because
+it is independently callable (two test fixtures construct it directly); the
+overlap is intentional tiered defense, as with StrictInt vs require_positive_int
+in D031–D033, not accidental duplication.
+
+**Migration.** Additive 4th union member; the three existing configs untouched.
+The build data keyword renamed `matrix`->`data`; the demo and the three existing
+seam test files took a mechanical kwarg update at the build call only
+(assertions and coverage unchanged; direct-generator `matrix=` constructions kept).
+D019 goldens unchanged (only the known US/NL calendar-order non-determinism).
+NOTE: because the rename couples `api.py` to its callers, a later dump sync
+landed the src rename without the caller update and broke the three seam test
+files + the E2E demo (`unexpected keyword argument 'matrix'`); re-applying the
+same mechanical `matrix=`->`data=` migration to the four callers restored green.
+Src and caller changes must land together.
+
+**Equivalence & determinism.** Direct vs seam identical in scenario count,
+ordering, values, dtype (float32) and layout (F-contiguous), across
+standard_normal / student_t / variance_gamma / regime_switching. Seeded seam
+construction preserves the D029 batch-size invariant (bs1 == bs7 == bs10).
+
+**Evidence.** New `tests/solutions/scenario_models/test_parametric_seam.py`.
+Seam tests 170 passed; tests/simlab 281; focused regression + solutions 1611
+passed / 2 skipped; E2E `ALL CHECKS PASSED`; changed-file lint clean; scope diff
+against the current dump shows only the intended files.
+
+**Out-of-scope drift flagged.** The project dump was updated mid-phase again;
+one drift was isolated to `dependence_stress/{benchmarks,engine,types}.py`,
+unrelated to this work. On that updated dump, three `dependence_stress` test
+modules (`test_copulas`, `test_invariants`, `test_tails`) fail COLLECTION with a
+bare `from canonical_measures import ...` ImportError — pre-existing on the
+pristine dump, not caused by this change. FilteredBootstrap deliberately NOT
+added (Parametric was the requested proof point).

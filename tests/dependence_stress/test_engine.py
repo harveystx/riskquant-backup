@@ -200,7 +200,7 @@ def test_result_owns_its_buffers(base: FloatArray) -> None:
     """Constructing from writable arrays must copy, not alias."""
     permutations = np.ascontiguousarray(
         np.broadcast_to(
-            np.arange(base.shape[1], dtype=np.int64),
+            np.arange(base.shape[1], dtype=np.int32),
             base.shape,
         )
     )
@@ -235,7 +235,7 @@ def test_result_equality_is_identity_based(base: FloatArray) -> None:
 def test_result_rejects_inconsistent_shapes(base: FloatArray) -> None:
     permutations = np.ascontiguousarray(
         np.broadcast_to(
-            np.arange(base.shape[1], dtype=np.int64),
+            np.arange(base.shape[1], dtype=np.int32),
             base.shape,
         )
     )
@@ -254,7 +254,7 @@ def test_result_rejects_inconsistent_shapes(base: FloatArray) -> None:
 
     with pytest.raises(ValueError, match="2-dimensional K x S"):
         DependenceStressResult(
-            permutations=np.arange(4, dtype=np.int64),
+            permutations=np.arange(4, dtype=np.int32),
             portfolio_pnl=np.zeros(4),
         )
 
@@ -340,7 +340,7 @@ def test_hand_verifiable_portfolio_aggregation() -> None:
             [3, 0, 2, 4, 1],
             [2, 1, 3, 0, 4],
         ],
-        dtype=np.int64,
+        dtype=np.int32,
     )
 
     expected = np.array([9.0, 16.0, 15.0, 8.0, 17.0])
@@ -418,10 +418,10 @@ def test_engine_never_creates_a_default_generator() -> None:
 def test_tail_alignment_rng_only_needed_in_random_mode(base: FloatArray) -> None:
     stress_engine = DependenceStressEngine(data=base)
 
-    stress_engine.apply_lower_tail_alignment(0.05)
+    stress_engine.apply_lower_tail_comonotone(0.05)
 
     with pytest.raises(TypeError, match=re.escape("numpy.random.Generator")):
-        stress_engine.apply_lower_tail_alignment(0.05, tail_order="random")
+        stress_engine.apply_lower_tail_comonotone(0.05, tail_order="random")
 
 
 # ======================================================================
@@ -437,8 +437,8 @@ def test_all_methods_return_results(
 
     results = [
         stress_engine.apply_comonotonic(),
-        stress_engine.apply_lower_tail_alignment(0.05),
-        stress_engine.apply_lower_tail_alignment(
+        stress_engine.apply_lower_tail_comonotone(0.05),
+        stress_engine.apply_lower_tail_comonotone(
             0.05,
             tail_order="random",
             rng=np.random.default_rng(0),
@@ -470,7 +470,7 @@ def test_audit_flag_is_off_by_default(base: FloatArray) -> None:
         "apply_comonotonic",
         "apply_gaussian_copula",
         "apply_t_copula",
-        "apply_lower_tail_alignment",
+        "apply_lower_tail_comonotone",
         "apply_transformer",
     ):
         parameter = inspect.signature(getattr(DependenceStressEngine, name)).parameters[

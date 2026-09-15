@@ -52,7 +52,7 @@ def test_build_rank_permutation_is_valid_permutation(base: FloatArray) -> None:
     permutations = build_rank_permutation(base, scores)
 
     validate_permutation_matrix(permutations, expected_shape=base.shape)
-    assert permutations.dtype == np.int64
+    assert permutations.dtype == np.int32
     assert permutations.flags.c_contiguous
 
 
@@ -139,7 +139,7 @@ def test_apply_permutation_validates_its_inputs(base: FloatArray) -> None:
 
 def test_transform_empirical_matrix_validates_at_the_edge() -> None:
     """The public entry point owns the boundary contract."""
-    with pytest.raises(ValueError, match="NaN or infinite"):
+    with pytest.raises(ValueError, match="must be finite"):
         transform_empirical_matrix(
             np.array([[1.0, np.nan], [1.0, 2.0]]),
             Comonotonic(),
@@ -180,6 +180,8 @@ def test_audit_mode_raises_on_a_lying_transformer(base: FloatArray) -> None:
             self,
             data: FloatArray,
             rng: np.random.Generator | None = None,
+            *,
+            data_order: np.ndarray | None = None,
         ) -> np.ndarray:
             return np.zeros(data.shape, dtype=np.int64)
 

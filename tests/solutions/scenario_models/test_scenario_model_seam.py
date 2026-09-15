@@ -109,7 +109,7 @@ def test_seed_is_not_a_historical_parameter() -> None:
 def test_build_returns_historical_generator() -> None:
     m = _matrix()
     cfg = HistoricalGeneratorConfig(model="historical", horizon=2)
-    gen = build_scenario_generator(cfg, matrix=m)
+    gen = build_scenario_generator(cfg, data=m)
     assert isinstance(gen, HistoricalGenerator)
     assert gen.horizon == 2  # config parameter propagated to the constructor
     assert type(gen.horizon) is int
@@ -121,7 +121,7 @@ def test_build_runs_generator_own_validation() -> None:
     m = _matrix(t=4)
     cfg = HistoricalGeneratorConfig(model="historical", horizon=10)
     with pytest.raises(ValueError):
-        build_scenario_generator(cfg, matrix=m)
+        build_scenario_generator(cfg, data=m)
 
 
 # ---- equivalence: direct vs seam ----------------------------------------------
@@ -134,7 +134,7 @@ def test_seam_equivalent_to_direct_construction(horizon) -> None:
     m = _matrix()
     direct = HistoricalGenerator(matrix=m, horizon=horizon)
     seamed = build_scenario_generator(
-        HistoricalGeneratorConfig(model="historical", horizon=horizon), matrix=m
+        HistoricalGeneratorConfig(model="historical", horizon=horizon), data=m
     )
     rd = _drive(direct)
     rs = _drive(seamed)

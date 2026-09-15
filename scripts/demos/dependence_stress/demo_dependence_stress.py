@@ -38,29 +38,28 @@ _REPO_SRC = Path(__file__).resolve().parents[3] / "src"
 if _REPO_SRC.is_dir():
     sys.path.insert(0, str(_REPO_SRC))
 
-from riskquant.dependence_stress.copulas import GaussianCopula, TCopula  # noqa: E402
-from riskquant.dependence_stress.diagnostics import (  # noqa: E402
-    empirical_lower_tail_cooccurrence,
-    empirical_upper_tail_cooccurrence,
+from _canonical_measures import (  # noqa: E402
+    average_ranks,
+    empirical_uniforms,
+    lower_tail_dependence,
     pearson_correlation,
     spearman_correlation,
+    upper_tail_dependence,
 )
+
+from riskquant.dependence_stress.benchmarks import (  # noqa: E402
+    Comonotonic,
+    DualTailComonotone,
+    LowerTailComonotone,
+    UpperTailComonotone,
+)
+from riskquant.dependence_stress.copulas import GaussianCopula, TCopula  # noqa: E402
 from riskquant.dependence_stress.engine import DependenceStressEngine  # noqa: E402
 from riskquant.dependence_stress.permutations import (  # noqa: E402
     aggregate_portfolio,
     apply_permutation,
     reconstruct_stressed,
     transform_empirical_matrix,
-)
-from riskquant.dependence_stress.ranks import (  # noqa: E402
-    average_ranks,
-    empirical_uniforms,
-)
-from riskquant.dependence_stress.tails import (  # noqa: E402
-    Comonotonic,
-    DualTailAlignment,
-    LowerTailAlignment,
-    UpperTailAlignment,
 )
 from riskquant.dependence_stress.types import (  # noqa: E402
     DependenceStressResult,
@@ -940,7 +939,7 @@ def section_lower_tail() -> FloatArray:
 
     result = transform_empirical_matrix(
         TAIL_DATA,
-        LowerTailAlignment(tail_probability=q),
+        LowerTailComonotone(tail_probability=q),
     )
 
     heading("Permutation produced by the package")
@@ -993,7 +992,7 @@ def section_lower_tail() -> FloatArray:
         TAIL_DATA,
         stressed_of(TAIL_DATA, result),
         result.permutations,
-        "LowerTailAlignment(comonotonic, preserve=True)",
+        "LowerTailComonotone(comonotonic, preserve=True)",
     )
 
     # ------------------------------------------------------------------
@@ -1015,7 +1014,7 @@ def section_lower_tail() -> FloatArray:
 
     full = transform_empirical_matrix(
         TAIL_DATA,
-        LowerTailAlignment(tail_probability=q, preserve_non_tail_order=False),
+        LowerTailComonotone(tail_probability=q, preserve_non_tail_order=False),
     )
 
     print()
@@ -1066,7 +1065,7 @@ def section_lower_tail() -> FloatArray:
 
     random_result = transform_empirical_matrix(
         TAIL_DATA,
-        LowerTailAlignment(tail_probability=q, tail_order="random"),
+        LowerTailComonotone(tail_probability=q, tail_order="random"),
         np.random.default_rng(2024),
     )
 
@@ -1097,11 +1096,11 @@ def section_lower_tail() -> FloatArray:
     )
     check(
         "deterministic mode needs no generator",
-        not LowerTailAlignment(tail_probability=q).requires_rng,
+        not LowerTailComonotone(tail_probability=q).requires_rng,
     )
     check(
         "random mode declares that it needs a generator",
-        LowerTailAlignment(tail_probability=q, tail_order="random").requires_rng,
+        LowerTailComonotone(tail_probability=q, tail_order="random").requires_rng,
     )
 
     return stressed_of(TAIL_DATA, result)
@@ -1133,7 +1132,7 @@ def section_upper_tail() -> FloatArray:
 
     result = transform_empirical_matrix(
         TAIL_DATA,
-        UpperTailAlignment(tail_probability=q),
+        UpperTailComonotone(tail_probability=q),
     )
 
     heading("Permutation produced by the package")
@@ -1186,7 +1185,7 @@ def section_dual_tail() -> FloatArray:
 
     result = transform_empirical_matrix(
         TAIL_DATA,
-        DualTailAlignment(lower_probability=q, upper_probability=q),
+        DualTailComonotone(lower_probability=q, upper_probability=q),
     )
 
     heading("Permutation produced by the package")
@@ -1247,42 +1246,42 @@ def section_tail_cooccurrence(
             lambda_hat(i, j) = #(scenarios in BOTH lower tails) / n_tail
 
         The public names are:
-            empirical_lower_tail_cooccurrence()
-            empirical_upper_tail_cooccurrence()
+            lower_tail_dependence()
+            upper_tail_dependence()
         """
     )
 
     heading("Full pairwise matrices, ORIGINAL data")
 
     print("    Lower Tail:")
-    print_square(empirical_lower_tail_cooccurrence(TAIL_DATA, q), TAIL_LABELS)
+    print_square(lower_tail_dependence(TAIL_DATA, q), TAIL_LABELS)
     print()
     print("    Upper Tail:")
-    print_square(empirical_upper_tail_cooccurrence(TAIL_DATA, q), TAIL_LABELS)
+    print_square(upper_tail_dependence(TAIL_DATA, q), TAIL_LABELS)
 
     heading("Full pairwise matrices, AFTER Lower-Tail Alignment")
 
     print("    Lower Tail:")
-    print_square(empirical_lower_tail_cooccurrence(lower_stressed, q), TAIL_LABELS)
+    print_square(lower_tail_dependence(lower_stressed, q), TAIL_LABELS)
     print()
     print("    Upper Tail:")
-    print_square(empirical_upper_tail_cooccurrence(lower_stressed, q), TAIL_LABELS)
+    print_square(upper_tail_dependence(lower_stressed, q), TAIL_LABELS)
 
     heading("Full pairwise matrices, AFTER Upper-Tail Alignment")
 
     print("    Lower Tail:")
-    print_square(empirical_lower_tail_cooccurrence(upper_stressed, q), TAIL_LABELS)
+    print_square(lower_tail_dependence(upper_stressed, q), TAIL_LABELS)
     print()
     print("    Upper Tail:")
-    print_square(empirical_upper_tail_cooccurrence(upper_stressed, q), TAIL_LABELS)
+    print_square(upper_tail_dependence(upper_stressed, q), TAIL_LABELS)
 
     heading("Full pairwise matrices, AFTER Dual-Tail Alignment")
 
     print("    Lower Tail:")
-    print_square(empirical_lower_tail_cooccurrence(dual_stressed, q), TAIL_LABELS)
+    print_square(lower_tail_dependence(dual_stressed, q), TAIL_LABELS)
     print()
     print("    Upper Tail:")
-    print_square(empirical_upper_tail_cooccurrence(dual_stressed, q), TAIL_LABELS)
+    print_square(upper_tail_dependence(dual_stressed, q), TAIL_LABELS)
 
     paragraph(
         """
@@ -1296,8 +1295,8 @@ def section_tail_cooccurrence(
     print()
     check(
         "dual-tail alignment drove BOTH co-occurrences to 1.0 everywhere",
-        bool(np.allclose(empirical_lower_tail_cooccurrence(dual_stressed, q), 1.0))
-        and bool(np.allclose(empirical_upper_tail_cooccurrence(dual_stressed, q), 1.0)),
+        bool(np.allclose(lower_tail_dependence(dual_stressed, q), 1.0))
+        and bool(np.allclose(upper_tail_dependence(dual_stressed, q), 1.0)),
     )
 
 
@@ -1424,14 +1423,12 @@ def _copula_data() -> FloatArray:
     rng = np.random.default_rng(31415)
 
     return np.ascontiguousarray(
-        np.vstack(
-            [
-                rng.standard_normal(2000),
-                rng.standard_t(5.0, 2000),
-                rng.lognormal(0.0, 0.6, 2000),
-                -rng.exponential(1.5, 2000),
-            ]
-        ),
+        np.vstack([
+            rng.standard_normal(2000),
+            rng.standard_t(5.0, 2000),
+            rng.lognormal(0.0, 0.6, 2000),
+            -rng.exponential(1.5, 2000),
+        ]),
         dtype=np.float64,
     )
 
@@ -1703,7 +1700,7 @@ def section_t_copula(data: FloatArray) -> None:
             for matrix, sink in (
                 (spearman_correlation(stressed_of(data, outcome)), spearman_values),
                 (
-                    empirical_lower_tail_cooccurrence(stressed_of(data, outcome), 0.05),
+                    lower_tail_dependence(stressed_of(data, outcome), 0.05),
                     tail_values,
                 ),
             ):
@@ -1943,9 +1940,9 @@ def section_method_comparison(copula_data: FloatArray) -> None:
 
     results = {
         "comonotonic": engine.apply_comonotonic(),
-        "lower tail q=0.05": engine.apply_lower_tail_alignment(0.05),
-        "upper tail q=0.05": engine.apply_upper_tail_alignment(0.05),
-        "dual tail q=0.05": engine.apply_dual_tail_alignment(0.05, 0.05),
+        "lower tail q=0.05": engine.apply_lower_tail_comonotone(0.05),
+        "upper tail q=0.05": engine.apply_upper_tail_comonotone(0.05),
+        "dual tail q=0.05": engine.apply_dual_tail_comonotone(0.05, 0.05),
         "gaussian copula": engine.apply_gaussian_copula(
             correlation,
             rng=np.random.default_rng(7),
@@ -1976,8 +1973,8 @@ def section_method_comparison(copula_data: FloatArray) -> None:
             f"    {name:<20}"
             f" {off_diagonal(pearson_correlation(matrix)):>9.4f}"
             f" {off_diagonal(spearman_correlation(matrix)):>9.4f}"
-            f" {off_diagonal(empirical_lower_tail_cooccurrence(matrix, 0.05)):>9.4f}"
-            f" {off_diagonal(empirical_upper_tail_cooccurrence(matrix, 0.05)):>9.4f}"
+            f" {off_diagonal(lower_tail_dependence(matrix, 0.05)):>9.4f}"
+            f" {off_diagonal(upper_tail_dependence(matrix, 0.05)):>9.4f}"
         )
 
     paragraph(
@@ -2037,13 +2034,11 @@ def section_invalid_inputs() -> None:
 
     heading("Correlation matrix that is not positive definite")
 
-    singular = np.array(
-        [
-            [1.0, 1.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-        ]
-    )
+    singular = np.array([
+        [1.0, 1.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ])
 
     try:
         GaussianCopula(latent_correlation=singular)
@@ -2090,7 +2085,7 @@ def section_invalid_inputs() -> None:
     try:
         transform_empirical_matrix(
             GOLDEN,
-            LowerTailAlignment(tail_probability=0.25, tail_order="random"),
+            LowerTailComonotone(tail_probability=0.25, tail_order="random"),
         )
     except TypeError as error:
         print(f"    Expected: reject input\n    Observed: TypeError: {error}")

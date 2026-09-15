@@ -25,18 +25,18 @@ from riskquant.observations.compile import (
 from riskquant.observations.orientation import ObservationOrientation
 
 from . import validation as val
+from .benchmarks import (
+    Comonotonic,
+    DualTailComonotone,
+    LowerTailComonotone,
+    UpperTailComonotone,
+)
 from .copulas import GaussianCopula, TCopula
 from .permutations import (
     DependenceTransformer,
     _apply_permutation_unchecked,
     _iter_transform_trusted,
     _transform_trusted,
-)
-from .tails import (
-    Comonotonic,
-    DualTailAlignment,
-    LowerTailAlignment,
-    UpperTailAlignment,
 )
 from .types import DependenceStressResult, FloatArray, IntArray, TailOrder
 
@@ -175,7 +175,7 @@ class DependenceStressEngine:
             audit=audit,
         )
 
-    def apply_lower_tail_alignment(
+    def apply_lower_tail_comonotone(
         self,
         tail_probability: float = _DEFAULT_TAIL_PROBABILITY,
         *,
@@ -190,7 +190,7 @@ class DependenceStressEngine:
         ``rng`` is required only when ``tail_order == "random"``.
         """
         return self._run(
-            LowerTailAlignment(
+            LowerTailComonotone(
                 tail_probability=tail_probability,
                 tail_order=tail_order,
                 preserve_non_tail_order=preserve_non_tail_order,
@@ -199,7 +199,7 @@ class DependenceStressEngine:
             audit=audit,
         )
 
-    def apply_upper_tail_alignment(
+    def apply_upper_tail_comonotone(
         self,
         tail_probability: float = _DEFAULT_TAIL_PROBABILITY,
         *,
@@ -210,7 +210,7 @@ class DependenceStressEngine:
     ) -> DependenceStressResult:
         """Engineer empirical upper-tail co-occurrence directly."""
         return self._run(
-            UpperTailAlignment(
+            UpperTailComonotone(
                 tail_probability=tail_probability,
                 tail_order=tail_order,
                 preserve_non_tail_order=preserve_non_tail_order,
@@ -219,7 +219,7 @@ class DependenceStressEngine:
             audit=audit,
         )
 
-    def apply_dual_tail_alignment(
+    def apply_dual_tail_comonotone(
         self,
         lower_probability: float = _DEFAULT_TAIL_PROBABILITY,
         upper_probability: float = _DEFAULT_TAIL_PROBABILITY,
@@ -231,7 +231,7 @@ class DependenceStressEngine:
     ) -> DependenceStressResult:
         """Engineer co-occurrence at both extremes simultaneously."""
         return self._run(
-            DualTailAlignment(
+            DualTailComonotone(
                 lower_probability=lower_probability,
                 upper_probability=upper_probability,
                 tail_order=tail_order,
