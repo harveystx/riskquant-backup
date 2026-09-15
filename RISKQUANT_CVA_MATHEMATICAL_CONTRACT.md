@@ -43,28 +43,33 @@ Every simplification must be explicitly derived from the more general quantity i
 5. Do not treat a CDS spread as a hazard rate by identity.
 6. Do not introduce WWR through an arbitrary correlation multiplier.
 7. Do not make CVA/DVA/FVA/MVA/KVA universally additive by construction.
-8. Do not hide measure, numeraire, closeout, recovery, collateral, sign, time-bucket, or interpolation conventions inside numerical kernels.
+8. Do not hide measure, numeraire, closeout, recovery, collateral, sign, time-bucket, event-order, or interpolation conventions inside numerical kernels.
 9. Do not double-count counterparty credit in future clean valuation and again in CVA.
 10. Prefer a small mathematically exact implementation over a broad abstraction whose semantics are ambiguous.
 11. Boundaries establish and validate semantics; kernels perform declared mathematics.
 12. Invalid mathematical inputs fail fast rather than being silently repaired into plausible-looking numbers.
 13. Distinguish unconditional exposure expectations from survival-conditioned exposure expectations; equality between them is an explicit consequence of the first-generation independence assumption.
-14. Distinguish the market/risk-factor filtration used for conditional survival from a filtration that already reveals the default event.
-15. Treat the default-time discretisation rule as part of the numerical contract rather than an incidental implementation detail.
+14. Distinguish the pre-default reference filtration used for conditional survival from a filtration that already reveals the default event.
+15. Treat default-time discretisation and event ordering as part of the numerical/model contract.
+16. Distinguish **numeraire**, **valuation currency**, **discount factor**, and **day-count/time coordinate**. They are related concepts but are not interchangeable.
+17. Do not allow upstream curve interpolation, date alignment, or currency conversion to become hidden behaviour of a numerical CVA kernel.
+18. Do not present a weighted Monte Carlo average as a valid pricing estimator unless the scenario law and weighting scheme jointly define the target pricing expectation.
+19. Do not silently extrapolate beyond the domain of required market or credit inputs.
+20. Preserve the mathematical distinction between an actual default loss, a signed closeout amount, and positive unsecured exposure.
 
 ---
 
 # 1. Mathematical north star
 
-The most general object required by the first unilateral CVA formulation is the expected discounted loss caused by counterparty default:
+The most general unilateral CVA object required by this contract is the expected discounted loss caused by counterparty default:
 
 $$
 \boxed{
 CVA_0
 =
-\mathbb E^{\mathbb Q}
+\mathbb E^{\mathbb Q^N}
 \left[
-D(0,\tau_C)\,
+D^N(0,\tau_C)\,
 \mathcal L_{\tau_C}\,
 \mathbf 1_{\{\tau_C\le T\}}
 \right]
@@ -73,13 +78,13 @@ $$
 
 where:
 
-* $\mathbb Q$ is the chosen pricing measure associated with the valuation numeraire;
+* $\mathbb Q^N$ is the pricing measure associated with the explicitly selected numeraire process $N_t$;
 * $\tau_C$ is counterparty default time;
-* $D(0,t)$ is the stochastic discount factor to the valuation currency/numeraire;
-* $\mathcal L_t$ is the **actual counterparty-default loss on the netting set at time $t$ under the selected closeout model**;
-* $T$ is the latest future date at which relevant closeout exposure may be non-zero for the selected netting set and valuation model.
+* $D^N(0,t)$ is the corresponding discount-factor representation;
+* $\mathcal L_t$ is the **actual counterparty-default loss amount on the netting set at time $t$ under the selected closeout model**;
+* $T$ is the latest future date at which relevant closeout exposure may be non-zero under the selected contractual and valuation model.
 
-This is the **economic definition**.
+This is the **general economic definition**.
 
 Everything else in this document is either:
 
@@ -89,9 +94,66 @@ Everything else in this document is either:
 * a Monte Carlo/statistical estimator;
 * or a controlled future extension.
 
+The general definition is a **pricing quantity**, not a generic risk statistic. It is the time-0 value of a contingent default-loss cashflow under a pricing measure. It is therefore analogous to the valuation of any other contingent claim, although the claim itself depends on the counterparty default event and the closeout model.
+
 ---
 
-# 2. First-generation production scope
+# 2. Numeraire and pricing-measure contract
+
+A numeraire is a strictly positive value process:
+
+$$
+\boxed{
+N_t>0.
+}
+$$
+
+It is **not** a currency label.
+
+The pricing measure associated with $N_t$ is denoted:
+
+$$
+\boxed{
+\mathbb Q^N.
+}
+$$
+
+For a payoff/value process represented in the same numeraire framework, the corresponding stochastic discount-factor representation is:
+
+$$
+\boxed{
+D^N(0,t)
+=
+\frac{N_0}{N_t}.
+}
+$$
+
+The particular construction of $N_t$ is a model choice and must be externally inspectable.
+
+Examples may include:
+
+* a money-market account;
+* an OIS-related account;
+* a collateral/discounting account under a specified collateral remuneration convention;
+* another explicitly defined strictly positive tradable numeraire.
+
+RiskQuant shall never equate:
+
+$$
+\text{currency}
+\equiv
+\text{numeraire}.
+$$
+
+The valuation currency is a unit in which the value is expressed.
+
+The numeraire is a stochastic value process used to define the pricing measure and discounting representation.
+
+For first-generation CVA, the implementation shall select one explicit valuation currency and one explicit deterministic discounting convention. The general mathematical contract nevertheless retains the distinction between currency and numeraire so that later extensions do not require redefining the foundations.
+
+---
+
+# 3. First-generation production scope
 
 The first production implementation shall be:
 
@@ -118,19 +180,21 @@ $$
 LGD=1-R_C.
 $$
 
-6. Discount factors are deterministic:
+6. The valuation currency is explicitly fixed.
+7. The valuation numeraire is explicitly fixed.
+8. Discounting in that valuation setup is deterministic:
 
 $$
 DF(t)>0.
 $$
 
-7. Counterparty default is independent of the future market-state / exposure process in the precise sense specified in Section 9.
-8. The first exposure model is **uncollateralised clean-MTM closeout with instantaneous closeout and no margin-period dynamics**.
-9. Future clean valuation is supplied by a future-state valuation/simulation layer.
-10. Credit is supplied by a risk-neutral cumulative default/survival curve or equivalent deterministic hazard representation.
-11. Default is integrated on an explicit time grid using the documented bucket convention in Section 19.
-12. All CVA amounts are expressed in one explicitly selected valuation currency/numeraire.
-13. The time coordinate used by the CVA integrator is an explicitly defined year-fraction coordinate.
+9. The counterparty default process is independent of the future market/exposure process in the precise sense specified in Section 10.
+10. The first exposure model is **uncollateralised clean-MTM closeout with instantaneous closeout and no margin-period dynamics**.
+11. Future clean valuation is supplied by a future-state valuation/simulation layer.
+12. Credit is supplied by a risk-neutral survival/default curve or equivalent deterministic hazard representation.
+13. Default is integrated on an explicit time grid using the declared bucket and event-order convention.
+14. The internal time coordinate used by the CVA numerical layer is explicitly defined.
+15. Required credit and discount curves cover the entire integration horizon. Silent extrapolation is prohibited.
 
 The first-generation continuous-time specialisation is:
 
@@ -149,13 +213,13 @@ where:
 $$
 EE(t)
 =
-\mathbb E^{\mathbb Q}
+\mathbb E^{\mathbb Q^N}
 \left[
 (V_t^{\mathrm{clean}})^+
 \right].
 $$
 
-This is a **specialisation plus a continuous-time representation**, not the general definition.
+This is a **specialisation** of the general economic definition.
 
 The canonical first bucketed numerical implementation is:
 
@@ -168,40 +232,39 @@ CVA_0^{(N)}
 DF_i\,EE_i\,
 \left[
 S_C(t_{i-1})-S_C(t_i)
-\right]
+\right].
 }
 $$
 
-under the endpoint default/exposure convention specified later.
-
-This is a **time-discretised numerical approximation**.
+This is a **time-discretised approximation** to the continuous-time quantity.
 
 ---
 
-# 3. Terminology and mathematical status
+# 4. Mathematical status hierarchy
 
 The following table is normative.
 
-| Object                                                                        | Mathematical status                                                    |
-| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| $\mathbb E^\mathbb Q[D(0,\tau_C)\mathcal L_{\tau_C}\mathbf1_{{\tau_C\le T}}]$ | **General economic definition**                                        |
-| $\mathcal L_t$                                                                | **Actual counterparty-default loss under the selected closeout model** |
-| $U_t$                                                                         | **Unsecured closeout amount**                                          |
-| $E_t=U_t^+$                                                                   | **Positive unsecured exposure specialisation**                         |
-| $\mathcal L_t=LGD_tE_t$                                                       | **Recovery/closeout specialisation**                                   |
-| $EE(t)=\mathbb E^\mathbb Q[E_t]$                                              | **Unconditional expected-exposure definition**                         |
-| $EE^{surv}(t)=\mathbb E^\mathbb Q[E_t\mid\tau_C>t]$                           | **Survival-conditioned expected exposure**                             |
-| $EE^{surv}(t)=EE(t)$                                                          | **First-generation independence consequence**                          |
-| $CVA=\int DF,EE,dPD$                                                          | **Deterministic/independent factorisation**                            |
-| $\sum_i DF_iEE_i\Delta PD_i$                                                  | **Time-discretised numerical approximation**                           |
-| $\widehat{EE}*i=\sum_sw_sE*{s,i}$                                             | **Monte Carlo estimator**                                              |
-| $EE\times PD\times LGD$                                                       | **Not a general identity**                                             |
+| Object                                                                              | Mathematical status                                              |
+| ----------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| $\mathbb E^{\mathbb Q^N}[D^N(0,\tau_C)\mathcal L_{\tau_C}\mathbf1_{{\tau_C\le T}}]$ | **General economic definition**                                  |
+| $N_t$                                                                               | **Numeraire definition**                                         |
+| $D^N(0,t)=N_0/N_t$                                                                  | **Discount-factor representation associated with the numeraire** |
+| $U_t$                                                                               | **Signed unsecured closeout amount**                             |
+| $E_t=U_t^+$                                                                         | **Positive unsecured exposure specialisation**                   |
+| $\mathcal L_t=LGD_tE_t$                                                             | **Recovery/closeout specialisation**                             |
+| $EE(t)=\mathbb E^{Q^N}[E_t]$                                                        | **Unconditional expected exposure**                              |
+| $EE^{surv}(t)=\mathbb E^{Q^N}[E_t\mid\tau_C>t]$                                     | **Survival-conditioned expected exposure**                       |
+| $EE^{surv}(t)=EE(t)$                                                                | **First-generation independence consequence**                    |
+| $CVA=\int DF,EE,dPD$                                                                | **Deterministic/independent factorisation**                      |
+| $\sum_iDF_iEE_i\Delta PD_i$                                                         | **Time-discretised numerical approximation**                     |
+| $\widehat{EE}*i=\sum_sw_sE*{s,i}$                                                   | **Monte Carlo estimator**                                        |
+| $EE\times PD\times LGD$                                                             | **Not a general identity**                                       |
 
 No implementation may conflate these levels without an explicit derivation.
 
 ---
 
-# 4. Economic interpretation
+# 5. Economic interpretation and sign
 
 CVA is a **valuation adjustment caused by counterparty default risk**.
 
@@ -212,22 +275,40 @@ It is not inherently:
 * PFE;
 * a stress loss;
 * historical P&L;
-* today’s positive MTM multiplied by a scalar PD;
-* or an arbitrary $EE\times PD\times LGD$ product.
+* today's positive MTM multiplied by a scalar PD;
+* or a generic $EE\times PD\times LGD$ product.
 
-Under unilateral CVA and the conventions in this document:
+The valuation perspective is:
+
+$$
+\boxed{
+V>0
+\Rightarrow
+\text{counterparty owes us value}.
+}
+$$
+
+Under unilateral CVA:
+
+$$
+E_t=V_t^+
+$$
+
+in the first uncollateralised specialisation.
+
+Therefore:
 
 $$
 CVA_0\ge0,
 $$
 
-and the CVA-adjusted value is:
+and:
 
 $$
 \boxed{
-V_0^{\mathrm{CVA}}
+V_0^{CVA}
 =
-V_0^{\mathrm{clean}}
+V_0^{clean}
 -
 CVA_0.
 }
@@ -236,51 +317,64 @@ $$
 Hence:
 
 $$
-V_0^{\mathrm{CVA}}
-\le
-V_0^{\mathrm{clean}}.
+V_0^{CVA}\le V_0^{clean}.
 $$
 
-This is a model invariant under the first-generation assumptions.
+### Sign sanity
+
+If:
+
+$$
+V^{clean}=+100,
+$$
+
+then:
+
+$$
+E=100
+$$
+
+and a positive CVA contribution is possible.
+
+If:
+
+$$
+V^{clean}=-100,
+$$
+
+then:
+
+$$
+E=0
+$$
+
+and that state contributes no unilateral counterparty CVA.
+
+The implementation shall never silently reverse valuation perspective to match a downstream reporting sign convention.
 
 ---
 
-# 5. Measure and numeraire contract
+# 6. Measure contract
 
-CVA is a pricing quantity.
-
-The pricing measure is:
+CVA is priced under the selected pricing measure:
 
 $$
 \boxed{
-\mathbb Q^N
-=
-\text{pricing measure associated with the selected valuation numeraire }N.
+\mathbb Q^N.
 }
 $$
 
-For the first-generation implementation, the selected valuation currency/numeraire shall be fixed and externally inspectable.
+The measure attached to every probabilistic input used by the pricing calculation must be externally inspectable, including:
 
-All probabilistic inputs used in the CVA calculation must have an explicit measure/numeraire interpretation, including:
-
-* future-state scenarios;
+* future market-state scenarios;
+* scenario weights;
 * expected exposure;
 * survival probabilities;
 * default probabilities;
 * hazard rates;
-* stochastic discount-factor inputs, where applicable.
+* stochastic discounting inputs where applicable.
 
-The relationship between the pricing measure and discounting shall not be left implicit.
-
-For the first-generation deterministic-discounting implementation:
-
-$$
-D(0,t)=DF(t),
-$$
-
-where $DF(t)$ is deterministic in the selected valuation currency/numeraire.
-
-The following substitutions are prohibited unless an explicit model transformation is supplied:
+The following substitutions are prohibited unless an explicit measure transformation is supplied:
 
 $$
 \mathbb P\text{-exposure}
@@ -296,98 +390,118 @@ $$
 
 Historical scenario frequencies or historical default rates shall not silently become pricing probabilities.
 
-For a different numeraire or valuation currency, the corresponding pricing-measure and discounting conventions must be explicitly re-established rather than assumed to be interchangeable.
+A valid sum of weights is insufficient to establish the correct measure:
+
+$$
+\sum_sw_s=1
+\]
+
+does not imply that the represented probability law is $\mathbb Q^N$.
 
 ---
 
-# 6. Clean future valuation contract
+# 7. Clean future valuation contract
 
 For scenario $s$ and future date $t_i$:
 
 $$
+
 \boxed{
 V_{s,i}^{\mathrm{clean}}
-=
-V^{\mathrm{clean}}(X_{s,i},t_i)
+========================
+
+V^{\mathrm{clean}}(X_{s,i},t_i).
 }
+
 $$
 
 where $X_{s,i}$ is the future market-factor state.
 
-The clean valuation is from **our perspective**:
+The clean valuation shall be from our perspective:
 
 $$
+
 V>0
 \Rightarrow
-\text{counterparty owes us value},
-$$
+\text{counterparty owes us},
 
 $$
+$$
+
 V<0
 \Rightarrow
-\text{we owe the counterparty value}.
+\text{we owe the counterparty}.
+
 $$
 
 ## Clean-value purity invariant
 
-The future clean valuation shall contain **no counterparty credit adjustment**.
+Future clean valuation shall contain **no counterparty credit adjustment**.
 
 It shall not silently include:
 
-* CVA;
-* DVA;
-* FVA;
-* counterparty-credit spread adjustments;
-* recovery/default-loss effects;
-* collateral-credit adjustments.
+- CVA;
+- DVA;
+- FVA;
+- counterparty-credit spread adjustments;
+- recovery/default-loss effects;
+- collateral-credit adjustments.
 
-This prevents double counting:
+Therefore:
 
 $$
+
 \boxed{
 \text{clean valuation contains no counterparty credit adjustment}.
 }
+
 $$
 
-The valuation layer is responsible for product/market valuation only. Counterparty-default loss belongs downstream.
+The valuation layer is responsible for product/market valuation only.
 
 ---
 
-# 7. Future valuation is not historical P&L
+# 8. Future valuation is not historical P&L
 
 Historical market-risk machinery commonly computes:
 
 $$
+
 \text{historical scenario}
 \rightarrow
 \Delta V
 \quad\text{or}\quad
-P\&L.
+P&L.
+
 $$
 
 CVA requires:
 
 $$
+
 \boxed{
 (X_{s,i},t_i)
 \rightarrow
-V_{s,i}^{\mathrm{clean}}.
+V_{s,i}^{clean}.
 }
+
 $$
 
 These are different mathematical objects.
 
-The following equivalence is prohibited:
+Therefore:
 
 $$
+
 \boxed{
-\text{historical P\&L scenario}
+\text{historical P&L scenario}
 \not\equiv
 \text{future risk-neutral exposure scenario}.
 }
+
 $$
 
-Existing RiskQuant scenario infrastructure may be reused only if its semantics prove compatible with:
+Existing RiskQuant scenario infrastructure may be reused only if its semantics prove compatibility with:
 
 1. future time evolution;
 2. the required pricing measure;
@@ -399,90 +513,103 @@ Structural resemblance is insufficient.
 
 ---
 
-# 8. Numeraire, currency, and units contract
+# 9. Time, currency, and dimensional contract
 
-All values aggregated within a netting set must be represented in a common valuation currency/numeraire **according to the contractual/modelled closeout conversion convention** before mathematical netting.
+All values participating in a netting calculation must be represented in the same explicitly selected valuation/closeout currency after applying the contractual/modelled FX conversion convention.
 
-For a selected netting-set valuation currency/numeraire $N$:
-
-$$
-V_{\mathcal N,t}^{(N)}
-=
-\sum_{j\in\mathcal N}
-V_{j,t}^{(N)}.
-$$
-
-Currency conversion is part of valuation/closeout semantics, not merely an implementation utility.
-
-The first-generation implementation shall use one explicitly selected aggregation currency/numeraire.
-
-For more general multi-currency structures, the relevant contractual closeout currency, FX conversion rule, and collateral currency treatment must be explicitly modelled before exposure is determined.
-
-## Dimensional invariants
+The distinction is:
 
 $$
-[V]
-=
-[E]
-=
-[\mathcal L]
-=
-[CVA]
-=
-\text{currency},
-$$
 
-$$
-[DF]
-=
-[PD]
-=
-[LGD]
-=
-1,
-$$
-
-and where applicable:
-
-$$
-[\lambda]
-=
-1/\text{time}.
-$$
-
-Therefore:
-
-$$
-[DF\times EE\times\Delta PD]
-=
+\boxed{
 \text{currency}
+\neq
+\text{numeraire}
+\neq
+\text{discount factor}.
+}
+
+$$
+
+The generation-one implementation uses one explicit valuation currency/numeraire setup.
+
+Dimensional invariants are:
+
+$$
+
+# [V]
+
+# [E]
+
+# [\mathcal L]
+
+# [CVA]
+
+\text{currency},
+
+$$
+$$
+
+# [DF]
+
+# [PD]
+
+# [LGD]
+
+1,
+
 $$
 
 and:
 
 $$
-[DF\times E\times\lambda\times dt]
-=
+
+# [\lambda]
+
+1/\text{time}.
+
+$$
+
+Therefore:
+
+$$
+
+# [DF\times EE\times\Delta PD]
+
+\text{currency},
+
+$$
+
+and:
+
+$$
+
+# [DF\times E\times\lambda\times dt]
+
 \text{currency}.
+
 $$
 
 A dimensionally inconsistent implementation is invalid regardless of numerical plausibility.
 
 ---
 
-# 9. Formal independence contract
+# 10. Formal first-generation independence contract
 
 Let:
 
 $$
+
 \mathcal F_t^M
-$$
-
-denote the filtration generated by the future market/risk-factor information relevant to exposure.
-
-For the first-generation model, counterparty survival shall satisfy:
 
 $$
+
+denote the **full market/risk-factor filtration relevant to future exposure**, including all historical and current market information required to determine the exposure process.
+
+The first-generation model requires that counterparty default have deterministic conditional survival with respect to this filtration:
+
+$$
+
 \boxed{
 \mathbb Q^N
 \left(
@@ -490,233 +617,466 @@ $$
 \mid
 \mathcal F_t^M
 \right)
-=
+=======
+
 S_C(t)
 }
-$$
-
-where $S_C(t)$ is deterministic.
-
-This states that the conditional survival probability does not depend on the future market state driving exposure.
-
-Equivalently, under the generation-one assumptions, the default event carries no incremental dependence on the future exposure state.
-
-Therefore:
 
 $$
+
+for all deterministic $t\in[0,T]$.
+
+In addition:
+
+- $E_t$ is $\mathcal F_t^M$-measurable;
+- the default process admits the deterministic survival/default law supplied to the credit layer;
+- the exposure process is evaluated on the pre-default market process;
+- the default compensator contains no additional dependence on market information.
+
+Under these assumptions:
+
+$$
+
 \boxed{
 \mathbb E^{\mathbb Q^N}
 [
 E_t\mid\tau_C>t
 ]
 =
-\mathbb E^{\mathbb Q^N}[E_t]
+
+\mathbb E^{\mathbb Q^N}[E_t].
 }
-$$
-
-and hence:
 
 $$
+
+Thus:
+
+$$
+
 \boxed{
 EE^{surv}(t)=EE(t).
 }
+
 $$
 
-This equality is a **model consequence**, not a universal definition of expected exposure.
+This equality is a **consequence of the independence model**, not a definition.
 
-Do not merely pass a boolean named `independent=True` without the mathematical meaning represented above.
+The one-line conditional-survival condition shall not be interpreted as permission to ignore the information set. If $\mathcal F_t^M$ omits relevant historical market information through which default depends on exposure, the stated condition may appear numerically satisfied while the required independence is false.
 
 ---
 
-# 10. General default-loss contract
+# 11. Default-time versus deterministic-time exposure
+
+The economic definition contains:
+
+$$
+
+E_{\tau_C},
+
+$$
+
+not merely:
+
+$$
+
+E_t.
+
+$$
+
+The generation-one factorisation requires the exposure process to be appropriately adapted/measurable to the market filtration and the default mechanism to be independent of that market process in the compensator sense required to replace default-time exposure by the deterministic-time exposure profile weighted by the default measure.
+
+For a continuous default law, the conceptual factorisation is:
+
+$$
+
+\mathbb E^{Q^N}
+[
+D_t\mathcal L_t,dPD_C(t)
+]
+=
+
+DF(t),
+LGD_t,
+EE(t),
+dPD_C(t)
+
+$$
+
+under the first-generation deterministic assumptions.
+
+The contract shall **not** claim that:
+
+$$
+
+# \mathbb E[E_{\tau_C}\mid\tau_C\in dt]
+
+EE(t)
+
+$$
+
+follows solely from:
+
+$$
+
+Q(\tau_C>t\mid\mathcal F_t^M)=S_C(t).
+
+$$
+
+The additional exposure-adaptedness and default-compensator assumptions in this section are part of the factorisation contract.
+
+---
+
+# 12. General default-loss contract
 
 The general default loss is:
 
 $$
+
 \boxed{
 \mathcal L_t
-=
-\text{counterparty-default loss on the netting set at }t.
+============
+
+\text{counterparty-default loss amount on the netting set at }t.
 }
-$$
-
-The general CVA definition is therefore:
 
 $$
+
+The general CVA definition remains:
+
+$$
+
 \boxed{
 CVA_0
-=
-\mathbb E^{\mathbb Q^N}
+=====
+
+\mathbb E^{Q^N}
 \left[
-D(0,\tau_C)
+D^N(0,\tau_C)
 \mathcal L_{\tau_C}
-\mathbf1_{\{\tau_C\le T\}}
+\mathbf1_{{\tau_C\le T}}
 \right].
 }
+
 $$
 
-This deliberately separates the economic definition from any particular recovery or closeout representation.
+This deliberately separates the economic loss from any particular recovery or closeout representation.
 
 ---
 
-# 11. Closeout and unsecured exposure contract
+# 13. Closeout and unsecured exposure contract
 
 Define:
 
 $$
+
 \boxed{
 U_t
-=
-\text{unsecured closeout amount at time }t.
+===
+
+\text{signed unsecured closeout amount at }t.
 }
+
 $$
 
 Positive unsecured exposure is:
 
 $$
+
 \boxed{
-E_t
-=
-U_t^+.
+E_t=U_t^+.
 }
-$$
-
-Collateral shall be denoted $M_t$ throughout this contract.
-
-Under the first-generation closeout specialisation:
 
 $$
+
+Under the first-generation simple closeout specialisation:
+
+$$
+
 \boxed{
 U_t
-=
-V_t^{\mathrm{clean}}
--
-M_t.
+===
+
+V_t^{clean}-M_t.
 }
-$$
-
-The corresponding positive unsecured exposure is:
 
 $$
+
+Therefore:
+
+$$
+
 \boxed{
 E_t
-=
-(V_t^{\mathrm{clean}}-M_t)^+.
+===
+
+(V_t^{clean}-M_t)^+.
 }
+
 $$
 
 For the first uncollateralised implementation:
 
 $$
+
 \boxed{
 M_t=0,
 }
+
 $$
 
 so:
 
 $$
+
 \boxed{
-E_t=(V_t^{\mathrm{clean}})^+.
+E_t=(V_t^{clean})^+.
 }
+
 $$
 
-The positive-part operation occurs **after netting and closeout adjustments**.
+The positive-part operation occurs **after netting, currency conversion, and closeout/collateral adjustments**.
 
 ---
 
-# 12. First-generation closeout specialisation
+# 14. First-generation closeout specialisation
 
-The first-generation engine shall use the following explicit closeout model:
+The first-generation engine uses an explicit **clean-MTM replacement-value closeout specialisation** with:
 
-1. The reference valuation is the future clean/risk-free replacement value.
-2. Counterparty default causes immediate closeout at the default time approximation.
-3. The unsecured amount is clean netting-set value less the modelled collateral balance.
-4. Only positive unsecured value generates counterparty loss.
-5. Recovery applies to that positive unsecured value through a deterministic LGD.
-6. There is no margin-period-of-risk exposure evolution.
-7. There is no liquidation-cost term.
-8. There is no separate stochastic closeout adjustment.
-9. The first production model is uncollateralised, so $M_t=0$.
+1. clean future value as the reference closeout value;
+2. immediate closeout at the default-time approximation;
+3. unsecured amount equal to clean netting-set value less the signed collateral balance;
+4. counterparty loss only on positive unsecured exposure;
+5. deterministic recovery applied to that positive unsecured exposure;
+6. no margin-period-of-risk dynamics;
+7. no liquidation-cost term;
+8. no additional stochastic closeout adjustment.
 
-Therefore, at default under the first-generation model:
+Thus:
 
 $$
+
 \boxed{
 \mathcal L_t
-=
-(1-R_C)
-(V_t^{\mathrm{clean}})^+.
+============
+
+LGD_tE_t.
 }
+
 $$
 
-This equation is a **closeout/recovery specialisation** of the general loss $\mathcal L_t$.
+In the first uncollateralised model:
 
-It is not a universal identity for arbitrary legal closeout models.
+$$
 
-Future closeout models may replace this mapping without changing the general CVA definition.
+\boxed{
+\mathcal L_t
+============
+
+(1-R_C)(V_t^{clean})^+.
+}
+
+$$
+
+This is a **model specialisation**, not a universal closeout theorem.
+
+A future closeout model may instead define:
+
+$$
+
+# \mathcal L_t
+
+\Phi(
+V_t^{clean},
+M_t,
+\text{agreement},
+\text{default state},
+\text{settlement rules},
+\ldots
+),
+
+$$
+
+without changing the general CVA definition.
 
 ---
 
-# 13. Recovery and LGD contract
+# 15. Collateral sign and collateral semantics
 
-The general model permits stochastic recovery:
+The canonical signed collateral convention is:
 
 $$
+
+\boxed{
+M_t>0
+\iff
+\text{collateral held by us}.
+}
+
+$$
+
+and:
+
+$$
+
+\boxed{
+M_t<0
+\iff
+\text{collateral posted by us}.
+}
+
+$$
+
+Under this convention:
+
+$$
+
+U_t=V_t^{clean}-M_t.
+
+$$
+
+Therefore:
+
+- receiving €80 collateral gives $M_t=+80$ and reduces unsecured exposure;
+- posting €80 collateral gives $M_t=-80$ and increases unsecured exposure.
+
+Numerical sanity:
+
+$$
+
+V=100,\quad M=80
+\Rightarrow
+E=20,
+
+$$
+
+while:
+
+$$
+
+V=100,\quad M=-80
+\Rightarrow
+E=180.
+
+$$
+
+A sign reversal that leaves CVA unchanged is a semantic defect.
+
+Collateral must be represented in the same valuation currency/numeraire used for closeout after applying the contractual FX convention.
+
+Collateral is not merely a scalar subtraction. The collateral state must reflect the applicable agreement and timing rules.
+
+---
+
+# 16. Initial margin, variation margin, and independent amount
+
+The contract distinguishes at least conceptually:
+
+$$
+
+M_t^{VM},
+\qquad
+M_t^{IM},
+\qquad
+M_t^{IA}.
+
+$$
+
+The first generation implements none of them:
+
+$$
+
+M_t=0.
+
+$$
+
+Variation margin, initial margin, and independent amount shall not be collapsed into one semantics-free `margin` quantity.
+
+Initial margin is not automatically subtractable merely because it is economically collateral.
+
+Before IM can enter a closeout exposure formula, the model must determine:
+
+- whether it is legally available against the default loss;
+- whether it is segregated;
+- who holds it;
+- whether it is returned on default;
+- whether it is subject to recovery;
+- whether it is available for set-off;
+- the relevant closeout convention.
+
+The same principle applies to independent amount.
+
+---
+
+# 17. Recovery and LGD contract
+
+General recovery may be stochastic:
+
+$$
+
 R_t\in[0,1],
+
 $$
 
 with:
 
 $$
+
 LGD_t=1-R_t.
-$$
-
-Under the simple recovery specialisation:
 
 $$
+
+Under the recovery specialisation:
+
+$$
+
 \boxed{
-\mathcal L_t
-=
-LGD_tE_t.
+\mathcal L_t=LGD_tE_t.
 }
-$$
-
-Under first-generation deterministic recovery:
 
 $$
+
+Under generation one:
+
+$$
+
 R_t=R_C,
-$$
 
 $$
-LGD=1-R_C,
 $$
 
-so:
+LGD=1-R_C.
 
 $$
+
+Therefore:
+
+$$
+
 \boxed{
 \mathcal L_t
-=
+============
+
 (1-R_C)E_t.
 }
+
 $$
 
-Recovery must remain conceptually distinct from exposure and default probability.
+The generation-one model does **not** apply recovery to an arbitrary signed closeout amount before the positive-part operator.
 
-Do not embed recovery inside a “PD” object unless the object’s semantics explicitly state that it is no longer a pure default-probability quantity.
+A model in which recovery is instead applied to some other closeout quantity is a different recovery/closeout model and must be represented explicitly.
+
+Recovery must remain distinct from default probability.
 
 ---
 
-# 14. Netting-set contract
+# 18. Netting-set contract
 
 CVA exposure is measured at the legally enforceable netting-set level.
 
-The contractual layer, not the CVA numerical kernel, establishes membership of $\mathcal N$.
-
-The normative mathematical dependency is:
+The mathematical dependency is:
 
 $$
+
 \boxed{
 \text{legal enforceability}
 \rightarrow
@@ -724,1152 +1084,1379 @@ $$
 \rightarrow
 \text{valuation aggregation}.
 }
+
 $$
 
 For scenario $s$ and time $t_i$:
 
 $$
+
 \boxed{
-V_{\mathcal N,s,i}^{\mathrm{clean}}
-=
+V_{\mathcal N,s,i}^{clean}
+==========================
+
 \sum_{j\in\mathcal N}
-V_{j,s,i}^{\mathrm{clean},(N)}.
+V_{j,s,i}^{clean,(N)}.
 }
-$$
-
-Only after that classification and aggregation does exposure truncation occur:
 
 $$
-E_{\mathcal N,s,i}
-=
+
+Only after netting does the exposure transformation occur:
+
+$$
+
+# E_{\mathcal N,s,i}
+
 \left(
-V_{\mathcal N,s,i}^{\mathrm{clean}}
--
+V_{\mathcal N,s,i}^{clean}
+--------------------------
+
 M_{\mathcal N,s,i}
 \right)^+.
+
 $$
 
 In general:
 
 $$
+
 \boxed{
-\left(\sum_jV_{j,t}\right)^+
+\left(\sum_jV_j\right)^+
 \ne
-\sum_j(V_{j,t})^+.
+\sum_jV_j^+.
 }
-$$
-
-This mathematical nonlinearity is exactly why netting scope must be established before exposure truncation.
-
-Counterparty identity alone shall not define $\mathcal N$.
-
-The contractual hierarchy shown conceptually is:
 
 $$
-\boxed{
-\text{legal agreement data}
-\rightarrow
-\text{enforceable netting scope}
-\rightarrow
-\text{collateral/closeout terms}
-\rightarrow
-\text{trades}.
-}
-$$
 
-This is a semantic dependency, not a claim that every legal structure has one universal object hierarchy.
-
----
-
-# 15. Collateral contract
-
-Collateral is contractual credit protection, not an arbitrary scalar adjustment.
-
-The first simple collateral representation uses:
+Example:
 
 $$
-U_t
-=
-V_t^{\mathrm{clean}}
--
-M_t
-$$
 
-subject to an explicitly fixed sign convention for $M_t$.
-
-The implementation must document whether positive $M_t$ means, for example:
-
-* collateral held by us;
-
-or:
-
-* collateral posted by us.
-
-The sign convention must be internally consistent across valuation, netting, exposure, and reporting.
-
-Future collateral extensions may need to represent:
-
-* variation margin;
-* initial margin / independent amount;
-* threshold;
-* minimum transfer amount;
-* margin frequency;
-* margin call/settlement lag;
-* collateral currency;
-* haircut;
-* collateral remuneration;
-* margin period of risk;
-* collateral return on default;
-* closeout / settlement conventions.
-
-These need not be implemented in generation one.
-
-## Initial-margin warning
-
-Initial margin shall not be treated as an automatically subtractable collateral balance merely because it is economically “collateral”.
-
-Its legal availability, segregation, return, recovery treatment, and closeout role must be explicitly modelled before it enters the exposure formula.
-
----
-
-# 16. Exposure definition
-
-For the first uncollateralised model:
+V_A=100,\qquad V_B=-90.
 
 $$
-\boxed{
-E_t
-=
-(V_t^{\mathrm{clean}})^+.
-}
-$$
 
-For the simple collateralised model:
+Correct:
 
 $$
-\boxed{
-E_t
-=
-(V_t^{\mathrm{clean}}-M_t)^+.
-}
-$$
 
-This exposure is the positive part of the unsecured closeout amount.
-
-It is not “the tail” in the PFE/ES sense; it is the entire positive region of the unsecured distribution.
-
-A precise interpretation is:
-
-> CVA depends on the positive part of the future unsecured closeout distribution, weighted by the timing and probability of counterparty default.
-
----
-
-# 17. Expected Exposure contract
-
-The unconditional expected exposure is:
-
-$$
-\boxed{
-EE(t)
-=
-\mathbb E^{\mathbb Q^N}[E_t].
-}
-$$
-
-The survival-conditioned expected exposure is:
-
-$$
-\boxed{
-EE^{surv}(t)
-=
-\mathbb E^{\mathbb Q^N}
-[
-E_t\mid\tau_C>t
-].
-}
-$$
-
-These are distinct mathematical quantities.
-
-Under the first-generation independence assumption:
-
-$$
-\boxed{
-EE^{surv}(t)=EE(t).
-}
-$$
-
-Under genuine WWR, they are generally not equal.
-
-Under equally weighted Monte Carlo:
-
-$$
-\boxed{
-\widehat{EE}_i
-=
-\frac1S
-\sum_{s=1}^{S}
-E_{s,i}.
-}
-$$
-
-For general probability weights:
-
-$$
-\boxed{
-\widehat{EE}_i
-=
-\sum_{s=1}^{S}
-w_sE_{s,i},
+V_{net}=10,
 \qquad
-w_s\ge0,
-\qquad
-\sum_sw_s=1.
-}
-$$
-
-The expectation is the mathematical quantity; the hatted expression is the estimator.
-
-The scenario law and scenario weights jointly define the probability measure represented by the estimator.
-
----
-
-# 18. Expected Exposure versus PFE
-
-Expected exposure:
+E_{net}=10.
 
 $$
-EE(t)
-=
-\mathbb E[V_t^+].
-$$
 
-Exposure quantile/PFE at confidence level $q$:
+Incorrect trade-level positive-part aggregation:
 
 $$
-PFE_q(t)
-=
-Q_q(V_t^+).
-$$
 
-These are different mathematical objects.
-
-CVA uses expected loss weighted through the default-time distribution. PFE is a tail exposure statistic at a future date.
-
-PFE shall not replace EE in the CVA contract unless an explicit approximation has been independently specified and validated.
-
-Terminology such as “EPE” may be used only with an explicit definition because institutional/regulatory conventions differ.
-
-Internally, RiskQuant should prefer unambiguous names such as:
-
-* `expected_exposure`;
-* `expected_exposure_profile`;
-* `survival_conditioned_expected_exposure`.
-
----
-
-# 19. Default-time contract and bucket convention
-
-Counterparty default time is:
+100^++(-90)^+=100.
 
 $$
-\tau_C.
-$$
 
-The event that default occurs in bucket $(t_{i-1},t_i]$ is:
+If:
 
 $$
-\{t_{i-1}<\tau_C\le t_i\}.
-$$
 
-The continuous mathematical object refers to exposure at the actual default time:
+V_A=100,\qquad V_B=-100,
 
-$$
-E_{\tau_C}.
-$$
-
-A bucketed implementation must explicitly state how the interval default mass is associated with exposure and discounting.
-
-## First-generation default-bucket convention
-
-RiskQuant shall use the following endpoint approximation unless a later model explicitly replaces it:
-
-> Defaults in $(t_{i-1},t_i]$ are represented by the exposure and discount factor associated with the **pre-closeout endpoint convention at $t_i$**.
-
-For a smooth exposure process this is represented as:
-
-$$
-EE_i=EE(t_i),
-$$
-
-$$
-DF_i=DF(t_i).
-$$
-
-Then:
-
-$$
-CVA_i
-=
-LGD_iDF_iEE_i\Delta PD_i.
-$$
-
-This is a **numerical approximation**, not an assertion that all defaults in the bucket literally occur at $t_i$.
-
-## Discontinuities
-
-Where the clean valuation has a contractual discontinuity at $t_i$, such as a cashflow, exercise, fixing, maturity, or settlement event, the exposure value used by the endpoint convention shall be explicitly identified as the relevant **pre-closeout/pre-discontinuity** value required by the chosen closeout approximation.
-
-The engine shall not silently choose between:
-
-$$
-V(t_i^-)
-\quad\text{and}\quad
-V(t_i^+).
-$$
-
-A numerical implementation must document which side of any discontinuity belongs to the closeout approximation.
-
----
-
-# 20. Survival/default probability contract
-
-Define unconditional risk-neutral survival probability:
-
-$$
-\boxed{
-S_C(t)
-=
-\mathbb Q^N(\tau_C>t).
-}
-$$
-
-Then cumulative default probability:
-
-$$
-\boxed{
-PD_C(t)
-=
-1-S_C(t).
-}
-$$
-
-For bucket $(t_{i-1},t_i]$:
-
-$$
-\boxed{
-\Delta PD_i
-=
-PD_C(t_i)-PD_C(t_{i-1})
-=
-S_C(t_{i-1})-S_C(t_i).
-}
-$$
-
-The first-generation curve invariants are:
-
-$$
-S_C(0)=1,
-$$
-
-$$
-0\le S_C(t)\le1,
-$$
-
-and for increasing time:
-
-$$
-S_C(t_i)\le S_C(t_{i-1}).
-$$
-
-Therefore:
-
-$$
-\boxed{
-\Delta PD_i\ge0.
-}
-$$
-
-The total default mass through $T$ is:
-
-$$
-\sum_{i=1}^{N}\Delta PD_i
-=
-S_C(0)-S_C(T)
-=
-1-S_C(T).
-$$
-
-Invalid survival curves must fail fast or be rejected explicitly.
-
----
-
-# 21. Hazard-rate contract
-
-For a deterministic hazard/intensity curve $\lambda_C(t)$ that generates an absolutely continuous survival law:
-
-$$
-\boxed{
-S_C(t)
-=
-\exp
-\left(
--\int_0^t\lambda_C(u)\,du
-\right)
-}
-$$
-
-and:
-
-$$
-\boxed{
-\lambda_C(t)
-=
--\frac{d}{dt}\log S_C(t)
-}
-$$
-
-where the derivative exists in the relevant sense.
-
-Then:
-
-$$
-\boxed{
-\frac{dPD_C(t)}{dt}
-=
-\lambda_C(t)S_C(t).
-}
-$$
-
-A credit curve interface must distinguish:
-
-* survival probability $S_C(t)$;
-* cumulative default probability $PD_C(t)$;
-* bucket default mass $\Delta PD_i$;
-* deterministic hazard rate $\lambda_C(t)$.
-
-These are related quantities, not aliases.
-
-The hazard representation is applicable only where the default-time distribution admits the corresponding intensity/density representation.
-
-If a model contains discrete default-time atoms or other non-absolutely-continuous components, the survival/default-mass representation remains valid while the ordinary $\lambda(t)S(t),dt$ representation is not by itself sufficient.
-
----
-
-# 22. Credit-curve calibration contract
-
-The conceptual market-data chain is:
-
-$$
-\boxed{
-\text{CDS market data}
-\rightarrow
-\text{credit calibration}
-\rightarrow
-S_C(t),PD_C(t),\lambda_C(t)
-\rightarrow
-CVA.
-}
-$$
-
-A CDS spread is **not** a hazard rate by identity.
-
-Calibration can depend on:
-
-* recovery;
-* discounting;
-* premium/accrual conventions;
-* default settlement conventions;
-* calibration instruments;
-* curve parametrisation;
-* interpolation;
-* numerical integration.
-
-The first RiskQuant CVA implementation may consume an already calibrated survival/default curve.
-
-This is preferable to embedding an unvalidated CDS bootstrap merely to complete the feature.
-
----
-
-# 23. Deterministic/independent CVA derivation
-
-Under the first-generation assumptions:
-
-* deterministic discounting;
-* deterministic LGD;
-* deterministic survival/default curve;
-* market exposure/default independence;
-* uncollateralised clean-MTM closeout;
-
-we have:
-
-$$
-\mathcal L_t
-=
-(1-R_C)
-(V_t^{\mathrm{clean}})^+.
-$$
-
-The general default-loss expectation specialises to:
-
-$$
-\boxed{
-CVA_0
-=
-(1-R_C)
-\int_0^T
-DF(t)
-EE(t)
-\,dPD_C(t).
-}
-$$
-
-The derivation depends on the first-generation independence condition:
-
-$$
-\mathbb Q^N(\tau_C>t\mid\mathcal F_t^M)
-=
-S_C(t),
-$$
-
-which gives:
-
-$$
-EE^{surv}(t)=EE(t).
-$$
-
-Equivalently, using a deterministic hazard representation when the corresponding intensity exists:
-
-$$
-\boxed{
-CVA_0
-=
-(1-R_C)
-\int_0^T
-DF(t)
-EE(t)
-\lambda_C(t)S_C(t)\,dt.
-}
-$$
-
-This is the canonical first-generation continuous-time CVA contract.
-
----
-
-# 24. Discrete CVA integration contract
-
-Given:
-
-$$
-0=t_0<t_1<\cdots<t_N=T,
-$$
-
-and endpoint convention:
-
-$$
-EE_i=EE(t_i),
-$$
-
-$$
-DF_i=DF(t_i),
 $$
 
 then:
 
 $$
+
+V_{net}=0,
+\qquad
+E_{net}=0.
+
+$$
+
+Counterparty identity alone shall never define $\mathcal N$.
+
+The legal layer must establish enforceable trade membership and any contractual restrictions on netting.
+
+---
+
+# 19. Multi-currency netting and closeout
+
+For first-generation CVA, all values entering the mathematical netting operation shall be converted into one explicitly selected valuation/closeout currency.
+
+The conversion must follow the selected contractual/model convention:
+
+$$
+
+# V_{j,t}^{(N)}
+
+FX_{j\rightarrow N}(t),
+V_{j,t}^{(j)}
+
+$$
+
+or the equivalent valuation-layer transformation appropriate to the chosen currency setup.
+
+The canonical ordering is:
+
+$$
+
 \boxed{
-CVA_0^{(N)}
-=
-(1-R_C)
-\sum_{i=1}^{N}
-DF_iEE_i
-\Delta PD_i
+\text{trade valuation}
+\rightarrow
+\text{contractual FX conversion}
+\rightarrow
+\text{legal netting}
+\rightarrow
+\text{collateral/closeout}.
 }
+
+$$
+
+A collateral amount denominated in another currency must likewise be converted under the applicable collateral/closeout FX convention before entering:
+
+$$
+
+U_t=V_t-M_t.
+
+$$
+
+The first-generation implementation shall not attempt to infer multi-currency legal closeout from a generic reporting FX conversion.
+
+---
+
+# 20. Expected exposure contract
+
+Define unconditional expected exposure:
+
+$$
+
+\boxed{
+EE(t)
+=====
+
+\mathbb E^{Q^N}[E_t].
+}
+
+$$
+
+Define survival-conditioned expected exposure:
+
+$$
+
+\boxed{
+EE^{surv}(t)
+============
+
+\mathbb E^{Q^N}
+[
+E_t\mid\tau_C>t
+].
+}
+
+$$
+
+These are distinct quantities.
+
+Under generation-one independence:
+
+$$
+
+\boxed{
+EE^{surv}(t)=EE(t).
+}
+
+$$
+
+Under WWR this equality generally fails.
+
+The sample estimator is separate from the mathematical expectation:
+
+$$
+
+\boxed{
+\widehat{EE}_i
+==============
+
+\sum_{s=1}^S
+w_sE_{s,i}.
+}
+
+$$
+
+---
+
+# 21. Expected exposure versus PFE
+
+Expected exposure:
+
+$$
+
+# EE(t)
+
+\mathbb E[V_t^+].
+
+$$
+
+PFE at confidence level $q$:
+
+$$
+
+# PFE_q(t)
+
+Q_q(V_t^+).
+
+$$
+
+These are different mathematical objects.
+
+CVA uses the expectation of the relevant positive unsecured closeout exposure, not a future tail quantile.
+
+PFE shall not replace EE unless a separate approximation is explicitly defined and independently validated.
+
+Internal RiskQuant terminology should prefer:
+
+- `expected_exposure`;
+- `expected_exposure_profile`;
+- `survival_conditioned_expected_exposure`.
+
+---
+
+# 22. Default-time law and survival probabilities
+
+Define:
+
+$$
+
+\boxed{
+S_C(t)
+======
+
+Q^N(\tau_C>t).
+}
+
+$$
+
+Then cumulative default probability:
+
+$$
+
+\boxed{
+PD_C(t)
+=======
+
+1-S_C(t).
+}
+
+$$
+
+For bucket $(t_{i-1},t_i]$:
+
+$$
+
+\boxed{
+\Delta PD_i
+===========
+
+# PD_C(t_i)-PD_C(t_{i-1})
+
+S_C(t_{i-1})-S_C(t_i).
+}
+
+$$
+
+The bucket includes defaults satisfying:
+
+$$
+
+t_{i-1}<\tau_C\le t_i.
+
+$$
+
+Therefore a default exactly at $t_i$ belongs to bucket $i$.
+
+---
+
+# 23. Default-event ordering and endpoint convention
+
+The first-generation time grid is:
+
+$$
+
+0=t_0<t_1<\cdots<t_N=T.
+
+$$
+
+The bucket:
+
+$$
+
+(t_{i-1},t_i]
+
+$$
+
+is represented numerically by its **right endpoint** $t_i$.
+
+This is an approximation:
+
+> Defaults in $(t_{i-1},t_i]$ are represented by the exposure and discount factor at the right-endpoint closeout state associated with $t_i$.
+
+For generation one, the canonical event-order rule is:
+
+$$
+
+\boxed{
+\text{default closeout at }t_i
+\text{ uses the pre-contractual-event clean state }V(t_i^-)
+}
+
+$$
+
+when a scheduled cashflow, exercise, settlement, fixing, maturity, or other valuation discontinuity occurs at $t_i$.
+
+Thus:
+
+$$
+
+EE_i
+
+$$
+
+must correspond to the declared pre-event exposure state.
+
+The contract does not permit silent selection between:
+
+$$
+
+V(t_i^-)
+\quad\text{and}\quad
+V(t_i^+).
+
+$$
+
+The valuation layer must expose the state appropriate to this event-order convention.
+
+A different closeout event ordering is a different model and must be explicitly declared.
+
+---
+
+# 24. Survival/default curve invariants
+
+The first-generation credit representation requires:
+
+$$
+
+S_C(0)=1,
+
+$$
+$$
+
+0\le S_C(t)\le1,
+
+$$
+
+and:
+
+$$
+
+S_C(t_i)\le S_C(t_{i-1}).
+
+$$
+
+Therefore:
+
+$$
+
+\boxed{
+\Delta PD_i\ge0.
+}
+
+$$
+
+Total default mass through $T$ is:
+
+$$
+
+\boxed{
+\sum_{i=1}^{N}\Delta PD_i
+=========================
+
+1-S_C(T).
+}
+
+$$
+
+This equality is algebraic given the bucket definition, subject to finite-precision tolerance.
+
+A survival curve that violates these conditions is invalid.
+
+No silent clipping or projection is permitted.
+
+---
+
+# 25. Credit-curve domain, interpolation, and alignment
+
+The credit layer owns:
+
+- credit-curve interpolation;
+- conversion from native market-curve conventions to the internal time coordinate;
+- evaluation of survival/default quantities at requested integration dates;
+- any internally required integration of hazard rates.
+
+The CVA numerical integrator does **not** perform credit interpolation.
+
+The required interface is conceptually:
+
+$$
+
+\boxed{
+\text{credit model}
+\rightarrow
+S_C(t_i),,
+PD_C(t_i),,
+\Delta PD_i,,
+\lambda_C(t_i)
+}
+
+$$
+
+on the declared CVA integration grid where those quantities are valid.
+
+If a requested date lies outside the supported credit-curve domain:
+
+$$
+
+\boxed{
+\text{FAIL FAST}.
+}
+
+$$
+
+Silent extrapolation is prohibited.
+
+Interpolation choice is mathematically material.
+
+For example, if:
+
+$$
+
+S(1)=0.98,\qquad S(2)=0.90,
+
+$$
+
+then linear survival gives:
+
+$$
+
+S(1.5)=0.94,
+
+$$
+
+while log-linear survival gives:
+
+$$
+
+S(1.5)=\sqrt{0.98\cdot0.90}.
+
+$$
+
+These produce different default masses and therefore potentially different CVA values.
+
+The interpolation convention must therefore be owned by the credit model and externally inspectable.
+
+---
+
+# 26. Hazard-rate contract
+
+For an absolutely continuous deterministic survival law with positive survival:
+
+$$
+
+S_C(t)>0,
+
+$$
+
+and sufficient regularity:
+
+$$
+
+# S_C(t)
+
+\exp
+\left(
+-\int_0^t
+\lambda_C(u),du
+\right),
+
 $$
 
 where:
 
 $$
-\Delta PD_i
-=
-S_C(t_{i-1})-S_C(t_i).
-$$
 
-Bucket contribution:
-
-$$
 \boxed{
-CVA_i
-=
-(1-R_C)DF_iEE_i\Delta PD_i.
+\lambda_C(t)
+============
+
+-\frac{d}{dt}\log S_C(t).
 }
-$$
-
-Cumulative CVA:
 
 $$
-CVA_{\le i}
-=
-\sum_{j=1}^{i}
-CVA_j.
-$$
 
-Aggregate:
+The corresponding default-density relationship is:
 
 $$
+
+\boxed{
+\frac{dPD_C(t)}{dt}
+===================
+
+\lambda_C(t)S_C(t).
+}
+
+$$
+
+The relevant conditions are that the survival law be non-increasing, absolutely continuous on the relevant interval, strictly positive there, and admit the corresponding non-negative integrable intensity.
+
+The following are distinct:
+
+$$
+
+S_C(t),
+\qquad
+PD_C(t),
+\qquad
+\Delta PD_i,
+\qquad
+\lambda_C(t).
+
+$$
+
+They are related quantities, not aliases.
+
+For a valid deterministic intensity model:
+
+$$
+
+\boxed{
+\lambda_C(t)\ge0.
+}
+
+$$
+
+A negative hazard in the generation-one intensity representation is invalid and shall fail fast.
+
+If:
+
+$$
+
+S_C(t)=0,
+
+$$
+
+then:
+
+$$
+
+-\log S_C(t)
+
+$$
+
+and therefore:
+
+$$
+
+# \lambda_C(t)
+
+-\frac{d}{dt}\log S_C(t)
+
+$$
+
+are not defined in the ordinary finite sense.
+
+The survival/default-mass representation remains valid.
+
+---
+
+# 27. Default atoms and general default measure
+
+The survival/default-mass formulation is more general than an ordinary hazard integral.
+
+If the default law contains an atom:
+
+$$
+
+# p_k
+
+Q^N(\tau_C=t_k)>0,
+
+$$
+
+then the correct CVA contribution includes the atom explicitly.
+
+A general default-measure representation is:
+
+$$
+
+\boxed{
+CVA_0
+=====
+
+\int_{(0,T]}
+D^N(0,t),
+\mathbb E^{Q^N}
+[
+\mathcal L_t
+\mid
+\tau_C=t
+]
+,dPD_C(t).
+}
+
+$$
+
+Under first-generation independence, deterministic LGD, and deterministic discounting, this reduces appropriately to an exposure expectation integrated against the default probability measure.
+
+If the default law has both continuous and atomic components:
+
+$$
+
+# dPD_C
+
+dPD_C^{cont}
++
+\sum_kp_k\delta_{t_k},
+
+$$
+
+then:
+
+$$
+
 \boxed{
 CVA
-=
-\sum_{i=1}^{N}
-CVA_i.
+===
+
+\int
+DF(t),
+LGD(t),
+EE(t),
+dPD_C^{cont}(t)
++
+\sum_k
+DF(t_k),
+LGD(t_k),
+EE_{t_k}^{atom},
+p_k.
 }
+
 $$
 
-The implementation shall expose the profile used to obtain the scalar result.
+The atom must use the explicitly selected event-order exposure at $t_k$.
+
+An ordinary $\lambda(t)S(t)dt$ representation alone is insufficient when atomic default mass exists.
 
 ---
 
-# 25. Discretisation status and numerical error
+# 28. Credit calibration contract
 
-The bucketed formula is not the continuous definition. It introduces a time-discretisation approximation:
-
-$$
-CVA_0^{(N)}
-\approx
-CVA_0.
-$$
-
-The total numerical error can arise from several distinct sources:
-
-1. **valuation-model error** in $V_{s,i}^{\mathrm{clean}}$;
-2. **time-grid/discretisation error**;
-3. **Monte Carlo sampling error**;
-4. **curve interpolation/calibration error**;
-5. **numerical integration error**;
-6. **proxy/regression error**, where applicable.
-
-Validation shall distinguish these sources rather than attributing every discrepancy to “Monte Carlo noise”.
-
-A numerical implementation shall distinguish mathematical identities from finite-precision acceptance tolerances.
-
-For example:
+The conceptual market-data chain is:
 
 $$
-CVA=\sum_iCVA_i
-$$
 
-is a mathematical identity, while a production implementation may only verify:
-
-$$
-\left|
-CVA-\sum_iCVA_i
-\right|
-\le
-\varepsilon_{\text{reconcile}}.
-$$
-
-The tolerance must be explicit.
-
----
-
-# 26. Discounting contract
-
-For deterministic discounting:
-
-$$
 \boxed{
-DF_i=DF(0,t_i)>0.
-}
-$$
-
-The general definition uses the stochastic discount factor:
-
-$$
-D(0,\tau_C).
-$$
-
-If rates are stochastic, the correct object is joint:
-
-$$
-\mathbb E^{\mathbb Q^N}
-\left[
-D_t
-\mathcal L_t
-\mathbf1_{\{\tau_C\in dt\}}
-\right].
-$$
-
-Under a suitable intensity representation this may be written schematically as:
-
-$$
-\mathbb E^{\mathbb Q^N}
-\left[
-D_t
-\mathcal L_t
-\lambda_C(t)
-G_t
-\,dt
-\right],
-$$
-
-where $G_t$ is the conditional survival process defined in Section 28.
-
-In general:
-
-$$
-\mathbb E[D_tE_t]
-\ne
-\mathbb E[D_t]\mathbb E[E_t].
-$$
-
-Therefore the first-generation factorisation using deterministic $DF_t$ shall not be baked into a general stochastic-discounting abstraction.
-
----
-
-# 27. Time-coordinate contract
-
-The continuous variable $t$ shall be represented by a defined year-fraction coordinate.
-
-The mapping:
-
-$$
-\text{calendar date}
+\text{CDS market data}
 \rightarrow
-t
+\text{credit calibration}
+\rightarrow
+S_C(t),PD_C(t),\Delta PD_i,\lambda_C(t)
+\rightarrow
+CVA.
+}
+
 $$
 
-must use an explicitly selected day-count/time convention.
+A CDS spread is **not** a hazard rate by identity.
 
-The same mathematical time coordinate must be used consistently when evaluating:
+The approximation:
 
-* hazard rates;
-* integrated hazard;
-* discount factors;
-* interpolation coordinates;
-* time-grid spacing;
-* numerical integration.
+$$
 
-A hazard rate measured in one time basis shall not be multiplied by a time increment expressed in another without an explicit conversion.
+s\approx LGD\times\lambda
+
+$$
+
+may be useful as intuition but is not the calibration equation.
+
+Actual calibration can depend on:
+
+- recovery;
+- discounting;
+- premium/accrual conventions;
+- default settlement conventions;
+- calibration instruments;
+- curve parametrisation;
+- interpolation;
+- numerical integration.
+
+The recovery assumption used in CDS calibration and the recovery assumption used for CVA are conceptually distinct.
 
 Therefore:
 
 $$
-[\lambda]=1/\text{year-fraction unit}
+
+R^{CDS}
+\not\equiv
+R^{CVA}
+
 $$
 
-must be consistent with:
+unless the model explicitly imposes that relationship.
 
-$$
-dt.
-$$
+The first RiskQuant CVA implementation may consume an already calibrated survival/default curve rather than implementing a CDS bootstrap.
+
+This is preferred over embedding an unvalidated calibration stack merely to complete the feature.
 
 ---
 
-# 28. Wrong-way risk contract
+# 29. Discounting contract
 
-WWR exists when exposure and counterparty credit quality are dependent.
-
-Let:
+For generation one:
 
 $$
-\mathcal F_t^M
-$$
 
-denote the market/risk-factor filtration driving exposure.
-
-Let:
-
-$$
-\mathcal F_t^{C}
-$$
-
-denote credit-model information beyond the market filtration where applicable.
-
-The relevant conditional survival quantity shall be defined with respect to a filtration that does **not already reveal the default event**.
-
-Therefore, for a stochastic intensity/Cox-style construction, define:
-
-$$
 \boxed{
-G_t
-=
-\mathbb Q^N
-\left(
-\tau_C>t
-\mid
-\mathcal F_t^M
-\vee
-\mathcal F_t^{C,\mathrm{pre-default}}
-\right).
+DF_i=DF(0,t_i)>0.
 }
-$$
-
-For a pure market-conditioned credit model this may reduce to:
 
 $$
+
+$DF(t)$ shall mean:
+
+> the deterministic pricing discount factor associated with the selected valuation currency, numeraire, and discounting/collateral convention.
+
+The term "risk-free discount factor" shall not be used as an undefined synonym.
+
+The discount layer owns:
+
+- market discount-curve conventions;
+- interpolation;
+- conversion to the CVA integration dates;
+- any native day-count/calendar handling.
+
+If a required date is outside the supported discount-curve domain:
+
+$$
+
 \boxed{
-G_t
-=
-\mathbb Q^N
-\left(
-\tau_C>t
-\mid
-\mathcal F_t^M
-\right).
+\text{FAIL FAST}.
 }
-$$
-
-The key distinction is:
 
 $$
+
+No silent extrapolation.
+
+If rates are stochastic, the general object is joint:
+
+$$
+
 \boxed{
-G_t
-\neq
-\mathbb Q^N(\tau_C>t\mid\text{information that already reveals whether default occurred}).
-}
-$$
+CVA
+===
 
-Otherwise the conditional survival probability collapses to the realised indicator:
-
-$$
-\mathbf1_{\{\tau_C>t\}}.
-$$
-
-Under an intensity/Cox construction with pre-default intensity $\lambda_C(t)$:
+\mathbb E^{Q^N}
+\left[
+\int
+D_t
+\mathcal L_t
+,dPD_C(t)
+\right]
 
 $$
+
+or, under an appropriate intensity construction:
+
+$$
+
 \boxed{
-G_t
-=
-\exp
-\left(
--\int_0^t\lambda_C(u)\,du
-\right)
-}
-$$
+CVA
+===
 
-where $\lambda_C$ may depend on the evolving market/credit state.
-
-The corresponding joint CVA representation is:
-
-$$
-\boxed{
-CVA_0
-=
-\mathbb E^{\mathbb Q^N}
+\mathbb E^{Q^N}
 \left[
 \int_0^T
 D_t
 \mathcal L_t
-\lambda_C(t)
-G_t
-\,dt
+\lambda_t
+G_t,dt
 \right].
 }
-$$
-
-Under the simple recovery specialisation:
 
 $$
-\mathcal L_t
-=
-LGD_tE_t,
-$$
 
-so equivalently:
+In general:
 
 $$
-\boxed{
-CVA_0
-=
-\mathbb E^{\mathbb Q^N}
-\left[
-\int_0^T
-D_t
-LGD_t
-E_t
-\lambda_C(t)
-G_t
-\,dt
-\right].
-}
-$$
 
-There is **no additional multiplication by $E_t$** once $\mathcal L_t$ is defined as the loss amount.
-
-The independent representation:
+\mathbb E[D_tE_t]
+\ne
+\mathbb E[D_t]\mathbb E[E_t]
 
 $$
-EE_t\times\lambda_C(t)S_C(t)
+
+because:
+
 $$
 
-is not valid under genuine WWR in general.
+# \mathbb E[D_tE_t]
 
-## WWR architectural rule
+\mathbb E[D_t]\mathbb E[E_t]
++
+\operatorname{Cov}(D_t,E_t).
 
-WWR shall be represented through an explicit **joint exposure-credit law** or equivalent conditional model.
+$$
 
-It shall not be implemented by multiplying independent CVA by an arbitrary correlation scalar.
-
-A parameter called `correlation` is not, by itself, a mathematically specified WWR model.
+The first-generation deterministic factorisation must not be embedded into a general stochastic-discounting abstraction.
 
 ---
 
-# 29. Monte Carlo contract
+# 30. Internal time-coordinate contract
 
-Let:
+RiskQuant shall use an explicit internal year-fraction coordinate:
 
 $$
-V_{s,i}^{\mathrm{clean}}
+
+\boxed{
+t
 =
-V^{\mathrm{clean}}(X_{s,i},t_i)
-$$
 
-for scenarios $s=1,\ldots,S$ and dates $i=1,\ldots,N$.
-
-First-generation exposure:
+\operatorname{YearFraction}(t_0,\text{date})
+}
 
 $$
+
+with the specific internal convention declared by the date/time subsystem.
+
+For the first-generation contract, this shall be one canonical internal basis, for example ACT/365F if that is the repository's canonical convention.
+
+External curves may use different market conventions.
+
+The curve layer is responsible for converting native conventions into the internal coordinate before numerical integration.
+
+The CVA kernel shall never infer day-count conventions from raw dates.
+
+A rate expressed against one time basis shall not be multiplied by a time increment from another basis without an explicit conversion.
+
+---
+
+# 31. Grid ownership and alignment
+
+The CVA engine has one explicit **integration grid**:
+
+$$
+
+0=t_0<t_1<\cdots<t_N=T.
+
+$$
+
+The integration grid must be:
+
+- strictly increasing;
+- duplicate-free unless a future model explicitly represents event multiplicity;
+- within the domain of all required input curves;
+- explicitly associated with the chosen time coordinate.
+
+Upstream seams own their native-grid transformations.
+
+Therefore:
+
+$$
+
+\boxed{
+\text{exposure layer}
+\rightarrow
+EE(t_i),
+}
+
+$$
+$$
+
+\boxed{
+\text{discount layer}
+\rightarrow
+DF(t_i),
+}
+
+$$
+$$
+
+\boxed{
+\text{credit layer}
+\rightarrow
+S_C(t_i),\Delta PD_i.
+}
+
+$$
+
+The CVA integration kernel receives aligned arrays.
+
+It shall not:
+
+- perform date matching;
+- perform nearest-date selection;
+- interpolate curves;
+- extrapolate;
+- infer event order.
+
+---
+
+# 32. Horizon contract
+
+$T$ is:
+
+> the latest future date at which the selected netting set can have non-zero relevant closeout exposure under the implemented valuation model and contractual settlement rules.
+
+It is not merely a scalar "portfolio maturity."
+
+The valuation layer owns the determination of the economically relevant horizon.
+
+Examples requiring valuation awareness include:
+
+- different trade maturities;
+- exercise dates;
+- settlement dates;
+- path-dependent termination;
+- delivery periods;
+- cashflows after exercise;
+- settlement lags.
+
+The CVA engine consumes the validated horizon.
+
+It shall not invent a maturity rule from trade metadata alone.
+
+---
+
+# 33. Optionality and nonlinear valuation boundary
+
+The CVA mathematics does not assume linear products.
+
+For general derivatives:
+
+$$
+
+# V_{s,i}^{clean}
+
+V(X_{s,i},t_i)
+
+$$
+
+may involve:
+
+- nonlinear payoff functions;
+- options;
+- exercise policies;
+- path dependence;
+- nested valuation;
+- regression/proxy valuation;
+- simulation-dependent exercise.
+
+The CVA layer must consume future clean valuation through a stable interface.
+
+It shall not encode assumptions that future value is a linear function of spot or a historical P&L shock.
+
+---
+
+# 34. Monte Carlo contract
+
+For scenario $s$ and time $t_i$:
+
+$$
+
+# V_{s,i}^{clean}
+
+V^{clean}(X_{s,i},t_i).
+
+$$
+
+First-generation exposure is:
+
+$$
+
 \boxed{
 E_{s,i}
-=
-\max
-\left(
-V_{s,i}^{\mathrm{clean}},
-0
-\right).
+=======
+
+\max(V_{s,i}^{clean},0)
 }
-$$
-
-Equal-weight estimator:
 
 $$
+
+after the scenario-level netting and collateral transformation required for the selected netting set.
+
+The semantic shape shall be explicit:
+
+$$
+
 \boxed{
-\widehat{EE}_i
-=
-\frac1S
-\sum_{s=1}^{S}
-E_{s,i}.
+E\in\mathbb R^{S\times N}
 }
-$$
-
-Weighted estimator:
 
 $$
-\boxed{
-\widehat{EE}_i
-=
-\sum_{s=1}^{S}
-w_sE_{s,i}
-}
-$$
 
-with:
+where:
 
-$$
-w_s\ge0,
-\qquad
-\sum_sw_s=1.
-$$
+- axis 0 = scenario;
+- axis 1 = time.
 
-The estimator must preserve explicit scenario/date semantics.
-
-For a future-state array, the semantic shape shall be documented, for example:
-
-$$
-[S\times N]
-$$
-
-for scenario $\times$ time.
-
-A transpose must never be capable of silently converting date axis into scenario axis.
+A transpose shall never silently change the mathematical meaning of the array.
 
 ---
 
-# 30. Scenario measure and weighting contract
+# 35. Monte Carlo measure and weighting
 
 The scenario generator must state:
 
-1. the probability measure represented by the generated scenarios;
-2. whether that measure is the selected pricing measure $\mathbb Q^N$;
-3. the interpretation of any non-uniform scenario weights;
-4. whether weights are part of the sampling estimator or an importance-sampling correction.
+1. the probability measure under which scenarios are generated;
+2. the valuation numeraire associated with that measure;
+3. the scenario sampling law;
+4. the interpretation of any scenario weights.
 
-For first-generation standard Monte Carlo:
-
-$$
-X_s\sim\mathbb Q^N,
-$$
-
-and equal weights are admissible:
+For ordinary IID Monte Carlo under the pricing measure:
 
 $$
+
+X_s\sim Q^N,
+
+$$
+
+and:
+
+$$
+
 w_s=\frac1S.
-$$
 
-For weighted simulation:
-
-$$
-\widehat{EE}_i
-=
-\sum_sw_sE_{s,i},
-$$
-
-the weights and scenario-generation law together must define an unbiased or otherwise explicitly characterised estimator of the target pricing expectation.
-
-Historical scenario probabilities shall not be silently reused merely because their numerical weights sum to one.
-
----
-
-# 31. Scenario state versus portfolio valuation
-
-The engine must preserve the distinction:
-
-$$
-X_{s,i}
-\rightarrow
-V_{s,i}^{\mathrm{clean}}
-\rightarrow
-E_{s,i}.
-$$
-
-Market-factor scenarios are not themselves exposures.
-
-A risk-factor shock is not automatically a future portfolio value.
-
-A scenario generator must not be allowed to masquerade as a valuation engine merely because it outputs arrays of the correct shape.
-
----
-
-# 32. Netting before positive part: exact requirement
-
-For netting set $\mathcal N$:
-
-$$
-V_{\mathcal N,s,i}^{\mathrm{clean}}
-=
-\sum_{j\in\mathcal N}
-V_{j,s,i}^{\mathrm{clean}}.
 $$
 
 Then:
 
 $$
-E_{\mathcal N,s,i}
-=
-\left(
-V_{\mathcal N,s,i}^{\mathrm{clean}}
--
-M_{\mathcal N,s,i}
-\right)^+.
-$$
 
-Never calculate:
+# \widehat{EE}_i
+
+\frac1S
+\sum_sE_{s,i}
 
 $$
-\sum_{j\in\mathcal N}
-(V_{j,s,i}^{\mathrm{clean}})^+
-$$
 
-as the exposure of a legally netted set.
-
-The correct operation order is:
+is unbiased for:
 
 $$
-\boxed{
-\text{future market state}
-\rightarrow
-\text{clean valuation}
-\rightarrow
-\text{numeraire/FX conversion}
-\rightarrow
-\text{legal netting}
-\rightarrow
-\text{collateral/closeout}
-\rightarrow
-\text{positive part}
-\rightarrow
-\text{scenario aggregation}
-\rightarrow
-\text{credit integration}.
-}
+
+EE(t_i).
+
 $$
+
+For a weighted estimator:
+
+$$
+
+# \widehat{EE}_i
+
+\sum_sw_sE_{s,i},
+
+$$
+
+the estimator is valid only if the scenario law and weighting scheme jointly target the desired expectation.
+
+For importance sampling, weights may represent likelihood-ratio corrections such as:
+
+$$
+
+w_s
+\propto
+\frac{dQ^N}{dQ^{IS}}(X_s).
+
+$$
+
+Self-normalised weights do not generally preserve unbiasedness and must not be described as ordinary unbiased Monte Carlo weights.
+
+The generation-one implementation may restrict itself to ordinary equal-weight Monte Carlo.
 
 ---
 
-# 33. First-generation deterministic reference calculation
+# 36. Monte Carlo independence, missing scenarios, and failure policy
+
+Scenario observations need not be independent for the weighted expectation to be mathematically meaningful, but sampling error depends on their dependence structure.
+
+For IID equal-weight Monte Carlo:
+
+$$
+
+# SE(\widehat{EE}_i)
+
+\sqrt{
+\frac{\widehat{\operatorname{Var}}(E_i)}{S}
+}.
+
+$$
+
+For dependent scenarios, the estimator variance must account for cross-scenario covariance.
+
+Generation-one numerical boundaries shall fail fast on:
+
+- zero scenarios;
+- missing scenario values;
+- NaN valuations;
+- NaN exposures;
+- infinite valuations;
+- malformed weights;
+- negative weights;
+- weights not satisfying the declared weighting contract.
+
+No scenario dropping, `nanmean`, silent reweighting, or sentinel substitution is permitted.
+
+---
+
+# 37. Monte Carlo versus time-discretisation error
+
+The production implementation shall distinguish at least:
+
+1. valuation-model error;
+2. Monte Carlo sampling error;
+3. time-grid/discretisation error;
+4. credit-curve/interpolation error;
+5. discount-curve/interpolation error;
+6. proxy/regression error, where applicable.
+
+These shall not be collapsed into one unexplained tolerance.
+
+For a Monte Carlo CVA calculation, the scenario-level CVA estimator should be capable of supporting an estimated sampling error where practical.
+
+---
+
+# 38. First-generation deterministic reference calculation
 
 Given:
 
-* dates $0=t_0<t_1<\cdots<t_N=T$;
-* clean future valuations $V_{s,i}^{\mathrm{clean}}$;
-* deterministic $DF_i$;
-* deterministic recovery $R_C$;
-* deterministic survival curve $S_i$;
-* equally weighted scenarios;
+- dates $0=t_0<t_1<\cdots<t_N=T$;
+- clean future valuations;
+- deterministic $DF_i$;
+- deterministic recovery;
+- deterministic survival;
+- equal-weight pricing-measure scenarios;
 
 calculate:
 
-### Step 1 — exposure
+### Step 1 — netting
 
 $$
-E_{s,i}
-=
-\max(V_{s,i}^{\mathrm{clean}},0).
+
+# V_{\mathcal N,s,i}^{clean}
+
+\sum_{j\in\mathcal N}
+V_{j,s,i}^{clean}.
+
 $$
 
-### Step 2 — expected exposure
+### Step 2 — exposure
+
+For generation one:
 
 $$
-EE_i
-=
+
+# E_{s,i}
+
+\max(V_{\mathcal N,s,i}^{clean},0).
+
+$$
+
+### Step 3 — expected exposure
+
+$$
+
+# EE_i
+
 \frac1S
 \sum_sE_{s,i}.
-$$
-
-### Step 3 — default mass
 
 $$
-\Delta PD_i
-=
+
+### Step 4 — default mass
+
+$$
+
+# \Delta PD_i
+
 S_{i-1}-S_i.
-$$
-
-### Step 4 — LGD
 
 $$
+
+### Step 5 — LGD
+
+$$
+
 LGD=1-R_C.
-$$
-
-### Step 5 — bucket CVA
 
 $$
-CVA_i
-=
-LGD\,DF_i\,EE_i\,\Delta PD_i.
-$$
 
-### Step 6 — aggregate
+### Step 6 — bucket CVA
 
 $$
+
+# CVA_i
+
+LGD,DF_i,EE_i,\Delta PD_i.
+
+$$
+
+### Step 7 — aggregate
+
+$$
+
 \boxed{
 CVA
-=
+===
+
 \sum_iCVA_i.
 }
+
 $$
 
 This is the canonical golden oracle for the first-generation CVA integrator.
 
 ---
 
-# 34. Output profile contract
+# 39. Discrete CVA integration contract
+
+With:
+
+$$
+
+0=t_0<t_1<\cdots<t_N=T,
+
+$$
+
+the first-generation right-endpoint approximation is:
+
+$$
+
+\boxed{
+CVA_0^{(N)}
+===========
+
+\sum_{i=1}^{N}
+LGD_i
+DF_i
+EE_i
+\Delta PD_i.
+}
+
+$$
+
+For generation one:
+
+$$
+
+LGD_i=1-R_C.
+
+$$
+
+where:
+
+$$
+
+# \Delta PD_i
+
+S_C(t_{i-1})-S_C(t_i).
+
+$$
+
+Bucket contribution:
+
+$$
+
+\boxed{
+CVA_i
+=====
+
+LGD_iDF_iEE_i\Delta PD_i.
+}
+
+$$
+
+Cumulative profile:
+
+$$
+
+# CVA_{\le i}
+
+\sum_{j=1}^{i}CVA_j.
+
+$$
+
+Aggregate:
+
+$$
+
+\boxed{
+CVA
+===
+
+\sum_{i=1}^{N}CVA_i.
+}
+
+$$
+
+The aggregate is mathematically identical to the sum of bucket contributions, subject to finite-precision reconciliation tolerance in implementation.
+
+---
+
+# 40. Numerical discretisation and convergence
+
+The bucketed expression is not the continuous definition:
+
+$$
+
+CVA_0^{(N)}
+\approx
+CVA_0.
+
+$$
+
+Under an absolutely continuous default law and sufficiently regular integrand:
+
+$$
+
+# f(t)
+
+DF(t),LGD(t),EE(t)\lambda_C(t)S_C(t),
+
+$$
+
+the right-endpoint approximation converges under grid refinement when the relevant Riemann/Stieltjes integral is well defined.
+
+Under sufficient smoothness/Lipschitz regularity, a right-endpoint scheme has first-order global discretisation error:
+
+$$
+
+O(\Delta t).
+
+$$
+
+This is not asserted universally in the presence of jumps, discontinuities, or default atoms.
+
+Where exposure has jumps, the event-order convention must determine the representative value.
+
+Where the default law has atoms, the atomic contribution must be represented separately or through the general default measure.
+
+---
+
+# 41. Bucket/profile output contract
 
 The engine shall expose at least:
 
 $$
+
 \boxed{
-\left\{
+\left{
 t_i,
 EE_i,
 S_i,
@@ -1877,150 +2464,262 @@ S_i,
 DF_i,
 LGD_i,
 CVA_i
-\right\}_{i=1}^{N}
+\right}_{i=1}^{N}
 }
+
 $$
 
 and the aggregate:
 
 $$
-CVA
-=
-\sum_iCVA_i.
+
+CVA=\sum_iCVA_i.
+
 $$
 
 Recommended semantic fields:
 
-| Field                             | Mathematical meaning |
-| --------------------------------- | -------------------- |
-| `date`                            | $t_i$                |
-| `expected_exposure`               | $EE_i$               |
-| `survival_probability`            | $S_C(t_i)$           |
-| `incremental_default_probability` | $\Delta PD_i$        |
-| `discount_factor`                 | $DF_i$               |
-| `lgd`                             | $LGD_i$              |
-| `cva_contribution`                | $CVA_i$              |
-| `cva_cumulative`                  | $\sum_{j\le i}CVA_j$ |
+| Field | Mathematical meaning |
+|---|---|
+| `date` | $t_i$ |
+| `expected_exposure` | $EE_i$ |
+| `survival_probability` | $S_C(t_i)$ |
+| `incremental_default_probability` | $\Delta PD_i$ |
+| `discount_factor` | $DF_i$ |
+| `lgd` | $LGD_i$ |
+| `cva_contribution` | $CVA_i$ |
+| `cva_cumulative` | $\sum_{j\le i}CVA_j$ |
 
-Exact storage technology is an implementation concern. Mathematical semantics are not.
+Exact storage technology is an implementation concern.
+
+Mathematical semantics are not.
 
 ---
 
-# 35. Mathematical invariants
+# 42. Numerical tolerance and reconciliation policy
+
+Mathematical identities shall not be confused with floating-point equality.
+
+Examples:
+
+$$
+
+\sum_i\Delta PD_i=1-S_N,
+
+$$
+
+and:
+
+$$
+
+CVA=\sum_iCVA_i.
+
+$$
+
+Production reconciliation shall use a declared tolerance of the form:
+
+$$
+
+\boxed{
+|x-y|
+\le
+\epsilon_{abs}
++
+\epsilon_{rel}|y|.
+}
+
+$$
+
+Tolerance values belong to numerical policy, not the economic definition.
+
+They shall not be used to repair invalid inputs.
+
+For example, the implementation shall not transform:
+
+$$
+
+\Delta PD_i<0
+
+$$
+
+into:
+
+$$
+
+\max(\Delta PD_i,0)
+
+$$
+
+merely because the value is "small."
+
+Likewise it shall not silently transform:
+
+$$
+
+CVA_i<0
+
+$$
+
+into:
+
+$$
+
+\max(CVA_i,0).
+
+$$
+
+A negative bucket contribution outside an explicitly declared floating-point tolerance is a model/integration failure.
+
+---
+
+# 43. Mathematical invariants
 
 The first-generation implementation shall enforce or test:
 
 ## Exposure
 
 $$
+
 EE_i\ge0.
+
 $$
 
 ## Survival
 
 $$
+
 S_0=1,
-$$
 
 $$
+$$
+
 0\le S_i\le1,
-$$
 
 $$
+$$
+
 S_i\le S_{i-1}.
+
 $$
 
 ## Default mass
 
 $$
+
 \Delta PD_i\ge0.
+
 $$
 
 ## Total default mass
 
 $$
-0\le
-\sum_i\Delta PD_i
-\le1,
+
+0\le\sum_i\Delta PD_i\le1,
+
 $$
 
 and:
 
 $$
-\sum_i\Delta PD_i
-=
-1-S_N
+
+\sum_i\Delta PD_i=1-S_N
+
 $$
 
-within the declared numerical tolerance.
+within declared numerical tolerance.
 
 ## Recovery/LGD
 
 $$
+
 0\le R_C\le1,
-$$
 
 $$
-0\le LGD\le1.
+$$
+
+0\le LGD_i\le1.
+
 $$
 
 ## Discounting
 
 $$
+
 DF_i>0.
+
+$$
+
+## Time grid
+
+$$
+
+t_i>t_{i-1}.
+
 $$
 
 ## Bucket CVA
 
-Under first-generation assumptions:
+Under the first-generation assumptions:
 
 $$
-CVA_i\ge0.
+
+CVA_i\ge0
+
 $$
+
+within the declared floating-point tolerance.
 
 ## Aggregate CVA
 
 $$
-CVA\ge0.
+
+CVA\ge0
+
 $$
+
+within the declared numerical tolerance.
 
 ## Adjusted value
 
 $$
-V_0^{CVA}
-=
-V_0^{clean}
--
-CVA
+
+# V_0^{CVA}
+
+V_0^{clean}-CVA
 \le
 V_0^{clean}.
+
 $$
 
 ---
 
-# 36. Monotonicity properties
+# 44. Monotonicity properties
 
-Under the first-generation model, holding all other quantities fixed:
+Holding all other quantities fixed:
 
 ## Exposure monotonicity
 
 If:
 
 $$
+
 EE_i^{(A)}
 \le
 EE_i^{(B)}
 \quad\forall i,
+
 $$
 
 then:
 
 $$
+
 \boxed{
 CVA^{(A)}
 \le
 CVA^{(B)}.
 }
+
 $$
 
 ## LGD monotonicity
@@ -2028,19 +2727,19 @@ $$
 If:
 
 $$
-LGD_A
-\le
-LGD_B,
+
+LGD_A\le LGD_B,
+
 $$
 
 then:
 
 $$
+
 \boxed{
-CVA_A
-\le
-CVA_B.
+CVA_A\le CVA_B.
 }
+
 $$
 
 ## Default-mass monotonicity
@@ -2048,56 +2747,31 @@ $$
 If:
 
 $$
+
 \Delta PD_i^{(A)}
 \le
 \Delta PD_i^{(B)}
 \quad\forall i,
+
 $$
 
 then:
 
 $$
+
 \boxed{
 CVA^{(A)}
 \le
 CVA^{(B)}.
 }
+
 $$
 
 These are suitable for property-based validation.
 
 ---
 
-# 37. Additivity boundary
-
-CVA is additive across separately modelled valuation units only when the units are genuinely separate under the contractual/model scope.
-
-For disjoint netting sets $\mathcal N_k$ evaluated independently:
-
-$$
-\boxed{
-CVA_{portfolio}
-=
-\sum_k
-CVA_{\mathcal N_k}.
-}
-$$
-
-This does **not** imply trade-level additivity within a netting set, because:
-
-$$
-\left(\sum_jV_j\right)^+
-\ne
-\sum_jV_j^+
-$$
-
-in general.
-
-Do not expose a generic “trade CVA sum” abstraction unless its meaning is explicitly defined as a decomposition, not as the primitive economic calculation.
-
----
-
-# 38. Golden / exact sanity cases
+# 45. Golden and edge-case tests
 
 The implementation shall support exact or near-exact tests.
 
@@ -2106,32 +2780,40 @@ The implementation shall support exact or near-exact tests.
 If:
 
 $$
+
 V_t^{clean}\le0
 \quad\forall t,
+
 $$
 
 then:
 
 $$
+
 \boxed{
 CVA=0.
 }
+
 $$
 
-## Case B — zero default probability
+## Case B — zero cumulative default probability
 
 If:
 
 $$
+
 PD_C(T)=0,
+
 $$
 
 then:
 
 $$
+
 \boxed{
 CVA=0.
 }
+
 $$
 
 ## Case C — zero LGD
@@ -2139,15 +2821,19 @@ $$
 If:
 
 $$
+
 R_C=1,
+
 $$
 
 then:
 
 $$
+
 \boxed{
 CVA=0.
 }
+
 $$
 
 ## Case D — constant exposure, unit discounting
@@ -2155,428 +2841,976 @@ $$
 If:
 
 $$
+
 EE(t)=E_0,
 \qquad
 DF(t)=1,
+
 $$
 
 then:
 
 $$
+
+# CVA
+
+LGD,E_0
+\sum_i\Delta PD_i.
+
+$$
+
+Since:
+
+$$
+
+\sum_i\Delta PD_i=PD_C(T),
+
+$$
+
+we obtain:
+
+$$
+
 \boxed{
 CVA
-=
-LGD\,E_0\,PD_C(T).
+===
+
+LGD,E_0,PD_C(T).
 }
+
 $$
+
+Here $PD_C(T)$ is the **cumulative** default probability.
+
+An incremental default probability cannot be substituted for $PD_C(T)$ in this expression without changing the calculation.
 
 ## Case E — certain default by maturity
 
 If:
 
 $$
+
 PD_C(T)=1,
+
 $$
 
 then:
 
 $$
+
 \sum_i\Delta PD_i=1.
+
 $$
 
 For constant exposure and unit discounting:
 
 $$
+
 \boxed{
-CVA
-=
-LGD\,E_0.
+CVA=LGD,E_0.
 }
+
 $$
+
+A default atom at $T$ belongs to the final bucket because:
+
+$$
+
+(t_{N-1},T]
+
+$$
+
+contains $T$.
 
 ## Case F — netting
 
 If:
 
 $$
-V_A=100,
-\qquad
-V_B=-90,
+
+V_A=100,\qquad V_B=-90,
+
 $$
 
 then:
 
 $$
-V_{net}=10,
+
+V_{net}=10,\qquad E_{net}=10.
+
+$$
+
+If:
+
+$$
+
+V_A=100,\qquad V_B=-100,
+
+$$
+
+then:
+
+$$
+
+V_{net}=0,\qquad E_{net}=0.
+
+$$
+
+## Case G — perfect deterministic oracle
+
+For deterministic:
+
+$$
+
+EE_i,\quad DF_i,\quad LGD_i,\quad\Delta PD_i,
+
+$$
+
+compare production output against:
+
+$$
+
+\boxed{
+\sum_iLGD_iDF_iEE_i\Delta PD_i.
+}
+
+$$
+
+The production result must match within a pre-declared numerical tolerance.
+
+## Case H — collateral sign
+
+For:
+
+$$
+
+V=100,
+
+$$
+
+verify:
+
+$$
+
+M=80
+\Rightarrow
+E=20,
+
+$$
+
+while:
+
+$$
+
+M=-80
+\Rightarrow
+E=180.
+
+$$
+
+## Case I — zero scenarios
+
+If:
+
+$$
+
+S=0,
+
+$$
+
+the expectation estimator is undefined.
+
+Therefore:
+
+$$
+
+\boxed{
+\text{FAIL FAST}.
+}
+
+$$
+
+## Case J — empty netting set
+
+For:
+
+$$
+
+\mathcal N=\varnothing,
+
+$$
+
+the mathematical aggregation is:
+
+$$
+
+V_{\mathcal N}=0,
+
+$$
+
+therefore:
+
+$$
+
+E_{\mathcal N}=0,
+
 $$
 
 and:
 
 $$
+
 \boxed{
-E_{net}=10
+CVA=0.
 }
-$$
-
-rather than:
 
 $$
-100^++(-90)^+=100.
+
+The implementation may flag an empty legal netting set diagnostically, but shall not manufacture exposure.
+
+## Case K — zero horizon
+
+If:
+
 $$
 
-## Case G — perfect deterministic oracle
-
-Choose deterministic $EE_i$, $DF_i$, $\Delta PD_i$, and $LGD_i$ and compare the production integrator exactly against:
+T=0
 
 $$
-\sum_iLGD_iDF_iEE_i\Delta PD_i.
+
+and generation-one assumptions exclude an atom of default at time zero:
+
 $$
 
-The production result must match within a pre-declared numerical tolerance.
+\boxed{
+CVA=0.
+}
+
+$$
 
 ---
 
-# 39. Scenario-weight sanity cases
+# 46. Scenario-weight sanity cases
 
 For weights:
 
 $$
+
+w_s\ge0,
+\qquad
 \sum_sw_s=1,
+
 $$
 
 if every scenario has identical exposure:
 
 $$
+
 E_{s,i}=E_i^*
 \quad\forall s,
+
 $$
 
 then:
 
 $$
+
 \widehat{EE}_i=E_i^*.
+
 $$
 
-This must hold independently of the number or ordering of scenarios.
-
-Scenario permutation must not change the result provided weights are permuted consistently.
+Scenario permutation must not change the result when the associated weights are permuted consistently.
 
 ---
 
-# 40. Time-grid contract
+# 47. Additivity boundary
 
-The exposure, discount, and credit calculations may use different native grids, but their mapping into the CVA integration grid must be explicit.
+CVA is additive across genuinely separate valuation units only when the total loss decomposes accordingly.
 
-The integration grid:
+For disjoint netting sets $\mathcal N_k$ satisfying:
 
 $$
-0=t_0<t_1<\cdots<t_N=T
+
+# \mathcal L_{portfolio}
+
+\sum_k\mathcal L_k,
+
 $$
 
-shall be strictly increasing and duplicate-free unless an explicit representation requires otherwise.
+linearity of expectation gives:
 
-The implementation must define how it handles:
+$$
 
-* valuation dates not present on the credit grid;
-* credit dates not present on the valuation grid;
-* discount dates not present on the exposure grid;
-* interpolation between dates;
-* extrapolation beyond available data;
-* contractual discontinuities at integration dates.
+\boxed{
+CVA_{portfolio}
+===============
 
-No implicit date alignment or silent nearest-date selection is permitted where it changes the mathematical quantity.
+\sum_kCVA_{\mathcal N_k}.
+}
 
-Any interpolation scheme used for a production curve or exposure profile must be part of the model contract.
+$$
+
+No independence assumption between netting sets is required for this linearity result.
+
+However, trade-level additivity within one netting set does not generally hold because:
+
+$$
+
+\left(\sum_jV_j\right)^+
+\ne
+\sum_jV_j^+.
+
+$$
+
+Cross-default clauses do not by themselves determine additivity. The decisive question is whether the legal/closeout model defines a loss decomposition into genuinely separate valuation units.
+
+Do not expose a generic "trade CVA sum" abstraction as though it were the primitive economic calculation.
+
+A trade-level CVA allocation may exist only as an explicitly defined decomposition of the netting-set CVA.
 
 ---
 
-# 41. Maturity / horizon contract
+# 48. Wrong-way risk contract
 
-$T$ means:
+WWR exists when exposure and counterparty credit quality are dependent.
 
-> the latest future date at which the selected netting set can have non-zero relevant closeout exposure under the implemented valuation model and contractual settlement rules.
+Define a **pre-default reference filtration**:
 
-It is not merely a scalar “portfolio maturity” field.
+$$
 
-A netting set may contain trades with:
+\boxed{
+\mathcal H_t
+============
 
-* different maturities;
-* exercise dates;
-* settlement dates;
-* optionality;
-* path-dependent termination;
-* delivery periods.
+\text{market/credit information available before the default event is revealed}.
+}
 
-The valuation layer owns the determination of the relevant future horizon.
+$$
 
-The CVA engine consumes that horizon; it shall not independently invent a maturity rule from trade metadata alone.
+The key requirement is that $\mathcal H_t$ must not already contain the realised event:
+
+$$
+
+\mathbf1_{{\tau_C\le t}}.
+
+$$
+
+Otherwise:
+
+$$
+
+# Q^N(\tau_C>t\mid\mathcal H_t)
+
+\mathbf1_{{\tau_C>t}},
+
+$$
+
+which is a realised survival indicator rather than the conditional survival probability required for the intensity representation.
+
+Define:
+
+$$
+
+\boxed{
+G_t
+===
+
+Q^N(\tau_C>t\mid\mathcal H_t).
+}
+
+$$
+
+For a pure market-conditioned credit model:
+
+$$
+
+\mathcal F_t^M\subseteq\mathcal H_t.
+
+$$
+
+Under a Cox/intensity construction, $\lambda_C(t)$ is the pre-default intensity, adapted/predictable with respect to $\mathcal H_t$.
+
+Then:
+
+$$
+
+\boxed{
+G_t
+===
+
+\exp
+\left(
+-\int_0^t
+\lambda_C(u),du
+\right).
+}
+
+$$
+
+The joint CVA representation is:
+
+$$
+
+\boxed{
+CVA_0
+=====
+
+E^{Q^N}
+\left[
+\int_0^T
+D_t
+\mathcal L_t
+\lambda_C(t)
+G_t
+,dt
+\right].
+}
+
+$$
+
+Under simple recovery:
+
+$$
+
+\mathcal L_t=LGD_tE_t,
+
+$$
+
+so:
+
+$$
+
+\boxed{
+CVA_0
+=====
+
+E^{Q^N}
+\left[
+\int_0^T
+D_t
+LGD_t
+E_t
+\lambda_C(t)
+G_t
+,dt
+\right].
+}
+
+$$
+
+There is no second multiplication by $E_t$.
+
+Under genuine WWR:
+
+$$
+
+EE^{surv}(t)
+\ne
+EE(t)
+
+$$
+
+in general.
+
+The independent representation:
+
+$$
+
+EE(t)\lambda_C(t)S_C(t)
+
+$$
+
+is therefore not generally valid.
 
 ---
 
-# 42. Optionality and nonlinear valuation boundary
+# 49. WWR with default atoms
 
-The CVA mathematics does not assume linear products.
-
-For general derivatives:
+If the stochastic credit model has default atoms, the ordinary:
 
 $$
-V_{s,i}^{clean}
-=
-V(X_{s,i},t_i)
+
+\lambda_tG_tdt
+
 $$
 
-may involve:
+representation is insufficient on its own.
 
-* nonlinear payoff functions;
-* options;
-* exercise policies;
-* path dependence;
-* nested valuation;
-* regression/proxy valuation;
-* simulation-dependent exercise.
+The general representation must include the corresponding atomic default probabilities.
 
-The CVA layer must consume future clean valuation through a stable interface and must not encode assumptions that future value is a linear function of spot or a P&L shock.
+Conceptually:
+
+$$
+
+\boxed{
+CVA
+===
+
+E^{Q^N}
+\left[
+\int
+D_t\mathcal L_t,d\Lambda_t^{cont}
+\right]
++
+\sum_k
+E^{Q^N}
+[
+D_{t_k}\mathcal L_{t_k}
+\mathbf1_{{\tau_C=t_k}}
+].
+}
+
+$$
+
+The exact compensator representation belongs to the stochastic-credit model.
+
+The generation-one engine need not implement this.
 
 ---
 
-# 43. Bilateral/DVA boundary
+# 50. WWR and collateral seam
+
+Under future WWR/collateral extensions, the exposure state may depend jointly on:
+
+- market state;
+- credit state;
+- collateral state;
+- legal agreement;
+- margin timing.
+
+The minimum conceptual seam becomes:
+
+$$
+
+\boxed{
+(\text{market state},
+\text{credit state},
+\text{collateral state},
+\text{agreement})
+\rightarrow
+U_t
+\rightarrow
+E_t
+\rightarrow
+\mathcal L_t.
+}
+
+$$
+
+The first-generation model uses only:
+
+$$
+
+M_t=0.
+
+$$
+
+---
+
+# 51. Gaussian copula and other WWR models
+
+A Gaussian copula may be used as part of a valid WWR model if it defines an explicit joint law.
+
+That requires specification of:
+
+- exposure-state marginal law;
+- credit/default marginal law;
+- copula structure;
+- dependence parameters;
+- mapping from latent variables to default time/intensity;
+- pricing measure;
+- simulation/estimation procedure.
+
+A scalar `correlation` parameter alone is not a WWR model.
+
+The contract therefore permits copula, factor, intensity, structural, or other joint-law constructions provided they explicitly define the joint exposure-credit law.
+
+---
+
+# 52. Bilateral/DVA boundary
 
 The first implementation is unilateral:
 
 $$
+
 \boxed{
-\text{counterparty default is modelled; our default is not.}
+\text{counterparty default is modelled; our default is not}.
 }
+
 $$
 
 Do not silently add DVA.
 
 A later bilateral model requires explicit treatment of:
 
-* counterparty default;
-* own default;
-* first-to-default ordering;
-* bilateral closeout;
-* own recovery;
-* counterparty recovery;
-* collateral return/closeout treatment.
+- counterparty default;
+- own default;
+- first-to-default ordering;
+- bilateral closeout;
+- own recovery;
+- counterparty recovery;
+- collateral return/closeout treatment.
 
 The textbook decomposition:
 
 $$
+
 V_{bilateral}
 \approx
 V_{clean}-CVA+DVA
+
 $$
 
-may be useful under specified assumptions, but is not a universal mathematical identity for arbitrary bilateral closeout models.
+is valid only under specified assumptions and closeout conventions.
 
-Therefore DVA is a later model extension, not a simple boolean attached to an independent-CVA scalar.
+It is not a universal identity for arbitrary bilateral closeout models.
+
+DVA is therefore a later model extension, not a boolean attached to an independent-CVA scalar.
 
 ---
 
-# 44. XVA boundary
+# 53. XVA boundary
 
 “XVA” shall mean a family of valuation adjustments rather than a universal additive identity.
 
 Common labels include:
 
-* CVA — counterparty credit;
-* DVA — own credit;
-* FVA — funding;
-* MVA — initial-margin funding;
-* KVA — capital cost.
+- CVA — counterparty credit;
+- DVA — own credit;
+- FVA — funding;
+- MVA — initial-margin funding;
+- KVA — capital cost.
 
-The mathematical interactions among these adjustments depend on the valuation framework, funding policy, closeout, margin model, and dependencies.
+The mathematical interactions among these adjustments depend on:
 
-Therefore the following shall **not** be treated as a universal contract:
+- valuation framework;
+- funding policy;
+- collateral/margin model;
+- closeout;
+- default dependence;
+- recursion/coupling.
+
+Therefore:
 
 $$
-XVA
-=
+
+# XVA
+
 CVA+DVA+FVA+MVA+KVA+\cdots
+
 $$
 
-RiskQuant shall not create an additive XVA interface before unilateral CVA is independently correct.
+shall not be treated as a universal mathematical contract.
+
+RiskQuant shall not create a generic additive XVA interface before unilateral CVA is independently correct.
 
 ---
 
-# 45. Architectural mathematical seams
+# 54. Architectural mathematical seams
 
-The preferred mathematical decomposition is:
+The preferred decomposition is:
 
 ## Seam A — future-state generation
 
 $$
+
 \boxed{
 \text{market inputs}
 \rightarrow
 X_{s,i}
 }
+
 $$
 
-This layer determines the future scenario state and its measure/weights.
+This layer determines the future scenario state and its probability-measure semantics.
 
 ## Seam B — clean future valuation
 
 $$
+
 \boxed{
 (X_{s,i},t_i)
 \rightarrow
 V_{s,i}^{clean}
 }
-$$
-
-## Seam C — contractual netting
 
 $$
+
+This layer owns product/market valuation and event-aware future value.
+
+## Seam C — contractual/netting aggregation
+
+$$
+
 \boxed{
-\{V_{j,s,i}^{clean}\}_{j\in\mathcal N}
+{V_{j,s,i}^{clean}}*{j\in\mathcal N}
 \rightarrow
-V_{\mathcal N,s,i}^{clean}
+V*{\mathcal N,s,i}^{clean}
 }
-$$
-
-## Seam D — closeout / collateral exposure
 
 $$
+
+This layer owns legal membership and aggregation.
+
+## Seam D — closeout/collateral exposure
+
+$$
+
 \boxed{
-(V_{\mathcal N,s,i}^{clean},M_{s,i},\text{agreement})
+(V_{\mathcal N,s,i}^{clean},
+M_{s,i},
+\text{agreement},
+\text{event state})
 \rightarrow
 U_{s,i}
 \rightarrow
 E_{s,i}=U_{s,i}^+
 }
+
+$$
+
+The generation-one implementation is:
+
+$$
+
+M_{s,i}=0,
+
+$$
+
+and:
+
+$$
+
+U_{s,i}=V_{\mathcal N,s,i}^{clean}.
+
 $$
 
 ## Seam E — exposure aggregation
 
 $$
+
 \boxed{
-\{E_{s,i}\}_{s}
+{E_{s,i}}_s
 \rightarrow
 EE_i
 }
-$$
-
-## Seam F — credit curve
 
 $$
+
+This layer owns scenario weighting and estimator semantics.
+
+## Seam F — credit curve/model
+
+Generation one:
+
+$$
+
 \boxed{
 \text{credit inputs}
 \rightarrow
-S_C,PD_C,\Delta PD_C,\lambda_C
+S_C(t_i),
+PD_C(t_i),
+\Delta PD_i,
+\lambda_C(t_i)
 }
-$$
-
-## Seam G — CVA integration
 
 $$
+
+Future WWR:
+
+$$
+
 \boxed{
-(EE,DF,LGD,\Delta PD)
+(\text{market/credit state})
+\rightarrow
+\lambda_t,G_t
+}
+
+$$
+
+The stochastic-credit seam is therefore a generalisation, not merely a richer deterministic credit curve.
+
+## Seam G — discount curve
+
+$$
+
+\boxed{
+\text{discount inputs}
+\rightarrow
+DF_i
+}
+
+$$
+
+This layer owns discount-curve interpolation and domain validation.
+
+## Seam H — CVA integration
+
+$$
+
+\boxed{
+(EE_i,DF_i,LGD_i,\Delta PD_i)
+\rightarrow
+CVA_i
 \rightarrow
 CVA
 }
+
 $$
 
-Each seam shall be independently testable against mathematical or golden-oracle expectations.
+The CVA kernel contains no legal, valuation, market-data, curve, or date semantics.
 
 ---
 
-# 46. Kernel doctrine
+# 55. Kernel doctrine
 
 Numerical kernels shall perform only declared mathematical transformations.
 
-For the first-generation CVA integrator the kernel conceptually performs:
+The first-generation CVA kernel conceptually performs:
 
 $$
+
+\boxed{
 CVA_i
-=
+=====
+
 LGD_iDF_iEE_i\Delta PD_i.
+}
+
 $$
 
-It shall not perform:
+Inputs are already:
 
-* legal netting discovery;
-* counterparty classification;
-* collateral agreement lookup;
-* credit-curve calibration;
-* CDS convention selection;
-* measure selection;
-* numeraire selection;
-* market-data retrieval;
-* business-rule interpretation;
-* object traversal;
-* string-based dispatch;
-* hidden interpolation policy;
-* implicit sign-convention correction.
+- validated;
+- finite;
+- numerically represented;
+- aligned to one integration grid;
+- expressed under one declared mathematical convention.
 
-Those belong at validated semantic boundaries.
+The kernel shall not perform:
+
+- legal netting discovery;
+- counterparty classification;
+- collateral agreement lookup;
+- credit-curve calibration;
+- CDS convention selection;
+- measure selection;
+- numeraire selection;
+- currency conversion;
+- date alignment;
+- interpolation;
+- extrapolation;
+- event-order interpretation;
+- market-data retrieval;
+- business-rule interpretation;
+- object traversal;
+- string-based dispatch;
+- hidden sign correction.
 
 ---
 
-# 47. Fail-fast contract
+# 56. Fail-fast contract
 
 Invalid mathematical inputs shall not be silently repaired.
 
 Examples include:
 
-* recovery outside $[0,1]$;
-* LGD outside $[0,1]$;
-* non-positive discount factors;
-* survival outside $[0,1]$;
-* increasing survival probabilities;
-* negative default mass;
-* inconsistent $PD$ and $S$;
-* scenario weights negative or not summing to one;
-* ambiguous scenario/date dimensions;
-* mismatched grid semantics;
-* duplicate dates where prohibited;
-* future valuation data contaminated by CVA/DVA;
-* physical-measure probability data supplied to a risk-neutral pricing contract without explicit transformation;
-* inconsistent numeraire/currency;
-* inconsistent day-count/time basis;
-* NaN/None sentinel semantics entering kernels where finite numerical input is required.
+- recovery outside $[0,1]$;
+- LGD outside $[0,1]$;
+- non-positive discount factors;
+- survival outside $[0,1]$;
+- increasing survival probabilities;
+- negative default mass;
+- inconsistent $PD$ and $S$;
+- invalid hazard rates;
+- scenario weights negative;
+- invalid weighting normalisation;
+- zero scenarios;
+- ambiguous scenario/date dimensions;
+- mismatched grids;
+- duplicate dates where prohibited;
+- non-monotone dates;
+- dates outside supported curve domains;
+- future valuation data contaminated by CVA/DVA;
+- physical-measure probability data supplied to a pricing contract without explicit transformation;
+- inconsistent valuation currency;
+- inconsistent numeraire metadata;
+- inconsistent time basis;
+- NaN/None sentinels inside numerical kernels;
+- infinite exposure or valuation;
+- missing scenarios;
+- unsupported default/event atoms passed into a generation-one intensity integrator.
 
-The implementation shall fail at the semantic boundary rather than allow invalid data to enter numerical kernels.
+No silent clipping is permitted.
+
+In particular:
+
+$$
+
+S_i
+\leftarrow
+\min(1,\max(0,S_i))
+
+$$
+
+and:
+
+$$
+
+\Delta PD_i
+\leftarrow
+\max(0,\Delta PD_i)
+
+$$
+
+are prohibited repairs unless a distinct, explicitly documented mathematical projection model is being implemented.
 
 ---
 
-# 48. No silent convention changes
+# 57. No silent convention changes
 
-The following are part of the mathematical contract and must be explicit:
+The following are part of the mathematical contract and must be externally inspectable:
 
-* valuation perspective;
-* pricing measure;
-* valuation numeraire/currency;
-* legal netting scope;
-* collateral sign convention;
-* closeout convention;
-* recovery convention;
-* probability representation;
-* survival/default representation;
-* hazard interpolation;
-* exposure grid;
-* credit grid;
-* discount grid;
-* time coordinate/day-count basis;
-* date alignment/interpolation;
-* endpoint/pre-discontinuity convention;
-* default bucket convention;
-* scenario weighting;
-* scenario/time axis semantics.
+- valuation perspective;
+- pricing measure;
+- numeraire;
+- valuation currency;
+- closeout currency;
+- legal netting scope;
+- collateral sign convention;
+- collateral currency conversion;
+- closeout convention;
+- recovery convention;
+- probability representation;
+- survival/default representation;
+- hazard representation;
+- curve interpolation;
+- curve extrapolation policy;
+- exposure grid;
+- credit grid;
+- discount grid;
+- internal time coordinate;
+- day-count conversion;
+- event ordering;
+- default bucket convention;
+- endpoint convention;
+- scenario weighting;
+- scenario measure;
+- scenario/time axis semantics;
+- numerical reconciliation tolerances.
 
-A change in any one of these may change the mathematical quantity being priced.
+Changing any of these may change the mathematical quantity being priced.
 
 ---
 
-# 49. No double-counting contract
+# 58. No double-counting contract
 
 Counterparty default shall enter the CVA calculation exactly once.
 
 The canonical first-generation chain is:
 
 $$
+
 \boxed{
 V^{clean}
 \rightarrow
@@ -2588,6 +3822,7 @@ EE
 \rightarrow
 CVA.
 }
+
 $$
 
 The clean valuation contains no counterparty credit adjustment.
@@ -2598,48 +3833,60 @@ The credit curve contains probability of default, not exposure.
 
 The CVA integrator combines them once.
 
-Therefore prohibited patterns include:
+At the general loss level:
 
 $$
-V^{clean,CVA-adjusted}
-\rightarrow
-EE
-\rightarrow
-CVA
-$$
 
-and any equivalent double application of counterparty default loss.
-
-At the general closeout level:
-
-$$
 \mathcal L_t
-$$
-
-already denotes the **loss amount**.
-
-Therefore a stochastic-intensity representation shall contain:
 
 $$
-D_t\mathcal L_t\lambda_tG_tdt,
+
+already denotes the loss amount.
+
+Therefore the stochastic-credit formulation is:
+
+$$
+
+D_t\mathcal L_t\lambda_tG_t,
+
 $$
 
 not:
 
 $$
-D_t\mathcal L_tE_t\lambda_tG_tdt.
+
+D_t\mathcal L_tE_t\lambda_tG_t.
+
 $$
+
+Under simple recovery:
+
+$$
+
+\mathcal L_t=LGD_tE_t.
+
+$$
+
+Therefore:
+
+$$
+
+D_tLGD_tE_t\lambda_tG_t
+
+$$
+
+is the correct expanded expression.
 
 ---
 
-# 50. Anti-patterns
+# 59. Anti-patterns
 
 ## Anti-pattern 1 — scalar CVA shortcut
 
 $$
-CVA
-=
-LGD\times EPE\times PD
+
+CVA=LGD\times EPE\times PD
+
 $$
 
 with no explicit time profile.
@@ -2647,88 +3894,120 @@ with no explicit time profile.
 ## Anti-pattern 2 — today's exposure
 
 $$
-CVA
-=
-LGD\times V_0^+\times PD(T).
+
+CVA=LGD\times V_0^+\times PD(T).
+
 $$
 
-This ignores the future exposure profile.
+## Anti-pattern 3 — historical P&L substitution
 
-## Anti-pattern 3 — P&L substitution
-
-Use historical VaR P&L scenarios as future CVA exposures without proving measure and future-valuation semantics.
+Using historical VaR P&L scenarios as future CVA exposures without proving future-state, measure, and valuation compatibility.
 
 ## Anti-pattern 4 — trade-first positive part
 
 $$
+
 \sum_jV_j^+
+
 $$
 
-when the trades belong to a legally enforceable netting set.
+for a legally netted set.
 
 ## Anti-pattern 5 — counterparty equals netting set
 
-Treating counterparty ID as sufficient legal netting scope.
+Using counterparty ID alone to determine legal netting.
 
 ## Anti-pattern 6 — CDS spread equals hazard
 
-Treating spread as an intensity by identity.
+Treating CDS spread as $\lambda$ by identity.
 
 ## Anti-pattern 7 — arbitrary WWR multiplier
 
-Applying a correlation factor to independent CVA without defining a joint exposure-credit model.
+Applying an arbitrary correlation scalar to independent CVA.
 
 ## Anti-pattern 8 — universal additive XVA
 
-Treating CVA/DVA/FVA/MVA/KVA as independent scalars with guaranteed additivity.
+Treating CVA/DVA/FVA/MVA/KVA as guaranteed independent additive scalars.
 
 ## Anti-pattern 9 — hidden default bucket rule
 
-Applying interval $\Delta PD$ to an exposure date without declaring the default-time approximation.
+Applying $\Delta PD$ to an exposure date without defining the default-time approximation.
 
-## Anti-pattern 10 — hidden stochastic discounting assumption
+## Anti-pattern 10 — hidden stochastic discounting factorisation
 
-Using $DF\times EE$ when the model actually contains stochastic discount factors without proving the required factorisation.
+Using $DF\times EE$ where discounting and exposure are stochastic without proving the required factorisation.
 
 ## Anti-pattern 11 — credit-contaminated clean value
 
-Supplying a valuation already adjusted for CVA or counterparty credit into the CVA exposure engine.
+Supplying CVA/DVA-adjusted future valuations into the exposure engine.
 
-## Anti-pattern 12 — collateral as semantics-free subtraction
+## Anti-pattern 12 — semantics-free collateral subtraction
 
-Subtracting a quantity called “collateral” without defining its sign, legal availability, currency, timing, or closeout meaning.
+Subtracting a scalar called "collateral" without agreement, sign, currency, timing, and legal meaning.
 
-## Anti-pattern 13 — filtration that reveals default
+## Anti-pattern 13 — default-revealing filtration
 
-Defining conditional survival by conditioning on an information set that already contains the realised default event.
+Conditioning survival on an information set that already reveals whether default occurred.
 
-## Anti-pattern 14 — unconditional EE used as universal WWR exposure
+## Anti-pattern 14 — unconditional EE under WWR
 
-Treating:
-
-$$
-\mathbb E[E_t]
-$$
-
-as interchangeable with:
+Using:
 
 $$
-\mathbb E[E_t\mid\tau_C>t]
-$$
 
-when exposure and default are dependent.
-
-## Anti-pattern 15 — hazard representation without validity conditions
-
-Treating every survival curve as if it necessarily possessed an ordinary intensity satisfying:
+E[E_t]
 
 $$
-dPD(t)=\lambda(t)S(t)\,dt.
+
+as though it were always:
+
 $$
+
+E[E_t\mid\tau_C>t].
+
+$$
+
+## Anti-pattern 15 — invalid hazard representation
+
+Forcing a survival curve containing atoms into:
+
+$$
+
+dPD=\lambda S,dt.
+
+$$
+
+## Anti-pattern 16 — silent curve extrapolation
+
+Extending credit or discount curves beyond their validated domain.
+
+## Anti-pattern 17 — hidden curve interpolation inside the CVA kernel
+
+Performing date lookup or interpolation inside the numerical integration primitive.
+
+## Anti-pattern 18 — ambiguous event ordering
+
+Using an unspecified $V(t_i)$ around a cashflow, exercise, settlement, or maturity discontinuity.
+
+## Anti-pattern 19 — historical weights as pricing weights
+
+Using weights that represent $\mathbb P$ while treating them as $\mathbb Q^N$ pricing probabilities.
+
+## Anti-pattern 20 — silent scenario dropping
+
+Dropping NaN/missing scenarios and renormalising remaining weights.
+
+## Anti-pattern 21 — tolerance as repair
+
+Clipping mathematically invalid quantities merely because the violation is numerically small.
+
+## Anti-pattern 22 — currency/numeraire conflation
+
+Treating a reporting currency label as though it uniquely defines the pricing numeraire and discounting convention.
 
 ---
 
-# 51. Validation hierarchy
+# 60. Validation hierarchy
 
 Validation proceeds from mathematics outward.
 
@@ -2736,86 +4015,119 @@ Validation proceeds from mathematics outward.
 
 Verify units and the CVA integration kernel against hand calculations.
 
-## Level B — credit curve invariants
+## Level B — measure and numeraire metadata
+
+Verify that:
+
+- scenario measure is declared;
+- credit measure is declared;
+- valuation numeraire is declared;
+- valuation currency is declared;
+- no physical-to-pricing substitution is implicit.
+
+## Level C — credit curve invariants
 
 Verify:
 
 $$
+
 S_0=1,
-\quad
-0\le S_i\le1,
-\quad
-\Delta PD_i\ge0.
+
+$$
 $$
 
-## Level C — exposure transformation
+0\le S_i\le1,
+
+$$
+$$
+
+\Delta PD_i\ge0.
+
+$$
+
+## Level D — exposure transformation
 
 Verify positive-part and collateral semantics.
 
-## Level D — netting
+## Level E — netting
 
 Verify aggregation before positive-part transformation.
 
-## Level E — Monte Carlo expectation
+## Level F — Monte Carlo expectation
 
-Verify scenario weighting, measure semantics, permutation invariance, and convergence.
+Verify weighting, measure semantics, permutation invariance, sampling-error behaviour, and convergence.
 
-## Level F — CVA integration
+## Level G — CVA integration
 
 Verify profile and aggregate against an independent golden oracle.
 
-## Level G — temporal discretisation
+## Level H — temporal discretisation
 
 Verify convergence as the integration grid is refined.
 
-## Level H — discontinuity handling
+## Level I — event discontinuities
 
-Verify endpoint/pre-discontinuity conventions around contractual cashflows, exercise, settlement, and maturity boundaries.
+Verify the selected pre-event/closeout convention around cashflows, exercise, settlement, and maturity.
 
-## Level I — extensions
+## Level J — curve alignment/interpolation
 
-Only after Levels A–H are robust should the engine introduce stochastic discounting, complex collateral, WWR, bilateral default, or other XVA features.
+Verify that credit and discount values are produced on the integration grid under the declared conventions and without hidden interpolation in the integrator.
+
+## Level K — extensions
+
+Only after Levels A–J are robust should the engine introduce stochastic discounting, complex collateral, WWR, bilateral default, or broader XVA features.
 
 ---
 
-# 52. Grid-refinement validation
+# 61. Grid-refinement validation
 
-Because the bucketed formula approximates a continuous integral, refinement should be tested.
-
-For nested grids with maximum step size decreasing:
+For nested grids satisfying:
 
 $$
-\Delta t_{max}^{(1)}
+
+\Delta t_{\max}^{(1)}
+
 >
-\Delta t_{max}^{(2)}
+
+\Delta t_{\max}^{(2)}
+
 >
+
 \cdots,
+
 $$
 
-the resulting CVA values should exhibit convergence consistent with the chosen approximation and the underlying smoothness assumptions.
+the resulting CVA values should converge consistently with the selected numerical scheme and underlying regularity.
 
-The test need not prescribe a universal convergence rate because that depends on the exposure and credit curves and the chosen numerical scheme.
+The test should detect:
 
-It must, however, detect:
+- gross non-convergence;
+- date-alignment errors;
+- event-order errors;
+- interpolation inconsistency;
+- incorrect default-mass allocation;
+- discontinuity artefacts.
 
-* gross non-convergence;
-* discontinuity introduced by implementation errors;
-* incorrect date alignment;
-* inappropriate interpolation;
-* inconsistent endpoint treatment.
+No universal convergence rate is prescribed because the rate depends on:
+
+- exposure regularity;
+- discount-curve regularity;
+- credit-curve regularity;
+- event discontinuities;
+- discretisation scheme.
 
 ---
 
-# 53. Independent oracle requirement
+# 62. Independent oracle requirement
 
 The production implementation shall be validated against an independently constructed oracle wherever practical.
 
-The oracle should not share the same implementation path, especially not:
+The oracle should not share the production implementation path, especially not:
 
-* the same loop;
-* the same interpolation helper;
-* the same default-mass construction;
-* the same scenario aggregation function.
+- the same integration loop;
+- the same interpolation helper;
+- the same default-mass construction;
+- the same scenario aggregation function.
 
 For simple deterministic cases, the oracle may be a hand-derived scalar or independently evaluated expression.
 
@@ -2823,226 +4135,186 @@ The objective is to detect shared implementation errors, not merely reproduce th
 
 ---
 
-# 54. Reference example
+# 63. Monte Carlo convergence reporting
+
+Where Monte Carlo is used, the implementation should be able to report an estimate of sampling uncertainty.
+
+For IID equal-weight exposure at date $t_i$:
+
+$$
+
+# \widehat{SE}(\widehat{EE}_i)
+
+\sqrt{
+\frac{
+\widehat{\operatorname{Var}}(E_{\cdot,i})
+}{S}
+}.
+
+$$
+
+Where practical, the CVA estimator should also support scenario-level sampling-error estimation.
+
+Monte Carlo error must not be confused with time-discretisation error.
+
+A result that changes under increasing $S$ is not evidence that the time-grid scheme is wrong.
+
+A result that changes materially under grid refinement is not evidence that Monte Carlo sampling error is large.
+
+These mechanisms must be diagnosed separately.
+
+---
+
+# 64. Reference example
 
 Suppose:
 
 | Date | Expected Exposure | Incremental PD | Discount Factor |
-| ---- | ----------------: | -------------: | --------------: |
-| 1Y   |       €10,000,000 |          0.50% |            0.97 |
-| 2Y   |        €8,000,000 |          0.75% |            0.94 |
-| 3Y   |        €6,000,000 |          1.00% |            0.91 |
+|---|---:|---:|---:|
+| 1Y | €10,000,000 | 0.50% | 0.97 |
+| 2Y | €8,000,000 | 0.75% | 0.94 |
+| 3Y | €6,000,000 | 1.00% | 0.91 |
 
 and:
 
 $$
-R_C=40\%,
+
+R_C=40%,
+
 $$
 
 so:
 
 $$
-LGD=60\%.
+
+LGD=60%.
+
 $$
 
 Then:
 
 $$
-CVA_1
-=
+
+# CVA_1
+
 0.60
 \times
 0.97
 \times
 10{,}000{,}000
 \times
-0.005,
-$$
+0.005
+=====
+
+€29{,}100,
 
 $$
-CVA_2
-=
+$$
+
+# CVA_2
+
 0.60
 \times
 0.94
 \times
 8{,}000{,}000
 \times
-0.0075,
-$$
+0.0075
+======
+
+€33{,}840,
 
 $$
-CVA_3
-=
+$$
+
+# CVA_3
+
 0.60
 \times
 0.91
 \times
 6{,}000{,}000
 \times
-0.01.
+0.01
+====
+
+€32{,}760.
+
 $$
 
-The total is:
+Therefore:
 
 $$
-CVA=CVA_1+CVA_2+CVA_3.
+
+\boxed{
+CVA=€95{,}700.
+}
+
 $$
 
-The numerical result shall be reproducible independently of the production implementation.
+The result shall be reproducible independently of the production implementation.
 
 ---
 
-# 55. Controlled evolution path
-
-The preferred development path is:
-
-## Level 1 — Exposure-profile integration
-
-Input:
-
-$$
-\{t_i,EE_i,DF_i,LGD_i,\Delta PD_i\}
-$$
-
-Calculate:
-
-$$
-CVA
-=
-\sum_iLGD_iDF_iEE_i\Delta PD_i.
-$$
-
-This isolates and proves the credit-weighted integration mathematics.
-
-## Level 2 — Future-state simulation
-
-Generate:
-
-$$
-X_{s,i}
-$$
-
-then value:
-
-$$
-V_{s,i}^{clean}.
-$$
-
-then exposure:
-
-$$
-E_{s,i}
-=
-(V_{s,i}^{clean})^+.
-$$
-
-## Level 3 — Contractual netting and simple collateral
-
-Netted future value:
-
-$$
-V_{\mathcal N,s,i}^{clean}
-$$
-
-then:
-
-$$
-E_{s,i}
-=
-\left(
-V_{\mathcal N,s,i}^{clean}
--
-M_{s,i}
-\right)^+.
-$$
-
-## Level 4 — Stochastic credit / WWR
-
-Replace factorised default weighting with joint exposure-credit expectation:
-
-$$
-\mathbb E^{\mathbb Q^N}
-\left[
-\int
-D_t
-\mathcal L_t
-\lambda_t
-G_t
-dt
-\right].
-$$
-
-Under simple recovery:
-
-$$
-\mathcal L_t=LGD_tE_t.
-$$
-
-## Level 5 — Bilateral credit
-
-Introduce own default, first-to-default effects, and explicit bilateral closeout.
-
-## Level 6 — Broader XVA
-
-Only then consider funding, initial-margin funding, capital, and coupled XVA effects.
-
-Each level must preserve the semantics of the preceding levels and make any new assumptions explicit.
-
----
-
-# 56. Code-archaeology contract
+# 65. Code-archaeology contract
 
 Before adding any new abstraction, inspect the existing RiskQuant codebase and determine whether the required mathematical primitive already exists.
 
-At minimum, investigate the existing abstractions for:
+At minimum, investigate:
 
 1. future market-state generation;
 2. future-dated valuation;
-3. portfolio and trade valuation;
+3. portfolio/trade valuation;
 4. contractual/netting-set aggregation;
-5. currency/numeraire conversion;
+5. currency/FX conversion;
 6. collateral representation;
 7. discounting;
 8. scenario weights;
-9. survival/default curves;
-10. hazard-rate representation;
-11. exposure aggregation;
-12. vectorised scenario × time storage;
-13. deterministic integration;
-14. independent golden-oracle infrastructure;
-15. validation/invariant enforcement;
-16. date/time-coordinate handling.
+9. scenario measure metadata;
+10. survival/default curves;
+11. hazard-rate representation;
+12. exposure aggregation;
+13. vectorised scenario × time storage;
+14. deterministic integration;
+15. independent golden-oracle infrastructure;
+16. invariant enforcement;
+17. date/time-coordinate handling;
+18. curve interpolation/extrapolation policy;
+19. clean-versus-credit-adjusted valuation semantics.
 
 For every candidate abstraction, answer:
 
-* What exact mathematical object does it represent?
-* What are its units?
-* What is its measure?
-* What is its numeraire/currency?
-* What is its sign convention?
-* At what time does it live?
-* Is it current-state, historical-scenario, or future-state information?
-* Is it trade-level, netting-set-level, counterparty-level, or portfolio-level?
-* What assumptions does it encode?
-* What invariants does it guarantee?
-* Does it represent clean value or credit-adjusted value?
-* Can it satisfy the CVA contract without semantic distortion?
+- What exact mathematical object does it represent?
+- What are its units?
+- What is its pricing measure?
+- What is its numeraire?
+- What is its currency?
+- What is its sign convention?
+- At what time does it live?
+- Is it current-state, historical-scenario, or future-state information?
+- Is it trade-level, netting-set-level, counterparty-level, or portfolio-level?
+- What assumptions does it encode?
+- What invariants does it guarantee?
+- Does it represent clean value or credit-adjusted value?
+- What interpolation/extrapolation conventions does it encode?
+- Can it satisfy the CVA contract without semantic distortion?
 
-A type/name match is not evidence of mathematical compatibility.
+A type/name/shape match is not evidence of mathematical compatibility.
 
 ---
 
-# 57. Required archaeological challenge questions
+# 66. Required archaeological challenge questions
 
 Before proposing a CVA architecture, the reviewer shall be able to answer:
 
 ## Future valuation
 
-Can the existing RiskQuant valuation infrastructure produce:
+Can existing RiskQuant valuation infrastructure produce:
 
 $$
+
 V^{clean}(X_t,t)
+
 $$
 
 at arbitrary future dates under simulated future states?
@@ -3053,45 +4325,93 @@ If not, exactly which seam is missing?
 
 Where is $\mathbb Q^N$ established?
 
-If it is not established, where can the engine safely establish or consume it?
+What object records its measure semantics?
 
 ## Numeraire
 
-What is the valuation numeraire and currency?
+What is:
 
-Where is the conversion into that numeraire defined?
+$$
+
+N_t?
+
+$$
+
+What currency is the valuation expressed in?
+
+How are the two distinguished?
+
+## Discounting
+
+What exactly produces:
+
+$$
+
+DF(t)?
+
+$$
+
+What curve convention and collateral/pricing convention does it represent?
 
 ## Netting
 
 Where is legal netting scope represented?
 
-If it does not exist, what is the minimum abstraction needed without inventing a broader XVA framework?
+What proves membership?
+
+## Currency
+
+Where is contractual FX conversion defined?
+
+What happens before netting?
 
 ## Collateral
 
-Does an existing object represent contractual collateral semantics, or merely a number called “margin”?
+Does an existing abstraction represent contractual collateral semantics, or merely a number called "margin"?
 
 ## Credit
 
-Does RiskQuant already represent survival/default probabilities or hazard curves?
+Does RiskQuant already represent:
 
-What does the existing object actually mean?
+$$
+
+S,\quad PD,\quad\Delta PD,\quad\lambda?
+
+$$
+
+What does each object actually mean?
 
 ## Time
 
 Can the existing scenario engine represent:
 
 $$
+
 (s,t)
+
 $$
 
 rather than merely scenario snapshots around today?
 
-What time coordinate and day-count basis are used?
+What is the canonical internal time coordinate?
+
+## Event ordering
+
+Can future valuation distinguish:
+
+$$
+
+V(t^-)
+\quad\text{from}\quad
+V(t^+)?
+
+$$
+
+If not, exactly which seam is missing?
 
 ## Kernel seam
 
-Can the CVA integration be implemented as pure numerical arithmetic over validated arrays?
+Can the CVA integration be implemented as pure numerical arithmetic over aligned validated arrays?
 
 ## Reuse
 
@@ -3101,23 +4421,28 @@ If not, reuse is prohibited even if the code shape looks convenient.
 
 ---
 
-# 58. First-generation mathematical API contract
+# 67. First-generation mathematical API contract
 
-The exact Python/API shape is an implementation choice, but semantically the first-generation computation must represent something equivalent to:
+The exact Python/API shape is an implementation choice.
+
+Semantically, the first-generation computation must represent:
 
 $$
+
 \boxed{
-(EE_i,DF_i,LGD_i,\Delta PD_i)_{i=1}^N
+(EE_i,DF_i,LGD_i,\Delta PD_i)*{i=1}^N
 \rightarrow
-(CVA_i)_{i=1}^N
+(CVA_i)*{i=1}^N
 \rightarrow
 CVA.
 }
-$$
-
-The exposure engine must separately represent:
 
 $$
+
+The exposure engine separately represents:
+
+$$
+
 \boxed{
 V_{s,i}^{clean}
 \rightarrow
@@ -3125,348 +4450,206 @@ E_{s,i}
 \rightarrow
 EE_i.
 }
-$$
-
-The credit layer must separately represent:
 
 $$
+
+The credit layer separately represents:
+
+$$
+
 \boxed{
 \text{credit inputs}
 \rightarrow
 S_i,PD_i,\Delta PD_i,\lambda_i.
 }
+
 $$
 
-This separation is a mathematical boundary, not merely an object-oriented preference.
+The discount layer separately represents:
+
+$$
+
+\boxed{
+\text{discount inputs}
+\rightarrow
+DF_i.
+}
+
+$$
+
+The scenario layer separately represents:
+
+$$
+
+\boxed{
+\text{scenario law}
++
+\text{weights}
+\rightarrow
+\widehat{EE}.
+}
+
+$$
+
+These are mathematical boundaries, not merely object-oriented preferences.
 
 ---
 
-# 59. Precision and numerical-policy requirements
+# 68. Precision and numerical-policy requirements
 
-The mathematical contract assumes sufficient numerical precision to preserve the sign, monotonicity, and mass properties of the inputs.
+The mathematical contract assumes sufficient numerical precision to preserve:
 
-The implementation shall not use NaN, None, magic sentinel values, or silent clipping as substitutes for missing or invalid mathematical quantities inside numerical kernels.
+- sign;
+- monotonicity;
+- probability mass;
+- profile reconciliation;
+- integration accuracy.
 
-Where clipping or projection is mathematically justified by an explicit model boundary, it must occur at that boundary and be visible in diagnostics.
+No NaN, None, magic sentinel, or silent clipping may substitute for a missing or invalid mathematical quantity inside numerical kernels.
 
-Examples of prohibited silent repairs:
+Where a finite-precision tolerance is mathematically appropriate, it shall be used only for validation/reconciliation.
 
-$$
-S_i
-\leftarrow
-\min(1,\max(0,S_i))
-$$
-
-or:
-
-$$
-\Delta PD_i
-\leftarrow
-\max(0,\Delta PD_i)
-$$
-
-merely to make invalid input pass.
-
-Such transformations change the supplied mathematical object.
-
-Numerical tolerances may be used to assess floating-point representations of valid mathematical identities. Tolerance-based acceptance must not be confused with mathematical repair.
+It shall not alter the underlying supplied quantity.
 
 ---
 
-# 60. Required sign-convention statement
+# 69. Controlled evolution path
 
-Every implementation and report must state the valuation perspective:
+The preferred development path is:
 
-$$
-V>0
-\Rightarrow
-\text{counterparty owes us}.
-$$
+## Level 1 — Exposure-profile integration
 
-For unilateral CVA:
+Input:
 
 $$
-E=V^+
-$$
 
-in the first uncollateralised model.
-
-Therefore a negative clean value cannot directly create unilateral CVA exposure at that instant.
-
-The implementation shall not silently flip signs to match a reporting convention.
-
-Any reporting transformation must occur after the mathematical calculation.
-
-For collateralised extensions, the sign convention for $M_t$ must also be reported explicitly.
-
----
-
-# 61. Required profile explainability
-
-The result shall be explainable as:
+{t_i,EE_i,DF_i,LGD_i,\Delta PD_i}
 
 $$
-\boxed{
-\text{future exposure profile}
-\times
-\text{default-time distribution}
-\times
-\text{LGD}
-\times
-\text{discounting}
-}
-$$
 
-For the first-generation model, this is concretely:
+Calculate:
 
 $$
-CVA_i
-=
-LGD_i
-\times
-DF_i
-\times
-EE_i
-\times
-\Delta PD_i.
-$$
 
-At minimum, RiskQuant must be able to answer:
+# CVA
 
-* Why is expected exposure high at a given date?
-* How much default probability lies in that interval?
-* What discount factor was applied?
-* What LGD was used?
-* What is the bucket CVA contribution?
-* How does the aggregate arise from the profile?
-* What time and interpolation convention produced the profile?
-
-A scalar-only CVA output is insufficient for validation and risk-management purposes.
-
----
-
-# 62. Final canonical equations
-
-## General unilateral CVA
+\sum_iLGD_iDF_iEE_i\Delta PD_i.
 
 $$
-\boxed{
-CVA_0
-=
-\mathbb E^{\mathbb Q^N}
-\left[
-D(0,\tau_C)
-\mathcal L_{\tau_C}
-\mathbf1_{\{\tau_C\le T\}}
-\right].
-}
-$$
 
-## General closeout decomposition
+This isolates and proves the credit-weighted integration mathematics.
+
+## Level 2 — Future-state simulation
+
+Generate:
 
 $$
-\boxed{
-U_t
-=
-\text{unsecured closeout amount},
-\qquad
-E_t=U_t^+.
-}
-$$
 
-## Simple recovery/closeout specialisation
+X_{s,i}
 
 $$
-\boxed{
-\mathcal L_t
-=
-LGD_tE_t.
-}
-$$
 
-## First-generation uncollateralised specialisation
+then:
 
 $$
-\boxed{
-M_t=0,
-\qquad
-E_t=(V_t^{clean})^+.
-}
-$$
 
-Therefore:
+V_{s,i}^{clean}.
 
 $$
-\boxed{
-\mathcal L_t
-=
-(1-R_C)
-(V_t^{clean})^+.
-}
-$$
 
-## Unconditional expected exposure
+then:
 
 $$
-\boxed{
-EE(t)
-=
-\mathbb E^{\mathbb Q^N}[E_t].
-}
-$$
 
-## Survival-conditioned expected exposure
+E_{s,i}.
 
 $$
-\boxed{
-EE^{surv}(t)
-=
-\mathbb E^{\mathbb Q^N}[E_t\mid\tau_C>t].
-}
-$$
 
-## First-generation independence consequence
+then:
 
 $$
-\boxed{
-EE^{surv}(t)=EE(t).
-}
-$$
 
-## First-generation deterministic/independent continuous-time CVA
+EE_i.
 
 $$
-\boxed{
-CVA_0
-=
-(1-R_C)
-\int_0^T
-DF(t)
-EE(t)
-\,dPD_C(t).
-}
-$$
 
-## Hazard-rate representation
+## Level 3 — Contractual netting and simple collateral
 
-When the survival law admits the corresponding intensity representation:
+Determine:
 
 $$
-\boxed{
-CVA_0
-=
-(1-R_C)
-\int_0^T
-DF(t)
-EE(t)
-\lambda_C(t)S_C(t)\,dt.
-}
-$$
 
-## First-generation discrete endpoint approximation
+V_{\mathcal N,s,i}^{clean},
 
 $$
-\boxed{
-CVA_0^{(N)}
-=
-(1-R_C)
-\sum_{i=1}^{N}
-DF_i
-EE_i
-\left[
-S_C(t_{i-1})-S_C(t_i)
-\right].
-}
-$$
 
-## First-generation Monte Carlo estimator
+then:
 
 $$
-\boxed{
-\widehat{EE}_i
-=
-\sum_{s=1}^{S}
-w_s
-\max
-(V_{s,i}^{clean},0),
-\qquad
-w_s\ge0,
+
+U_{s,i},
+
+$$
+
+then:
+
+$$
+
+E_{s,i}.
+
+$$
+
+## Level 4 — Stochastic credit / WWR
+
+Introduce:
+
+$$
+
+\lambda_t,
 \quad
-\sum_sw_s=1.
-}
-$$
-
-## WWR/intensity generalisation
+G_t,
+\quad
+\mathcal H_t,
 
 $$
-\boxed{
-CVA_0
-=
-\mathbb E^{\mathbb Q^N}
+
+and replace factorised default weighting with the joint exposure-credit law:
+
+$$
+
+E^{Q^N}
 \left[
-\int_0^T
+\int
 D_t
 \mathcal L_t
-\lambda_C(t)
-G_t
-\,dt
-\right],
-}
-$$
-
-with:
-
-$$
-\boxed{
-G_t
-=
-\mathbb Q^N
-\left(
-\tau_C>t
-\mid
-\mathcal F_t^{\mathrm{pre-default}}
-\right),
-}
-$$
-
-where the conditioning filtration contains the market/credit state relevant to conditional survival but does not already reveal the realised default event.
-
-Under simple recovery:
-
-$$
-\boxed{
-\mathcal L_t
-=
-LGD_tE_t.
-}
-$$
-
-Hence:
-
-$$
-\boxed{
-CVA_0
-=
-\mathbb E^{\mathbb Q^N}
-\left[
-\int_0^T
-D_t
-LGD_t
-E_t
-\lambda_C(t)
-G_t
-\,dt
+\lambda_tG_tdt
 \right].
-}
+
 $$
+
+## Level 5 — Bilateral credit
+
+Introduce own default, first-to-default effects, and explicit bilateral closeout.
+
+## Level 6 — Broader XVA
+
+Only then consider funding, initial-margin funding, capital, and coupled XVA effects.
+
+Each level must preserve the semantics of the preceding levels and make every new assumption explicit.
 
 ---
 
-# 63. Absolute implementation doctrine
+# 70. Absolute implementation doctrine
 
 The following statements are normative.
 
-**The general CVA definition is expected discounted counterparty-default loss.**
+**The general CVA definition is expected discounted counterparty-default loss under an explicitly selected pricing measure.**
+
+**CVA is a valuation quantity, not inherently a VaR/PFE/ES-style risk statistic.**
+
+**A numeraire is a value process, not a currency label.**
+
+**The pricing measure, numeraire, valuation currency, and discount factor must remain distinct but consistent.**
 
 **The first implementation is unilateral CVA, not general XVA.**
 
@@ -3476,67 +4659,94 @@ The following statements are normative.
 
 **Collateral semantics must be explicit; initial margin is not automatically subtractable.**
 
-**Risk-neutral pricing measure and physical measure must never be silently interchanged.**
+**The canonical collateral sign is \(M>0\) for collateral held by us and \(M<0\) for collateral posted by us.**
 
-**The valuation measure is tied to an explicitly selected numeraire/currency.**
+**Risk-neutral pricing probabilities and physical probabilities must never be silently interchanged.**
 
-**The standard $DF\times EE\times\Delta PD$ formula is a factorised specialisation under explicit assumptions.**
+**Unconditional EE and survival-conditioned EE are distinct mathematical quantities.**
 
-**The bucketed sum is a numerical approximation to the continuous default integral.**
+**Their equality is a consequence of the first-generation independence model, not a definition.**
+
+**The market filtration used for the independence condition must contain all exposure-relevant market information.**
+
+**The pre-default survival filtration must not reveal the realised default event.**
+
+**The standard \(DF\times EE\times\Delta PD\) formula is a factorised specialisation under explicit assumptions.**
+
+**The bucketed sum is a numerical approximation to the continuous/default-measure formulation.**
+
+**Default at \(t_i\) belongs to bucket \((t_{i-1},t_i]\).**
+
+**The generation-one endpoint convention uses the explicitly declared pre-contractual-event closeout state at \(t_i\) when a discontinuity occurs.**
+
+**A survival curve, cumulative PD, bucket default mass, and hazard rate are distinct mathematical objects.**
+
+**Hazard-rate formulas require the corresponding intensity representation; default atoms must be represented through the default measure.**
+
+**Credit and discount interpolation belong to their respective curve layers, not the CVA kernel.**
+
+**Silent extrapolation beyond curve domains is prohibited.**
 
 **A Monte Carlo sample mean is an estimator, not the mathematical definition of expected exposure.**
 
-**Unconditional EE and survival-conditioned EE are distinct quantities; their equality is a first-generation independence consequence.**
+**Scenario measure and weighting jointly determine the estimator semantics.**
 
-**WWR is a joint exposure-credit model, not an arbitrary correlation correction.**
+**WWR is an explicit joint exposure-credit model, not an arbitrary correlation multiplier.**
 
-**Conditional survival must be conditioned on a pre-default information set, not on an information set that already reveals default.**
+**CVA, DVA, FVA, MVA, and KVA are not assumed universally additive.**
 
-**CVA, DVA, FVA, MVA, and KVA are not assumed to be universally additive.**
+**Default loss and exposure are distinct objects.**
 
-**Do not double-count default or loss.**
+**Do not double-count default or exposure.**
 
 **Do not infer semantics from names, shapes, or architectural convenience.**
 
-**Kernels perform declared mathematics. Boundaries establish the assumptions and invariants.**
-
-**Closeout assumptions must be explicit enough to determine the loss functional.**
-
-**Default bucket timing, endpoint conventions, and discontinuity treatment are mathematical/numerical contracts.**
-
-**Hazard-rate representations apply only where the survival law admits the corresponding intensity representation.**
-
-**Time coordinates and day-count conventions are part of the mathematical contract.**
+**Kernels perform declared mathematics. Boundaries establish assumptions and invariants.**
 
 **Fail fast when the mathematical contract is violated.**
 
 ---
 
-# 64. Completion criterion for the first CVA engine
+# 71. Completion criterion for the first CVA engine
 
 The first RiskQuant CVA implementation is not complete merely because it produces a plausible scalar.
 
 It is complete only when it can demonstrate all of the following:
 
-1. The implementation can state exactly which mathematical quantity it calculates.
+1. The implementation states exactly which mathematical quantity it calculates.
 2. The first-generation assumptions are explicit and externally inspectable.
-3. The chosen pricing measure and valuation numeraire are explicit.
-4. Clean future valuation is distinct from historical P&L and from credit-adjusted valuation.
-5. Legal netting scope is established before exposure truncation.
-6. Exposure semantics and sign conventions are explicit.
-7. The generation-one closeout/recovery mapping is explicit.
-8. Credit curves are represented as mathematically defined survival/default/hazard quantities.
-9. Default bucket timing and endpoint/discontinuity treatment are explicit.
-10. Scenario weighting and scenario measure semantics are explicit.
-11. The scalar CVA matches an independent oracle.
-12. The bucket profile reconciles to the aggregate within declared numerical tolerance.
-13. Mathematical invariants are enforced or tested.
-14. Grid refinement can be demonstrated.
-15. Monte Carlo convergence can be demonstrated where Monte Carlo is used.
-16. The implementation can distinguish unconditional and survival-conditioned expected exposure.
-17. The WWR extension has a mathematically correct pre-default conditional-survival seam.
-18. No architectural abstraction is introduced solely because the term “XVA” appears; every abstraction must have a defensible mathematical owner.
-19. The implementation can explain which assumptions would need to change for collateral, WWR, bilateral default, or broader XVA.
-20. No default-loss quantity is counted twice through overlapping definitions of exposure and loss.
+3. The pricing measure is explicit.
+4. The numeraire is explicit and distinct from valuation currency.
+5. The discounting convention is explicit.
+6. Clean future valuation is distinct from historical P&L and credit-adjusted valuation.
+7. Legal netting scope is established before exposure truncation.
+8. Currency/FX conversion before netting is explicit.
+9. Exposure semantics and sign conventions are explicit.
+10. The generation-one closeout/recovery mapping is explicit.
+11. Variation margin, initial margin, and independent amount are not semantically conflated.
+12. Credit curves are represented as mathematically defined survival/default/hazard quantities.
+13. The credit model states its domain and interpolation convention.
+14. Default bucket timing is explicit.
+15. Event ordering at contractual discontinuities is explicit.
+16. The internal time coordinate is explicit.
+17. Scenario measure and weighting semantics are explicit.
+18. The scalar CVA matches an independent oracle.
+19. The bucket profile reconciles to the aggregate within declared numerical tolerance.
+20. Mathematical invariants are enforced or tested.
+21. Netting-before-positive-part behaviour is independently tested.
+22. Collateral sign behaviour is independently tested.
+23. Grid refinement can be demonstrated.
+24. Monte Carlo convergence and sampling uncertainty can be demonstrated where Monte Carlo is used.
+25. Monte Carlo, time-discretisation, and curve errors are distinguished.
+26. The implementation can distinguish unconditional and survival-conditioned expected exposure.
+27. The WWR seam uses a pre-default filtration and explicit joint exposure-credit law.
+28. Default atoms are not incorrectly forced through an ordinary hazard-density representation.
+29. Curve and date semantics are established before numerical kernels execute.
+30. Invalid inputs fail fast rather than being silently repaired.
+31. No abstraction exists solely because the term “XVA” appears.
+32. Every architectural abstraction has a defensible mathematical owner.
+33. No default-loss quantity is counted twice through overlapping exposure/loss definitions.
+34. The implementation can state exactly which assumptions would change for collateral, WWR, bilateral default, or broader XVA.
 
 Only after these conditions are satisfied should RiskQuant move beyond unilateral first-generation CVA.
+$$
