@@ -21,11 +21,47 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
+import numpy as np
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    ValidationInfo,
+    field_validator,
+)
 
 from riskquant.constants import EWMA_DECAY_FACTOR, MAX_EWMA_VOL_RATIO
 
 _STRICT = ConfigDict(extra="forbid", protected_namespaces=())
+
+
+def _require_real(value: object, name: str) -> object:
+    """
+    Canonical continuous-input gate for every real-valued scenario-config
+    parameter (D038).
+
+    Accepts the float family — ``int``, ``float``, ``np.integer``,
+    ``np.floating`` — because every continuous parameter here is mathematically
+    real and legitimately takes an integer-valued input (``max_vol_ratio=8``,
+    ``df=3``, ``prob_crisis=1``). Rejects ``bool`` (a subclass of ``int``;
+    accepting ``True`` as ``1.0`` is type confusion), and rejects
+    representations of numbers rather than numbers: ``str``, ``Decimal``,
+    ``Fraction``, ``complex``, ``None``. Parsing a textual representation is an
+    EDGE concern, not a solution-schema one.
+
+    Finiteness is enforced by ``allow_inf_nan=False`` on each field, and the
+    mathematical domain by that field's ``Field`` bounds. The validated value is
+    stored as a Python ``float`` by the field annotation.
+    """
+    if isinstance(value, bool) or not isinstance(
+        value, (int, float, np.integer, np.floating)
+    ):
+        raise ValueError(
+            f"{name} must be a real number (int, float, or NumPy real scalar); "
+            f"got {type(value).__name__}."
+        )
+    return value
 
 
 class HistoricalGeneratorConfig(BaseModel):
@@ -75,12 +111,8 @@ class SbbGeneratorConfig(BaseModel):
 
     @field_validator("expected_block_size", mode="before")
     @classmethod
-    def _reject_bool_block_size(cls, value: object) -> object:
-        # bool is a subclass of int and would coerce to 1.0/0.0; a block length
-        # is a real number, never a boolean.
-        if isinstance(value, bool):
-            raise ValueError("expected_block_size must be a real number, not bool.")
-        return value
+    def _real(cls, value: object) -> object:
+        return _require_real(value, "expected_block_size")
 
 
 class FilteredHistoricalGeneratorConfig(BaseModel):
@@ -119,10 +151,8 @@ class FilteredHistoricalGeneratorConfig(BaseModel):
 
     @field_validator("decay_factor", "max_vol_ratio", mode="before")
     @classmethod
-    def _reject_bool_real(cls, value: object) -> object:
-        if isinstance(value, bool):
-            raise ValueError("must be a real number, not bool.")
-        return value
+    def _real(cls, value: object, info: ValidationInfo) -> object:
+        return _require_real(value, info.field_name or "value")
 
 
 class FilteredBootstrapGeneratorConfig(BaseModel):
@@ -166,25 +196,14 @@ class FilteredBootstrapGeneratorConfig(BaseModel):
 
     @field_validator("decay_factor", "max_vol_ratio", mode="before")
     @classmethod
-    def _reject_bool_real(cls, value: object) -> object:
-        if isinstance(value, bool):
-            raise ValueError("must be a real number, not bool.")
-        return value
+    def _real(cls, value: object, info: ValidationInfo) -> object:
+        return _require_real(value, info.field_name or "value")
 
 
 # Parametric distribution configuration — a nested discriminated union tagged by
 # ``kind``. Each variant carries ONLY its own parameters, so invalid parameter
 # combinations (e.g. standard_normal with a df, or student_t without one) are
 # unrepresentable rather than merely rejected.
-
-
-def _require_real(value: object, name: str) -> object:
-    """Strict real: accept int or float (integer-valued reals allowed for these
-    continuous parameters), reject bool and non-numeric (incl. str). Finiteness
-    is enforced by ``allow_inf_nan=False`` on the field."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{name} must be a real number (int or float).")
-    return value
 
 
 class StandardNormalDistribution(BaseModel):

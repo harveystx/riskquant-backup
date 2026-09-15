@@ -1149,330 +1149,91 @@ co-seeded independence. Contract fixed here; implement additively when the first
 co-seeded/parallel/ensemble consumer appears. D036 seam remains FROZEN and
 untouched. Next: D038 — continuous-config strictness harmonization.
 
-## D038 — Continuous configuration strictness harmonization
+## D038 — Continuous configuration strictness harmonization (methodology RESOLVED; implementation DEFERRED)
 
-### Methodology RESOLVED; implementation DEFERRED
+Archaeology + decision memo only; no production edits, no test edits. Defines the
+canonical continuous-numerical-input contract for the scenario-model config seam.
+Full memo: `D038_CONTINUOUS_CONFIG_STRICTNESS.md`.
 
-Archaeology + decision memo only; no production edits, no test edits.
+**Problem.** Two policies coexist. Lax (D032/D033/D035:
+`expected_block_size`, `decay_factor`, `max_vol_ratio`) is plain `float` +
+reject-bool, so it silently coerces `"0.9"`, `Decimal`, and `Fraction` to float.
+Strict (D034: Parametric `df`/`nu`/`prob_crisis`/`crisis_vol_multipliers`) uses
+`isinstance(x, (int, float))`, which is itself incoherent across NumPy scalars —
+it accidentally accepts `np.float64` (a `float` subclass) but rejects `np.int64`
+and `np.float32`. `numbers.Real` is not a usable criterion (admits `bool` and
+`Fraction`, rejects `Decimal`).
 
-Defines the canonical continuous-numerical-input contract for the
-`scenario_models` configuration seam.
+**Canonical policy.** One coherent strict-real rule for every continuous
+scenario-config parameter: a valid input is a finite real-valued scalar of the
+float family, in domain, stored as Python `float`.
 
-Full methodology memo: `D038_CONTINUOUS_CONFIG_STRICTNESS.md`.
-
-### Problem
-
-Two incompatible input-typing policies currently coexist.
-
-**Lax policy** in D032/D033/D035:
-
-* `expected_block_size`
-* `decay_factor`
-* `max_vol_ratio`
-
-These use ordinary Pydantic `float` fields with explicit bool rejection.
-Pydantic therefore permits representation coercion such as `"0.9"`,
-`Decimal`, or `Fraction` before the value reaches the stored Python `float`.
-
-**Strict policy** in D034:
-
-* Parametric `df`
-* Parametric `nu`
-* Parametric `prob_crisis`
-* Parametric `crisis_vol_multipliers`
-
-These use an explicit `isinstance(x, (int, float))` check. That criterion is
-itself inconsistent across NumPy scalar types because its accepted set does
-not explicitly model the intended numerical family.
-
-`numbers.Real` is also unsuitable as the canonical predicate because it admits
-types such as `bool` and `Fraction`, while `Decimal` does not participate in
-the desired hierarchy.
-
-The result is not an observed numerical-corruption defect. It is a
-configuration-boundary typing inconsistency: equivalent numerical inputs can
-follow different acceptance/coercion paths depending on the scenario model.
-
-### Canonical policy
-
-The scenario-model solution boundary adopts one **strict numerical scalar
-contract** for continuous numerical values.
-
-For each scalar continuous value:
-
-```text
-accept:
-    int
-    float
-    np.integer
-    np.floating
-
-reject:
-    bool
-    str
-    Decimal
-    Fraction
-    complex
-    None
-    NaN
-    +inf
-    -inf
-
-store:
-    Python float
+```
+accept : int, float, np.integer, np.floating   (NOT bool)
+reject : bool, str, Decimal, Fraction, complex, None, NaN, +inf, -inf
+store  : Python float ; domain via existing Field bounds, unchanged
 ```
 
-`bool` is explicitly excluded even though Python considers it an integer
-subclass.
-
-Integer-valued numerical inputs are valid continuous inputs and are stored as
-Python `float`. Examples include:
-
-```text
-expected_block_size = 1
-max_vol_ratio       = 8
-df                  = 3
-nu                  = 1
-prob_crisis         = 0 or 1
-```
-
-Domain constraints remain field-specific and unchanged.
-
-### Scalar-versus-vector fields
-
-The strict numerical contract applies to **numeric leaves**, not necessarily
-to the container representation of a field.
-
-Where a configuration field has legitimate scalar-or-per-factor semantics,
-such as `crisis_vol_multipliers`, the surrounding container semantics remain
-unchanged. A valid scalar representation must satisfy the scalar contract
-above; a valid vector/sequence representation must preserve its existing
-shape, cardinality, positivity, finiteness, and factor-alignment semantics
-while applying the same strict numerical contract to each contained numeric
-value.
-
-The implementation must therefore inspect the existing declared type and
-validator path for `crisis_vol_multipliers` before changing `_require_real`.
-A scalar-only validator must not be applied to the field in a way that
-invalidates an existing, intentional per-factor representation.
-
-No new container representation is introduced by D038.
-
-### Explicit representation policy
-
-The solution boundary validates already-typed numerical representations. It
-does not perform representation parsing.
-
-The architectural sequence is:
-
-```text
-raw external representation
-        |
-        v
-EDGE parsing / normalization
-        |
-        v
-strict numerical type validation
-        |
-        v
-canonical Python float(s)
-        |
-        v
-field-level domain / shape constraints
-        |
-        v
-stored solution configuration
-```
-
-Therefore:
-
-* textual `"0.9"` is an EDGE representation that must be parsed before the
-  solution boundary;
-* JSON numeric values arrive already typed and follow the normal path;
-* callers supplying `Decimal` or `Fraction` convert them at the appropriate
-  EDGE boundary rather than relying on solution-tier coercion.
-
-This preserves the D001/D006 EDGE ownership of representation parsing.
-
-### Non-finite values
-
-`NaN`, positive infinity, and negative infinity are rejected.
-
-`allow_inf_nan=False` remains the canonical Pydantic field-level mechanism,
-with the strict numerical validator operating alongside it.
-
-No non-finite sentinel is introduced by this decision.
-
-### Mechanism
-
-The smallest correct implementation is confined to:
-
-```text
-scenario_models/schemas.py
-```
-
-The intended implementation is:
-
-1. Correct the existing `_require_real` validation mechanism so that scalar
-   values satisfy the explicit numerical-family predicate:
-
-   ```python
-   isinstance(value, bool) or not isinstance(
-       value,
-       (int, float, np.integer, np.floating),
-   )
-   ```
-
-2. Ensure the accepted scalar is canonicalized to Python `float` at the
-   solution boundary rather than relying on accidental downstream coercion.
-
-3. Apply the same scalar policy consistently to all applicable scalar
-   continuous fields.
-
-4. For fields with scalar-or-vector semantics, such as
-   `crisis_vol_multipliers`, preserve the existing container contract and apply
-   the strict scalar rule to the contained numerical values rather than
-   replacing the field with a scalar-only validator.
-
-5. Remove the superseded `_reject_bool_real` validators where the unified
-   contract makes them redundant.
-
-6. Preserve all existing `float` declarations, `Field(...,
-   allow_inf_nan=False)` settings, and field-specific domain bounds unless
-   inspection proves that a change is required to implement the canonical
-   contract correctly.
-
-No changes are permitted in:
-
-```text
-api.py
-generators
-kernels
-scenario-model unions
-ParametricRiskData
-```
-
-unless repository archaeology proves that the current schema cannot enforce
-the already-decided contract without crossing that boundary. Such a finding
-must be reported before broadening scope.
-
-D036 validation ownership remains unchanged:
-
-```text
-config boundary:
-    representation typing
-    numerical type admissibility
-    finiteness
-    field domain constraints
-    existing structural constraints
-
-generator/runtime:
-    model-specific runtime invariants
-
-kernel:
-    numerical computation only
-```
-
-No mathematical logic moves into configuration validation.
-
-### Backward compatibility
-
-Repository archaeology performed for D038 established that no existing test
-uses a `str`, `Decimal`, or `Fraction` as a successful continuous-config input.
-
-Therefore:
-
-* rejecting those representations removes zero currently-supported test
-  cases that intentionally depend on coercion;
-* accepting `np.int64` and `np.float32` where they represent valid numerical
-  inputs is a safe widening of the intended numerical type domain;
-* accepted values remain canonical Python `float` values, so numerical
-  behavior is unchanged.
-
-No D019 golden re-baseline is required.
-
-No D029 RNG or batch-equivalence behavior is affected.
-
-This is an input-contract change, not a numerical-method change.
-
-### Required implementation verification
-
-Before editing, verify the actual runtime representation and validator path of
-every continuous field.
-
-In particular, explicitly verify whether `crisis_vol_multipliers` currently
-accepts:
-
-```text
-scalar
-sequence
-NumPy array
-scalar-or-sequence
-```
-
-and where element-level validation currently occurs.
-
-The implementation must preserve legitimate existing semantics while enforcing
-the D038 numerical contract.
-
-After implementation, tests must explicitly cover:
-
-```text
-Python int
-Python float
-np.integer
-np.floating
-bool
-str
-Decimal
-Fraction
-complex
-None
-NaN
-+inf
--inf
-```
-
-for applicable scalar fields, plus the existing valid container cases for
-`crisis_vol_multipliers`.
-
-Tests must also verify that accepted values are canonical Python `float`
-values and that existing domain constraints remain authoritative.
-
-### Supersession
-
-D038 supersedes the **continuous-input typing portions** of D032, D033, and
-D035.
-
-D038 also corrects the NumPy-scalar asymmetry in D034's continuous numerical
-typing rule.
-
-Those decisions are not rewritten. This entry records the supersession.
-
-Scope is limited to the `scenario_models` configuration seam.
-
-The credit-tier configuration seam, which currently has separate numerical
-typing behavior, is explicitly outside D038 and requires a separate future
-decision.
-
-### Verdict
-
-**METHODOLOGY RESOLVED. IMPLEMENTATION DEFERRED.**
-
-The current architecture is not considered unsafe: existing validation
-already rejects bool and non-finite values, and the observed lax behavior is
-a representation/coercion inconsistency rather than demonstrated numerical
-corruption.
-
-D038 nevertheless fixes the canonical policy:
-
-> Solution configuration accepts explicitly defined numerical types, does
-> not perform representation coercion, canonicalizes accepted scalar values
-> to Python `float`, and preserves existing container semantics for
-> scalar-or-vector numerical fields.
-
-Implementation is a later mechanical increment.
-
-D036 scenario-model seam remains **FROZEN**.
-
-D037 remains **methodology RESOLVED / implementation DEFERRED**.
+* **Decimal / Fraction — REJECT** (explicit): not float-family; `Decimal` is
+  outside `numbers.Real`; they never arise from JSON/Polars/Excel edges; a caller
+  converts at the edge (`float(x)`).
+* **Integer-valued reals — ACCEPT** for all params on their mathematics
+  (`expected_block_size=1`, `max_vol_ratio=8`, `df=3`, `nu=1`, `prob_crisis=0|1`),
+  stored as float. `bool` still rejected (accepting `True` as `1.0` is type
+  confusion / fail-fast violation).
+* **NaN/±inf — REJECT** via `allow_inf_nan=False` (verified sufficient alongside
+  the before-validator).
+* **Boundary (D001/D006).** EDGE owns representation parsing (a text `"0.9"` is
+  parsed to a number at ingest — precedent: credit tier's explicit `float(v)`);
+  SOLUTION validates an already-typed real and does not coerce representations.
+  JSON numbers arrive typed, so strict solution typing costs the normal path
+  nothing.
+
+**Mechanism.** Smallest correct option: correct the existing `_require_real`
+before-validator to the float-family predicate `isinstance(value, bool) or not
+isinstance(value, (int, float, np.integer, np.floating))`, and apply that single
+validator to all seven continuous fields, replacing the two `_reject_bool_real`
+validators; keep every `float`/`Field(..., allow_inf_nan=False)`/domain bound
+as-is. Change confined to `scenario_models/schemas.py`; no `api.py`/generator/
+kernel/union/`ParametricRiskData` change. D036 validation-ownership split
+preserved (config owns typing + finite + domain; generator keeps model/runtime
+invariants; no math moves into config).
+
+**Backward compatibility (measured).** No existing test passes a
+`str`/`Decimal`/`Fraction` to any continuous field expecting success (lax fields
+receive only numeric literals; Parametric already asserts string rejection), so
+rejecting them breaks zero tests — a safe narrowing. Widening the strict path to
+accept `np.int64`/`np.float32` is a safe loosening on genuine numeric types.
+Input typing only; accepted values still store as the same Python `float`, so
+D019 goldens and all D029/equivalence tests are unaffected — no golden
+re-baseline.
+
+**Supersession.** D038 supersedes the continuous-input typing portions of D032,
+D033, and D035, and corrects the NumPy-scalar asymmetry of D034's strict-real.
+Those decisions are NOT rewritten; this entry records the supersession. Scope is
+the scenario-model seam only; extending the same contract to the credit-tier
+configs (currently bare lax `float`) is a separate future decision, not touched
+here.
+
+**Verdict — NO PRODUCTION CHANGE THIS INCREMENT; METHODOLOGY RESOLVED /
+IMPLEMENTATION DEFERRED.** The architecture is not unsafe today (both policies
+reject bool and non-finite; lax coercions yield in-domain values, not corrupt
+ones), so no immediate change is required. The contract is fixed here;
+implementation is a later mechanical increment. D036 seam remains FROZEN; D037
+remains methodology RESOLVED / implementation DEFERRED.
+
+**Implementation status — CLOSED (production-closure pass).** D038 is implemented
+in `scenario_models/schemas.py`: one canonical `_require_real` (float-family
+predicate: accepts int/float/np.integer/np.floating; rejects bool/str/Decimal/
+Fraction/complex/None) defined once at module top and applied to all nine
+continuous parameters, replacing the two ad-hoc bool-only validators and the
+duplicate helper; `allow_inf_nan=False` and every `Field` domain bound unchanged;
+values stored as Python `float`. `crisis_vol_multipliers` keeps its scalar-or-
+sequence semantics with the rule applied to its numerical leaves. Evidence: new
+`tests/solutions/scenario_models/test_continuous_typing.py` 160 passed / 2
+skipped; seam suite 405 passed / 2 skipped; tests/simlab 281; focused regression
++ solutions 1565 passed / 4 skipped; E2E `ALL CHECKS PASSED`; D019 goldens
+preserved (no re-baseline); changed-file lint clean; scope diff = `schemas.py`
+plus the new test. D037 remains deferred: archaeology confirms no production or
+demo caller constructs co-seeded independent engines. See
+`SIMLAB_PRODUCTION_CLOSURE.md`.
