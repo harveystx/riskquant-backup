@@ -12,6 +12,7 @@ from __future__ import annotations
 import platform
 from typing import Any
 
+import numba
 import numpy as np
 import numpy.typing as npt
 
@@ -25,7 +26,6 @@ from riskquant.solutions.run_identity.hashing import (
 from riskquant.solutions.run_identity.schemas import (
     DataIdentity,
     EngineIdentity,
-    ExecutionIdentity,
     PnlIdentity,
     ReportingIdentity,
     RiskMeasureIdentity,
@@ -62,6 +62,7 @@ def engine_identity() -> EngineIdentity:
         riskquant_version=str(rq_version),
         python_version=platform.python_version(),
         numpy_version=np.__version__,
+        numba_version=numba.__version__,
     )
 
 
@@ -89,14 +90,15 @@ def build_run_manifest(
     reporting_currency: str,
     fx: npt.NDArray[np.float64],
     confidence_level: float,
-    batch_size: int,
 ) -> RunManifest:
     """
     Assemble the immutable identity of one risk run.
 
     Every argument is a result-defining input established by mutation testing;
-    nothing operational (time, host, operator) is included, so the identity is
-    stable across reruns of the same computation.
+    nothing operational is included, so the identity is stable across reruns of
+    the same computation. `batch_size` is deliberately absent: the official risk
+    path is bitwise invariant to batch partitioning (D041), so it is an
+    execution knob, not a mathematical input.
     """
     return RunManifest(
         engine=engine_identity(),
@@ -115,7 +117,6 @@ def build_run_manifest(
             reporting_currency=reporting_currency, fx_digest=digest_array(fx)
         ),
         risk_measure=RiskMeasureIdentity(confidence_level=confidence_level),
-        execution=ExecutionIdentity(batch_size=batch_size),
     )
 
 
@@ -171,10 +172,6 @@ def verify_run_inputs(manifest: RunManifest, **inputs: Any) -> None:
         if name == "reporting_currency":
             if value != manifest.reporting.reporting_currency:
                 raise InputMismatchError("reporting_currency does not match manifest.")
-            continue
-        if name == "batch_size":
-            if int(value) != manifest.execution.batch_size:
-                raise InputMismatchError("batch_size does not match manifest.")
             continue
         if name not in expected:
             raise TypeError(f"Unknown run input: {name!r}.")

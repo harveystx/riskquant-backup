@@ -1381,3 +1381,71 @@ digest. That conservative direction is asserted by an explicit test.
 identifies snapshots but does not store them; and adoption is caller-side — the
 production runner and E2E demo do not yet build a manifest. Wiring it in is the
 next increment.
+
+---
+
+## D041 — Deterministic execution: the final risk result is bitwise invariant; batch_size is operational (supersedes part of D040)
+
+Release-gate audit. Full evidence: `SIMLAB_DETERMINISTIC_EXECUTION_AUDIT.md`.
+
+**The D040 1-ULP finding was misattributed and is retracted.** Re-tested against
+the OFFICIAL path (E2E demo instrumented on a copy to emit `float.hex()` of VaR
+and ES), the final numbers are BITWISE IDENTICAL across batch sizes
+1,2,3,4,5,7,11,63,64,65,1000, across three fresh processes, and across
+OMP/OPENBLAS/MKL/NUMBA thread-environment settings. The 1.4e-13 divergence
+recorded in D040 came from the audit harness's own `sensitivities @ delta` GEMV,
+whose BLAS blocking varies with batch width. RiskQuant's P&L performs no such
+reduction: the only BLAS call site in the entire numerical path is
+`np.matmul(...)` in `simlab/scenarios/parametric.py:402`.
+
+**Why the production path is structurally deterministic.** The Taylor kernel uses
+thread-private scratch `(n_threads_max, B_capacity)` indexed by
+`nb.get_thread_id()`; `prange` chunks partition the ROW axis so each iteration
+owns disjoint whole rows of `out` with no cross-thread write aliasing; and no
+reduction across the thread axis exists anywhere in `sensitivity_pnl`. The
+arithmetic producing a given output row is therefore fixed however rows are
+distributed across threads, even though the chunk partition itself depends on
+`NUMBA_NUM_THREADS`.
+
+**Numerical contract (new).** Scenario stream, shocked levels, trade P&L,
+portfolio P&L, VaR and ES are ALL **BITWISE** reproducible under a matching
+environment. Across differing NumPy/Numba versions: NOT GUARANTEED.
+
+**Environment identity refined.** `EngineIdentity` gains `numba_version`:
+evidence-based, because the P&L kernels are Numba/LLVM-compiled and codegen
+governs FMA contraction. Thread settings, BLAS configuration, array layout, batch
+size and process identity are deliberately NOT in the contract — each was
+measured to have no effect. CPU architecture is outside the supported envelope
+and is not claimed.
+
+**Supersedes D040 in part.** `execution.batch_size` is REMOVED from the
+mathematical run identity and reclassified as an operational parameter;
+`ExecutionIdentity` is deleted; `manifest_schema_version` goes "1" -> "2" (a v1
+payload and a stray `execution` field are now rejected — this is what the schema
+version exists for). `build_run_manifest` no longer accepts `batch_size` and
+`verify_run_inputs` no longer checks it. Every other D040 field survived
+re-testing unchanged; D040 is not rewritten.
+
+**Seed policy made explicit.** `seed` is the reproducibility root of the RNG, NOT
+the run identity — Historical and FilteredHistorical carry no seed yet are fully
+identified by the manifest. Production reproducible runs MUST set an explicit
+seed; `seed=None` remains permitted for exploratory work and carries no
+reproducibility claim. D037 (`stream_id`) stays deferred: nothing in this audit
+required independent co-seeded streams.
+
+**Evidence.** `test_deterministic_execution.py` 47 passed (4 models x 10 batch
+sizes asserting bitwise equality of stream, shocked levels, P&L, VaR hex and ES
+hex; plus layout invariance and fresh-process / thread-env child processes);
+run_identity suites 95 passed; `tests/solutions` + `tests/simlab` 1151 passed / 3
+skipped; focused regression 861 passed / 1 skipped; E2E `ALL CHECKS PASSED` at
+every batch size; lint clean; `src/riskquant/simlab` BYTE-IDENTICAL to pristine.
+Manifest build 1.97 ms vs 17.1 ms generation; no determinism remediation was
+needed, so determinism costs nothing.
+
+**Open, stated plainly.** (1) Multi-thread determinism is NOT empirically proven:
+this host is single-core (`os.cpu_count() == 1`, `NUMBA_NUM_THREADS == 1`), so the
+parallel path never executed. The contract is pinned by a test that becomes a
+real gate on multi-core CI — running it there is REQUIRED before a multi-core
+production release. (2) Manifest adoption remains caller-side; a risk result
+without an identity should be considered incomplete. (3) A caller that reduces
+P&L with its own BLAS GEMV reintroduces 1-ULP batch sensitivity in its own code.

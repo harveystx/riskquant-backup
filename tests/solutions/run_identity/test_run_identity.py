@@ -82,7 +82,7 @@ def _inputs() -> dict:
         "reporting_currency": "USD",
         "fx": np.array([1.25], np.float64),
         "confidence_level": 0.99,
-        "batch_size": 16,
+        "batch_size": 16,  # execution knob only (D041): not part of identity
     }
 
 
@@ -126,7 +126,6 @@ def _manifest(inp: dict) -> RunManifest:
         reporting_currency=inp["reporting_currency"],
         fx=inp["fx"],
         confidence_level=inp["confidence_level"],
-        batch_size=inp["batch_size"],
     )
 
 
@@ -231,14 +230,14 @@ def test_scenario_config_reconstructs_through_the_frozen_seam() -> None:
     [
         lambda d: {**d, "unexpected_field": 1},
         lambda d: {k: v for k, v in d.items() if k != "risk_measure"},
-        lambda d: {**d, "manifest_schema_version": "99"},
+        lambda d: {**d, "manifest_schema_version": "1"},
         lambda d: {**d, "data": {**d["data"], "kind": "not_a_kind"}},
-        lambda d: {**d, "execution": {"batch_size": 0}},
+        lambda d: {**d, "execution": {"batch_size": 4}},  # v1 field must be rejected
     ],
     ids=[
         "foreign_field",
         "missing_section",
-        "unknown_schema_version",
+        "superseded_schema_version",
         "bad_data_kind",
         "bad_batch_size",
     ],
@@ -377,6 +376,15 @@ def test_object_identity_does_not_affect_run_identity(rebuild) -> None:
     assert _manifest(base).identity() == _manifest(other).identity()
 
 
+def test_batch_size_is_not_part_of_run_identity() -> None:
+    """D041: the official risk path is bitwise invariant to batch partitioning,
+    so the batch size is an execution knob and must not perturb the identity."""
+    inp = _inputs()
+    a = _manifest(inp)
+    b = _manifest({**inp, "batch_size": 7})
+    assert a.identity() == b.identity()
+
+
 # --------------------------------------------------------------------------
 # STALE INPUT detection
 # --------------------------------------------------------------------------
@@ -390,7 +398,6 @@ def test_verify_accepts_the_identified_inputs() -> None:
         sensitivities=inp["sensitivities"],
         shock_scale=inp["shock_scale"],
         confidence_level=inp["confidence_level"],
-        batch_size=inp["batch_size"],
     )
 
 
@@ -403,7 +410,6 @@ def test_verify_accepts_the_identified_inputs() -> None:
         ("base_levels", np.arange(4, dtype=np.float64)),
         ("fx", np.array([9.99], np.float64)),
         ("confidence_level", 0.90),
-        ("batch_size", 5),
         ("reporting_currency", "EUR"),
     ],
 )

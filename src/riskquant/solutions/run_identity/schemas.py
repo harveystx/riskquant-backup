@@ -24,13 +24,12 @@ import hashlib
 import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 __all__ = [
     "MANIFEST_SCHEMA_VERSION",
     "DataIdentity",
     "EngineIdentity",
-    "ExecutionIdentity",
     "PnlIdentity",
     "ReportingIdentity",
     "RiskMeasureIdentity",
@@ -40,20 +39,25 @@ __all__ = [
 
 # Schema version of THIS contract. Deliberately distinct from the engine
 # version: the manifest layout and the software evolve independently.
-MANIFEST_SCHEMA_VERSION = "1"
+# v2 (D041) removed `execution.batch_size` from the mathematical identity after
+# the official risk path was measured bitwise-invariant to batch partitioning,
+# and added `numba_version`, because the P&L kernels are Numba-compiled.
+MANIFEST_SCHEMA_VERSION = "2"
 
 _STRICT = ConfigDict(extra="forbid", frozen=True, protected_namespaces=())
 
 
 class EngineIdentity(BaseModel):
     """Numerical environment. Explains whether a rerun can be bitwise identical.
-    NumPy gives no cross-version guarantee for `Generator` distributions, so a
-    differing `numpy` here downgrades the reproducibility claim."""
+    NumPy gives no cross-version guarantee for `Generator` distributions and the
+    P&L kernels are Numba/LLVM-compiled (codegen governs FMA contraction), so a
+    differing `numpy` or `numba` downgrades the reproducibility claim."""
 
     model_config = _STRICT
     riskquant_version: str
     python_version: str
     numpy_version: str
+    numba_version: str
 
 
 class DataIdentity(BaseModel):
@@ -103,17 +107,6 @@ class RiskMeasureIdentity(BaseModel):
     confidence_level: float
 
 
-class ExecutionIdentity(BaseModel):
-    """Execution parameters that can perturb the final float reduction.
-
-    `batch_size` does NOT change the scenario stream (D029, proven bitwise), but
-    a downstream BLAS reduction over a batch-shaped array can differ in its last
-    ulp with the batch width. Recording it makes the bitwise claim honest."""
-
-    model_config = _STRICT
-    batch_size: int = Field(gt=0)
-
-
 class RunManifest(BaseModel):
     """
     Complete numerical identity of a risk run.
@@ -126,7 +119,7 @@ class RunManifest(BaseModel):
 
     model_config = _STRICT
 
-    manifest_schema_version: Literal["1"] = MANIFEST_SCHEMA_VERSION
+    manifest_schema_version: Literal["2"] = MANIFEST_SCHEMA_VERSION
     engine: EngineIdentity
     scenario_config: dict[str, Any]
     data: DataIdentity
@@ -134,7 +127,6 @@ class RunManifest(BaseModel):
     pnl: PnlIdentity
     reporting: ReportingIdentity
     risk_measure: RiskMeasureIdentity
-    execution: ExecutionIdentity
 
     def canonical_bytes(self) -> bytes:
         """
