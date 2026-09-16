@@ -12,8 +12,25 @@ indexes directly into `BLOCK_EVALUATORS`, so no `type()` calls, no isinstance
 ladders, no string keys. The base value is the `UNSET_BLOCK_TYPE_ID_SENTINEL`
 sentinel; every concrete block MUST override it with its `BlockType` enum id.
 The override is enforced at class-creation time by `__init_subclass__`, which
-fails loudly the moment a new block type is added without wiring its id — a
+fails loudly the moment a new block type is added without wiring its id -- a
 compile-time guard rather than a runtime surprise.
+
+Dataclass contract
+------------------
+Every block is `@dataclass(frozen=True, slots=True, kw_only=True, eq=False)`.
+
+`eq=False` is load-bearing, not stylistic (D045/VAL-09). The generated
+`__eq__` compares a tuple of fields, and comparing a tuple of NumPy arrays
+raises `ValueError: truth value of an array ... is ambiguous`. `frozen=True`
+additionally synthesises `__hash__` from the same tuple, which raises
+`TypeError: unhashable type: 'numpy.ndarray'`. With the default `eq=True`,
+`block_a == block_b`, `hash(block)` and `block in [...]` all raise. `eq=False`
+inherits `object`'s identity semantics, which are defined and correct for a
+container of shared array buffers.
+
+`kw_only=True` is equally load-bearing. Blocks carry runs of adjacent
+same-dtype arrays, and positional construction lets a transposition compile
+and price silently.
 """
 
 from __future__ import annotations
@@ -30,7 +47,7 @@ from riskquant.valuation.blocks.block_type import (
 )
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class Block:
     """
     Universal base for compiled SoA valuation blocks.
@@ -39,7 +56,10 @@ class Block:
     Concrete subclasses define the economic SoA fields required by their
     valuation kernel.
 
-    `trade_uids[i]` identifies the originating trade that produced row `i` of the block.
+    `trade_uids[i]` identifies the originating trade that produced row `i` of
+    the block. It is NOT a unique key: an instrument that decomposes into
+    several block rows repeats its uid across them. See
+    `riskquant.valuation.result` for the row/trade cardinality contract.
     """
 
     # Block type identifier for dispatching to the right pricer kernel. Every concrete

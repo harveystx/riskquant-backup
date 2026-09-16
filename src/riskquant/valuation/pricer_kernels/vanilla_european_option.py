@@ -1,15 +1,33 @@
 # src/riskquant/valuation/pricer_kernels/vanilla_european_option.py
-"""Pricing kernels for vanilla European options."""
+"""
+Pricing kernels for vanilla European options.
+
+    FV = cp * ( F_k * Phi(cp * d1) - K * Phi(cp * d2) )        (strike ccy, at T_exp)
+    PV = effective_discount_factor * qty * FV                  (settlement ccy, at 0)
+
+Preconditions (established by the block compiler, not here)
+----------------------------------------------------------
+* every `_uix` array holds valid dense row indices into its matrix;
+* `vols[v, s] > 0` and `sqrt_tte[i] > 0`, so `vol_sqrt_tte > 0` and the d1
+  division is well-defined;
+* `forward_prices_strike_ccy[p, s] > 0` and `strike[i] > 0`;
+* `option_log_forward_prices_strike_ccy[j, s] == log(forward_prices_strike_ccy[p, s])`
+  for the paired (p, j) of each row -- see the block docstring;
+* every market matrix has `shape[1] >= out.shape[1]`.
+
+The kernel performs no branch and no validation.
+"""
 
 from __future__ import annotations
 
-import numba as nb
+import numba as nb  # type: ignore[import-untyped]
 
 from riskquant.jit import (
-    _F64_1D_C,
+    _F64_1D_C_RO,
     _F64_2D_C,
-    _I8_1D_C,
-    _I32_1D_C,
+    _F64_2D_C_RO,
+    _I8_1D_C_RO,
+    _I32_1D_C_RO,
     _NB_VOID,
     parallel_njit,
 )
@@ -23,22 +41,22 @@ from riskquant.valuation.pricing_models.black76.model import (
         # OUTPUT
         _F64_2D_C,  # out
         # MARKET DATA
-        _F64_2D_C,  # forward_prices_strike_ccy
-        _F64_2D_C,  # option_log_forward_prices_strike_ccy
-        _F64_2D_C,  # vols
-        _F64_2D_C,  # effective_discount_factors
+        _F64_2D_C_RO,  # forward_prices_strike_ccy
+        _F64_2D_C_RO,  # option_log_forward_prices_strike_ccy
+        _F64_2D_C_RO,  # vols
+        _F64_2D_C_RO,  # effective_discount_factors
         # BLOCK FIELDS (TRADE SPECIFICS)
-        _F64_1D_C,  # qty
-        _F64_1D_C,  # strike
-        _F64_1D_C,  # log_strike
-        _I8_1D_C,  # cp_mult
-        _F64_1D_C,  # sqrt_tte
-        _F64_1D_C,  # half_tte
+        _F64_1D_C_RO,  # qty
+        _F64_1D_C_RO,  # strike
+        _F64_1D_C_RO,  # log_strike
+        _I8_1D_C_RO,  # cp_mult
+        _F64_1D_C_RO,  # sqrt_tte
+        _F64_1D_C_RO,  # half_tte
         # BLOCK FIELDS (LINKAGES / UIX)
-        _I32_1D_C,  # forward_price_strike_ccy_uix
-        _I32_1D_C,  # option_log_forward_price_strike_ccy_uix
-        _I32_1D_C,  # vol_uix
-        _I32_1D_C,  # effective_discount_factor_uix
+        _I32_1D_C_RO,  # forward_price_strike_ccy_uix
+        _I32_1D_C_RO,  # option_log_forward_price_strike_ccy_uix
+        _I32_1D_C_RO,  # vol_uix
+        _I32_1D_C_RO,  # effective_discount_factor_uix
     ),
 )
 def _kernel_price_vanilla_european_option(

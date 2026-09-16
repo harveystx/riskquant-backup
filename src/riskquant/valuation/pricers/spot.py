@@ -2,12 +2,14 @@
 """
 Spot pricer.
 
-PV = qty * spot_price * fx_effective
+Unpacks `SpotBlock` into flat arrays and calls the kernel. No arithmetic, no
+market-data interpretation, no validation -- the dataclass does not cross the
+JIT boundary.
 
-`fx_spots_effective` rows are already the resolved transform (direct or
-pre-inverted) — pricer kernels do no inversion math. Per-trade FX is one
-gather + one multiply per scenario. The `fx_effective_uix < 0` sentinel
-selects the "no FX" branch which is hoisted outside the scenario loop.
+    PV = qty * effective_spot_price
+
+FX is already folded into `effective_spot_prices` by the market-data compiler;
+there is no FX gather and no inversion at this tier.
 """
 
 from __future__ import annotations

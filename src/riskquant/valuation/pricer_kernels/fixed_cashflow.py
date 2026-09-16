@@ -1,17 +1,29 @@
 # src/riskquant/valuation/pricer_kernels/fixed_cashflow.py
 """
 Fixed cashflow pricing kernel.
+
+    PV = notional * accrual_factor * fixed_rate * pay_receive_mult
+         * effective_discount_factor
+
+The trade-specific product is scenario-independent and is hoisted out of the
+scenario loop.
+
+Preconditions (established by the block compiler, not here)
+----------------------------------------------------------
+* `effective_discount_factor_uix[i]` is a valid dense row index;
+* `effective_discount_factors.shape[1] >= out.shape[1]`.
 """
 
 from __future__ import annotations
 
-import numba as nb
+import numba as nb  # type: ignore[import-untyped]
 
 from riskquant.jit import (
-    _F64_1D_C,
+    _F64_1D_C_RO,
     _F64_2D_C,
-    _I8_1D_C,
-    _I32_1D_C,
+    _F64_2D_C_RO,
+    _I8_1D_C_RO,
+    _I32_1D_C_RO,
     _NB_VOID,
     parallel_njit,
 )
@@ -22,13 +34,13 @@ from riskquant.jit import (
         # OUTPUT
         _F64_2D_C,  # out
         # MARKET DATA
-        _F64_2D_C,  # effective_discount_factors
+        _F64_2D_C_RO,  # effective_discount_factors
         # BLOCK FIELDS
-        _F64_1D_C,  # notional
-        _F64_1D_C,  # accrual_factor
-        _F64_1D_C,  # fixed_rate
-        _I8_1D_C,  # pay_receive_mult
-        _I32_1D_C,  # effective_discount_factor_uix
+        _F64_1D_C_RO,  # notional
+        _F64_1D_C_RO,  # accrual_factor
+        _F64_1D_C_RO,  # fixed_rate
+        _I8_1D_C_RO,  # pay_receive_mult
+        _I32_1D_C_RO,  # effective_discount_factor_uix
     ),
 )
 def _kernel_price_fixed_cashflow(

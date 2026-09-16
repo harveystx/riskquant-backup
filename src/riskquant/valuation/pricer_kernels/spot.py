@@ -2,12 +2,21 @@
 """
 Spot pricing kernel.
 
-PV = qty * spot_price * fx_effective
+    PV = qty * effective_spot_price
 
-`fx_spots_effective` rows are already the resolved transform (direct or
-pre-inverted) — pricer kernels do no inversion math. Per-trade FX is one
-gather + one multiply per scenario. The `fx_effective_uix < 0` sentinel
-selects the "no FX" branch which is hoisted outside the scenario loop.
+`ValuationState.effective_spot_prices` rows are already the fully-resolved
+settlement-currency price: the market-data compiler has folded the asset-to-
+settle FX rate (direct or pre-inverted) into the asset's spot price. The kernel
+does no inversion, no branching and no sentinel handling -- one gather and one
+multiply per scenario.
+
+Spot carries no time value, so no discount factor is applied.
+
+Preconditions (established by the block compiler, not here)
+----------------------------------------------------------
+* `effective_spot_price_uix[i]` is a valid dense row index into
+  `effective_spot_prices`. The kernel runs under `boundscheck=False`.
+* `effective_spot_prices.shape[1] >= out.shape[1]`.
 """
 
 from __future__ import annotations
@@ -15,25 +24,24 @@ from __future__ import annotations
 import numba as nb  # type: ignore[import-untyped]
 
 from riskquant.jit import (
-    _F64_1D_C,
+    _F64_1D_C_RO,
     _F64_2D_C,
-    _I32_1D_C,
+    _F64_2D_C_RO,
+    _I32_1D_C_RO,
     _NB_VOID,
     parallel_njit,
 )
 
-# ==============================================================================
-# Numba layout-pinned aliases — force C-contiguous strides at compile time so
-# the kernel emits straight-line SIMD loops with no dynamic stride checks.
-# ==============================================================================
-
 
 @parallel_njit(
     _NB_VOID(
+        # OUTPUT
         _F64_2D_C,  # out
-        _F64_2D_C,  # effective_spot_prices
-        _F64_1D_C,  # qty
-        _I32_1D_C,  # effective_spot_price_uix
+        # MARKET DATA
+        _F64_2D_C_RO,  # effective_spot_prices
+        # BLOCK FIELDS
+        _F64_1D_C_RO,  # qty
+        _I32_1D_C_RO,  # effective_spot_price_uix
     ),
 )
 def _kernel_price_spot(
@@ -48,8 +56,8 @@ def _kernel_price_spot(
     """
     Fused spot pricing kernel: out[i, s] = effective_spot_prices[p, s] * qty[i].
 
-    Zero allocations. Each row is a contiguous gather + scale + (gated)
-    multiply streaming through C-contiguous memory.
+    Zero allocations. Each row is a contiguous gather + scale streaming through
+    C-contiguous memory.
     """
     m_trades, s_scenarios = out.shape
 

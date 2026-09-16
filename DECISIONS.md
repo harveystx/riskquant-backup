@@ -1869,3 +1869,126 @@ Before `riskquant.valuation` can be release-certified:
 > mathematics is largely sound; the immediate blockers are one live critical
 > defect, broken assurance coverage, and incomplete semantic/reachability
 > contracts.
+
+## D046 — Black-76 normal-CDF accepted-risk closure
+
+**Status:** LOCKED — ACCEPTED-RISK
+**Date:** 2026-09-16
+**Finding:** VAL-10
+**Full evidence:** `VAL-10_BLACK76_CDF_NUMERICAL_CONTRACT.md`
+
+The fresh valuation audit identified an undocumented numerical approximation in
+the Black-76 valuation path: `numba_norm_cdf_abrom_steg` implements Abramowitz &
+Stegun 26.2.17 but had no explicit accuracy contract.
+
+An independent measurement was performed using SciPy as the reference and an
+independently implemented Black-76 formula. The benchmark also compared the
+existing erf-based `numba_norm_cdf`.
+
+### Decision
+
+**Retain `numba_norm_cdf_abrom_steg` on the valuation price path.**
+
+Do not replace it with `numba_norm_cdf` merely to improve tail accuracy.
+
+### Evidence
+
+A&S absolute CDF error is bounded by approximately:
+
+```text
+7.5e-8
+```
+
+with relative error increasing as the tail probability becomes small:
+
+```text
+|d| = 1  → ~3.6e-8 relative
+|d| = 2  → ~3.1e-6
+|d| = 3  → ~5.1e-5
+|d| = 4  → ~4.7e-4
+|d| = 8  → ~1.0e-2
+```
+
+Across the measured Black-76 price grid:
+
+* worst relative pricing error was approximately `1.75e-2`;
+* worst absolute error was approximately `1.97e-5` per 100 of forward.
+
+The large relative errors occur only where the option price itself is extremely
+small. For the measured grid, every point with relative pricing error above
+`1e-3` had an exact price below approximately `1e-7` per 100 of forward.
+
+For implied-volatility inversion, the measured maximum error was approximately
+`0.077 bp`, against market quote precision of approximately 5–25 bp.
+
+### Alternative CDF
+
+The existing `numba_norm_cdf` was independently measured rather than assumed
+to be superior.
+
+It is substantially more accurate through much of the central region, but is
+not uniformly superior. In particular, `math.erf` causes the probability to
+reach exactly zero at sufficiently extreme negative arguments (for example
+`|d| = 10`), producing complete relative loss in that tail.
+
+An otherwise identical 8-million-option benchmark measured:
+
+```text
+A&S CDF : 195.8 ms best / 218.9 ms median
+erf CDF : 344.2 ms best / 371.7 ms median
+ratio   : ~1.76x
+```
+
+The benchmark was single-threaded and isolates the CDF implementation. The
+absolute throughput is environment-dependent; the measured relative cost is
+the relevant architectural evidence.
+
+### Parity
+
+The A&S sign branch satisfies:
+
+$$
+\Phi(x)+\Phi(-x)\equiv1
+$$
+
+identically, so the approximation error cancels in:
+
+$$
+C-P=F-K.
+$$
+
+Put-call parity is therefore exact under the approximation to floating-point
+precision.
+
+### Canonical accepted-risk contract
+
+`numba_norm_cdf_abrom_steg` is accepted with the following documented envelope:
+
+> Implements Abramowitz & Stegun 26.2.17 with absolute CDF error no greater
+> than approximately `7.5e-8`. Relative CDF error increases materially in the
+> far tail, reaching approximately `5e-5` at `|d|=3`, `5e-4` at `|d|=4`, and
+> `1e-2` at `|d|=8`.
+>
+> For Black-76 valuation, measured absolute price error is bounded at roughly
+> `2e-5` per 100 of forward over the audited grid. Relative price error can
+> become large for extremely small option values, but the corresponding
+> absolute error remains small. Implied-volatility inversion through the
+> production approximation was measured to better than `0.1 bp` over the
+> audited cases.
+>
+> The erf-based `numba_norm_cdf` is retained as a separate reference/research
+> primitive. It is not uniformly more accurate and measured approximately
+> `1.76x` slower in an otherwise identical pricing kernel.
+
+### Disposition
+
+**VAL-10 is CLOSED.**
+
+The remaining remediation is documentation only: attach the accepted-risk
+contract to `numba_norm_cdf_abrom_steg` and record this decision.
+
+No numerical implementation change is authorised by VAL-10.
+
+**VAL-01 remains open and independent.** The vega domain-guard defect is
+unaffected by this decision because `_black76_fv_vega` uses the normal PDF rather
+than the CDF.
