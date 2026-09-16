@@ -30,11 +30,21 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Final, TypeAlias
 
-from riskquant.portfolio.compilers.block_compilers.spot import compile_spot_block
+from riskquant.portfolio.compilers.block_compilers.spot import (
+    compile_spot_block,
+)
+from riskquant.portfolio.compilers.block_compilers.vanilla_european_option import (
+    compile_vanilla_european_option_block,
+)
+from riskquant.portfolio.compilers.block_compilers.vanilla_forward import (
+    compile_vanilla_forward_block,
+)
 from riskquant.portfolio.ingest.batch import IngestBatch
 from riskquant.portfolio.instruments import (
     NUM_INSTRUMENTS,
     SPOT_ID,
+    VANILLA_EUROPEAN_OPTION_NODE_ID,
+    VANILLA_FORWARD_NODE_ID,
 )
 from riskquant.valuation.blocks._base_block import Block
 
@@ -74,13 +84,31 @@ _register(
     compile_spot_block,
 )
 
+# --- VANILLA FORWARD (NODE-sourced) ---
+_register(
+    int(VANILLA_FORWARD_NODE_ID),
+    "vanilla_forward",
+    compile_vanilla_forward_block,
+)
+
+# --- VANILLA EUROPEAN OPTION (NODE-sourced) ---
+_register(
+    int(VANILLA_EUROPEAN_OPTION_NODE_ID),
+    "vanilla_european_option",
+    compile_vanilla_european_option_block,
+)
+
 # --- PENDING (flat compilers not yet authored) ---------------------------------
-# VANILLA_FORWARD_{NODE,CURVE}_ID        -> field "vanilla_forward"
-# VANILLA_EUROPEAN_OPTION_{NODE,CURVE}_ID-> field "vanilla_european_option"
+# VANILLA_FORWARD_CURVE_ID                -> field "vanilla_forward"
+#   Reads `price_curve_grid`, not `forward_nodes`; needs a source-kind column in
+#   the effective-forward universe.
+# VANILLA_EUROPEAN_OPTION_CURVE_ID        -> field "vanilla_european_option"
+#   Reads `vol_surfaces`; needs surface interpolation the flat `vols` universe
+#   does not model.
 # VANILLA_IRS_ID                          -> decomposes into cashflow blocks
-# Both node and curve instrument IDs will register to the SAME flat compiler /
-# field once it lands; the compiler reads the forward-source tag. Until then
-# they stay unregistered and the engine fails loud on encounter.
+#   `CompiledPortfolio` has no cashflow slot yet.
+# All stay unregistered so the engine fails loud on encounter rather than
+# pricing off the wrong array.
 
 # Diagnostics only -- no import-time hard fail (partial registration is the
 # intended buildout state).

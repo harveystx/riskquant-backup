@@ -29,13 +29,17 @@ effective-spot-price table built one level up on it. Both share the same
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import numpy.typing as npt
 
 from riskquant._arrays import searchsorted_or_propagate_sentinel_int32
-from riskquant.constants import INVALID_UIX
+from riskquant.constants import (
+    DAYS_PER_YR_ACT_365_25,
+    INVALID_UIX,
+    TTE_FLOOR,
+)
 
 # ==============================================================================
 # FREE LOOKUP HELPERS (shared by the mapper methods and the engine producer)
@@ -126,6 +130,102 @@ def _pack_spot_effective_key(
     return (price_uix.astype(np.int64) << 32) | eff_key
 
 
+def _mixed_radix_key(
+    columns: tuple[npt.NDArray[np.int64], ...],
+    radices: tuple[int, ...],
+    *,
+    ctx: str,
+) -> npt.NDArray[np.int64]:
+    """
+    Pack non-negative integer columns into one int64 key that is strictly
+    monotone in their LEXICOGRAPHIC order.
+
+    `np.unique(axis=0)` sorts a pair/tuple table lexicographically by column, so
+    a mixed-radix key built with the same column order reproduces that order
+    exactly -- which is what lets the build (`np.unique`) and the lookup
+    (`np.searchsorted`) agree without a second sort.
+
+    Radices are the RUNTIME sizes of each column's universe, not hard-coded bit
+    widths: a hard-coded shift silently aliases two distinct factors the day a
+    universe outgrows its field. The product is asserted to fit in int64.
+    """
+    if len(columns) != len(radices):
+        raise ValueError(f"{ctx}: {len(columns)} columns vs {len(radices)} radices")
+
+    product = 1
+    for r in radices:
+        if r <= 0:
+            raise ValueError(f"{ctx}: non-positive radix {r}")
+        product *= r
+        if product > np.iinfo(np.int64).max:
+            raise ValueError(
+                f"{ctx}: packed key overflows int64 (radices={radices}). The "
+                "effective-factor universes are larger than a single int64 key "
+                "can address lexicographically."
+            )
+
+    key = np.zeros(columns[0].shape[0], dtype=np.int64)
+    for col, radix in zip(columns, radices, strict=True):
+        key = key * np.int64(radix) + col
+    return key
+
+
+def _remap_optional_uix(uix: npt.NDArray[np.int32]) -> npt.NDArray[np.int64]:
+    """
+    Map an optional `_uix` (INVALID_UIX for "not required") onto `[0, K]`.
+
+    Any negative value is the identity/absent sentinel and must sort FIRST, so
+    `<0 -> 0` and valid `v -> v + 1`. Monotone, and the result stays inside the
+    radix `K + 1`.
+    """
+    return np.where(uix < 0, 0, uix.astype(np.int64) + 1)
+
+
+def _pack_edf_effective_key(
+    *,
+    curve_uix: npt.NDArray[np.int32],
+    date_uix: npt.NDArray[np.int32],
+    fx_eff_uix: npt.NDArray[np.int32],
+    n_curves: int,
+    n_dates: int,
+    n_fx: int,
+) -> npt.NDArray[np.int64]:
+    """Lexicographic key for the `(curve_uix, date_uix, fx_eff_uix)` EDF table."""
+    return _mixed_radix_key(
+        (
+            curve_uix.astype(np.int64),
+            date_uix.astype(np.int64),
+            _remap_optional_uix(fx_eff_uix),
+        ),
+        (max(n_curves, 1), max(n_dates, 1), n_fx + 1),
+        ctx="effective_discount_factors",
+    )
+
+
+def _pack_efp_effective_key(
+    *,
+    price_uix: npt.NDArray[np.int32],
+    curve_uix: npt.NDArray[np.int32],
+    date_uix: npt.NDArray[np.int32],
+    fx_eff_uix: npt.NDArray[np.int32],
+    n_market: int,
+    n_curves: int,
+    n_dates: int,
+    n_fx: int,
+) -> npt.NDArray[np.int64]:
+    """Lexicographic key for the `(price, curve, date, fx)` EFP table."""
+    return _mixed_radix_key(
+        (
+            price_uix.astype(np.int64),
+            curve_uix.astype(np.int64),
+            date_uix.astype(np.int64),
+            _remap_optional_uix(fx_eff_uix),
+        ),
+        (max(n_market, 1), max(n_curves, 1), max(n_dates, 1), n_fx + 1),
+        ctx="effective_forward_prices",
+    )
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class UixMapper:
     """
@@ -174,17 +274,64 @@ class UixMapper:
     date_ord32_universe: npt.NDArray[np.int32]
     fx_effective_pairs: npt.NDArray[np.int32]
     spot_effective_pairs: npt.NDArray[np.int32]
+    edf_effective_triples: npt.NDArray[np.int32] = field(
+        default_factory=lambda: np.empty((0, 3), dtype=np.int32),
+    )
+    efp_effective_quads: npt.NDArray[np.int32] = field(
+        default_factory=lambda: np.empty((0, 4), dtype=np.int32),
+    )
+    vol_effective_uix: npt.NDArray[np.int32] = field(
+        default_factory=lambda: np.empty(0, dtype=np.int32),
+    )
+    fk_effective_pairs: npt.NDArray[np.int32] = field(
+        default_factory=lambda: np.empty((0, 2), dtype=np.int32),
+    )
+    as_of_ord32: int | None = None
 
     # --- INVARIANTS (CHECKED ONCE) -----------------------------------------
 
     def __post_init__(self) -> None:
-        self._validate_universe(self.market_id_universe, "market_id_universe")
         self._validate_universe(
-            self.discount_curve_id_universe, "discount_curve_id_universe"
+            self.market_id_universe,
+            "market_id_universe",
         )
-        self._validate_universe(self.date_ord32_universe, "date_ord32_universe")
-        self._validate_pair_table(self.fx_effective_pairs, "fx_effective_pairs")
-        self._validate_pair_table(self.spot_effective_pairs, "spot_effective_pairs")
+        self._validate_universe(
+            self.discount_curve_id_universe,
+            "discount_curve_id_universe",
+        )
+        self._validate_universe(
+            self.date_ord32_universe,
+            "date_ord32_universe",
+        )
+        self._validate_pair_table(
+            self.fx_effective_pairs,
+            "fx_effective_pairs",
+        )
+        self._validate_pair_table(
+            self.spot_effective_pairs,
+            "spot_effective_pairs",
+        )
+        self._validate_tuple_table(
+            self.edf_effective_triples,
+            3,
+            "edf_effective_triples",
+        )
+        self._validate_tuple_table(
+            self.efp_effective_quads,
+            4,
+            "efp_effective_quads",
+        )
+        self._validate_tuple_table(
+            self.fk_effective_pairs,
+            2,
+            "fk_effective_pairs",
+        )
+        if self.vol_effective_uix.dtype != np.int32:
+            raise TypeError(
+                f"vol_effective_uix must be int32; got {self.vol_effective_uix.dtype}."
+            )
+        if self.vol_effective_uix.ndim != 1:
+            raise ValueError("vol_effective_uix must be 1-D.")
 
     @staticmethod
     def _validate_universe(arr: npt.NDArray[np.int32], name: str) -> None:
@@ -196,6 +343,17 @@ class UixMapper:
             raise ValueError(f"{name} must be C-contiguous.")
         if arr.size > 1 and np.any(arr[1:] <= arr[:-1]):
             raise ValueError(f"{name} must be strictly increasing and unique.")
+
+    @staticmethod
+    def _validate_tuple_table(
+        table: npt.NDArray[np.int32], width: int, name: str
+    ) -> None:
+        if table.dtype != np.int32:
+            raise TypeError(f"{name} must be int32; got {table.dtype}.")
+        if table.ndim != 2 or table.shape[1] != width:
+            raise ValueError(f"{name} must have shape (K, {width}); got {table.shape}")
+        if not table.flags.c_contiguous:
+            raise ValueError(f"{name} must be C-contiguous.")
 
     @staticmethod
     def _validate_pair_table(pairs: npt.NDArray[np.int32], name: str) -> None:
@@ -272,6 +430,211 @@ class UixMapper:
             raw_fx_ids=raw_fx_ids,
             raw_fx_inv=raw_fx_inv,
         )
+
+    # ----------------------------------------------------------------- #
+    # FORWARD EFFECTIVE-FACTOR COORDINATES                              #
+    # ----------------------------------------------------------------- #
+
+    def map_edf_to_effective_uix(
+        self,
+        *,
+        curve_uix: npt.NDArray[np.int32],
+        date_uix: npt.NDArray[np.int32],
+        fx_eff_uix: npt.NDArray[np.int32],
+    ) -> npt.NDArray[np.int32]:
+        """
+        Translate a per-trade `(curve_uix, date_uix, fx_eff_uix)` discounting leg
+        into a `ValuationState.effective_discount_factors` row.
+
+        `curve_uix` indexes `discount_curve_id_universe`, `date_uix` indexes
+        `date_ord32_universe`, `fx_eff_uix` is an `fx_spots_effective` row or
+        `INVALID_UIX` for identity FX. Every per-trade triple MUST exist in
+        `edf_effective_triples` -- the table was deduplicated from exactly these
+        legs, so a miss means the mapper and the batch disagree.
+        """
+        return self._lookup_effective(
+            needed=_pack_edf_effective_key(
+                curve_uix=curve_uix,
+                date_uix=date_uix,
+                fx_eff_uix=fx_eff_uix,
+                n_curves=self.discount_curve_id_universe.shape[0],
+                n_dates=self.date_ord32_universe.shape[0],
+                n_fx=self.fx_effective_pairs.shape[0],
+            ),
+            table=self.edf_effective_triples,
+            table_key=_pack_edf_effective_key(
+                curve_uix=self.edf_effective_triples[:, 0],
+                date_uix=self.edf_effective_triples[:, 1],
+                fx_eff_uix=self.edf_effective_triples[:, 2],
+                n_curves=self.discount_curve_id_universe.shape[0],
+                n_dates=self.date_ord32_universe.shape[0],
+                n_fx=self.fx_effective_pairs.shape[0],
+            ),
+            n=curve_uix.shape[0],
+            ctx="effective-discount-factor",
+        )
+
+    def map_efp_to_effective_uix(
+        self,
+        *,
+        price_uix: npt.NDArray[np.int32],
+        curve_uix: npt.NDArray[np.int32],
+        date_uix: npt.NDArray[np.int32],
+        fx_eff_uix: npt.NDArray[np.int32],
+    ) -> npt.NDArray[np.int32]:
+        """
+        Translate a per-trade forward underlying leg into a
+        `ValuationState.effective_forward_prices` row.
+
+        The quad is `(market_id_uix, discount_curve_uix, delivery_date_uix,
+        fx_eff_uix)`: the forward NODE level, the curve that discounts it, the
+        delivery date, and its asset->settle FX. The fold pre-multiplies all
+        four into one PV row.
+        """
+        n_market = self.market_id_universe.shape[0]
+        n_curves = self.discount_curve_id_universe.shape[0]
+        n_dates = self.date_ord32_universe.shape[0]
+        n_fx = self.fx_effective_pairs.shape[0]
+        return self._lookup_effective(
+            needed=_pack_efp_effective_key(
+                price_uix=price_uix,
+                curve_uix=curve_uix,
+                date_uix=date_uix,
+                fx_eff_uix=fx_eff_uix,
+                n_market=n_market,
+                n_curves=n_curves,
+                n_dates=n_dates,
+                n_fx=n_fx,
+            ),
+            table=self.efp_effective_quads,
+            table_key=_pack_efp_effective_key(
+                price_uix=self.efp_effective_quads[:, 0],
+                curve_uix=self.efp_effective_quads[:, 1],
+                date_uix=self.efp_effective_quads[:, 2],
+                fx_eff_uix=self.efp_effective_quads[:, 3],
+                n_market=n_market,
+                n_curves=n_curves,
+                n_dates=n_dates,
+                n_fx=n_fx,
+            ),
+            n=price_uix.shape[0],
+            ctx="effective-forward-price",
+        )
+
+    @staticmethod
+    def _lookup_effective(
+        *,
+        needed: npt.NDArray[np.int64],
+        table: npt.NDArray[np.int32],
+        table_key: npt.NDArray[np.int64],
+        n: int,
+        ctx: str,
+    ) -> npt.NDArray[np.int32]:
+        """Shared searchsorted-with-membership-proof for the effective tables."""
+        out = np.full(n, INVALID_UIX, dtype=np.int32)
+        if table.shape[0] == 0 or n == 0:
+            return out
+
+        idx = np.searchsorted(table_key, needed)
+        if idx.size and (
+            idx.max() >= table_key.size or np.any(table_key[idx] != needed)
+        ):
+            raise RuntimeError(
+                f"{ctx} dedup contract violated: a per-trade leg is not present "
+                "in the effective table. The mapper was built from a different "
+                "batch than the one being compiled."
+            )
+        return idx.astype(np.int32, copy=False)
+
+        # ----------------------------------------------------------------- #
+
+    # OPTION EFFECTIVE-FACTOR COORDINATES                                #
+    # ----------------------------------------------------------------- #
+
+    def map_vol_to_effective_uix(
+        self,
+        market_uix: npt.NDArray[np.int32],
+    ) -> npt.NDArray[np.int32]:
+        """
+        Translate a per-trade volatility market-uix into a `ValuationState.vols`
+        row.
+
+        `vol_effective_uix` is the deduplicated set of `market_id_universe`
+        coordinates whose `MarketDataMatrix.vol_nodes` row a `vols` row mirrors.
+        It is sorted ascending, so a plain searchsorted plus a membership proof
+        resolves it.
+        """
+        return self._lookup_effective(
+            needed=market_uix.astype(np.int64),
+            table=self.vol_effective_uix.reshape(-1, 1),
+            table_key=self.vol_effective_uix.astype(np.int64),
+            n=market_uix.shape[0],
+            ctx="volatility",
+        )
+
+    def map_fk_to_effective_uix(
+        self,
+        *,
+        efp_uix: npt.NDArray[np.int32],
+        edf_expiry_uix: npt.NDArray[np.int32],
+    ) -> npt.NDArray[np.int32]:
+        """
+        Translate a per-trade `(efp_uix, edf_expiry_uix)` pair into a
+        `ValuationState.forward_prices_strike_ccy` row.
+
+        The strike-currency forward is not a new market quantity: it is the
+        ratio of two effective rows this mapper already carries,
+
+            F_K(T) = effective_forward_prices[efp] / effective_discount_factors[edf]
+
+        with BOTH legs taken at the option's EXPIRY date. Deduplicating on that
+        pair is therefore the whole of its identity.
+
+        The same row index addresses `option_log_forward_prices_strike_ccy`: the
+        log cache is generated as an elementwise log of this table, row for row,
+        so the VAL-11 pairing invariant `L[k] == log(F[k])` holds by
+        construction rather than by assertion.
+        """
+        n_efp = max(self.efp_effective_quads.shape[0], 1)
+        n_edf = max(self.edf_effective_triples.shape[0], 1)
+        return self._lookup_effective(
+            needed=_mixed_radix_key(
+                (efp_uix.astype(np.int64), edf_expiry_uix.astype(np.int64)),
+                (n_efp, n_edf),
+                ctx="forward_prices_strike_ccy",
+            ),
+            table=self.fk_effective_pairs,
+            table_key=_mixed_radix_key(
+                (
+                    self.fk_effective_pairs[:, 0].astype(np.int64),
+                    self.fk_effective_pairs[:, 1].astype(np.int64),
+                ),
+                (n_efp, n_edf),
+                ctx="forward_prices_strike_ccy",
+            ),
+            n=efp_uix.shape[0],
+            ctx="strike-currency-forward",
+        )
+
+    def tte_years(self, ordinals: npt.NDArray[np.int32]) -> npt.NDArray[np.float64]:
+        """
+        Canonical act/365.25 time-to-expiry from the run's as-of date.
+
+        This MUST use the same `as_of_ord32` that `build_market_data_matrix`
+        used to build `tte_grid`; a mismatch silently reprices every option
+        against a different maturity. The compiler cannot detect that, so the
+        as-of is carried on the mapper -- one per-run value, one source.
+        """
+        if self.as_of_ord32 is None:
+            raise ValueError(
+                "UixMapper was built without `as_of_ord32`, so time-to-expiry "
+                "cannot be resolved. Options require it; pass it to "
+                "`build_uix_mapper`."
+            )
+        raw = (
+            ordinals.astype(np.float64) - float(self.as_of_ord32)
+        ) / DAYS_PER_YR_ACT_365_25
+        return np.maximum(raw, TTE_FLOOR)
 
     def map_spot_to_effective_uix(
         self,

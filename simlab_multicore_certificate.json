@@ -1,0 +1,557 @@
+{
+  "classification": "FAIL",
+  "multi_core_hardware_available": true,
+  "numba_multi_thread_execution_verified": true,
+  "multi_core_determinism_certified": false,
+  "hardware": {
+    "effective_cpus": 12,
+    "cpu_source": "cpu_count",
+    "os_cpu_count": 12,
+    "platform": "Windows-10-10.0.26200-SP0",
+    "python": "3.11.9"
+  },
+  "fixture": {
+    "K": 250,
+    "T": 600,
+    "S": 2000,
+    "M": 200
+  },
+  "checks": [
+    {
+      "check": "threads=1 genuinely executed",
+      "passed": true,
+      "detail": "configured=1 observed_workers=1 layer=omp"
+    },
+    {
+      "check": "threads=2 genuinely executed",
+      "passed": true,
+      "detail": "configured=2 observed_workers=2 layer=omp"
+    },
+    {
+      "check": "threads=4 genuinely executed",
+      "passed": true,
+      "detail": "configured=4 observed_workers=4 layer=omp"
+    },
+    {
+      "check": "threads=8 genuinely executed",
+      "passed": true,
+      "detail": "configured=8 observed_workers=8 layer=omp"
+    },
+    {
+      "check": "NUMBA MULTI-THREAD EXECUTION VERIFIED",
+      "passed": true,
+      "detail": ">= 2 distinct worker ids inside a real prange"
+    },
+    {
+      "check": "historical: threads 1 vs 2 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "historical: threads 1 vs 4 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "historical: threads 1 vs 8 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_historical: threads 1 vs 2 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_historical: threads 1 vs 4 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_historical: threads 1 vs 8 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "sbb: threads 1 vs 2 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "sbb: threads 1 vs 4 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "sbb: threads 1 vs 8 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_bootstrap: threads 1 vs 2 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_bootstrap: threads 1 vs 4 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_bootstrap: threads 1 vs 8 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric: threads 1 vs 2 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric: threads 1 vs 4 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric: threads 1 vs 8 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "historical: batch_size 1 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "historical: batch_size 3 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "historical: batch_size 7 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "historical: batch_size 64 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "historical: batch_size S identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "historical: batch_size S+1 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_historical: batch_size 1 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_historical: batch_size 3 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_historical: batch_size 7 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_historical: batch_size 64 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_historical: batch_size S identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_historical: batch_size S+1 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "sbb: batch_size 1 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "sbb: batch_size 3 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "sbb: batch_size 7 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "sbb: batch_size 64 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "sbb: batch_size S identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "sbb: batch_size S+1 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_bootstrap: batch_size 1 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_bootstrap: batch_size 3 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_bootstrap: batch_size 7 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_bootstrap: batch_size 64 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_bootstrap: batch_size S identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_bootstrap: batch_size S+1 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric: batch_size 1 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric: batch_size 3 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric: batch_size 7 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric: batch_size 64 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric: batch_size S identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric: batch_size S+1 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric identical under OMP_NUM_THREADS=1",
+      "passed": false,
+      "detail": "FIRST DIVERGENCE at manifest_identity"
+    },
+    {
+      "check": "parametric identical under OMP_NUM_THREADS=8",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric identical under OPENBLAS_NUM_THREADS=1",
+      "passed": false,
+      "detail": "FIRST DIVERGENCE at manifest_identity"
+    },
+    {
+      "check": "parametric identical under OPENBLAS_NUM_THREADS=8",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric identical under MKL_NUM_THREADS=1",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "two fresh processes identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "environment gate rejects every changed field",
+      "passed": true,
+      "detail": "{\"riskquant_version\": \"rejected\", \"python_version\": \"rejected\", \"numpy_version\": \"rejected\", \"numba_version\": \"rejected\"}"
+    },
+    {
+      "check": "seed policy",
+      "passed": true,
+      "detail": "{\"0\": \"accepted\", \"1\": \"accepted\", \"2**70\": \"accepted\", \"2**130\": \"accepted\", \"-1\": \"rejected:ValidationError\", \"True\": \"rejected:ValidationError\", \"1.0\": \"rejected:ValidationError\", \"\\\"1\\\"\": \"rejected:ValidationError\", \"None+reproducible\": \"NonReproducibleRunError\", \"None+exploratory\": \"reproducible=False\"}"
+    },
+    {
+      "check": "stale input refused before numerics",
+      "passed": true,
+      "detail": "{\"historical_value\": \"InputMismatchError\", \"factor_order\": \"InputMismatchError\", \"source_factor_ids\": \"InputMismatchError\", \"shift_types\": \"InputMismatchError\", \"shock_scale\": \"InputMismatchError\", \"base_levels\": \"InputMismatchError\", \"confidence\": \"InputMismatchError\", \"compiled_book\": \"InputMismatchError\"}"
+    },
+    {
+      "check": "every result-defining mutation changes identity",
+      "passed": true,
+      "detail": "conservative over-separation (identity moved, result did not): historical_value"
+    },
+    {
+      "check": "identity invariant to batch size",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "RiskRun tamper protection",
+      "passed": true,
+      "detail": "{\"forged_identity_ctor\": \"rejected:ValueError\", \"forged_identity\": \"rejected:ValueError\", \"forged_var_hex\": \"rejected:ValueError\", \"forged_reporting_ccy\": \"rejected:ValueError\"}"
+    },
+    {
+      "check": "bypass audit: one public scenario-VaR entry point",
+      "passed": false,
+      "detail": "producers=[]"
+    }
+  ],
+  "evidence": {
+    "worker_probe": {
+      "1": {
+        "configured": 1,
+        "observed_workers": 1,
+        "worker_ids": [
+          0
+        ],
+        "layer": "omp",
+        "numba": "0.66.0"
+      },
+      "2": {
+        "configured": 2,
+        "observed_workers": 2,
+        "worker_ids": [
+          0,
+          1
+        ],
+        "layer": "omp",
+        "numba": "0.66.0"
+      },
+      "4": {
+        "configured": 4,
+        "observed_workers": 4,
+        "worker_ids": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "layer": "omp",
+        "numba": "0.66.0"
+      },
+      "8": {
+        "configured": 8,
+        "observed_workers": 8,
+        "worker_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "layer": "omp",
+        "numba": "0.66.0"
+      }
+    },
+    "matrix": {
+      "historical:threads2": "identical",
+      "historical:threads4": "identical",
+      "historical:threads8": "identical",
+      "filtered_historical:threads2": "identical",
+      "filtered_historical:threads4": "identical",
+      "filtered_historical:threads8": "identical",
+      "sbb:threads2": "identical",
+      "sbb:threads4": "identical",
+      "sbb:threads8": "identical",
+      "filtered_bootstrap:threads2": "identical",
+      "filtered_bootstrap:threads4": "identical",
+      "filtered_bootstrap:threads8": "identical",
+      "parametric:threads2": "identical",
+      "parametric:threads4": "identical",
+      "parametric:threads8": "identical",
+      "historical:bs1": "identical",
+      "historical:bs3": "identical",
+      "historical:bs7": "identical",
+      "historical:bs64": "identical",
+      "historical:bsS": "identical",
+      "historical:bsS+1": "identical",
+      "filtered_historical:bs1": "identical",
+      "filtered_historical:bs3": "identical",
+      "filtered_historical:bs7": "identical",
+      "filtered_historical:bs64": "identical",
+      "filtered_historical:bsS": "identical",
+      "filtered_historical:bsS+1": "identical",
+      "sbb:bs1": "identical",
+      "sbb:bs3": "identical",
+      "sbb:bs7": "identical",
+      "sbb:bs64": "identical",
+      "sbb:bsS": "identical",
+      "sbb:bsS+1": "identical",
+      "filtered_bootstrap:bs1": "identical",
+      "filtered_bootstrap:bs3": "identical",
+      "filtered_bootstrap:bs7": "identical",
+      "filtered_bootstrap:bs64": "identical",
+      "filtered_bootstrap:bsS": "identical",
+      "filtered_bootstrap:bsS+1": "identical",
+      "parametric:bs1": "identical",
+      "parametric:bs3": "identical",
+      "parametric:bs7": "identical",
+      "parametric:bs64": "identical",
+      "parametric:bsS": "identical",
+      "parametric:bsS+1": "identical"
+    },
+    "parametric_blas": {
+      "OMP_NUM_THREADS=1": "manifest_identity",
+      "OMP_NUM_THREADS=8": "identical",
+      "OPENBLAS_NUM_THREADS=1": "manifest_identity",
+      "OPENBLAS_NUM_THREADS=8": "identical",
+      "MKL_NUM_THREADS=1": "identical"
+    },
+    "fresh_process": {
+      "divergence": "none",
+      "threads": 8
+    },
+    "contracts": {
+      "var_es_producers": [],
+      "environment_gate": {
+        "riskquant_version": "rejected",
+        "python_version": "rejected",
+        "numpy_version": "rejected",
+        "numba_version": "rejected"
+      },
+      "seed_policy": {
+        "0": "accepted",
+        "1": "accepted",
+        "2**70": "accepted",
+        "2**130": "accepted",
+        "-1": "rejected:ValidationError",
+        "True": "rejected:ValidationError",
+        "1.0": "rejected:ValidationError",
+        "\"1\"": "rejected:ValidationError",
+        "None+reproducible": "NonReproducibleRunError",
+        "None+exploratory": "reproducible=False"
+      },
+      "stale_input": {
+        "historical_value": "InputMismatchError",
+        "factor_order": "InputMismatchError",
+        "source_factor_ids": "InputMismatchError",
+        "shift_types": "InputMismatchError",
+        "shock_scale": "InputMismatchError",
+        "base_levels": "InputMismatchError",
+        "confidence": "InputMismatchError",
+        "compiled_book": "InputMismatchError"
+      },
+      "identity_mutation": {
+        "historical_value": {
+          "result_changed": false,
+          "identity_changed": true
+        },
+        "factor_order": {
+          "result_changed": true,
+          "identity_changed": true
+        },
+        "source_factor_ids": {
+          "result_changed": true,
+          "identity_changed": true
+        },
+        "shift_types": {
+          "result_changed": true,
+          "identity_changed": true
+        },
+        "shock_scale": {
+          "result_changed": true,
+          "identity_changed": true
+        },
+        "base_levels": {
+          "result_changed": true,
+          "identity_changed": true
+        },
+        "confidence": {
+          "result_changed": true,
+          "identity_changed": true
+        }
+      },
+      "identity_operational_neutral": true,
+      "tamper": {
+        "forged_identity_ctor": "rejected:ValueError",
+        "forged_identity": "rejected:ValueError",
+        "forged_var_hex": "rejected:ValueError",
+        "forged_reporting_ccy": "rejected:ValueError"
+      }
+    }
+  },
+  "performance": [
+    {
+      "threads": 1,
+      "runtime_s": 0.023615599988261238,
+      "verify_s": 0.026358400005847216,
+      "serialize_s": 0.00030500000866595656,
+      "peak_mb": 22.696551,
+      "artifact_kb": 11.899,
+      "scen_per_s": 84689.78137308192
+    },
+    {
+      "threads": 2,
+      "runtime_s": 0.023548099998151883,
+      "verify_s": 0.02734920001239516,
+      "serialize_s": 0.00032140000257641077,
+      "peak_mb": 22.696484,
+      "artifact_kb": 11.899,
+      "scen_per_s": 84932.54233492151
+    },
+    {
+      "threads": 4,
+      "runtime_s": 0.024252700008219108,
+      "verify_s": 0.022738900006515905,
+      "serialize_s": 0.000440500007243827,
+      "peak_mb": 22.696551,
+      "artifact_kb": 11.899,
+      "scen_per_s": 82465.04510104899
+    },
+    {
+      "threads": 8,
+      "runtime_s": 0.025010600002133287,
+      "verify_s": 0.02705430000787601,
+      "serialize_s": 0.0005251999973552302,
+      "peak_mb": 22.696484,
+      "artifact_kb": 11.899,
+      "scen_per_s": 79966.09436916385
+    }
+  ],
+  "threads_executed": [
+    1,
+    2,
+    4,
+    8
+  ]
+}

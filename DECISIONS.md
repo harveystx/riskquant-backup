@@ -1992,3 +1992,437 @@ No numerical implementation change is authorised by VAL-10.
 **VAL-01 remains open and independent.** The vega domain-guard defect is
 unaffected by this decision because `_black76_fv_vega` uses the normal PDF rather
 than the CDF.
+
+## D047 — `VanillaForwardBlock` is a physically settled forward; no settlement enum
+
+**Status:** LOCKED
+
+**Decision:** `VanillaForwardBlock` means one thing: a PHYSICALLY SETTLED
+forward. Receive one unit of the asset at T, pay `strike` in the strike
+currency, each leg discounted on its own curve and converted at its own spot FX.
+
+    PV(0) = Q * [ F_a DF_a FX(a->s)  -  K DF_k FX(k->s) ]
+
+**Reason:** D045/VAL-15 found the two-leg formula could express both physical
+and cash settlement, with no recorded convention. A block with two possible
+economic meanings is not a contract. Physical is the general case: when both
+legs share a curve, date and currency the form degenerates EXACTLY to
+`Q (F - K) DF * FX`, which is also the cash-settled value, so cash settlement
+needs no separate representation.
+
+**Implications:** no settlement enum, no second block type. The compiler must
+never pair two DIFFERENT discount curves on a cash-settled forward -- the
+two-leg form would then silently produce the physical value. Documented on the
+block. Proved as an oracle result, not an asserted identity:
+`test_single_currency_forward_degenerates_to_q_times_f_minus_k_times_df`.
+
+## D048 — `effective_forward_prices` is a settlement-currency PV, not a forward price
+
+**Status:** LOCKED
+
+**Decision:** a row of `ValuationState.effective_forward_prices` is
+
+    F_ccy(0,T) * DF_ccy(0,T) * FX_SPOT_EFFECTIVE(ccy -> settle)
+
+-- the PV at t = 0 of receiving one unit of the asset at T, in SETTLEMENT
+currency. It is not a forward price and not in the asset currency.
+
+**Reason:** D045/VAL-06. The block comment previously described a raw forward
+price. A compiler written to that comment would subtract a discounted PV from an
+undiscounted price and produce a dimensionally invalid number with no error.
+
+**Implications:** `_fold_effective_forward_prices` produces exactly this, and
+the block field comment states the units, currency, date, discounting and FX
+state. Closes VAL-06.
+
+## D049 — Forward effective universes: `(curve, date, fx)` and `(price, curve, date, fx)`
+
+**Status:** LOCKED
+
+**Decision:** two new deduplicated tables on `UixMapper`:
+
+    edf_effective_triples  (K,3)  (curve_uix, date_uix, fx_eff_uix)
+    efp_effective_quads    (K,4)  (price_uix, curve_uix, date_uix, fx_eff_uix)
+
+built by `build_uix_mapper` from exactly the legs the forward compiler will
+resolve, and folded by `market_data.compile` into `effective_discount_factors`
+and `effective_forward_prices`.
+
+**Reason:** the forward kernel gathers one pre-multiplied row per leg. Those
+rows must exist and be addressable by a dense UIX the compiler can prove valid.
+
+**Implications:** lookup uses a MIXED-RADIX key built from RUNTIME universe
+sizes, not hard-coded bit shifts -- a hard-coded shift silently aliases two
+distinct factors the day a universe outgrows its field, and the int64 product is
+asserted. Both tables are built on `fx_effective_pairs`, so the `fx_eff_uix`
+they carry is byte-identical to the one the compiler stamps per trade.
+Both fields default to empty, so existing `UixMapper` callers are unaffected.
+
+## D050 — NODE-sourced forwards only; CURVE stays unregistered
+
+**Status:** LOCKED
+
+**Decision:** `VANILLA_FORWARD_NODE_ID` is registered and production-supported.
+`VANILLA_FORWARD_CURVE_ID` remains UNREGISTERED.
+
+**Reason:** curve-sourced forwards read `MarketDataMatrix.price_curve_grid`, not
+`forward_nodes`, and therefore need a source-kind column in
+`efp_effective_quads`. Registering both against a node-only fold would price a
+curve forward off the wrong array, silently.
+
+**Implications:** the engine fails loud on a curve forward, per the existing
+partial-registration convention. VAL-13 closes FOR NODE FORWARDS ONLY. Do not
+read this as "forwards are supported"; read it as "node forwards are".
+
+## D051 — The block compiler owns UIX validity for the forward path
+
+**Status:** LOCKED
+
+**Decision:** `compile_vanilla_forward_block` proves `0 <= uix < n_rows` against
+the row count of each effective universe BEFORE emitting a block, and raises
+naming the offending trade uids otherwise.
+
+**Reason:** D045/VAL-04. The kernel runs under `boundscheck=False` and cannot
+distinguish an out-of-range row from a real one: a negative uix wraps to the
+last row, an oversized one reads arbitrary memory. The compiler is the earliest
+layer that holds both the trade identity and the universe, so it is the correct
+owner.
+
+**Implications:** no bounds check inside any Numba kernel. VAL-04 closes FOR THE
+FORWARD PATH ONLY -- the option and cashflow universes are still unpopulated and
+their compilers unwritten. Evidence:
+`test_unresolved_market_leg_is_rejected_by_the_compiler`,
+`test_unresolved_discount_leg_is_rejected_by_the_compiler`,
+`test_mapper_built_from_a_different_batch_is_rejected`.
+
+## D052 — Phase 4 closure: forward production-certified against the independent oracle
+
+**Status:** LOCKED
+
+**Decision:** the NODE-sourced vanilla forward is production-certified. A real
+`IngestBatch` compiled by the real compiler and priced by the real engine
+matches an independent economic oracle to a worst relative error of 4.09e-15
+over four trades and three scenarios, on a hostile cross-currency fixture.
+
+**Evidence:** 156 valuation tests pass, including the 10 Phase-3 oracle tests
+unchanged. Fixture: `trade_uids = [9007, 41, 120003, 5]`; sparse non-ascending
+rf ids with `id != row position` everywhere; USD asset / GBP strike / EUR
+settlement; the GBP leg quoted EUR->GBP with `inv = 1` so the resolution must
+invert it; `DF_asset != DF_strike` on different dates; mixed long and short.
+Seven mutation classes detected against the oracle, worst 3.78e+03 relative
+deviation: asset forward row permutation, strike discount row substitution,
+asset FX substitution, strike FX substitution, wrong FX inversion, spot row
+permutation, block row permutation.
+
+**Implications:** VAL-13 (node forwards), VAL-06 and VAL-15 CLOSED; VAL-04
+CLOSED FOR THE FORWARD PATH. Remaining buildout, none of which is a defect:
+curve-sourced forwards, the option compiler, cashflow compilers and their
+`CompiledPortfolio` slots, the `vols` / `forward_rates` /
+`forward_prices_strike_ccy` / `option_log_forward_prices_strike_ccy` producers,
+and VAL-11 (forward/log-forward pairing).
+
+
+## D053 — Cross-currency option volatility basis remains an explicit model-input contract
+
+**Status:** OPEN — MODEL-INPUT CONTRACT, NOT A VALUATION DEFECT
+
+**Context:** Phase 5 option production certification identified an important
+distinction between correct volatility-row binding and correctness of the
+economic volatility itself. `VanillaEuropeanOptionBlock.vol_uix` is correctly
+bound to the volatility row selected for the option, but the current repository
+does not contain sufficient stochastic inputs to derive or independently
+validate the volatility of a cross-currency strike-currency forward from an
+underlying-forward volatility.
+
+### Decision
+
+For the current NODE-sourced vanilla European option implementation, the
+valuation contract is:
+
+> **The volatility supplied to Black-76 must already be the volatility of the
+> exact strike-currency forward represented by the option's
+> `forward_price_strike_ccy_uix`.**
+
+In particular, RiskQuant must NOT silently substitute the volatility of the
+asset/underlying forward when the option's Black-76 underlying is the
+strike-currency translated forward.
+
+For a cross-currency option, where the priced quantity is conceptually:
+
+$$
+F_K
+=
+F_a
+\times
+\frac{FX_{a\to s}}{FX_{K\to s}},
+$$
+
+the supplied volatility must represent the stochastic volatility of
+\(F_K\), not merely that of \(F_a\).
+
+### What RiskQuant proves
+
+The option compiler proves the **identity binding**:
+
+$$
+vol\_uix
+\rightarrow
+\text{the volatility row declared for the option's }F_K.
+$$
+
+The production path therefore guarantees that the option does not accidentally
+select an unrelated volatility row.
+
+The independent oracle and mutation tests establish that substituting another
+volatility row materially changes the economic PV.
+
+### What RiskQuant does not currently prove
+
+The current repository contains no complete model for deriving the volatility of
+a cross-currency strike-currency forward from:
+
+* asset-forward volatility;
+* FX volatility;
+* correlation/dependence;
+* or other quanto inputs.
+
+Therefore the repository cannot currently establish that a supplied volatility
+value is economically correct merely from an underlying-forward volatility.
+
+This is an **input/model-governance boundary**, not a kernel defect.
+
+### Required fail-safe semantic rule
+
+A future option construction path must not permit the following implicit
+substitution:
+
+$$
+\sigma(F_a)
+\;\not\Rightarrow\;
+\sigma(F_K).
+$$
+
+Where the feed does not explicitly identify the supplied volatility as belonging
+to the priced strike-currency forward, the construction layer must either:
+
+1. reject the option as lacking a valid volatility basis; or
+2. use an explicitly defined model that derives the required
+   \(\sigma(F_K)\) from sufficient quanto inputs.
+
+No fallback or "best available" volatility is permitted.
+
+### Current supported contract
+
+The current NODE option implementation may continue to be certified under the
+following assumption:
+
+> **The market-data/feed layer supplies a volatility already defined for the
+> exact strike-currency forward being priced.**
+
+This assumption must be visible in the production contract and option
+documentation.
+
+It is deliberately NOT implemented as a new runtime calculation in the Black-76
+kernel.
+
+### Future quanto model
+
+A separate future decision is required before RiskQuant claims native
+quanto-volatility construction.
+
+That future decision must define, independently:
+
+* the stochastic quantities;
+* the FX volatility inputs;
+* the dependence/correlation inputs;
+* the variance/covariance construction;
+* any approximation or model assumption;
+* the calibration/data source;
+* and the numerical validation oracle.
+
+No such model is introduced by D053.
+
+### Sequencing
+
+D053 does **not block the next valuation construction increment**.
+
+The next increment may proceed to the fixed, floating and principal cashflow
+blocks, while D053 remains open.
+
+Before any future claim of unrestricted cross-currency option support, D053 must
+either be closed by an explicit supplied-volatility contract enforced at the
+input boundary or superseded by a separately approved quanto-volatility model.
+
+### Relationship to Phase 5
+
+Phase 5 therefore remains correctly classified as:
+
+> **OPTION PRODUCTION-CERTIFIED — for NODE-sourced vanilla European options
+> with explicitly supplied volatility for the strike-currency forward.**
+
+D053 does not invalidate the Phase 5 construction/binding certification.
+
+It records the boundary of that certification so that a feed supplying
+asset-forward volatility cannot be mistaken for a feed supplying
+strike-forward volatility.
+
+### Rejected alternatives
+
+**Implicit substitution of asset-forward volatility:** rejected because it can
+produce a mathematically valid Black-76 calculation on the wrong stochastic
+underlying.
+
+**Adding FX-volatility/correlation inputs to the current option block:** rejected
+as premature because no implemented quanto model or product requirement has
+established the required specification.
+
+**Embedding a quanto adjustment in the Black-76 kernel:** rejected because the
+kernel must remain a mathematical primitive and cannot own market-model
+construction or semantic input validation.
+
+**Using a generic volatility-basis string inside the kernel:** rejected by the
+DOD/SoA architecture. Any semantic basis must be resolved before the JIT
+boundary.
+
+**Verdict — OPEN / EXPLICIT INPUT CONTRACT.**
+
+The current option path is safe only under the explicit assumption that the
+volatility feed already represents the exact forward underlying used by the
+Black-76 price.
+
+
+## D054 — Cashflow production construction is blocked at ingest, not at valuation
+
+**Status:** LOCKED (blocker recorded; Phase 6 not completed)
+
+**Decision:** the three authored cashflow block types (`FixedCashflowBlock`,
+`FloatingCashflowBlock`, `PrincipalCashflowBlock`) CANNOT be wired to a
+production compiler against the current repository, and no compiler was written.
+
+**Evidence:** two independent blockers, both verified from source.
+
+1. `IngestBatch` carries none of the cashflow economics the blocks require --
+   no `notional`, `accrual_factor`, `fixed_rate`, `spread`, `amount`,
+   `pay_receive_mult`, and no reset/fixing date. This is closed at the schema,
+   not merely absent from the SoA container: `ALL_ALLOWED_COLS_SET` is the
+   entire permitted ingest universe and is
+
+       uid, instrument, quantity, underlying, settlement_ccy, netting_set_id,
+       strike_price, strike_ccy, is_call, expiry_date, delivery_date,
+       settlement_date, under_discount_curve, strike_discount_curve,
+       volatility_container_name
+
+   A rate-schedule column set does not exist at any layer.
+
+2. `MarketDataMatrix` has no forward-rate producer.
+   `ValuationState.forward_rates` exists as a consumer field and measures
+   `size == 0` on every run. A simple forward rate is derivable from
+   `discount_factor_grid` as `(DF(0,s)/DF(0,T) - 1)/alpha`, but that presupposes
+   single-curve discounting -- a modelling decision (OIS/LIBOR basis) outside a
+   valuation-hardening phase -- and still needs `alpha` and the reset date from
+   an ingest that has neither.
+
+**Implications:** VAL-13 stays OPEN for cashflows; VAL-04 is NOT closed for the
+cashflow path; VAL-16's two-convention sign contract remains documented but
+untested in production. No ingest columns were added: that is an EDGE/schema
+change spanning `schema.py`, `parser.py`, `canonicalize.py`, `materialize.py`,
+`validate.py` and `IngestBatch`, plus a rate-curve market-data producer.
+
+Positive findings recorded for whoever does the work:
+* the D049 EDF key `(curve_uix, date_uix, fx_eff_uix)` is the correct SHAPE for
+  a cashflow -- curve, payment date, FX-to-settlement. Only the dedup POOL needs
+  extending with `(cashflow_curve, payment_date, fx_c2s)`. No redesign.
+* adding cashflow slots to `CompiledPortfolio` is safe: `simlab/runner.py` and
+  `valuation/engine.py` both read `total_trades` as a ROW count, which is
+  correct and stays correct, and nothing assumes `num_trades == num_rows`.
+
+Pinned by `test_cashflow_blocks_are_still_not_production_reachable` and
+`test_forward_rate_state_field_has_no_producer` so the blocker is a visible
+regression rather than folklore.
+
+## D054 — Cashflow production construction is blocked at ingest, not at valuation
+
+**Status:** LOCKED (blocker recorded; Phase 6 not completed)
+
+**Decision:** the three authored cashflow block types (`FixedCashflowBlock`,
+`FloatingCashflowBlock`, `PrincipalCashflowBlock`) CANNOT be wired to a
+production compiler against the current repository, and no compiler was written.
+
+**Evidence:** two independent blockers, both verified from source.
+
+1. `IngestBatch` carries none of the cashflow economics the blocks require --
+   no `notional`, `accrual_factor`, `fixed_rate`, `spread`, `amount`,
+   `pay_receive_mult`, and no reset/fixing date. This is closed at the schema,
+   not merely absent from the SoA container: `ALL_ALLOWED_COLS_SET` is the
+   entire permitted ingest universe and is
+
+       uid, instrument, quantity, underlying, settlement_ccy, netting_set_id,
+       strike_price, strike_ccy, is_call, expiry_date, delivery_date,
+       settlement_date, under_discount_curve, strike_discount_curve,
+       volatility_container_name
+
+   A rate-schedule column set does not exist at any layer.
+
+2. `MarketDataMatrix` has no forward-rate producer.
+   `ValuationState.forward_rates` exists as a consumer field and measures
+   `size == 0` on every run. A simple forward rate is derivable from
+   `discount_factor_grid` as `(DF(0,s)/DF(0,T) - 1)/alpha`, but that presupposes
+   single-curve discounting -- a modelling decision (OIS/LIBOR basis) outside a
+   valuation-hardening phase -- and still needs `alpha` and the reset date from
+   an ingest that has neither.
+
+**Implications:** VAL-13 stays OPEN for cashflows; VAL-04 is NOT closed for the
+cashflow path; VAL-16's two-convention sign contract remains documented but
+untested in production. No ingest columns were added: that is an EDGE/schema
+change spanning `schema.py`, `parser.py`, `canonicalize.py`, `materialize.py`,
+`validate.py` and `IngestBatch`, plus a rate-curve market-data producer.
+
+Positive findings recorded for whoever does the work:
+* the D049 EDF key `(curve_uix, date_uix, fx_eff_uix)` is the correct SHAPE for
+  a cashflow -- curve, payment date, FX-to-settlement. Only the dedup POOL needs
+  extending with `(cashflow_curve, payment_date, fx_c2s)`. No redesign.
+* adding cashflow slots to `CompiledPortfolio` is safe: `simlab/runner.py` and
+  `valuation/engine.py` both read `total_trades` as a ROW count, which is
+  correct and stays correct, and nothing assumes `num_trades == num_rows`.
+
+Pinned by `test_cashflow_blocks_are_still_not_production_reachable` and
+`test_forward_rate_state_field_has_no_producer` so the blocker is a visible
+regression rather than folklore.
+
+## D055 — Multi-row trade identity is PROVEN on the production path
+
+**Status:** LOCKED
+
+**Decision:** the row/trade cardinality model
+
+    one economic trade -> many valuation rows -> PV_trade = sum(PV_rows)
+
+is proven end-to-end through the production path, using a trade whose uid
+appears in TWO different blocks rather than in several cashflow rows.
+
+**Reason:** D045/VAL-05 established that `trade_uids` is neither unique nor
+sorted, and `ValuationResult.get_trade_pv` was written for exactly that. Phase 6
+intended to exercise it with cashflows. Cashflows are blocked (D054), but the
+invariant does not depend on them: a uid spanning the forward and option blocks
+is non-unique, non-contiguous, and straddles a `block_offsets` boundary --
+strictly harder than several rows inside one block.
+
+**Evidence:** fixture uids `[9007, 41, 120003, 9007]`, 9007 owning the forward
+row and the last option row.
+
+    trade_uids : [9007, 41, 120003, 9007]   num_rows=4  num_trades=3
+         uid  rows     trade PV (scen 0)       oracle sum     max|rel|
+          41     1          -2062.425636     -2062.429386     2.22e-05
+        9007     2          69064.040900     69064.061214     4.64e-07
+      120003     1           5565.918426      5565.919014     2.81e-07
+    portfolio  : 72567.533690  vs oracle 72567.550842  rel 2.36e-07
+
+The oracle groups rows from the FIXTURE, never from production's lookup.
+13 tests, including: the two 9007 rows straddle `block_offsets`;
+`num_rows != num_trades`; `get_trade_pv` is a real sum asserted against each row
+individually, not a first-match; row-grouping and trade-grouping reach the same
+portfolio total; a wrong-grouping mutation is detected against the oracle.
+
+**Implications:** VAL-05 closes on the production path. 199 valuation tests
+pass; no golden drift and no tolerance widened. D046, D052 and D053 untouched;
+D053 remains OPEN.
