@@ -1,227 +1,157 @@
 # tests/valuation/test_engine.py
+"""
+Current `run_valuation` semantics.
+
+Replaces the stale module of the same name, which imported
+`VanillaForwardNodeBlock`, constructed `SpotBlock(spot_price_uix=, fx_uix=,
+fx_invert=)` and called `run_valuation` without `out=`. None of those exist.
+
+Current signature:
+
+    run_valuation(*, portfolio, valuation_state, out) -> None
+"""
+
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from riskquant.constants import (
-    NO_DATE_UIX,
-    NO_DISCOUNT_CURVE_ID,
-    NO_FX_RF_REQUIRED,
-)
-from riskquant.market_data.state import MarketDataMatrix
+from riskquant.market_data.state import ValuationState
 from riskquant.portfolio.compiled import CompiledPortfolio
 from riskquant.valuation.blocks.spot_block import SpotBlock
-from riskquant.valuation.blocks.vanilla_forward_block import (
-    VanillaForwardNodeBlock,
-)
+from riskquant.valuation.blocks.vanilla_forward_block import VanillaForwardBlock
 from riskquant.valuation.engine import run_valuation
 
-# =========================================================================
-# CONSTANTS
-# =========================================================================
-N_SCENARIOS = 4
+S = 3
+NO_DATES = np.array([], dtype=np.int32)
 
 
-# =========================================================================
-# HELPERS
-# =========================================================================
+def _state(**kw) -> ValuationState:
+    return ValuationState(batch_size=S, **kw)
 
 
-def _empty_md(s: int = N_SCENARIOS) -> MarketDataMatrix:
-    """MarketDataMatrix with no data (for tests that only use spot prices)."""
-    return MarketDataMatrix(
-        num_scenarios=s,
-        fx_spots=np.empty((0, s), dtype=np.float64),
-        prices=np.empty((0, s), dtype=np.float64),
-        forward_nodes=np.empty((0, s), dtype=np.float64),
-        vol_nodes=np.empty((0, s), dtype=np.float64),
-        discount_factor_grid=np.empty((0, 0, s), dtype=np.float64),
-        price_curve_grid=np.empty((0, 0, s), dtype=np.float64),
-        tte_grid=np.empty(0, dtype=np.float64),
-        vol_surface_strikes=np.empty((0, 0), dtype=np.float64),
-        vol_surfaces=np.empty((0, 0, 0, s), dtype=np.float64),
-    )
-
-
-def _make_spot_block(n: int, price_offset: int = 0) -> SpotBlock:
+def _spot_block(uids, qty, uix) -> SpotBlock:
     return SpotBlock(
-        trade_uids=np.arange(n, dtype=np.int64),
-        qty=np.ones(n, dtype=np.float64),
-        spot_price_uix=np.arange(price_offset, price_offset + n, dtype=np.int32),
-        fx_uix=np.full(n, NO_FX_RF_REQUIRED, dtype=np.int32),
-        fx_invert=np.zeros(n, dtype=np.bool_),
+        trade_uids=np.asarray(uids, dtype=np.int64),
+        qty=np.asarray(qty, dtype=np.float64),
+        effective_spot_price_uix=np.asarray(uix, dtype=np.int32),
     )
 
 
-def _make_fwd_node_block(n: int, price_offset: int = 0) -> VanillaForwardNodeBlock:
-    return VanillaForwardNodeBlock(
-        trade_uids=np.arange(100, 100 + n, dtype=np.int64),
-        qty=np.ones(n, dtype=np.float64),
-        strike=np.full(n, 50.0, dtype=np.float64),
-        price_uix=np.arange(price_offset, price_offset + n, dtype=np.int32),
-        settlement_date_uix=np.full(n, NO_DATE_UIX, dtype=np.int32),
-        fx_under_to_settle_uix=np.full(n, NO_FX_RF_REQUIRED, dtype=np.int32),
-        fx_strike_to_settle_uix=np.full(n, NO_FX_RF_REQUIRED, dtype=np.int32),
-        fx_under_to_settle_invert=np.zeros(n, dtype=np.bool_),
-        fx_strike_to_settle_invert=np.zeros(n, dtype=np.bool_),
-        under_discount_curve_uix=np.full(n, NO_DISCOUNT_CURVE_ID, dtype=np.int32),
-        strike_discount_curve_uix=np.full(n, NO_DISCOUNT_CURVE_ID, dtype=np.int32),
+def _fwd_block(uids, qty, strike, fuix, duix) -> VanillaForwardBlock:
+    return VanillaForwardBlock(
+        trade_uids=np.asarray(uids, dtype=np.int64),
+        qty=np.asarray(qty, dtype=np.float64),
+        strike=np.asarray(strike, dtype=np.float64),
+        effective_forward_price_uix=np.asarray(fuix, dtype=np.int32),
+        effective_discount_factor_uix=np.asarray(duix, dtype=np.int32),
     )
+
+
+EFF_SPOT = np.ascontiguousarray([[10.0, 20.0, 30.0], [100.0, 200.0, 300.0]])
+EFF_FWD = np.ascontiguousarray([[70.0, 80.0, 60.0]])
+EFF_DF = np.ascontiguousarray([[0.95, 0.94, 0.96]])
+
+
+def test_single_spot_block():
+    p = CompiledPortfolio(
+        unique_dates_ord32=NO_DATES, spot=_spot_block([9007, 41], [2.0, -3.0], [1, 0])
+    )
+    out = np.empty((p.total_trades, S))
+    run_valuation(
+        portfolio=p, valuation_state=_state(effective_spot_prices=EFF_SPOT), out=out
+    )
+    np.testing.assert_allclose(out[0], 2.0 * EFF_SPOT[1])
+    np.testing.assert_allclose(out[1], -3.0 * EFF_SPOT[0])
+
+
+def test_multiple_block_types_land_at_the_right_offsets():
+    p = CompiledPortfolio(
+        unique_dates_ord32=NO_DATES,
+        spot=_spot_block([9007], [2.0], [1]),
+        vanilla_forward=_fwd_block([41, 5], [10.0, -1.0], [65.0, 55.0], [0, 0], [0, 0]),
+    )
+    assert p.block_offsets.tolist() == [0, 1]
+    assert p.total_trades == 3
+    out = np.empty((p.total_trades, S))
+    run_valuation(
+        portfolio=p,
+        valuation_state=_state(
+            effective_spot_prices=EFF_SPOT,
+            effective_forward_prices=EFF_FWD,
+            effective_discount_factors=EFF_DF,
+        ),
+        out=out,
+    )
+    np.testing.assert_allclose(out[0], 2.0 * EFF_SPOT[1])
+    np.testing.assert_allclose(out[1], 10.0 * (EFF_FWD[0] - 65.0 * EFF_DF[0]))
+    np.testing.assert_allclose(out[2], -1.0 * (EFF_FWD[0] - 55.0 * EFF_DF[0]))
+
+
+def test_trade_uids_are_concatenated_in_block_slot_order():
+    p = CompiledPortfolio(
+        unique_dates_ord32=NO_DATES,
+        spot=_spot_block([9007], [1.0], [0]),
+        vanilla_forward=_fwd_block([41, 5], [1.0, 1.0], [1.0, 1.0], [0, 0], [0, 0]),
+    )
+    assert p.trade_uids.tolist() == [9007, 41, 5]
+    assert p.trade_uids.tolist() != sorted(p.trade_uids.tolist())
+
+
+def test_empty_portfolio_prices_nothing():
+    p = CompiledPortfolio(unique_dates_ord32=NO_DATES)
+    assert p.total_trades == 0 and p.total_blocks == 0
+    out = np.empty((0, S))
+    run_valuation(portfolio=p, valuation_state=_state(), out=out)
+    assert out.shape == (0, S)
 
 
 # =========================================================================
-# TESTS — Engine dispatch and output assembly
+# VAL-03 output contract (production fix applied in the current source)
 # =========================================================================
 
 
-def test_single_spot_block() -> None:
-    """Engine dispatches a single SpotBlock and returns correct shape and values."""
-    n = 3
-    prices = np.full((n, N_SCENARIOS), 10.0)
-
-    spot = _make_spot_block(n)
-    portfolio = CompiledPortfolio(spot=spot)
-
-    md = MarketDataMatrix(
-        num_scenarios=N_SCENARIOS,
-        fx_spots=np.empty((0, N_SCENARIOS), dtype=np.float64),
-        prices=prices,
-        forward_nodes=np.empty((0, N_SCENARIOS), dtype=np.float64),
-        vol_nodes=np.empty((0, N_SCENARIOS), dtype=np.float64),
-        discount_factor_grid=np.empty((0, 0, N_SCENARIOS), dtype=np.float64),
-        price_curve_grid=np.empty((0, 0, N_SCENARIOS), dtype=np.float64),
-        tte_grid=np.empty(0, dtype=np.float64),
-        vol_surface_strikes=np.empty((0, 0), dtype=np.float64),
-        vol_surfaces=np.empty((0, 0, 0, N_SCENARIOS), dtype=np.float64),
+@pytest.mark.parametrize(
+    "shape",
+    [
+        (1, S),
+        (3, S),
+        (2, S - 1),
+        (2, S + 1),
+    ],
+)
+def test_mis_sized_output_is_rejected(shape):
+    p = CompiledPortfolio(
+        unique_dates_ord32=NO_DATES, spot=_spot_block([9007, 41], [1.0, 1.0], [0, 0])
     )
+    with pytest.raises(ValueError, match="out has shape"):
+        run_valuation(
+            portfolio=p,
+            valuation_state=_state(effective_spot_prices=EFF_SPOT),
+            out=np.empty(shape),
+        )
 
-    result = run_valuation(portfolio=portfolio, valuation_state=md)
 
-    assert result.shape == (n, N_SCENARIOS)
-    # qty=1 * price=10 => PV=10 for all
-    np.testing.assert_allclose(result, 10.0)
-
-
-def test_single_forward_node_block() -> None:
-    """Engine dispatches a single ForwardNodeBlock."""
-    n = 2
-    fwd = np.full((n, N_SCENARIOS), 100.0)
-
-    fwd_block = _make_fwd_node_block(n)
-    portfolio = CompiledPortfolio(vanilla_forward_node=fwd_block)
-
-    md = MarketDataMatrix(
-        num_scenarios=N_SCENARIOS,
-        fx_spots=np.empty((0, N_SCENARIOS), dtype=np.float64),
-        prices=np.empty((0, N_SCENARIOS), dtype=np.float64),
-        forward_nodes=fwd,
-        vol_nodes=np.empty((0, N_SCENARIOS), dtype=np.float64),
-        discount_factor_grid=np.empty((0, 0, N_SCENARIOS), dtype=np.float64),
-        price_curve_grid=np.empty((0, 0, N_SCENARIOS), dtype=np.float64),
-        tte_grid=np.empty(0, dtype=np.float64),
-        vol_surface_strikes=np.empty((0, 0), dtype=np.float64),
-        vol_surfaces=np.empty((0, 0, 0, N_SCENARIOS), dtype=np.float64),
+def test_non_contiguous_output_is_rejected():
+    p = CompiledPortfolio(
+        unique_dates_ord32=NO_DATES, spot=_spot_block([9007, 41], [1.0, 1.0], [0, 0])
     )
+    wide = np.empty((2, S + 2))
+    with pytest.raises(ValueError):
+        run_valuation(
+            portfolio=p,
+            valuation_state=_state(effective_spot_prices=EFF_SPOT),
+            out=wide[:, :S],
+        )
 
-    result = run_valuation(portfolio=portfolio, valuation_state=md)
 
-    assert result.shape == (n, N_SCENARIOS)
-    # qty=1, fwd=100, strike=50 => PV = 1 * (100 - 50) = 50
-    np.testing.assert_allclose(result, 50.0)
-
-
-def test_multiple_block_types_contiguous_output() -> None:
-    """Engine assembles output from spot + forward blocks contiguously."""
-    n_spot = 2
-    n_fwd = 3
-
-    spot_prices = np.full((n_spot, N_SCENARIOS), 25.0)
-    fwd_prices = np.full((n_fwd, N_SCENARIOS), 80.0)
-
-    spot = _make_spot_block(n_spot)
-    fwd = _make_fwd_node_block(n_fwd)
-    portfolio = CompiledPortfolio(spot=spot, vanilla_forward_node=fwd)
-
-    md = MarketDataMatrix(
-        num_scenarios=N_SCENARIOS,
-        fx_spots=np.empty((0, N_SCENARIOS), dtype=np.float64),
-        prices=spot_prices,
-        forward_nodes=fwd_prices,
-        vol_nodes=np.empty((0, N_SCENARIOS), dtype=np.float64),
-        discount_factor_grid=np.empty((0, 0, N_SCENARIOS), dtype=np.float64),
-        price_curve_grid=np.empty((0, 0, N_SCENARIOS), dtype=np.float64),
-        tte_grid=np.empty(0, dtype=np.float64),
-        vol_surface_strikes=np.empty((0, 0), dtype=np.float64),
-        vol_surfaces=np.empty((0, 0, 0, N_SCENARIOS), dtype=np.float64),
+def test_wrong_output_dtype_is_rejected():
+    p = CompiledPortfolio(
+        unique_dates_ord32=NO_DATES, spot=_spot_block([9007], [1.0], [0])
     )
-
-    result = run_valuation(portfolio=portfolio, valuation_state=md)
-
-    assert result.shape == (n_spot + n_fwd, N_SCENARIOS)
-    # Spot rows: qty=1 * 25 = 25
-    np.testing.assert_allclose(result[:n_spot, :], 25.0)
-    # Fwd rows: qty=1 * (80 - 50) = 30
-    np.testing.assert_allclose(result[n_spot:, :], 30.0)
-
-
-def test_empty_portfolio() -> None:
-    """Empty portfolio (no blocks) returns shape (0, S)."""
-    portfolio = CompiledPortfolio()
-    md = _empty_md()
-
-    result = run_valuation(portfolio=portfolio, valuation_state=md)
-
-    assert result.shape == (0, N_SCENARIOS)
-
-
-def test_unknown_block_type_raises() -> None:
-    """A block type not in BLOCK_PRICER_MAP raises ValueError."""
-
-    class FakeBlock:
-        trade_uids = np.array([1], dtype=np.int64)
-
-        @property
-        def num_trades(self):
-            return 1
-
-    # Monkey-patch a portfolio to yield an unknown block
-    portfolio = CompiledPortfolio()
-    original_iter = portfolio.iter_blocks
-    portfolio.__class__.iter_blocks = lambda self: (FakeBlock(),)
-
-    md = _empty_md()
-
-    with pytest.raises(ValueError, match="No pricer mapped"):
-        run_valuation(portfolio=portfolio, valuation_state=md)
-
-    # Restore
-    portfolio.__class__.iter_blocks = original_iter
-
-
-def test_total_trades_matches_output_rows() -> None:
-    """Output row count equals portfolio.total_trades."""
-    spot = _make_spot_block(4)
-    fwd = _make_fwd_node_block(3)
-    portfolio = CompiledPortfolio(spot=spot, vanilla_forward_node=fwd)
-
-    spot_prices = np.ones((4, N_SCENARIOS))
-    fwd_prices = np.full((3, N_SCENARIOS), 100.0)
-
-    md = MarketDataMatrix(
-        num_scenarios=N_SCENARIOS,
-        fx_spots=np.empty((0, N_SCENARIOS), dtype=np.float64),
-        prices=spot_prices,
-        forward_nodes=fwd_prices,
-        vol_nodes=np.empty((0, N_SCENARIOS), dtype=np.float64),
-        discount_factor_grid=np.empty((0, 0, N_SCENARIOS), dtype=np.float64),
-        price_curve_grid=np.empty((0, 0, N_SCENARIOS), dtype=np.float64),
-        tte_grid=np.empty(0, dtype=np.float64),
-        vol_surface_strikes=np.empty((0, 0), dtype=np.float64),
-        vol_surfaces=np.empty((0, 0, 0, N_SCENARIOS), dtype=np.float64),
-    )
-
-    result = run_valuation(portfolio=portfolio, valuation_state=md)
-
-    assert result.shape[0] == portfolio.total_trades
-    assert result.shape[0] == 7
+    with pytest.raises(ValueError, match="float64"):
+        run_valuation(
+            portfolio=p,
+            valuation_state=_state(effective_spot_prices=EFF_SPOT),
+            out=np.empty((1, S), dtype=np.float32),  # type: ignore
+        )
