@@ -1449,3 +1449,99 @@ real gate on multi-core CI — running it there is REQUIRED before a multi-core
 production release. (2) Manifest adoption remains caller-side; a risk result
 without an identity should be considered incomplete. (3) A caller that reduces
 P&L with its own BLAS GEMV reintroduces 1-ULP batch sensitivity in its own code.
+
+---
+
+## D042 — Production run entry point: every risk result is inseparable from its identity
+
+Closes production adoption. Full evidence: `SIMLAB_PRODUCTION_RUN_CLOSURE.md`.
+A new decision is warranted because this establishes a durable PUBLIC production
+contract; D036–D041 are unchanged and not contradicted.
+
+**Archaeology finding.** Before this increment there was NO production entry
+point for scenario-based VaR/ES. No `src/` function produced one; all six
+producers were hand-wired demo scripts and none carried an identity. The only
+`src/` caller of `compute_var_es` was the credit loss path. "The runner does not
+emit a manifest" understated it: there was no runner.
+
+**The entry point.** `riskquant.solutions.risk_run.api.run_scenario_var_es`
+composes ONLY existing production functions — the D036 scenario seam,
+`apply_shocks_to_base_levels`, the compiled `SensitivityPnlCalculator` (official
+Taylor P&L via `FactorAxis.levels`), `build_fx_conversion_plan` /
+`convert_scenario_pnl_to_reporting_currency` (D014), and one canonical
+`compute_var_es` over `[positions; portfolio]` (D015) — and adds no numerical
+logic. Order is fixed: validate -> build identity from the exact objects handed
+to numerics -> (if reproducing) verify environment and inputs, FAIL FAST ->
+execute -> `RiskRun`.
+
+**`RiskRun` (result + identity, inseparable).** Frozen dataclass: `position_uids`,
+`var`/`es` (positions then portfolio LAST), `reporting_ccy`, full `manifest`,
+`identity`, `reproducible`, `pnl_provenance`. `__post_init__` rejects an identity
+that does not equal `manifest.identity()`; `to_json` writes the numbers as exact
+IEEE-754 hex with the manifest inside; `from_json` re-derives the identity and
+rejects a tampered payload. A risk number cannot be persisted without its
+identity through this API. `SensitivityPnlProvenance` rides along as the
+operational RECORD (counts, batch_size); it is not the identity (D040
+identity-vs-record distinction preserved).
+
+**Sensitivities identity strengthened.** `hash_compiled_book(calculator.book)`
+digests the CSR arrays the Taylor kernel actually consumes (position_uids,
+active_factor_ids, offsets, factor_uix, first/second/cross order). The identity
+names exactly what priced the run. `build_run_manifest` now takes
+`sensitivities_digest`/`fx_digest` (digests, not arrays) so a compiled book and a
+plain vector share one path without a nullable alternative; identity values for
+the array path are unchanged. `digest_reporting_plan` identifies reporting ccy,
+per-position settlement ccys, FX factor names and rows; FX scenario levels are
+not re-hashed because they are rows of the shocked levels already fixed by the
+data + shock identities.
+
+**Seed policy (explicit).** `seed` is the RNG reproducibility root, NOT the run
+identity — Historical/FilteredHistorical carry no seed and are fully identified.
+`mode="reproducible"` (default) raises `NonReproducibleRunError` for a stochastic
+model with `seed=None` before any numerical work; `mode="exploratory"` permits it
+and marks `reproducible=False`. A `seed=None` run is never represented as
+reproducible.
+
+**Environment gate (explicit).** `verify_environment` enforces STRICT EQUALITY
+on riskquant/python/numpy/numba versions when reproducing. No compatibility
+policy: the repository has none, the claim is BITWISE, and no evidence exists
+that any two versions are bit-compatible. `EnvironmentMismatchError` before
+numerics.
+
+**Stale-input boundary.** When `reproduce=` is given, `verify_run_inputs`
+re-digests data, shock vectors, base levels, compiled book, config, confidence
+and reporting currency and raises `InputMismatchError` on the first mismatch —
+after identity construction, before `build_scenario_generator`. No kernel or
+generator is touched. `batch_size` is operational (D041): same identity and same
+numbers for bs=3 and bs=S+5 through the production API.
+
+**Bypass audit.** One PUBLIC production entry point (identity enforced). The
+scenario seam, generators, `apply_shocks`, `SensitivityPnlCalculator`,
+`run_sensitivity_pnl`, FX conversion and `compute_var_es` remain identity-free
+low-level building blocks by design (D001). The six demo scripts and the credit
+loss path are documented as demo / separate-path, not production bypasses.
+
+**Rejected.** `RunManager`, `RunContext`, global execution context, registry,
+database, ORM, event sourcing, plugin, generic provenance framework — none was
+needed; the existing solution-tier composition sufficed. A `RiskResult(...,
+run_identity=)` extension of `VarEsResult` was rejected because `VarEsResult`
+is a core metric type and must stay identity-free; `RiskRun` composes at the
+solution tier instead.
+
+**Evidence.** `tests/solutions/risk_run` 29 passed (result always carries
+identity; identity tamper-checked on construction and on load; bitwise JSON
+round-trip; seed policy; batch_size excluded; stale data / stale book /
+substituted shock-scale, source-ids, confidence, base-levels refused before
+execution; foreign environment refused; 10 result-defining mutations change
+result AND identity; equivalent objects change neither; fresh-process
+reproduction of identity, VaR and ES via the production API, and a persisted
+`RiskRun` reproducing against its own manifest in a new process).
+`tests/solutions/run_identity` 95; `tests/solutions` + `tests/simlab` 1180 passed
+/ 3 skipped; focused regression 861 passed / 1 skipped; E2E `ALL CHECKS PASSED`;
+lint clean; `src/riskquant/simlab` and `src/riskquant/sensitivity_pnl` core
+BYTE-IDENTICAL. Performance at K=250/S=10k/M=200: production run 88.4 ms;
+identity 3.3 ms (3.8%); verification 1.6 ms; artifact 11.9 kB.
+
+**Verdict.** PRODUCTION READY WITH EXPLICIT ENVIRONMENT GATE. Open: multi-core
+determinism remains structurally argued and empirically unverified on this
+single-core host (D041) — a required prerequisite for a multi-core release.

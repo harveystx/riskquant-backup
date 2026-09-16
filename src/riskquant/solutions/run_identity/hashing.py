@@ -27,6 +27,8 @@ import numpy.typing as npt
 __all__ = [
     "digest_array",
     "digest_named_arrays",
+    "digest_reporting_plan",
+    "hash_compiled_book",
     "hash_parametric_risk_data",
     "hash_risk_factor_matrix",
 ]
@@ -99,3 +101,52 @@ def hash_parametric_risk_data(data) -> str:
         cholesky_matrix=data.cholesky_matrix,
         volatilities=data.volatilities,
     )
+
+
+def hash_compiled_book(book) -> str:
+    """
+    Identity of a compiled sensitivity book — the CSR arrays the Taylor kernel
+    actually consumes, so the digest names exactly what priced the run rather
+    than a source frame that might have been re-projected differently.
+    """
+    return digest_named_arrays(
+        position_uids=book.position_uids,
+        active_factor_ids=book.active_factor_ids,
+        active_level_uix=book.active_level_uix,
+        displacement_convention_ids=book.displacement_convention_ids,
+        position_offsets=book.position_offsets,
+        factor_uix=book.factor_uix,
+        first_order=book.first_order,
+        second_order=book.second_order,
+        cross_offsets=book.cross_offsets,
+        cross_factor_uix_i=book.cross_factor_uix_i,
+        cross_factor_uix_j=book.cross_factor_uix_j,
+        cross_second_order=book.cross_second_order,
+    )
+
+
+def digest_reporting_plan(
+    *,
+    reporting_ccy: str,
+    settlement_ccys,
+    fx_factor_names,
+    fx_factor_rows: npt.NDArray,
+) -> str:
+    """
+    Identity of the reporting-currency conversion inputs.
+
+    The FX scenario levels themselves are NOT re-hashed: they are rows of the
+    shocked levels, already fixed by the data + shock identities. What remains
+    result-defining is which positions settle in which currency, which factor
+    rows carry the FX rates, and their names (the quotation direction is derived
+    from the names by the FX authority).
+    """
+    h = hashlib.new(_HASH)
+    h.update(reporting_ccy.encode(_ENC))
+    h.update(b"|")
+    h.update(",".join(str(c) for c in settlement_ccys).encode(_ENC))
+    h.update(b"|")
+    h.update(",".join(str(n) for n in fx_factor_names).encode(_ENC))
+    h.update(b"|")
+    h.update(digest_array(np.asarray(fx_factor_rows, dtype=np.int32)).encode(_ENC))
+    return h.hexdigest()

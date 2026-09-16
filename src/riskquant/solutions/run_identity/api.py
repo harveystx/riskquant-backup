@@ -20,6 +20,7 @@ from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
 from riskquant.solutions.run_identity.hashing import (
     digest_array,
+    hash_compiled_book,
     hash_parametric_risk_data,
     hash_risk_factor_matrix,
 )
@@ -36,12 +37,21 @@ from riskquant.solutions.scenario_models.api import parse_scenario_model_config
 from riskquant.solutions.scenario_models.schemas import ScenarioModelConfig
 
 __all__ = [
+    "EnvironmentMismatchError",
     "InputMismatchError",
     "build_run_manifest",
     "engine_identity",
     "scenario_config_from_manifest",
+    "verify_environment",
     "verify_run_inputs",
 ]
+
+
+class EnvironmentMismatchError(RuntimeError):
+    """The current numerical environment differs from the one the manifest
+    declares. Bitwise reproduction is only claimed under a matching
+    environment (D041), so a rerun must not proceed as if it were reproducing.
+    """
 
 
 class InputMismatchError(RuntimeError):
@@ -86,13 +96,17 @@ def build_run_manifest(
     source_factor_ids: npt.NDArray[np.int32],
     shock_scale: npt.NDArray[np.float32],
     base_levels: npt.NDArray[np.float64],
-    sensitivities: npt.NDArray[np.float64],
+    sensitivities_digest: str,
     reporting_currency: str,
-    fx: npt.NDArray[np.float64],
+    fx_digest: str,
     confidence_level: float,
 ) -> RunManifest:
     """
     Assemble the immutable identity of one risk run.
+
+    `sensitivities_digest` and `fx_digest` are supplied as digests so that a plain
+    sensitivity vector (`digest_array`) and a compiled book (`hash_compiled_book`)
+    share one manifest path without a nullable alternative.
 
     Every argument is a result-defining input established by mutation testing;
     nothing operational is included, so the identity is stable across reruns of
@@ -111,10 +125,10 @@ def build_run_manifest(
         ),
         pnl=PnlIdentity(
             base_levels_digest=digest_array(base_levels),
-            sensitivities_digest=digest_array(sensitivities),
+            sensitivities_digest=sensitivities_digest,
         ),
         reporting=ReportingIdentity(
-            reporting_currency=reporting_currency, fx_digest=digest_array(fx)
+            reporting_currency=reporting_currency, fx_digest=fx_digest
         ),
         risk_measure=RiskMeasureIdentity(confidence_level=confidence_level),
     )
@@ -128,6 +142,31 @@ def scenario_config_from_manifest(manifest: RunManifest) -> ScenarioModelConfig:
     manifest cannot reconstruct a configuration the seam would reject.
     """
     return parse_scenario_model_config(manifest.scenario_config)
+
+
+def verify_environment(manifest: RunManifest) -> None:
+    """
+    Fail fast when the running environment is not the manifest's environment.
+
+    Strict equality on every `engine` field. No compatibility policy is applied:
+    the reproducibility claim is BITWISE, NumPy publishes no cross-version
+    guarantee for `Generator` distributions and Numba/LLVM codegen governs FMA
+    contraction, so no evidence exists that any two versions are bit-compatible.
+    """
+    current = engine_identity()
+    expected = manifest.engine
+    for field in (
+        "riskquant_version",
+        "python_version",
+        "numpy_version",
+        "numba_version",
+    ):
+        got, want = getattr(current, field), getattr(expected, field)
+        if got != want:
+            raise EnvironmentMismatchError(
+                f"{field} mismatch: manifest declares {want!r}, runtime is {got!r}; "
+                f"bitwise reproduction is not claimed across environments."
+            )
 
 
 def verify_run_inputs(manifest: RunManifest, **inputs: Any) -> None:
@@ -159,6 +198,15 @@ def verify_run_inputs(manifest: RunManifest, **inputs: Any) -> None:
                 raise InputMismatchError(
                     f"data content mismatch: manifest identifies "
                     f"{manifest.data.digest[:16]}..., got {actual.digest[:16]}..."
+                )
+            continue
+        if name == "book":
+            actual_digest = hash_compiled_book(value)
+            if actual_digest != manifest.pnl.sensitivities_digest:
+                raise InputMismatchError(
+                    f"book content mismatch: manifest identifies "
+                    f"{manifest.pnl.sensitivities_digest[:16]}..., got "
+                    f"{actual_digest[:16]}..."
                 )
             continue
         if name == "scenario_config":

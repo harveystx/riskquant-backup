@@ -122,9 +122,9 @@ def _manifest(inp: dict) -> RunManifest:
         source_factor_ids=inp["source_factor_ids"],
         shock_scale=inp["shock_scale"],
         base_levels=inp["base_levels"],
-        sensitivities=inp["sensitivities"],
+        sensitivities_digest=digest_array(inp["sensitivities"]),
         reporting_currency=inp["reporting_currency"],
-        fx=inp["fx"],
+        fx_digest=digest_array(inp["fx"]),
         confidence_level=inp["confidence_level"],
     )
 
