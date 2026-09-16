@@ -7,23 +7,46 @@ as-of-date market-data snapshot. One deterministic "scenario" (the t0
 levels) so we exercise the full hydration path without standing up a
 scenario generator.
 
-Coverage scope (P1)
--------------------
-We price the families whose market-data layout is fully wired and
-verified end-to-end:
+Coverage scope (current registry state, checked against
+`portfolio.compilers.registry.COMPILERS` at demo-write time)
+-------------------------------------------------------------
+We price the SPOT family only:
 
-    SPOT, VANILLA_FORWARD_NODE, VANILLA_FORWARD_CURVE
+    SPOT
 
-Both NODE families and the forward-CURVE family resolve their underlyings
-to scalar RFs (node ids OR curve/surface POINT rf-ids, read as one scalar)
-or to curve CONTAINER ids (forward-curve, interpolated via the universe-
-aligned `price_curve_grid`). The two OPTION families
-(VANILLA_EUROPEAN_OPTION_NODE / _CURVE) ship in the fixture for ingest
-coverage but need the vol-surface (C, M, K) layout (P2) before pricing.
+`VANILLA_FORWARD_NODE`, `VANILLA_FORWARD_CURVE`, both OPTION families, and
+`VANILLA_IRS` all ship in the exhaustive fixture for INGEST coverage, but
+none has a registered block compiler yet
+(`portfolio.compilers.registry.UNREGISTERED_INSTRUMENT_IDS`) --
+`compile_portfolio_from_ingest_batch` fails loud on any of them, by design
+(Constitution: fail fast, never silently drop a trade). This demo filters
+them out before compiling, rather than let the engine raise.
+
+Within SPOT, trades whose `underlying` is itself an FX-pair risk factor
+(`node_meta.asset_class == "FX"`, e.g. `USDEUR`, `USDGBP`, `EURCHF`) are
+ALSO excluded. Diagnosed, not guessed: for those trades
+`SpotBlock.effective_spot_price_uix` resolves a `price_uix` pointing at the
+FX-classified rf_id itself, but `MarketDataMatrix.prices` is populated only
+for non-FX (`scalar_levels`) risk factors -- FX rf_ids are otherwise only
+ever read through `fx_spots_effective`. The unread `prices` slot is
+uninitialized, so pricing such a trade silently returns either an
+accidental `0.0` or a raw denormalized float, never a raised error -- a
+production gap in the SPOT/market-data seam for this specific case, not
+something this demo script can correct (see the current-state notes
+alongside this file).
+
+The exhaustive fixture also carries VANILLA_IRS-only ingest columns
+(`fixed_rate`, `notional`, `maturity_date`, ...) not in
+`portfolio.ingest.schema.ALL_ALLOWED_COLS_SET`, and a `netting_set_id`
+credit-exposure linkage column whose NA handling in
+`portfolio.ingest.materialize._materialize_nullable_int_col` currently
+raises on real NaN despite the column being documented optional. Both are
+dropped from the ingest frame below -- neither is used by SPOT valuation.
 """
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from riskquant.config.proxy_config.compile import compile_proxy_topology_from_df
@@ -50,6 +73,7 @@ from riskquant.market_data.assemble import (
     build_market_data_matrix_from_snapshot,
     build_universe_mapping,
 )
+from riskquant.market_data.compile import assemble_valuation_state
 from riskquant.market_data.risk_factors.compile_snapshot import (
     compile_risk_factor_level_snapshot_from_levels_dict,
 )
@@ -59,6 +83,7 @@ from riskquant.portfolio.engine import (
 )
 from riskquant.portfolio.ingest.batch import IngestBatch
 from riskquant.portfolio.ingest.pipeline import compile_raw_df_into_ingest_batch
+from riskquant.portfolio.ingest.schema import ALL_ALLOWED_COLS_SET
 from riskquant.portfolio.instruments import InstrumentType
 from riskquant.portfolio.validation import validate_ingest_batches_against_uix_universe
 from riskquant.utils.printer import (
@@ -71,8 +96,10 @@ from riskquant.utils.printer import (
     print_subheader,
     print_success_message,
     print_text,
+    print_title,
 )
 from riskquant.valuation.engine import run_valuation
+from riskquant.valuation.result import ValuationResult
 
 # ============================================================
 # CANONICAL INPUTS
@@ -88,21 +115,26 @@ _RF_LEVELS_SNAPSHOT = CANONICAL_MARKET_DATA_SNAPSHOT_LEVELS_DICT
 # Single deterministic scenario — the canonical t0 snapshot.
 _NUM_SCENARIOS: int = 1
 
-# Instruments wired end-to-end through `build_universe_mapping` (P1):
-#   - SPOT / VANILLA_FORWARD_NODE: underlying is a scalar RF (a node id OR a
-#     curve/surface POINT rf-id) -> read directly from the universe-aligned
-#     `scalar_levels` matrix.
-#   - VANILLA_FORWARD_CURVE: underlying is a curve CONTAINER id -> the
-#     builder scatters the per-curve interpolated grid into the universe-
-#     aligned `price_curve_grid` (item C / A1, curve layer).
-# OPTION families need the vol-surface (C, M, K) layout (P2) and are excluded.
-_PRICEABLE_INSTRUMENTS: frozenset[str] = frozenset(
-    {
-        InstrumentType.SPOT.name,
-        InstrumentType.VANILLA_FORWARD_NODE.name,
-        InstrumentType.VANILLA_FORWARD_CURVE.name,
-    }
+# Only SPOT has a registered block compiler today
+# (`portfolio.compilers.registry.COMPILERS`); every other family in the
+# exhaustive fixture ships for ingest coverage only.
+_PRICEABLE_INSTRUMENTS: frozenset[str] = frozenset({InstrumentType.SPOT.name})
+
+# `node_meta.asset_class == "FX"` names, read directly from the canonical
+# static-config fixture (no compiled RiskStaticConfig needed for this). SPOT
+# trades on these underlyings are excluded -- see the module docstring.
+_FX_UNDERLYING_NAMES: frozenset[str] = frozenset(
+    _RISK_STATIC_CONFIG_DICT_OF_DFS["node_meta"]
+    .filter(_RISK_STATIC_CONFIG_DICT_OF_DFS["node_meta"]["asset_class"] == "FX")[
+        "node_name"
+    ]
+    .to_list()
 )
+
+# VANILLA_IRS-only ingest columns present in the exhaustive fixture but not
+# in `ALL_ALLOWED_COLS_SET`, plus the optional credit-exposure linkage
+# column whose NA handling currently raises — see the module docstring.
+_UNPRICED_COLUMNS_TO_DROP: frozenset[str] = frozenset({"netting_set_id"})
 
 
 # ============================================================
@@ -112,7 +144,12 @@ _PRICEABLE_INSTRUMENTS: frozenset[str] = frozenset(
 
 if __name__ == "__main__":
     print_calling_file()
-    print_header(title="DEMO: SPOT / NODE-FAMILY END-TO-END VALUATION (PVs)")
+    print_title("START OF DEMO - BASE VALUATION")
+    print_text(
+        "This demo showcases the end-to-end valuation process for SPOT "
+        "instruments using canonical base data."
+    )
+    print_header(title="DEMO: SPOT END-TO-END VALUATION (PVs)")
 
     # ---- INGEST (LOCAL BINDS OF CANONICAL DATA) --------------------------
 
@@ -122,23 +159,34 @@ if __name__ == "__main__":
     print_text(f"AS OF DATE: {as_of_date}")
 
     risk_static_config_dict_of_dfs = _RISK_STATIC_CONFIG_DICT_OF_DFS
+    # `print_dict_of_dfs`/`print_df` are pandas-only (`d: dict[str,
+    # pd.DataFrame]`); the canonical static-config tables are Polars
+    # (Constitution D006: config ingest is Polars, not pandas). Convert for
+    # display only -- nothing downstream of this print reads the pandas copy.
     print_dict_of_dfs(
-        risk_static_config_dict_of_dfs,
+        {k: v.to_pandas() for k, v in risk_static_config_dict_of_dfs.items()},
         title="CANONICAL RISK STATIC CONFIGURATION",
     )
 
     proxy_config_df = _PROXY_CONFIG_DF
     print_df(
-        proxy_config_df,
+        proxy_config_df.to_pandas(),
         title="CANONICAL RISK PROXY CONFIGURATION",
         float_format=">12_.0f",
     )
 
-    # Filter exhaustive trade-data down to the pricer-runnable subset.
+    # Filter exhaustive trade-data down to the pricer-runnable subset: SPOT
+    # only, excluding FX-underlying SPOT trades (see module docstring).
     full_trade_df = _PORTFOLIO_DATA_DF
     portfolio_trade_data_df = full_trade_df[
         full_trade_df["instrument"].isin(_PRICEABLE_INSTRUMENTS)
+        & ~full_trade_df["underlying"].isin(_FX_UNDERLYING_NAMES)
     ].reset_index(drop=True)
+    # Drop VANILLA_IRS-only / credit-exposure-only columns not needed for
+    # SPOT valuation (see module docstring); every remaining column stays.
+    portfolio_trade_data_df = portfolio_trade_data_df.loc[
+        :, portfolio_trade_data_df.columns.isin(ALL_ALLOWED_COLS_SET)
+    ].drop(columns=list(_UNPRICED_COLUMNS_TO_DROP), errors="ignore")
     print_df(
         full_trade_df,
         title=(
@@ -149,8 +197,10 @@ if __name__ == "__main__":
     n_dropped = len(full_trade_df) - len(portfolio_trade_data_df)
     print_text(
         f"Filtered to pricer-runnable subset: {len(portfolio_trade_data_df)} rows "
-        f"(dropped {n_dropped} option-family rows — vol-surface layout is P2; "
-        f"spot / forward-node / forward-curve run end-to-end)."
+        f"(dropped {n_dropped} rows — forward-node/forward-curve/option/IRS "
+        f"families have no registered block compiler yet, and FX-underlying "
+        f"SPOT trades hit an unsupported market-data path; see module "
+        f"docstring)."
     )
     print_df(
         portfolio_trade_data_df,
@@ -335,9 +385,24 @@ if __name__ == "__main__":
 
     print_header(title="SECTION: RUN VALUATION")
 
-    base_valuation_result = run_valuation(
-        portfolio=compiled_portfolio,
-        valuation_state=market_data_mtx,
+    # `run_valuation` takes the FOLDED `ValuationState` (`effective_spot_prices
+    # = spot * fx`), not the raw `MarketDataMatrix` -- `assemble_valuation_state`
+    # is the fold step. It also writes in place into a caller-preallocated
+    # `out` (zero-allocation hot path) and returns nothing; this demo wraps
+    # the result into a `ValuationResult` for display, matching
+    # `demo_e2e_sensi_based_var.py`'s `_fixtures._run_pricing`.
+    valuation_state = assemble_valuation_state(
+        matrix=market_data_mtx, uix_mapper=uix_mapper
+    )
+    out = np.empty(
+        (compiled_portfolio.total_trades, market_data_mtx.num_scenarios),
+        dtype=np.float64,
+    )
+    run_valuation(
+        portfolio=compiled_portfolio, valuation_state=valuation_state, out=out
+    )
+    base_valuation_result = ValuationResult(
+        trade_uids=compiled_portfolio.trade_uids, values=out
     )
 
     print_array(
@@ -352,5 +417,5 @@ if __name__ == "__main__":
     )
 
     # ---- END OF DEMO -----------------------------------------------------
-
+    print_title("END OF DEMO")
     print_success_message("Success! End-to-end demo complete.")
