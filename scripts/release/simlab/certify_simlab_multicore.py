@@ -86,10 +86,16 @@ BLAS_ENVS = [
 
 def effective_cpus() -> tuple[int, str]:
     """Effective CPUs for THIS process. Affinity wins over `cpu_count`."""
-    try:
-        return len(os.sched_getaffinity(0)), "sched_getaffinity"
-    except (AttributeError, OSError):
-        return (os.cpu_count() or 1), "cpu_count"
+    # Dynamically fetch the function, returning None if it doesn't exist
+    affinity_func = getattr(os, "sched_getaffinity", None)
+
+    if affinity_func:
+        try:
+            return len(affinity_func(0)), "sched_getaffinity"
+        except OSError:
+            pass
+
+    return (os.cpu_count() or 1), "cpu_count"
 
 
 # --------------------------------------------------------------------------

@@ -1664,3 +1664,208 @@ is release-certified for every claim except C. When the local run reports
 `MULTI-CORE DETERMINISM CERTIFIED`, SimLab is closed for the documented envelope;
 if it reports FAIL, stop at the first divergent object named by the certificate
 and document the mechanism before any patch.
+
+
+## D045 — Fresh independent valuation audit: NOT PROVEN
+
+**Status:** LOCKED AS AUDIT BASELINE
+**Date:** 2026-09-16
+**Full evidence:** `RISKQUANT_VALUATION_FRESH_INDEPENDENT_AUDIT.md`
+
+A fresh, independent audit of `riskquant.valuation` was performed against the
+current repository dump. `DECISIONS.md` and the prior seven-pass valuation audit
+were used only for orientation; material conclusions were re-established from
+current source, independent mathematical derivation, targeted probes, and
+executed evidence.
+
+**Verdict: NOT PROVEN.**
+
+This is **not** an assertion that the valuation mathematics is wrong. The
+mathematics independently checked in this pass is substantially correct. The
+package is not certifiable because one live critical production defect exists,
+the valuation test suite is substantially stale/non-executable, and most
+authored valuation functionality is not reachable through the sanctioned
+production construction path.
+
+### Confirmed live valuation defect
+
+**VAL-01 — CRITICAL — `_black76_fv_vega` domain guard absent.**
+
+`pricing_models/black76/model.py::_black76_fv_vega` documents a guard requiring
+vega to return `0.0` when `vol <= 0` or `sqrt_tte <= 0`, but the implementation
+contains no such guard.
+
+Measured behaviour:
+
+* `vol = IV_SOLVER_FAILED_SENTINEL (-1.0)` returns approximately `35.2065`
+  instead of `0.0`;
+* ATM `vol = 0` returns `NaN`;
+* OTM `vol = 0` happens to return `0.0` only accidentally through tail
+  saturation.
+
+The production implied-volatility calibration path contains a comment explicitly
+relying on this guard.
+
+This is a genuine valuation/model-primitive defect and is live.
+
+### Assurance failure
+
+**VAL-02 — CRITICAL — current valuation test suite is substantially dead.**
+
+Six of eight modules beneath `tests/valuation/` import modules/classes that do not
+exist in the current repository, including:
+
+* `riskquant.valuation.models.black_scholes`;
+* `pricers._deprecated.*`;
+* `VanillaForwardNodeBlock`;
+* `VanillaForwardCurveBlock`;
+* `VanillaEuropeanOptionNodeBlock`;
+* `VanillaEuropeanOptionCurveBlock`.
+
+`test_engine.py` also constructs the current `SpotBlock` using fields that no
+longer exist and calls `run_valuation` without its required `out=` argument.
+
+These are collection/API failures rather than failed mathematical assertions.
+
+The only live mathematical valuation test found is a small Spot-kernel smoke
+test and does not establish correctness of the broader valuation package.
+
+Therefore prior mathematical conclusions are audit evidence, not repository
+assurance.
+
+### Reachability state
+
+Only `SpotBlock` is currently wired through the sanctioned portfolio path.
+
+The current production compiler registry contains only the Spot compiler.
+`CompiledPortfolio` exposes slots for Spot, Forward, and European Option, while
+the three cashflow block types have no compiled portfolio slot. The valuation
+state currently populates only `effective_spot_prices`.
+
+Consequently:
+
+* Spot valuation is reachable;
+* Forward valuation is authored but unreachable;
+* European option valuation is authored but unreachable;
+* Fixed cashflow valuation is authored but unreachable;
+* Floating cashflow valuation is authored but unreachable;
+* Principal cashflow valuation is authored but unreachable.
+
+These are primarily buildout/reachability findings, not evidence that the
+underlying pricing formulas are incorrect.
+
+### Mathematics independently established
+
+The following were independently derived and/or numerically reconciled:
+
+* Spot valuation matches `Q × effective_spot_price` exactly;
+* the forward kernel is the correct two-leg formulation for the currently
+  implied physical, two-currency settlement model;
+* Black-76 `cp_mult` packing is mathematically correct for both calls and puts;
+* put-call parity holds to machine precision;
+* fixed, floating and principal cashflow algebra matches the declared equations;
+* effective discount-factor folding
+  `DF_ccy × FX_spot(ccy→settle)` is mathematically valid for the current
+  settlement-currency valuation representation;
+* valuation performs no FX inversion itself; inversion is resolved upstream;
+* canonical C/F layout handling does not exhibit the SimLab single-row/single-
+  column ambiguity defect.
+
+### Additional findings
+
+The fresh audit recorded:
+
+* **VAL-03 HIGH:** `run_valuation` does not validate the full `out.shape`;
+* **VAL-04 HIGH:** several `ValuationState` factor matrices default to empty
+  arrays and have no producer/validator, creating an unsafe latent state;
+* **VAL-05 HIGH:** `ValuationResult.get_trade_values` assumes sorted trade IDs
+  although `CompiledPortfolio` constructs them in block-concatenation order;
+* **VAL-06 MEDIUM/HIGH:** forward factor documentation describes a raw forward
+  price while the state supplies a discounted, FX-converted quantity;
+* **VAL-07 MEDIUM:** option documentation describes a nonexistent
+  `INVALID_UIX` branch;
+* **VAL-08 MEDIUM:** `VanillaEuropeanOptionBlock` lacks the keyword-only
+  construction contract used by sibling blocks;
+* **VAL-09 MEDIUM:** block/result equality and hashing semantics are not defined
+  and produce unsafe behaviour;
+* **VAL-10 MEDIUM:** the active Abramowitz–Stegun normal CDF has no documented
+  accuracy envelope; measured relative pricing error reaches approximately
+  `4.3e-4` for an ordinary deep-OTM put and several percent in very deep tails;
+* **VAL-11 MEDIUM:** forward and log-forward option factor universes have no
+  enforced pairing invariant;
+* **VAL-12 MEDIUM:** read-only kernel inputs use writable aliases despite
+  canonical `_RO` aliases existing in `riskquant.jit`;
+* **VAL-13 MEDIUM:** five of six authored block types lack current compilation
+  reachability;
+* **VAL-14/15/16 LOW:** stale or incomplete valuation field/convention
+  documentation;
+* **VAL-17 LOW:** `resolve_pricer` is dead relative to actual engine dispatch;
+* **VAL-18 LOW ACCEPTED-RISK:** denormal far-tail Black-76 values can become
+  slightly negative at machine-denormal magnitudes.
+
+### Currency finding
+
+The previously reported valuation/sensitivity inverse-FX difference is **not a
+valuation mathematical defect**.
+
+Valuation receives already-resolved effective FX rows and performs multiplication.
+Sensitivity requires the functional form of FX to compute derivatives and
+therefore has a different admissibility condition for inverse FX.
+
+The remaining issue is a boundary-contract/documentation gap, not a valuation
+formula error.
+
+### Canonical valuation theorem
+
+Under the explicitly stated input hypotheses:
+
+1. target factor matrices are populated and C-contiguous `float64`;
+2. every block UIX is valid for its target matrix;
+3. factor rows carry the economic quantities declared by the valuation state;
+4. option factors satisfy the required positivity and forward/log-forward pairing
+   invariants;
+5. output storage has the required shape and layout;
+
+the authored valuation kernels implement their declared mathematical equations,
+up to IEEE-754 arithmetic and the accepted Abramowitz–Stegun CDF approximation
+on the option path.
+
+The hypotheses are **not currently guaranteed by the repository**.
+
+### Architectural disposition
+
+No broad redesign is warranted.
+
+The numerical kernels remain consistent with the RiskQuant principle that
+kernels perform dumb mathematics and semantic contracts are established above
+them.
+
+The next phase is therefore controlled remediation and assurance, not a rewrite
+of the valuation architecture.
+
+### Certification gates
+
+Before `riskquant.valuation` can be release-certified:
+
+1. VAL-01 must be closed and regression-tested through the live calibration path.
+2. The current valuation test suite must be restored to executable, current APIs.
+3. An independent end-to-end valuation oracle must exist and use hostile,
+   identifying fixtures.
+4. Output-shape and trade-identity contracts must be explicit and enforced.
+5. Factor/UIX ownership must be established at the boundary that owns each
+   producer.
+6. Valuation documentation must match actual economic quantities and currency
+   conventions.
+7. The Black-76 CDF approximation must have an explicit accuracy contract and
+   recorded decision.
+8. Authored valuation blocks must either be deliberately documented as
+   buildout/unreachable or be wired through a complete, independently tested
+   production construction path.
+
+**Conclusion:**
+
+> `riskquant.valuation` is **NOT PROVEN** as a production-certified valuation
+> primitive in the current repository. The independently checked pricing
+> mathematics is largely sound; the immediate blockers are one live critical
+> defect, broken assurance coverage, and incomplete semantic/reachability
+> contracts.
