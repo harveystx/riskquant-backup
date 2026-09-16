@@ -1545,3 +1545,122 @@ identity 3.3 ms (3.8%); verification 1.6 ms; artifact 11.9 kB.
 **Verdict.** PRODUCTION READY WITH EXPLICIT ENVIRONMENT GATE. Open: multi-core
 determinism remains structurally argued and empirically unverified on this
 single-core host (D041) — a required prerequisite for a multi-core release.
+
+---
+
+## D043 — SimLab RELEASE-CERTIFIED (corrects D041's multi-core limitation)
+
+Final release-gate certification of `riskquant.simlab` and the official
+scenario-VaR path. Full evidence: `SIMLAB_FINAL_RELEASE_CERTIFICATION.md`.
+Test-only change; no production code was modified.
+
+**D041's multi-core limitation was WRONG and is corrected.** D041 recorded
+multi-core certification as "not performed" because `numba.config.NUMBA_NUM_THREADS
+== 1`. That value merely follows `cpu_count()` when the variable is unset. With
+`NUMBA_NUM_THREADS=8` on the same single-`nproc` host, Numba's OMP layer spawns
+real worker threads and **8 distinct `numba.get_thread_id()` values are observed
+INSIDE the parallel region** (`set_num_threads(4)` gives exactly 4). The gate was
+executable all along. D041's numerical conclusions are unaffected and stand.
+
+**Multi-thread determinism now EMPIRICALLY certified.** Through the official
+`run_scenario_var_es`, at threads {1,2,4,8} actually executing, across models
+{historical, sbb, filtered_bootstrap, filtered_historical, parametric} and
+batch sizes {1,3,7,64,S,S+1}: scenario stream, shocked levels, trade P&L, VaR, ES
+and run identity are all bitwise identical, compared in divergence order
+(sha256 over dtype|shape|bytes; `float.hex()` for scalars; no tolerance anywhere).
+Fresh processes agree. The one BLAS site (`parametric.py:402 np.matmul`) got its
+own gate under five BLAS/OMP thread configurations and did not move.
+
+**Structural backing.** Every `prange` reachable from the risk path partitions an
+independent axis; `taylor.py:159` takes thread-private scratch via
+`accumulator[nb.get_thread_id()]`; a search for any cross-thread reduction
+(shared accumulator, `.sum(axis=0)` over a thread axis, a loop over thread ids,
+atomics, critical sections) returns nothing. Arithmetic per output row is
+therefore fixed however rows are distributed.
+
+**Bypass audit.** Exactly two `src/` callers of `compute_var_es`:
+`risk_run/api.py` (the single public production scenario-VaR entry, identity
+enforced) and `credit/aggregate/loss_metrics.py` (separate credit subsystem).
+Exactly one function returns `RiskRun`. No unintended production bypass.
+
+**Verdict: RELEASE READY WITH DOCUMENTED ENVIRONMENT LIMITATIONS.** No P0, no P1.
+Remaining limitations are the out-of-scope set — cross-version bitwise
+reproducibility (gated by `verify_environment`), `seed=None` (refused by default),
+D037 co-seeded streams (deferred, no consumer), unsupported CPU architectures —
+plus one honest hardware qualifier: threads were time-sliced on a single physical
+CPU, so true multi-socket execution is uncertified. No code mechanism is sensitive
+to simultaneity, since no cross-thread reduction exists.
+
+**Evidence.** Release certification suite 47 passed; `tests/solutions/risk_run`
+76; `run_identity` + `production_run` 124; `tests/solutions` + `tests/simlab` 1180
+passed / 3 skipped; focused regression 861 passed / 1 skipped; E2E
+`ALL CHECKS PASSED`; lint clean; `simlab`, `sensitivity_pnl`, `scenario_metrics`
+and `reporting` BYTE-IDENTICAL to pristine. Performance flat across thread counts
+(28–29 ms, ~70 k scen/s at K=250/S=2000/M=200); verification <1 ms.
+
+**SIMLAB = RELEASE-CERTIFIED for the documented scope. SimLab work is closed.**
+
+---
+
+## D044 — Correction to D043 + portable multi-core release gate
+
+D043 overclaimed. This entry corrects it; D043 is not rewritten.
+
+**The overclaim.** D043 wrote "multi-core determinism now EMPIRICALLY certified"
+and "genuine multi-thread execution ... the multi-core gate ran and passed". The
+evidence supports the second half only. Three claims must never be collapsed:
+
+```
+A. NUMBA MULTI-THREAD EXECUTION VERIFIED  — >= 2 distinct get_thread_id() inside a real prange
+B. MULTI-CORE HARDWARE AVAILABLE          — the PROCESS has >= 2 CPUs
+C. MULTI-CORE DETERMINISM CERTIFIED       — A and B, plus every check passing
+```
+
+On the audit host `len(os.sched_getaffinity(0)) == 1` and `os.cpu_count() == 1`.
+Numba's OMP layer still created 8 workers, but they time-slice ONE CPU.
+Therefore: **A is PROVEN. B is FALSE. C is NOT PROVEN.** D041's claim that the
+parallel path could not be exercised was wrong (A corrects it); D043's claim of
+multi-core certification does not follow from A.
+
+**Corrected D043 conclusion.** D043 demonstrated genuine multi-threaded Numba
+execution and determinism across the tested worker configurations (1, 2, 4, 8),
+but did NOT establish determinism under genuinely concurrent multi-core hardware,
+because effective CPU availability was one. D043 is therefore NOT the final
+multi-core hardware release certificate. Its determinism observations stand as
+supporting evidence; its headline classification does not.
+
+**The portable gate.** `scripts/release/certify_simlab_multicore.py`, run as
+`python scripts/release/certify_simlab_multicore.py`. It uses only the official
+`run_scenario_var_es`, compares in divergence order (scenario stream -> shocked
+levels -> trade P&L -> portfolio P&L -> VaR -> ES -> manifest identity ->
+RiskRun identity), exactly (sha256 over dtype|shape|bytes; `float.hex()`; no
+tolerance), and emits a human-readable plus a JSON certificate. It reports
+PASS / FAIL / NOT EXECUTED and **cannot produce a false multi-core PASS**:
+hardware is measured by `sched_getaffinity` (not `cpu_count`), a requested
+worker count that is clamped is not counted as executed, and NOT EXECUTED is
+never upgraded. Exit codes 0/1/2.
+
+**Run on the audit host: NOT EXECUTED** (effective CPUs = 1), with
+"NUMBA MULTI-THREAD EXECUTION VERIFIED: True" recorded separately so the two
+claims cannot be confused. Certificate retained as
+`simlab_multicore_certificate.NOT_EXECUTED.json`.
+
+**PASS path validated, and it found a real defect.** A machinery dry-run with the
+hardware check forced exercised the whole PASS path and surfaced two failures:
+one fixture flaw (the "different book" substitution rebuilt an identical book —
+corrected in the gate), and one GENUINE production gap — `RiskRun` validated
+identity and array lengths but never checked `reporting_ccy` against
+`manifest.reporting.reporting_currency`, so a persisted artifact could state a
+currency its own identity contradicted. **Smallest correction applied**:
+`RiskRun.__post_init__` now rejects that mismatch (solution tier, no numerics).
+Regression after the fix: risk_run + run_identity 124 passed; tests/solutions +
+tests/simlab 1180 passed / 3 skipped; focused regression 861 passed / 1 skipped;
+E2E `ALL CHECKS PASSED`; lint clean; `simlab`, `sensitivity_pnl`,
+`scenario_metrics` and `reporting` BYTE-IDENTICAL to pristine.
+
+**Classification: RELEASE READY WITH DOCUMENTED ENVIRONMENT LIMITATIONS**, with
+the multi-core determinism gate explicitly **OPEN** and executable locally. SimLab
+is release-certified for every claim except C. When the local run reports
+`MULTI-CORE DETERMINISM CERTIFIED`, SimLab is closed for the documented envelope;
+if it reports FAIL, stop at the first divergent object named by the certificate
+and document the mechanism before any patch.

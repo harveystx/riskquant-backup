@@ -9,6 +9,7 @@ is called by a generator or a kernel, and nothing here is passed into one.
 
 from __future__ import annotations
 
+import importlib.metadata
 import platform
 from typing import Any
 
@@ -62,12 +63,28 @@ class InputMismatchError(RuntimeError):
     """
 
 
+# def engine_identity() -> EngineIdentity:
+#     """Numerical environment of the current process."""
+#     try:
+#         from riskquant import __version__ as rq_version
+#     except Exception:  # pragma: no cover - version module is optional
+#         rq_version = "unknown"
+#     return EngineIdentity(
+#         riskquant_version=str(rq_version),
+#         python_version=platform.python_version(),
+#         numpy_version=np.__version__,
+#         numba_version=numba.__version__,
+#     )
+
+
 def engine_identity() -> EngineIdentity:
     """Numerical environment of the current process."""
     try:
-        from riskquant import __version__ as rq_version
-    except Exception:  # pragma: no cover - version module is optional
+        # Fetches version from package metadata rather than the module namespace
+        rq_version = importlib.metadata.version("riskquant")
+    except importlib.metadata.PackageNotFoundError:  # pragma: no cover
         rq_version = "unknown"
+
     return EngineIdentity(
         riskquant_version=str(rq_version),
         python_version=platform.python_version(),

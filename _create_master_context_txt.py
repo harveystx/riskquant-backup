@@ -575,5 +575,5 @@ if __name__ == "__main__":
     main(profile="riskquant_dependence_stress")
     # main(profile="scenario_metrics")
     # main(profile="sensitivity_pnl")
-    # main(profile="solutions_sensitivity_pnl")
+    # main(profile="solutions_sensitivity_pnl") 
     # main(profile="github")

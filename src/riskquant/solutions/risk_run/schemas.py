@@ -97,6 +97,13 @@ class RiskRun:
     def __post_init__(self) -> None:
         if self.identity != self.manifest.identity():
             raise ValueError("identity does not match manifest.")
+        # A persisted artifact must not be able to state a currency its own
+        # identity contradicts: the manifest is the authority.
+        if self.reporting_ccy != self.manifest.reporting.reporting_currency:
+            raise ValueError(
+                f"reporting_ccy {self.reporting_ccy!r} contradicts the manifest "
+                f"({self.manifest.reporting.reporting_currency!r})."
+            )
         n = self.position_uids.shape[0] + 1
         if self.var.shape != (n,) or self.es.shape != (n,):
             raise ValueError("var/es must have one entry per position plus portfolio.")
