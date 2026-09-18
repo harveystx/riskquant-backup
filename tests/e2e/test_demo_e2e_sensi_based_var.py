@@ -98,7 +98,10 @@ def portfolio_and_mapper(
     ingest_batch = compile_raw_df_into_ingest_batch(
         raw_df=_FIXTURES._POSITIONS_DF, static_config=rsc
     )
-    mapper = build_uix_mapper([ingest_batch])
+    mapper = build_uix_mapper(
+        [ingest_batch],
+        as_of_ord32=int(_FIXTURES.date_to_ord32(_FIXTURES._SNAPSHOT_AS_OF_DATE)),
+    )
     portfolio = compile_portfolio_from_ingest_batch(
         ingest_batch=ingest_batch, uix_mapper=mapper
     )
@@ -248,7 +251,7 @@ def pricing_and_sensitivities(
     snapshot = _FIXTURES.build_risk_factor_level_snapshot_from_dict(
         as_of_date=_FIXTURES._SNAPSHOT_AS_OF_DATE,
         levels_dict=_FIXTURES._RISK_FACTOR_LEVELS,
-        name_to_id_map=rsc.rel_name_to_rf_id,
+        static_config=rsc,
     )
     market_data = _FIXTURES._run_market_data(
         rsc=rsc, uix_mapper=mapper, snapshot=snapshot

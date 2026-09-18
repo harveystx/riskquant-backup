@@ -34,7 +34,8 @@ def test_every_authored_block_type_has_a_pricer():
 
 def test_compiled_portfolio_exposes_exactly_three_block_slots():
     slots = {f.name for f in dataclasses.fields(CompiledPortfolio) if f.init} - {
-        "unique_dates_ord32"
+        "unique_dates_ord32",
+        "uix_fingerprint",  # universe identity metadata (AUD-02), not a block slot
     }
     assert slots == PORTFOLIO_SLOTS
 

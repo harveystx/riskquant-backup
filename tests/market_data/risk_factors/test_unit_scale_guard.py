@@ -1,10 +1,12 @@
 # tests/market_data/risk_factors/test_unit_scale_guard.py
 """Regression test: the snapshot compiler fails loud on an un-occupied unit-scale
 slot instead of silently propagating a sentinel/NaN (RQ-AUD-012)."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from types import SimpleNamespace
 
 import numpy as np
 import numpy.typing as npt
@@ -18,11 +20,15 @@ from riskquant.market_data.risk_factors.compile_snapshot import (
 
 @dataclass
 class _StubStaticConfig:
-    """Minimal duck-typed stand-in exposing only the two attributes the
-    snapshot compiler reads."""
+    """Minimal duck-typed stand-in exposing the attributes the snapshot
+    compiler reads: name resolution, unit scale, and (D070) the quote type of
+    each rf via its parent topology."""
 
     rel_name_to_rf_id: dict[str, int]
     rf_id_to_unit_scale_factor: npt.NDArray[np.float64]
+    rf_id_to_parent_topology_type: npt.NDArray[np.int8]
+    rf_id_to_parent_id: npt.NDArray[np.int32]
+    node_meta_dict: dict[int, object]
 
 
 def _stub(n_slots: int, occupied: dict[int, float]) -> _StubStaticConfig:
@@ -30,7 +36,13 @@ def _stub(n_slots: int, occupied: dict[int, float]) -> _StubStaticConfig:
     for rf_id, scale in occupied.items():
         arr[rf_id] = scale
     rel = {f"rf.{rf_id}": rf_id for rf_id in occupied}
-    return _StubStaticConfig(rel_name_to_rf_id=rel, rf_id_to_unit_scale_factor=arr)
+    return _StubStaticConfig(
+        rel_name_to_rf_id=rel,
+        rf_id_to_unit_scale_factor=arr,
+        rf_id_to_parent_topology_type=np.zeros(n_slots, dtype=np.int8),  # NODE
+        rf_id_to_parent_id=np.arange(n_slots, dtype=np.int32),
+        node_meta_dict={i: SimpleNamespace(quote_type="PRICE") for i in range(n_slots)},
+    )
 
 
 def test_occupied_slot_prices_correctly():

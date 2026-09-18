@@ -24,10 +24,13 @@ from riskquant.valuation.engine import run_valuation
 
 S = 3
 NO_DATES = np.array([], dtype=np.int32)
+# Hand-built blocks and state share one hand-built universe; they declare it with
+# the same identity token so `run_valuation`'s AUD-02 pairing check applies.
+_UNIVERSE = "hand-built:tests/valuation/test_engine.py"
 
 
 def _state(**kw) -> ValuationState:
-    return ValuationState(batch_size=S, **kw)
+    return ValuationState(batch_size=S, uix_fingerprint=_UNIVERSE, **kw)
 
 
 def _spot_block(uids, qty, uix) -> SpotBlock:
@@ -55,7 +58,9 @@ EFF_DF = np.ascontiguousarray([[0.95, 0.94, 0.96]])
 
 def test_single_spot_block():
     p = CompiledPortfolio(
-        unique_dates_ord32=NO_DATES, spot=_spot_block([9007, 41], [2.0, -3.0], [1, 0])
+        uix_fingerprint=_UNIVERSE,
+        unique_dates_ord32=NO_DATES,
+        spot=_spot_block([9007, 41], [2.0, -3.0], [1, 0]),
     )
     out = np.empty((p.total_trades, S))
     run_valuation(
@@ -67,6 +72,7 @@ def test_single_spot_block():
 
 def test_multiple_block_types_land_at_the_right_offsets():
     p = CompiledPortfolio(
+        uix_fingerprint=_UNIVERSE,
         unique_dates_ord32=NO_DATES,
         spot=_spot_block([9007], [2.0], [1]),
         vanilla_forward=_fwd_block([41, 5], [10.0, -1.0], [65.0, 55.0], [0, 0], [0, 0]),
@@ -90,6 +96,7 @@ def test_multiple_block_types_land_at_the_right_offsets():
 
 def test_trade_uids_are_concatenated_in_block_slot_order():
     p = CompiledPortfolio(
+        uix_fingerprint=_UNIVERSE,
         unique_dates_ord32=NO_DATES,
         spot=_spot_block([9007], [1.0], [0]),
         vanilla_forward=_fwd_block([41, 5], [1.0, 1.0], [1.0, 1.0], [0, 0], [0, 0]),
@@ -99,7 +106,7 @@ def test_trade_uids_are_concatenated_in_block_slot_order():
 
 
 def test_empty_portfolio_prices_nothing():
-    p = CompiledPortfolio(unique_dates_ord32=NO_DATES)
+    p = CompiledPortfolio(uix_fingerprint=_UNIVERSE, unique_dates_ord32=NO_DATES)
     assert p.total_trades == 0 and p.total_blocks == 0
     out = np.empty((0, S))
     run_valuation(portfolio=p, valuation_state=_state(), out=out)
@@ -122,7 +129,9 @@ def test_empty_portfolio_prices_nothing():
 )
 def test_mis_sized_output_is_rejected(shape):
     p = CompiledPortfolio(
-        unique_dates_ord32=NO_DATES, spot=_spot_block([9007, 41], [1.0, 1.0], [0, 0])
+        uix_fingerprint=_UNIVERSE,
+        unique_dates_ord32=NO_DATES,
+        spot=_spot_block([9007, 41], [1.0, 1.0], [0, 0]),
     )
     with pytest.raises(ValueError, match="out has shape"):
         run_valuation(
@@ -134,7 +143,9 @@ def test_mis_sized_output_is_rejected(shape):
 
 def test_non_contiguous_output_is_rejected():
     p = CompiledPortfolio(
-        unique_dates_ord32=NO_DATES, spot=_spot_block([9007, 41], [1.0, 1.0], [0, 0])
+        uix_fingerprint=_UNIVERSE,
+        unique_dates_ord32=NO_DATES,
+        spot=_spot_block([9007, 41], [1.0, 1.0], [0, 0]),
     )
     wide = np.empty((2, S + 2))
     with pytest.raises(ValueError):
@@ -147,7 +158,9 @@ def test_non_contiguous_output_is_rejected():
 
 def test_wrong_output_dtype_is_rejected():
     p = CompiledPortfolio(
-        unique_dates_ord32=NO_DATES, spot=_spot_block([9007], [1.0], [0])
+        uix_fingerprint=_UNIVERSE,
+        unique_dates_ord32=NO_DATES,
+        spot=_spot_block([9007], [1.0], [0]),
     )
     with pytest.raises(ValueError, match="float64"):
         run_valuation(

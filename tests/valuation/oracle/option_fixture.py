@@ -297,6 +297,7 @@ def build_market_matrix(uix_mapper) -> MarketDataMatrix:
 
     return MarketDataMatrix(
         num_scenarios=s,
+        uix_fingerprint=uix_mapper.fingerprint,
         fx_spots_effective=fx_eff,
         prices=prices,
         forward_nodes=prices,

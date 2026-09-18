@@ -33,20 +33,18 @@ from riskquant.market_data.risk_factors.builder_matrix import (
 from riskquant.simlab.scenarios.historical import HistoricalGenerator
 from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
 
-_DATES = pd.to_datetime(
-    [
-        "2026-12-01",
-        "2026-12-02",
-        "2026-12-03",
-        "2026-12-04",
-        "2026-12-07",
-        "2026-12-08",
-        "2026-12-09",
-        "2026-12-10",
-        "2026-12-11",
-        "2026-12-14",
-    ]
-)
+_DATES = pd.to_datetime([
+    "2026-12-01",
+    "2026-12-02",
+    "2026-12-03",
+    "2026-12-04",
+    "2026-12-07",
+    "2026-12-08",
+    "2026-12-09",
+    "2026-12-10",
+    "2026-12-11",
+    "2026-12-14",
+])
 _SOURCE_NAMES = ("USDEUR", "AAPL_EQ", "BRENT_CRUDE")
 _LEVELS = np.array(
     [
@@ -63,7 +61,18 @@ _LEVELS = np.array(
     ],
     dtype=np.float64,
 )
-_NAME_TO_ID = {"USDEUR": 0, "AAPL_EQ": 1, "BRENT_CRUDE": 2}
+# History frames are resolved and unit-normalised through the static config
+# (D069 / AUD-06); the conftest config places USDEUR, AAPL_EQ, BRENT_CRUDE at
+# rf_ids 0, 1, 2, all DECIMAL, so the ids and levels below are unchanged.
+_RSC = None
+
+
+@pytest.fixture(autouse=True)
+def _bind_static_config(rsc):
+    global _RSC
+    _RSC = rsc
+    assert [rsc.rel_name_to_rf_id[n] for n in _SOURCE_NAMES] == [0, 1, 2]
+
 
 # required = [USDEUR, AAPL, BRENT, WTI]; WTI sources BRENT (col 2) x 0.95.
 _SOURCE_FACTOR_IDS = np.array([0, 1, 2, 2], dtype=np.int32)
@@ -77,9 +86,7 @@ def _frame() -> pd.DataFrame:
 
 
 def _matrix(**kwargs):
-    return build_risk_factor_matrix_from_df(
-        df=_frame(), name_to_id_map=_NAME_TO_ID, **kwargs
-    )
+    return build_risk_factor_matrix_from_df(df=_frame(), static_config=_RSC, **kwargs)
 
 
 def _shocked_levels(batch_size: int) -> np.ndarray:
@@ -142,14 +149,75 @@ def test_float32_matrix_is_rejected_by_the_kernel_contract() -> None:
         HistoricalGenerator(matrix=matrix, horizon=1)
 
 
-def test_canonical_history_fixture_drives_the_generator() -> None:
-    """The shipped canonical fixture must also satisfy the kernel contract."""
+# -----------------------------------------------------------------------------
+# Canonical history fixture through the real D076 boundary (AUD06-F1)
+# -----------------------------------------------------------------------------
+
+# Independent unit table for the oracle below (config `unit_scale` strings).
+_UNIT_TO_BASE = {"DECIMAL": 1.0, "PERCENT": 0.01, "BP": 1e-4}
+_SURFACE_Y_AXIS_KINDS = ("STRIKE", "DELTA_CALL", "LOG_MONEYNESS_FWD")
+
+
+@pytest.fixture(scope="module")
+def canonical_static_config():
+    from riskquant.config.static_config.compile import (
+        compile_risk_static_config_from_dict_of_dfs,
+    )
+    from riskquant.ingest_fixtures.config.risk_static_config.canonical_risk_static_config import (
+        CANONICAL_RISK_STATIC_CONFIG_DICT_OF_DFS,
+    )
+
+    return compile_risk_static_config_from_dict_of_dfs(
+        CANONICAL_RISK_STATIC_CONFIG_DICT_OF_DFS
+    )
+
+
+@pytest.fixture(scope="module")
+def canonical_history_df() -> pd.DataFrame:
     from riskquant.ingest_fixtures.market_data.canonical_market_data_history import (
-        CANONICAL_HISTORICAL_MARKET_DATA_DF as DF,
+        CANONICAL_HISTORICAL_MARKET_DATA_DF,
+    )
+
+    return CANONICAL_HISTORICAL_MARKET_DATA_DF
+
+
+def _configured_factor_oracle(cfg) -> dict[str, tuple[int, float, str | None]]:
+    """
+    Identity oracle built from the metadata OBJECTS, not from the fixture and
+    not from `rel_name_to_rf_id`: canonical relative name -> (intended rf_id,
+    unit scale, surface y_axis_kind or None). Surface names carry the bare
+    `y_label`; the y-axis kind is metadata, never part of the name.
+    """
+    oracle: dict[str, tuple[int, float, str | None]] = {}
+    for node in cfg.node_meta_dict.values():
+        scale = _UNIT_TO_BASE[node.unit_scale]
+        oracle[node.node_name] = (int(node.node_id), scale, None)
+    for pt in cfg.curve_point_meta_dict.values():
+        cm = cfg.curve_meta_dict[pt.curve_id]
+        name = f"{cm.curve_name}{pt.tenor_token}"
+        oracle[name] = (int(pt.rf_id), _UNIT_TO_BASE[cm.unit_scale], None)
+    for pt in cfg.surface_point_meta_dict.values():
+        sm = cfg.surface_meta_dict[pt.surface_id]
+        name = f"{sm.surface_name}{pt.x_tenor_token}[{pt.y_label}]"
+        oracle[name] = (int(pt.rf_id), _UNIT_TO_BASE[sm.unit_scale], sm.y_axis_kind)
+    return oracle
+
+
+def test_canonical_history_fixture_drives_the_generator(
+    canonical_static_config, canonical_history_df
+) -> None:
+    """The FULL canonical fixture passes the real D076 builder and the kernel."""
+    from riskquant.ingest_fixtures.constants import CANONICAL_HISTORY_BUSINESS_DAYS
+    from riskquant.ingest_fixtures.market_data.canonical_market_data_history import (
+        CANONICAL_HISTORICAL_FACTOR_COUNT,
     )
 
     matrix = build_risk_factor_matrix_from_df(
-        df=DF, name_to_id_map={c: i for i, c in enumerate(DF.columns)}
+        df=canonical_history_df, static_config=canonical_static_config
+    )
+    assert matrix.values.shape == (
+        CANONICAL_HISTORY_BUSINESS_DAYS,
+        CANONICAL_HISTORICAL_FACTOR_COUNT,
     )
     assert matrix.values.dtype == np.float64
 
@@ -164,6 +232,100 @@ def test_canonical_history_fixture_drives_the_generator() -> None:
         )
     )
     assert batches
+
+
+def test_canonical_history_columns_are_exactly_the_configured_relative_names(
+    canonical_static_config, canonical_history_df
+) -> None:
+    columns = [str(c) for c in canonical_history_df.columns]
+    oracle = _configured_factor_oracle(canonical_static_config)
+
+    assert len(columns) == len(set(columns))  # no duplicate names
+    name_table = canonical_static_config.rel_name_to_rf_id
+    unresolved = [c for c in columns if c not in name_table]
+    assert unresolved == []  # the core AUD06-F1 regression assertion
+    assert set(columns) == set(oracle)  # exactly the configured universe
+    assert len(oracle) == len(name_table)
+    for name in columns:
+        assert name_table[name] == oracle[name][0], name
+
+
+def test_canonical_history_maps_every_column_to_its_intended_rf_id_once_scaled(
+    canonical_static_config, canonical_history_df
+) -> None:
+    """
+    Identity by VALUE, not position: the matrix column holding each intended
+    rf_id equals that name's own source column times its unit scale, applied
+    exactly once. A permutation, alias or double scaling fails here.
+
+    The fixture's column order coincides with ascending rf_id, so a positional
+    id assignment would look correct on it; the check therefore also runs on a
+    seeded column permutation, where only name resolution can pass.
+    """
+    oracle = _configured_factor_oracle(canonical_static_config)
+    expected_ids = sorted(rf_id for rf_id, _, _ in oracle.values())
+    order = np.random.default_rng(7).permutation(canonical_history_df.shape[1])
+
+    for frame in (canonical_history_df, canonical_history_df.iloc[:, order]):
+        matrix = build_risk_factor_matrix_from_df(
+            df=frame, static_config=canonical_static_config
+        )
+        assert matrix.factor_ids.tolist() == expected_ids
+        assert len(set(matrix.factor_ids.tolist())) == len(expected_ids)
+
+        column_of = {int(rf): j for j, rf in enumerate(matrix.factor_ids.tolist())}
+        non_unit_scales = 0
+        for name, (rf_id, scale, _) in oracle.items():
+            source = frame[name].to_numpy(dtype=np.float64)
+            np.testing.assert_array_equal(
+                matrix.values[:, column_of[rf_id]], source * scale
+            )
+            non_unit_scales += scale != 1.0
+        assert non_unit_scales > 0  # the once-only check is not vacuous
+
+
+def test_canonical_history_identity_is_independent_of_column_order(
+    canonical_static_config, canonical_history_df
+) -> None:
+    rng = np.random.default_rng(20260917)
+    order = rng.permutation(canonical_history_df.shape[1])
+    shuffled = canonical_history_df.iloc[:, order]
+    assert list(shuffled.columns) != list(canonical_history_df.columns)
+
+    base = build_risk_factor_matrix_from_df(
+        df=canonical_history_df, static_config=canonical_static_config
+    )
+    moved = build_risk_factor_matrix_from_df(
+        df=shuffled, static_config=canonical_static_config
+    )
+    np.testing.assert_array_equal(moved.factor_ids, base.factor_ids)
+    np.testing.assert_array_equal(moved.values, base.values)
+
+
+def test_canonical_history_surface_names_use_the_bare_y_label(
+    canonical_static_config, canonical_history_df
+) -> None:
+    columns = set(map(str, canonical_history_df.columns))
+    oracle = _configured_factor_oracle(canonical_static_config)
+    surfaces = canonical_static_config.surface_meta_dict.values()
+    kinds = {sm.y_axis_kind for sm in surfaces}
+    assert kinds == set(_SURFACE_Y_AXIS_KINDS)  # all three naming families covered
+
+    for pt in canonical_static_config.surface_point_meta_dict.values():
+        sm = canonical_static_config.surface_meta_dict[pt.surface_id]
+        canonical = f"{sm.surface_name}{pt.x_tenor_token}[{pt.y_label}]"
+        obsolete = f"{sm.surface_name}{pt.x_tenor_token}[{sm.y_axis_kind}={pt.y_label}]"
+        assert canonical in columns and oracle[canonical][2] == sm.y_axis_kind
+        assert obsolete not in columns
+    assert not [c for c in columns for k in kinds if f"[{k}=" in c]
+
+    for canonical, obsolete in (
+        ("BRENT_CRUDE_VOL_SURF[M+0][50.00]", "BRENT_CRUDE_VOL_SURF[M+0][STRIKE=50.00]"),
+        ("USDEUR_VOL_SURF[1W][0.10]", "USDEUR_VOL_SURF[1W][DELTA_CALL=0.10]"),
+        ("AAPL_VOL_SURF[1M][-0.20]", "AAPL_VOL_SURF[1M][LOG_MONEYNESS_FWD=-0.20]"),
+    ):
+        assert canonical in columns
+        assert obsolete not in columns
 
 
 # =============================================================================

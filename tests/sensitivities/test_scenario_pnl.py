@@ -62,6 +62,7 @@ from riskquant.solutions.sensitivity_pnl.api import (
     SensitivityPnlCalculator,
 )
 from riskquant.solutions.sensitivity_pnl.errors import SensitivityPnlInputError
+from riskquant.utils.dates import date_to_ord32
 
 # Source factors that carry market data. WTI is deliberately absent so the
 # proxy path is forced rather than incidental.
@@ -99,14 +100,14 @@ def snapshot(rsc, as_of_date, golden_levels):
     return build_risk_factor_level_snapshot_from_dict(
         as_of_date=as_of_date,
         levels_dict=golden_levels,
-        name_to_id_map=rsc.rel_name_to_rf_id,
+        static_config=rsc,
     )
 
 
 @pytest.fixture(scope="module")
-def portfolio_and_mapper(rsc, raw_positions):
+def portfolio_and_mapper(rsc, raw_positions, as_of_date):
     batch = compile_raw_df_into_ingest_batch(raw_df=raw_positions, static_config=rsc)
-    mapper = build_uix_mapper([batch])
+    mapper = build_uix_mapper([batch], as_of_ord32=int(date_to_ord32(as_of_date)))
     return compile_portfolio_from_ingest_batch(
         ingest_batch=batch, uix_mapper=mapper
     ), mapper

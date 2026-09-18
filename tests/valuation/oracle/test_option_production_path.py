@@ -117,7 +117,7 @@ def test_forward_and_log_forward_uix_are_the_same_coordinate():
     """One universe, two materialisations: the compiler stamps one integer."""
     portfolio, _, _ = _compile()
     o = portfolio.vanilla_european_option
-    assert o is not None, "Vanilla European option node must not be None"
+    assert o is not None, "Vanilla European option must not be None"
     np.testing.assert_array_equal(
         o.forward_price_strike_ccy_uix,
         o.option_log_forward_price_strike_ccy_uix,
@@ -152,7 +152,7 @@ def test_strike_ccy_forward_matches_independent_covered_interest_parity():
 def _forward_row_for(uid: int) -> int:
     portfolio, _, _ = _compile()
     o = portfolio.vanilla_european_option
-    assert o is not None, "Vanilla European option node must not be None"
+    assert o is not None, "Vanilla European option must not be None"
     idx = o.trade_uids.tolist().index(uid)
     return int(o.forward_price_strike_ccy_uix[idx])
 
@@ -192,7 +192,7 @@ def test_deferred_settlement_binds_the_settlement_discount_row():
     """
     portfolio, _, mapper = _compile()
     o = portfolio.vanilla_european_option
-    assert o is not None, "Vanilla European option node must not be None"
+    assert o is not None, "Vanilla European option must not be None"
     i = o.trade_uids.tolist().index(120003)
     edf_row = int(o.effective_discount_factor_uix[i])
     fk_row = int(o.forward_price_strike_ccy_uix[i])
@@ -273,21 +273,21 @@ def test_settlement_before_expiry_is_rejected():
 def test_log_strike_is_the_log_of_strike():
     portfolio, _, _ = _compile()
     o = portfolio.vanilla_european_option
-    assert o is not None, "Vanilla European option node must not be None"
+    assert o is not None, "Vanilla European option must not be None"
     np.testing.assert_allclose(o.log_strike, np.log(o.strike), rtol=0.0, atol=0.0)
 
 
 def test_half_tte_is_half_the_square_of_sqrt_tte():
     portfolio, _, _ = _compile()
     o = portfolio.vanilla_european_option
-    assert o is not None, "Vanilla European option node must not be None"
+    assert o is not None, "Vanilla European option must not be None"
     np.testing.assert_allclose(o.half_tte, 0.5 * o.sqrt_tte**2, rtol=1e-15)
 
 
 def test_tte_matches_the_independent_act_365_25_convention():
     portfolio, _, _ = _compile()
     o = portfolio.vanilla_european_option
-    assert o is not None, "Vanilla European option node must not be None"
+    assert o is not None, "Vanilla European option must not be None"
     book = {t.trade_uid: t for t in of.economic_book()}
     for i, uid in enumerate(o.trade_uids.tolist()):
         np.testing.assert_allclose(o.sqrt_tte[i] ** 2, book[uid].tte_years, rtol=1e-14)
@@ -296,7 +296,7 @@ def test_tte_matches_the_independent_act_365_25_convention():
 def test_cp_mult_reaches_the_block_as_int8():
     portfolio, _, _ = _compile()
     o = portfolio.vanilla_european_option
-    assert o is not None, "Vanilla European option node must not be None"
+    assert o is not None, "Vanilla European option must not be None"
     assert o.cp_mult.dtype == np.int8
 
 
@@ -364,7 +364,7 @@ def test_log_forward_uix_pointed_at_another_forward_is_detected():
     """
     portfolio, state, _ = _compile()
     o = portfolio.vanilla_european_option
-    assert o is not None, "Vanilla European option node must not be None"
+    assert o is not None, "Vanilla European option must not be None"
     wrong = np.ascontiguousarray(
         (o.option_log_forward_price_strike_ccy_uix + 1)
         % state.forward_prices_strike_ccy.shape[0],
@@ -390,7 +390,7 @@ def test_vol_uix_pointed_at_another_volatility_is_detected():
     """`vol_uix` must be tied to the option's own forward, not "some vol row"."""
     portfolio, state, _ = _compile()
     o = portfolio.vanilla_european_option
-    assert o is not None, "Vanilla European option node must not be None"
+    assert o is not None, "Vanilla European option must not be None"
     wrong = np.ascontiguousarray((o.vol_uix + 1) % state.vols.shape[0], dtype=np.int32)
     assert not np.array_equal(wrong, o.vol_uix)
 
@@ -414,7 +414,7 @@ def test_expiry_discount_row_substituted_for_settlement_is_detected():
     """
     portfolio, state, mapper = _compile()
     o = portfolio.vanilla_european_option
-    assert o is not None, "Vanilla European option node must not be None"
+    assert o is not None, "Vanilla European option must not be None"
     i = o.trade_uids.tolist().index(120003)
     fk_row = int(o.forward_price_strike_ccy_uix[i])
     expiry_edf_row = int(mapper.fk_effective_pairs[fk_row, 1])
@@ -443,7 +443,7 @@ def test_expiry_discount_row_substituted_for_settlement_is_detected():
 def test_option_block_row_permutation_is_detected():
     portfolio, state, _ = _compile()
     o = portfolio.vanilla_european_option
-    assert o is not None, "Vanilla European option node must not be None"
+    assert o is not None, "Vanilla European option must not be None"
     idx = np.array([2, 0, 1])
     permuted = dataclasses.replace(
         portfolio,

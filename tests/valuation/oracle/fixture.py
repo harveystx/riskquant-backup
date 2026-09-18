@@ -49,6 +49,9 @@ from riskquant.valuation.blocks.vanilla_forward_block import VanillaForwardBlock
 
 SETTLE_CCY = "EUR"
 N_SCENARIOS = 3
+# Hand-built blocks and state share one hand-built universe (no UixMapper exists
+# in this Phase-3 fixture); both declare it with the same identity token.
+UNIVERSE_TOKEN = "hand-built:tests/valuation/oracle/fixture.py"
 
 # --- factor identities -------------------------------------------------------
 # Sparse and non-ascending. The ROW ORDER below is deliberately NOT the sorted
@@ -211,6 +214,7 @@ def compile_state(m: EconomicMarket) -> ValuationState:
 
     return ValuationState(
         batch_size=m.n_scenarios,
+        uix_fingerprint=UNIVERSE_TOKEN,
         effective_spot_prices=eff_spot,
         effective_discount_factors=eff_df,
         effective_forward_prices=eff_fwd,
@@ -262,6 +266,7 @@ def compile_book() -> CompiledPortfolio:
         ),
     )
     return CompiledPortfolio(
+        uix_fingerprint=UNIVERSE_TOKEN,
         unique_dates_ord32=np.array([], dtype=np.int32),
         spot=spot,
         vanilla_forward=fwd,

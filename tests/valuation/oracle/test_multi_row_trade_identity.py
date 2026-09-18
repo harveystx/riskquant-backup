@@ -101,7 +101,11 @@ def _tol(index: int) -> float:
 def test_one_trade_produces_rows_in_two_different_blocks():
     portfolio, _ = _compile()
     assert portfolio.trade_uids.tolist() == UIDS
+    assert portfolio.vanilla_forward is not None, "Vanilla forward must not be None"
     assert portfolio.vanilla_forward.trade_uids.tolist() == [MULTI_ROW_UID]
+    assert portfolio.vanilla_european_option is not None, (
+        "Vanilla European option must not be None"
+    )
     assert MULTI_ROW_UID in portfolio.vanilla_european_option.trade_uids.tolist()
     # The two rows for uid 9007 straddle a block-offset boundary.
     positions = [i for i, u in enumerate(UIDS) if u == MULTI_ROW_UID]
@@ -220,6 +224,7 @@ def test_wrong_trade_grouping_is_detected():
 def test_block_row_permutation_breaks_the_uid_binding():
     portfolio, state = _compile()
     o = portfolio.vanilla_european_option
+    assert o is not None, "Vanilla European option must not be None"
     idx = np.array([2, 0, 1])
     permuted = dataclasses.replace(
         portfolio,

@@ -275,6 +275,7 @@ def test_block_row_permutation_is_detected():
     """Permuting the compiled block's rows must break the uid <-> PV binding."""
     portfolio, state = _compile()
     f = portfolio.vanilla_forward
+    assert f is not None, "Vanilla forward must not be None"
     idx = np.array([2, 0, 1])
     permuted = dataclasses.replace(
         portfolio,

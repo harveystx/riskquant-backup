@@ -30,6 +30,7 @@ from riskquant.market_data.calibrate.option_quotes.master import (
     CalibratedOptionQuotes,
     CanonicalOptionQuotes,
 )
+from riskquant.valuation.pricing_models.black76.model import _black76_fv_call
 
 _LOWER_VOL = 1e-8
 _UPPER_VOL = 10.0
@@ -45,6 +46,37 @@ def _b76_undisc(fwd, strike, tte, vol):
     d1 = (np.log(fwd / strike) + 0.5 * vol * vol * tte) / vst
     d2 = d1 - vst
     return fwd * norm.cdf(d1) - strike * norm.cdf(d2)
+
+
+def _b76_undisc_prod(fwd, strike, tte, vol):
+    """Production Black-76 undiscounted call price, vectorised for tests."""
+    fwd = np.asarray(fwd, float)
+    strike = np.asarray(strike, float)
+    tte = np.asarray(tte, float)
+    vol = np.asarray(vol, float)
+
+    fwd, strike, tte, vol = np.broadcast_arrays(fwd, strike, tte, vol)
+
+    out = np.empty(fwd.shape, dtype=float)
+
+    for i, (f, k, t, v) in enumerate(
+        zip(
+            fwd.ravel(),
+            strike.ravel(),
+            tte.ravel(),
+            vol.ravel(),
+            strict=True,
+        )
+    ):
+        out.ravel()[i] = _black76_fv_call(
+            float(f),
+            float(k),
+            math.sqrt(float(t)),
+            0.5 * float(t),
+            float(v),
+        )
+
+    return out
 
 
 def _vega_ref(fwd, strike, tte, vol):
@@ -67,7 +99,14 @@ def _vega_ref(fwd, strike, tte, vol):
 
 def _scipy_iv(fwd, strike, tte, target):
     f = lambda v: float(_b76_undisc(fwd, strike, tte, v)) - target
-    return brentq(f, _LOWER_VOL, _UPPER_VOL, xtol=1e-12, rtol=1e-12, maxiter=200)
+    return brentq(
+        f,
+        _LOWER_VOL,
+        _UPPER_VOL,
+        xtol=1e-12,
+        rtol=1e-12,
+        maxiter=200,
+    )
 
 
 def _vega_over_fwd(fwd, strike, tte, vol):
@@ -102,40 +141,57 @@ def _build_grid():
 
 # --------------------------------------------------------------------------- tests
 def test_grid_reprices():
-    """Every solved IV must reprice to its target (price round-trip)."""
+    """Every solved IV must reprice to its production-model target."""
     rows = _build_grid()
     F = np.array([r[0] for r in rows])
     K = np.array([r[1] for r in rows])
     T = np.array([r[2] for r in rows])
-    tgt = np.array([r[3] for r in rows])
+    true_vol = np.array([r[4] for r in rows])
+
+    # Generate the target with the same production Black-76 primitive that
+    # the implied-volatility kernel inverts.
+    tgt = _b76_undisc_prod(F, K, T, true_vol)
 
     iv, vega = _calibrate_black76_iv_arrays(F, K, T, tgt)
     assert np.all(iv >= 0.0), "no quote in this grid should fail to invert"
 
-    reprice = _b76_undisc(F, K, T, iv)
-    rel = np.abs(reprice - tgt) / np.maximum(tgt, 1.0)
-    # solver vol tolerance is 1e-8; the implied price residual stays << 1e-5
-    assert rel.max() < 1e-5, f"max rel reprice error {rel.max():.3e}"
+    reprice = _b76_undisc_prod(F, K, T, iv)
+    abs_error = np.abs(reprice - tgt)
+
+    # The solver is controlled in volatility space. Translate the 1e-8
+    # volatility tolerance into the corresponding first-order price tolerance
+    # via vega, while retaining a small numerical price floor.
+    allowed = 1e-9 * np.maximum(tgt, 1.0) + vega * 1e-8
+
+    assert np.all(abs_error <= allowed), (
+        f"max price error {abs_error.max():.3e}; max allowed {allowed.max():.3e}"
+    )
 
     assert not np.isnan(vega).any()
     assert np.all(vega >= 0.0)
 
 
 def test_scipy_vol_parity_well_conditioned():
-    """Where vega is healthy, the kernel IV matches SciPy brentq to ~1e-6."""
+    """Where vega is healthy, the production IV stays within the D046 model-error envelope."""
     worst = 0.0
     n = 0
     for F, K, T, target, sig in _build_grid():
         if _vega_over_fwd(F, K, T, sig) <= 1e-2:
             continue
         iv, _ = _calibrate_black76_iv_arrays(
-            np.array([F]), np.array([K]), np.array([T]), np.array([target])
+            np.array([F]),
+            np.array([K]),
+            np.array([T]),
+            np.array([target]),
         )
         ref = _scipy_iv(F, K, T, target)
         worst = max(worst, abs(float(iv[0]) - ref))
         n += 1
+
     assert n > 0
-    assert worst < 1e-6, f"max |kernel - scipy| vol = {worst:.3e}"
+
+    # D046 A&S-vs-exact-normal model-error envelope.
+    assert worst < 1e-5, f"max |kernel - scipy| vol = {worst:.3e}"
 
 
 def test_vega_matches_reference():
@@ -156,7 +212,7 @@ def test_rotation_regression():
     """
     Guard for the NR-zbrent rotation bug: OTM / short-dated quotes that the
     pre-fix solver resolved to the lower bracket bound (non-repricing). These
-    must now invert and reprice.
+    must now invert and reprice through the production Black-76 model.
     """
     cases = [
         (4000.0, 6400.0, 1.0, 0.80),  # deep OTM, 1y
@@ -165,15 +221,47 @@ def test_rotation_regression():
         (1.0, 1.6, 0.25, 0.20),  # OTM small notional
         (100.0, 110.0, 1.0 / 365.0, 0.80),  # OTM, 1 day, resolvable time value
     ]
+
     for F, K, T, sig in cases:
-        target = float(_b76_undisc(F, K, T, sig))
-        iv, _ = _calibrate_black76_iv_arrays(
-            np.array([F]), np.array([K]), np.array([T]), np.array([target])
+        target = float(
+            _black76_fv_call(
+                F,
+                K,
+                math.sqrt(T),
+                0.5 * T,
+                sig,
+            )
         )
+
+        iv, _ = _calibrate_black76_iv_arrays(
+            np.array([F]),
+            np.array([K]),
+            np.array([T]),
+            np.array([target]),
+        )
+
         v = float(iv[0])
+
         assert v > _LOWER_VOL, f"regressed to bracket bound: {F, K, T, sig} -> {v}"
-        reprice = float(_b76_undisc(F, K, T, v))
-        assert abs(reprice - target) / max(target, 1.0) < 1e-5
+
+        reprice = float(
+            _black76_fv_call(
+                F,
+                K,
+                math.sqrt(T),
+                0.5 * T,
+                v,
+            )
+        )
+
+        reprice_vega = float(_vega_ref(F, K, T, v))
+        abs_error = abs(reprice - target)
+        allowed = 1e-9 * max(target, 1.0) + reprice_vega * 1e-8
+
+        assert abs_error <= allowed, (
+            f"price residual {abs_error:.3e} > allowed {allowed:.3e}: "
+            f"{F, K, T, sig} -> {v}"
+        )
 
 
 def test_failure_regimes():
@@ -186,13 +274,16 @@ def test_failure_regimes():
     tgt = np.array([F[0] + 1.0, 5.0, 10.0])
     iv, vega = _calibrate_black76_iv_arrays(F, K, T, tgt)
 
-    assert iv[0] == IV_SOLVER_FAILED_SENTINEL
-    assert iv[1] == IV_SOLVER_FAILED_SENTINEL
-    assert iv[2] == 0.0  # at-intrinsic is a SUCCESS, not a failure
+    assert iv[0] == IV_SOLVER_FAILED_SENTINEL, "iv[0] != IV_SOLVER_FAILED_SENTINEL"
+    assert iv[1] == IV_SOLVER_FAILED_SENTINEL, "iv[1] != IV_SOLVER_FAILED_SENTINEL"
+    assert iv[2] == 0.0, "iv[2] != 0.0"  # at-intrinsic is a SUCCESS, not a failure
     assert not np.isnan(iv).any(), "failures must use the sentinel, never NaN"
 
     # vega is 0 for failed AND for at-intrinsic zero-vol solves
-    assert np.all(vega == 0.0)
+    assert vega[0] == 0.0, "vega[0] must be 0.0 for failed inversion"
+    assert vega[1] == 0.0, "vega[1] must be 0.0 for failed inversion"
+    assert vega[2] == 0.0, "vega[2] must be 0.0 for at-intrinsic zero-vol"
+    assert not np.isnan(vega).any(), "vega contains NaN values"
 
 
 def test_master_contract():
@@ -216,6 +307,7 @@ def test_master_contract():
     assert out.n_solved + out.n_failed == out.n_quotes
     assert out.n_failed >= 2
     assert not np.isnan(out.iv).any()
+
     # iv-sign contract
     assert np.array_equal(out.success_mask, out.iv >= 0.0)
     assert np.all(out.iv[~out.success_mask] == IV_SOLVER_FAILED_SENTINEL)
@@ -243,7 +335,10 @@ def test_reliable_mask_gates_flat_vega():
     T = np.array([good[2], flat[2]])
     undisc = np.array([float(_b76_undisc(*good)), float(_b76_undisc(*flat))])
     quotes = CanonicalOptionQuotes(
-        fwd_price=F, strike=K, tte=T, undiscounted_call_price=undisc
+        fwd_price=F,
+        strike=K,
+        tte=T,
+        undiscounted_call_price=undisc,
     )
     out = calibrate_black76_iv_from_undiscounted_call_prices(quotes)
     rel = out.reliable_mask()
@@ -251,8 +346,10 @@ def test_reliable_mask_gates_flat_vega():
     assert rel.dtype == np.bool_
     assert np.all(rel <= out.success_mask)  # reliable implies solved
     assert rel[0], "ATM healthy-vega quote should be reliable"
+
     # flat-vega quote: either failed or vega below the floor -> not reliable
     assert not rel[1], "flat-vega quote should not be reliable"
+
     # default floor is the centralized constant
     assert MIN_RELIABLE_VEGA_OVER_FWD > 0.0
 
