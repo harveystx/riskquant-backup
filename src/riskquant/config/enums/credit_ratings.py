@@ -1,10 +1,10 @@
 # src/riskquant/config/enums/credit_ratings.py
 
 
-from enum import Enum
+from enum import StrEnum
 
 
-class GenericCreditRating(str, Enum):
+class GenericCreditRating(StrEnum):
     AAA = "AAA"
     AA = "AA"
     A = "A"

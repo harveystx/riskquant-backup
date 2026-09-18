@@ -55,6 +55,7 @@ import numpy as np
 import numpy.typing as npt
 
 from riskquant._arrays import searchsorted_or_raise
+from riskquant.config.enums.discounting_modes import DiscountingMode
 from riskquant.config.namespace import GlobalIdNamespace
 from riskquant.config.static_config.static_config import RiskStaticConfig
 from riskquant.market_data.builder import build_market_data_matrix
@@ -429,7 +430,7 @@ def extract_levels_from_snapshot(
         raw=required_ids,
         ctx="risk factors required by the compiled portfolio but missing "
         "from the snapshot",
-    )
+    )   
     return np.ascontiguousarray(snapshot.factor_levels[idx]).astype(
         np.float64, copy=False
     )
@@ -447,6 +448,7 @@ def build_market_data_matrix_from_flat_levels(
     universe_map: UniverseMapping,
     flat_levels: npt.NDArray[np.float64],
     num_scenarios: int,
+    discounting_mode: DiscountingMode,
 ) -> MarketDataMatrix:
     """
     Build a `MarketDataMatrix` from a flat `(N_req, S)` levels matrix.
@@ -479,6 +481,7 @@ def build_market_data_matrix_from_flat_levels(
 
     return build_market_data_matrix(
         as_of_date=as_of_date,
+        discounting_mode=discounting_mode,
         uix_mapper=uix_mapper,
         num_scenarios=num_scenarios,
         raw_fx_spots=raw_fx_spots,
@@ -508,6 +511,7 @@ def build_market_data_matrix_from_snapshot(
     uix_mapper: UixMapper,
     universe_map: UniverseMapping,
     snapshot: RiskFactorLevelSnapshot,
+    discounting_mode: DiscountingMode,
     num_scenarios: int = 1,
 ) -> MarketDataMatrix:
     """
@@ -538,4 +542,5 @@ def build_market_data_matrix_from_snapshot(
         universe_map=universe_map,
         flat_levels=flat_levels,
         num_scenarios=num_scenarios,
+        discounting_mode=discounting_mode,
     )

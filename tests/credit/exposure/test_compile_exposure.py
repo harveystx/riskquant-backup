@@ -1,438 +1,362 @@
 # tests/credit/exposure/test_compile_exposure.py
 """
-Test suite for `compile_exposure` and its integration with `run_exposure`.
+Unit tests for the exposure compiler, written against the CURRENT contract.
 
-Layout tests exercise the uid-join and CSR banding directly (no kernel).
-Integration tests synthesize an MtM matrix in `CompiledPortfolio.trade_uids`
-row order and drive the full RC path: compile_exposure -> run_exposure.
+These tests replace a suite that had been uncollectable since the compiler was
+decoupled from `CompiledPortfolio`/`IngestBatch`: it imported
+`_join_netting_set_ids` and `_resolve_collateral`, neither of which exists, and
+called `compile_exposure_rc(portfolio=..., batch=...)` rather than the flat-array
+signature. The compiler therefore had zero effective coverage (audit P2-01).
 
-The minimal fixture deliberately scrambles `portfolio.trade_uids` relative to
-`batch.uids` so the uid-join is proven order-independent — a positional carry
-would silently pass the sorted case and fail here.
+Production is the source of truth: nothing deleted has been restored. Coverage
+intent from the old suite is preserved — input validation, CSR construction, uid
+ordering, missing-netting-set detection, collateral projection — and extended to
+the CEM and SA-CCR compile paths, which were never covered at all.
+
+Expected values are hand-derived. The fixture deliberately scrambles trade order
+relative to netting-set id so a positional carry cannot pass where a uid join is
+required.
 """
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import numpy as np
 import pytest
 
-from riskquant.constants import NO_NETTING_SET_ID
+from riskquant.constants import NO_ID
+from riskquant.credit.exposure.add_on.compiled import CompiledAddOnFactors
 from riskquant.credit.exposure.compile import (
-    _join_netting_set_ids,
-    _resolve_collateral,
+    _build_csr,
+    _project_netting_set_attributes,
+    _validate_inputs,
+    _validate_master,
+    _validate_no_missing_netting_sets,
+    compile_exposure_cem,
     compile_exposure_rc,
+    compile_exposure_saccr,
 )
-from riskquant.credit.exposure.compiled import CompiledExposure
-from riskquant.credit.exposure.engine import run_exposure
-from riskquant.credit.exposure.models import REPLACEMENT_COST_ID
-from riskquant.credit.exposure.results import NettingSetExposurePaths
-from riskquant.credit.exposure.views.replacement_cost import RcNettingSetView
-from riskquant.portfolio.compiled import CompiledPortfolio
-from riskquant.portfolio.ingest.batch import IngestBatch
-from riskquant.valuation.blocks.spot_block import SpotBlock
+from riskquant.credit.exposure.saccr.config import CompiledSaccrConfig
+from riskquant.credit.masters.netting_set.compiled import CompiledNettingSetMaster
 
-_SENTINEL = int(NO_NETTING_SET_ID)
+# ==========================================================================
+# Fixture book
+# ==========================================================================
+# Trades are deliberately NOT grouped by netting set in input order.
+#   row 0 -> ns 30 | row 1 -> ns 10 | row 2 -> ns 30 | row 3 -> ns 20
+TRADE_UIDS = np.array([101, 102, 103, 104], dtype=np.int64)
+TRADE_NS = np.array([30, 10, 30, 20], dtype=np.int64)
 
-# Batch uid axis is sorted; portfolio uid axis is scrambled. Any uid-join bug
-# that reads by position rather than by key fails the fixture-backed tests.
-_BATCH_UIDS = [1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008]
-_PORTFOLIO_UIDS = [1006, 1008, 1001, 1004, 1003, 1002, 1007, 1005]
-
-# Ground-truth netting-set linkage. 1007/1008 carry no linkage.
-_NS_OF_UID: dict[int, int | None] = {
-    1001: 101,
-    1002: 101,
-    1003: 101,
-    1004: 102,
-    1005: 102,
-    1006: 103,
-    1007: None,
-    1008: None,
-}
-
-# Per-uid MtM used by the integration tests.
-_MTM_OF_UID: dict[int, float] = {
-    1001: 100.0,
-    1002: 50.0,
-    1003: 30.0,
-    1004: 20.0,
-    1005: -90.0,
-    1006: 500.0,
-    1007: 7.0,
-    1008: 8.0,
-}
+MASTER_UID = np.array([10, 20, 30], dtype=np.int64)
+MASTER_OBLIGOR = np.array([900, 910, 920], dtype=np.int64)
+MASTER_COLLATERAL = np.array([11.0, 22.0, 33.0])
 
 
-# ==============================================================================
-# BUILDERS
-# ==============================================================================
+def _master(**overrides) -> CompiledNettingSetMaster:
+    kwargs = {
+        "uid": MASTER_UID,
+        "obligor_uid": MASTER_OBLIGOR,
+        "net_collateral": MASTER_COLLATERAL,
+    }
+    kwargs.update(overrides)
+    return CompiledNettingSetMaster(**kwargs)
 
 
-def _make_batch(*, uids, netting_set_id) -> IngestBatch:
-    """Minimal valid `IngestBatch` carrying only uids + netting-set linkage."""
-    uids = np.ascontiguousarray(uids, dtype=np.int64)
-    netting_set_id = np.ascontiguousarray(netting_set_id, dtype=np.int64)
-    n = uids.shape[0]
-
-    i32 = lambda: np.zeros(n, dtype=np.int32)  # noqa: E731
-    f64 = lambda: np.zeros(n, dtype=np.float64)  # noqa: E731
-
-    return IngestBatch(
-        size=n,
-        instrument_ids=i32(),
-        uids=uids,
-        qty=f64(),
-        strike_price=f64(),
-        cp_mult=np.zeros(n, dtype=np.int8),
-        settle_ord=i32(),
-        delivery_ord=i32(),
-        expiry_ord=i32(),
-        unique_dates_ord=np.empty(0, dtype=np.int32),
-        settle_date_uix=i32(),
-        delivery_date_uix=i32(),
-        expiry_date_uix=i32(),
-        fx_under_to_settle_ids=i32(),
-        fx_under_to_settle_invert=i32(),
-        fx_strike_to_settle_ids=i32(),
-        fx_strike_to_settle_invert=i32(),
-        price_rf_ids=i32(),
-        price_curve_ids=i32(),
-        vol_rf_ids=i32(),
-        vol_surface_rf_ids=i32(),
-        under_discount_curve_ids=i32(),
-        strike_discount_curve_ids=i32(),
-        vol_surface_y_axis_type_ids=np.zeros(n, dtype=np.int8),
-        ead=f64(),
-        pd=f64(),
-        lgd=f64(),
-        beta=f64(),
-        systemic_uix=i32(),
-        idiosyncratic_uix=i32(),
-        chi_squared_uix=i32(),
-        netting_set_id=netting_set_id,
+def _add_on_factors() -> CompiledAddOnFactors:
+    return CompiledAddOnFactors(
+        subclass_uix=np.array([0, 1], dtype=np.int32),
+        factor=np.array([0.18, 0.40]),
     )
 
 
-def _make_portfolio(*, trade_uids) -> CompiledPortfolio:
-    """Minimal `CompiledPortfolio`: one `SpotBlock` in the given uid order."""
-    trade_uids = np.ascontiguousarray(trade_uids, dtype=np.int64)
-    n = trade_uids.shape[0]
-    block = SpotBlock(
-        trade_uids=trade_uids,
-        qty=np.zeros(n, dtype=np.float64),
-        spot_price_uix=np.zeros(n, dtype=np.int32),
-        fx_uix=np.zeros(n, dtype=np.int32),
-        fx_invert=np.zeros(n, dtype=np.bool_),
-    )
-    return CompiledPortfolio(spot=block)
-
-
-def _ns_array(uids) -> np.ndarray:
-    """Ground-truth netting-set id array aligned to `uids` (None -> sentinel)."""
-    return np.array(
-        [
-            _NS_OF_UID[int(u)] if _NS_OF_UID[int(u)] is not None else _SENTINEL
-            for u in uids
-        ],
-        dtype=np.int64,
+def _saccr_config() -> CompiledSaccrConfig:
+    return CompiledSaccrConfig(
+        subclass_uix=np.array([0, 1], dtype=np.int32),
+        subclass_hedging_set=np.array([0, 0], dtype=np.int32),
+        hedging_set_uix=np.array([0], dtype=np.int32),
+        hedging_set_rho=np.array([0.5]),
+        alpha=1.4,
+        multiplier_floor=0.05,
     )
 
 
-def _make_mtm(portfolio, *, n_scenarios, scale_by_scenario=False) -> np.ndarray:
-    """(M, S) MtM aligned to `portfolio.trade_uids`; row value = `_MTM_OF_UID`."""
-    base = np.array(
-        [_MTM_OF_UID[int(u)] for u in portfolio.trade_uids], dtype=np.float64
-    )
-    mtm = np.empty((base.shape[0], n_scenarios), dtype=np.float64)
-    for s in range(n_scenarios):
-        mtm[:, s] = base * (s + 1) if scale_by_scenario else base
-    return np.ascontiguousarray(mtm)
+# ==========================================================================
+# INPUT VALIDATION
+# ==========================================================================
+class TestValidateInputs:
+    def test_accepts_aligned_int64_arrays(self) -> None:
+        _validate_inputs(TRADE_UIDS, TRADE_NS)  # must not raise
+
+    def test_rejects_non_int64_trade_uids(self) -> None:
+        with pytest.raises(TypeError, match="trade_uids must be int64"):
+            _validate_inputs(TRADE_UIDS.astype(np.int32), TRADE_NS)
+
+    def test_rejects_non_int64_netting_set_id(self) -> None:
+        with pytest.raises(TypeError, match="trade_netting_set_id must be int64"):
+            _validate_inputs(TRADE_UIDS, TRADE_NS.astype(np.int32))
+
+    def test_rejects_non_1d(self) -> None:
+        with pytest.raises(ValueError, match="1D"):
+            _validate_inputs(TRADE_UIDS.reshape(2, 2), TRADE_NS.reshape(2, 2))
+
+    def test_rejects_misaligned_lengths(self) -> None:
+        with pytest.raises(ValueError, match="must align"):
+            _validate_inputs(TRADE_UIDS, TRADE_NS[:2])
 
 
-def _band_netting_sets(view, portfolio) -> list[set[int | None]]:
-    """Per band, the ground-truth netting-set ids of its member trades."""
-    banded = portfolio.trade_uids[view.mtm_row_perm]
-    off = view.netting_set_offsets
-    return [
-        {_NS_OF_UID[int(u)] for u in banded[off[b] : off[b + 1]]}
-        for b in range(view.num_netting_sets)
-    ]
+class TestValidateMaster:
+    def test_accepts_sorted_unique_master(self) -> None:
+        _validate_master(_master())
 
+    def test_rejects_non_int64_uid(self) -> None:
+        with pytest.raises(TypeError, match="uid must be int64"):
+            _validate_master(
+                _master(
+                    uid=MASTER_UID.astype(np.int32),
+                    obligor_uid=MASTER_OBLIGOR,
+                )
+            )
 
-@pytest.fixture
-def minimal_case() -> SimpleNamespace:
-    """Scrambled 8-trade portfolio: 3 netting sets + 2 unlinked trades."""
-    return SimpleNamespace(
-        portfolio=_make_portfolio(trade_uids=_PORTFOLIO_UIDS),
-        batch=_make_batch(uids=_BATCH_UIDS, netting_set_id=_ns_array(_BATCH_UIDS)),
-    )
+    def test_rejects_non_float64_collateral(self) -> None:
+        with pytest.raises(TypeError, match="net_collateral must be float64"):
+            _validate_master(
+                _master(net_collateral=MASTER_COLLATERAL.astype(np.float32))
+            )
 
-
-# ==============================================================================
-# UID JOIN
-# ==============================================================================
-
-
-class TestJoinNettingSetIds:
-    def test_join_follows_uid_not_position(self, minimal_case):
-        ns = _join_netting_set_ids(minimal_case.portfolio, minimal_case.batch)
-        expected = _ns_array(_PORTFOLIO_UIDS)  # aligned to portfolio order
-        np.testing.assert_array_equal(ns, expected)
-
-    def test_raises_when_portfolio_uid_absent_from_batch(self):
-        batch = _make_batch(uids=[1, 2, 3], netting_set_id=[10, 10, 20])
-        portfolio = _make_portfolio(trade_uids=[1, 2, 9999])
-        with pytest.raises(ValueError, match="absent from the ingest batch"):
-            compile_exposure_rc(portfolio=portfolio, batch=batch)
-
-
-# ==============================================================================
-# COLLATERAL RESOLUTION
-# ==============================================================================
-
-
-class TestResolveCollateral:
-    def test_none_yields_zeros(self):
-        out = _resolve_collateral(np.array([101, 102, 103], dtype=np.int64), None)
-        np.testing.assert_array_equal(out, np.zeros(3))
-        assert out.dtype == np.float64
-
-    def test_empty_mapping_yields_zeros(self):
-        out = _resolve_collateral(np.array([101, 102], dtype=np.int64), {})
-        np.testing.assert_array_equal(out, np.zeros(2))
-
-    def test_partial_mapping_zero_fills_missing(self):
-        out = _resolve_collateral(np.array([101, 102, 103], dtype=np.int64), {102: 5.0})
-        np.testing.assert_array_equal(out, [0.0, 5.0, 0.0])
-
-    def test_band_order_independent_of_dict_order(self):
-        out = _resolve_collateral(
-            np.array([101, 102, 103], dtype=np.int64), {103: 9.0, 101: 1.0}
-        )
-        np.testing.assert_array_equal(out, [1.0, 0.0, 9.0])
-
-    def test_unknown_keys_ignored(self):
-        out = _resolve_collateral(np.array([101], dtype=np.int64), {101: 1.0, 999: 9.0})
-        np.testing.assert_array_equal(out, [1.0])
-
-    def test_negative_collateral_raises(self):
-        with pytest.raises(ValueError, match="negative collateral"):
-            _resolve_collateral(np.array([101], dtype=np.int64), {101: -1.0})
-
-
-# ==============================================================================
-# COMPILE: CSR BAND LAYOUT
-# ==============================================================================
-
-
-class TestCompileExposureLayout:
-    def test_returns_single_rc_view(self, minimal_case):
-        exposure = compile_exposure_rc(
-            portfolio=minimal_case.portfolio, batch=minimal_case.batch
-        )
-        assert isinstance(exposure, CompiledExposure)
-        assert exposure.total_views == 1
-        view = exposure.views[0]
-        assert isinstance(view, RcNettingSetView)
-        assert view.EXPOSURE_MODEL_ID == REPLACEMENT_COST_ID
-
-    def test_netting_set_uids_and_offsets(self, minimal_case):
-        view = compile_exposure_rc(
-            portfolio=minimal_case.portfolio, batch=minimal_case.batch
-        ).views[0]
-        np.testing.assert_array_equal(view.netting_set_uids, [101, 102, 103])
-        np.testing.assert_array_equal(view.netting_set_offsets, [0, 3, 5, 6])
-        assert view.num_netting_sets == 3
-        assert view.num_trades == 6
-
-    def test_mtm_row_perm_exact_permutation(self, minimal_case):
-        view = compile_exposure_rc(
-            portfolio=minimal_case.portfolio, batch=minimal_case.batch
-        ).views[0]
-        # Deterministic given the fixture: stable group-by on the joined ids.
-        np.testing.assert_array_equal(view.mtm_row_perm, [2, 4, 5, 3, 7, 0])
-
-    def test_perm_selects_only_linked_trades(self, minimal_case):
-        view = compile_exposure_rc(
-            portfolio=minimal_case.portfolio, batch=minimal_case.batch
-        ).views[0]
-        banded = {int(u) for u in minimal_case.portfolio.trade_uids[view.mtm_row_perm]}
-        assert banded == {1001, 1002, 1003, 1004, 1005, 1006}
-        assert 1007 not in banded and 1008 not in banded
-
-    def test_bands_group_correct_netting_sets(self, minimal_case):
-        view = compile_exposure_rc(
-            portfolio=minimal_case.portfolio, batch=minimal_case.batch
-        ).views[0]
-        assert _band_netting_sets(view, minimal_case.portfolio) == [
-            {101},
-            {102},
-            {103},
-        ]
-
-    def test_within_band_order_is_stable(self, minimal_case):
-        view = compile_exposure_rc(
-            portfolio=minimal_case.portfolio, batch=minimal_case.batch
-        ).views[0]
-        off = view.netting_set_offsets
-        for b in range(view.num_netting_sets):
-            band = view.mtm_row_perm[off[b] : off[b + 1]]
-            assert np.all(np.diff(band) > 0), "band rows must stay in portfolio order"
-
-    def test_view_array_dtypes_and_contiguity(self, minimal_case):
-        view = compile_exposure_rc(
-            portfolio=minimal_case.portfolio, batch=minimal_case.batch
-        ).views[0]
-        assert view.mtm_row_perm.dtype == np.int32
-        assert view.netting_set_offsets.dtype == np.int32
-        assert view.netting_set_uids.dtype == np.int64
-        assert view.collateral.dtype == np.float64
-        for arr in (
-            view.mtm_row_perm,
-            view.netting_set_offsets,
-            view.netting_set_uids,
-            view.collateral,
+    def test_rejects_unsorted_or_duplicate_uid(self) -> None:
+        for uid in (
+            np.array([30, 10, 20], dtype=np.int64),
+            np.array([10, 10, 20], dtype=np.int64),
         ):
-            assert arr.flags.c_contiguous
-
-    def test_collateral_resolved_into_band_order(self, minimal_case):
-        view = compile_exposure_rc(
-            portfolio=minimal_case.portfolio,
-            batch=minimal_case.batch,
-            collateral={103: 1_000_000.0, 101: 250.0},
-        ).views[0]
-        np.testing.assert_array_equal(view.collateral, [250.0, 0.0, 1_000_000.0])
-
-    def test_collateral_none_yields_zero_band(self, minimal_case):
-        view = compile_exposure_rc(
-            portfolio=minimal_case.portfolio, batch=minimal_case.batch
-        ).views[0]
-        np.testing.assert_array_equal(view.collateral, np.zeros(3))
-
-    def test_compiled_exposure_aggregate(self, minimal_case):
-        exposure = compile_exposure_rc(
-            portfolio=minimal_case.portfolio, batch=minimal_case.batch
-        )
-        np.testing.assert_array_equal(exposure.netting_set_uids, [101, 102, 103])
-        np.testing.assert_array_equal(exposure.view_offsets, [0])
-        assert exposure.total_netting_sets == 3
+            with pytest.raises(ValueError, match="strictly ascending and unique"):
+                _validate_master(_master(uid=uid))
 
 
-# ==============================================================================
-# COMPILE: ERROR PATHS
-# ==============================================================================
+class TestMissingNettingSetDetection:
+    def test_accepts_fully_assigned_trades(self) -> None:
+        _validate_no_missing_netting_sets(TRADE_NS)
 
+    def test_rejects_the_unassigned_sentinel(self) -> None:
+        ns = np.array([30, int(NO_ID), 20], dtype=np.int64)
+        with pytest.raises(ValueError, match="netting set"):
+            _validate_no_missing_netting_sets(ns)
 
-class TestCompileExposureErrors:
-    def test_raises_when_no_trade_carries_a_netting_set(self):
-        batch = _make_batch(uids=[1, 2], netting_set_id=[_SENTINEL, _SENTINEL])
-        portfolio = _make_portfolio(trade_uids=[1, 2])
-        with pytest.raises(ValueError, match="no priced trade carries"):
-            compile_exposure_rc(portfolio=portfolio, batch=batch)
-
-    def test_negative_collateral_rejected(self, minimal_case):
-        with pytest.raises(ValueError, match="negative collateral"):
+    def test_compile_rejects_unassigned_before_any_join(self) -> None:
+        ns = np.array([30, int(NO_ID), 30, 20], dtype=np.int64)
+        with pytest.raises(ValueError, match="netting set"):
             compile_exposure_rc(
-                portfolio=minimal_case.portfolio,
-                batch=minimal_case.batch,
-                collateral={101: -1.0},
+                trade_uids=TRADE_UIDS,
+                trade_netting_set_id=ns,
+                netting_set_master=_master(),
             )
 
 
-# ==============================================================================
-# INTEGRATION: compile_exposure -> run_exposure
-# ==============================================================================
+# ==========================================================================
+# CSR CONSTRUCTION
+# ==========================================================================
+class TestBuildCsr:
+    def test_groups_by_netting_set_with_sorted_uids(self) -> None:
+        uids, offsets, perm = _build_csr(TRADE_NS)
+        assert uids.tolist() == [10, 20, 30]  # ascending, deduplicated
+        assert offsets.tolist() == [0, 1, 2, 4]  # 1 + 1 + 2 trades
+        assert perm.tolist() == [1, 3, 0, 2]  # rows regrouped, order stable
+        assert uids.dtype == offsets.dtype == perm.dtype == np.int64
+
+    def test_offsets_partition_the_rows_exactly(self) -> None:
+        _, offsets, perm = _build_csr(TRADE_NS)
+        assert offsets[0] == 0
+        assert offsets[-1] == TRADE_NS.size
+        assert sorted(perm.tolist()) == list(range(TRADE_NS.size))
+        assert np.all(np.diff(offsets) > 0)
+
+    def test_ordering_within_a_netting_set_is_stable(self) -> None:
+        ns = np.array([7, 7, 7, 7], dtype=np.int64)
+        uids, offsets, perm = _build_csr(ns)
+        assert uids.tolist() == [7]
+        assert offsets.tolist() == [0, 4]
+        assert perm.tolist() == [0, 1, 2, 3]  # input order preserved
+
+    def test_single_trade(self) -> None:
+        uids, offsets, perm = _build_csr(np.array([5], dtype=np.int64))
+        assert (uids.tolist(), offsets.tolist(), perm.tolist()) == ([5], [0, 1], [0])
 
 
-class TestRunExposureIntegration:
-    def test_result_shape_and_join_key(self, minimal_case):
-        exposure = compile_exposure_rc(
-            portfolio=minimal_case.portfolio, batch=minimal_case.batch
+# ==========================================================================
+# COLLATERAL PROJECTION
+# ==========================================================================
+class TestProjectNettingSetAttributes:
+    def test_projects_by_uid_not_by_position(self) -> None:
+        """Ask for the master rows out of order: the answer must follow the uid."""
+        got = _project_netting_set_attributes(
+            np.array([30, 10], dtype=np.int64), _master()
         )
-        mtm = _make_mtm(minimal_case.portfolio, n_scenarios=4)
-        result = run_exposure(exposure=exposure, mtm=mtm)
+        assert got.tolist() == [33.0, 11.0]  # NOT [11.0, 22.0]
+        assert got.dtype == np.float64 and got.flags.c_contiguous
 
-        assert isinstance(result, NettingSetExposurePaths)
-        np.testing.assert_array_equal(result.uid, [101, 102, 103])
-        assert result.exposure.shape == (3, 4)
-        assert result.exposure.dtype == np.float64
-        assert result.exposure.flags.c_contiguous
+    def test_unknown_netting_set_uid_fails_fast(self) -> None:
+        with pytest.raises(ValueError, match="netting_set_uids"):
+            _project_netting_set_attributes(
+                np.array([10, 99], dtype=np.int64), _master()
+            )
 
-    def test_rc_floor_collateral_and_negative_netting(self, minimal_case):
-        # V: 101 -> 180, 102 -> -70, 103 -> 500.  C: 101=80, 103 over-collateralized.
-        exposure = compile_exposure_rc(
-            portfolio=minimal_case.portfolio,
-            batch=minimal_case.batch,
-            collateral={101: 80.0, 102: 0.0, 103: 1_000_000.0},
+    def test_subset_projection_is_exact(self) -> None:
+        got = _project_netting_set_attributes(np.array([20], dtype=np.int64), _master())
+        assert got.tolist() == [22.0]
+
+
+# ==========================================================================
+# RC COMPILE PATH
+# ==========================================================================
+class TestCompileExposureRc:
+    def test_view_structure_and_projection(self) -> None:
+        compiled = compile_exposure_rc(
+            trade_uids=TRADE_UIDS,
+            trade_netting_set_id=TRADE_NS,
+            netting_set_master=_master(),
         )
-        mtm = _make_mtm(minimal_case.portfolio, n_scenarios=2)
-        ead = run_exposure(exposure=exposure, mtm=mtm).exposure
+        view = compiled.replacement_cost
+        assert compiled.current_exposure_method is None
+        assert compiled.saccr is None
+        assert view.netting_set_uids.tolist() == [10, 20, 30]
+        assert view.netting_set_offsets.tolist() == [0, 1, 2, 4]
+        assert view.mtm_row_perm.tolist() == [1, 3, 0, 2]
+        # collateral follows the netting-set uid, not the master row order
+        assert view.collateral.tolist() == [11.0, 22.0, 33.0]
 
-        np.testing.assert_allclose(ead[0], [100.0, 100.0])  # 101: max(180-80,0)
-        np.testing.assert_allclose(ead[1], [0.0, 0.0])  # 102: net short -> 0
-        np.testing.assert_allclose(ead[2], [0.0, 0.0])  # 103: over-collateralized
-
-    def test_rc_without_collateral_is_max_v_zero(self, minimal_case):
-        exposure = compile_exposure_rc(
-            portfolio=minimal_case.portfolio, batch=minimal_case.batch
+    def test_master_row_order_does_not_leak_into_the_view(self) -> None:
+        """Only netting set 30 is traded: the view must carry ITS collateral."""
+        compiled = compile_exposure_rc(
+            trade_uids=np.array([101, 103], dtype=np.int64),
+            trade_netting_set_id=np.array([30, 30], dtype=np.int64),
+            netting_set_master=_master(),
         )
-        mtm = _make_mtm(minimal_case.portfolio, n_scenarios=1)
-        ead = run_exposure(exposure=exposure, mtm=mtm).exposure
+        assert compiled.replacement_cost.collateral.tolist() == [33.0]
 
-        np.testing.assert_allclose(ead[:, 0], [180.0, 0.0, 500.0])
-
-    def test_rc_floor_crosses_within_scenarios(self, minimal_case):
-        # 101 V_s = 180*(s+1) = 180, 360, 540;  C = 400 -> RC = 0, 0, 140.
-        exposure = compile_exposure_rc(
-            portfolio=minimal_case.portfolio,
-            batch=minimal_case.batch,
-            collateral={101: 400.0},
-        )
-        mtm = _make_mtm(minimal_case.portfolio, n_scenarios=3, scale_by_scenario=True)
-        ead = run_exposure(exposure=exposure, mtm=mtm).exposure
-
-        np.testing.assert_allclose(ead[0], [0.0, 0.0, 140.0])
-
-    def test_rc_floor_is_strict_at_v_equals_c(self, minimal_case):
-        # 103 single-trade set, V = 500. C = 500 -> RC = 0; C = 499 -> RC = 1.
-        mtm = _make_mtm(minimal_case.portfolio, n_scenarios=1)
-
-        ead_eq = run_exposure(
-            exposure=compile_exposure_rc(
-                portfolio=minimal_case.portfolio,
-                batch=minimal_case.batch,
-                collateral={103: 500.0},
-            ),
-            mtm=mtm,
-        ).exposure
-        assert ead_eq[2, 0] == 0.0
-
-        ead_below = run_exposure(
-            exposure=compile_exposure_rc(
-                portfolio=minimal_case.portfolio,
-                batch=minimal_case.batch,
-                collateral={103: 499.0},
-            ),
-            mtm=mtm,
-        ).exposure
-        np.testing.assert_allclose(ead_below[2, 0], 1.0)
-
-    def test_ead_per_scenario_independent(self, minimal_case):
-        # Scenario-scaled V proves the kernel sums per-scenario, not per-set-total.
-        exposure = compile_exposure_rc(
-            portfolio=minimal_case.portfolio,
-            batch=minimal_case.batch,
-            collateral={101: 80.0},
-        )
-        mtm = _make_mtm(minimal_case.portfolio, n_scenarios=3, scale_by_scenario=True)
-        ead = run_exposure(exposure=exposure, mtm=mtm).exposure
-
-        np.testing.assert_allclose(ead[0], [100.0, 280.0, 460.0])  # 180*(s+1)-80
+    def test_unknown_netting_set_fails_fast(self) -> None:
+        with pytest.raises(ValueError, match="netting_set_uids"):
+            compile_exposure_rc(
+                trade_uids=TRADE_UIDS,
+                trade_netting_set_id=np.array([30, 10, 30, 77], dtype=np.int64),
+                netting_set_master=_master(),
+            )
 
 
-if __name__ == "__main__":
-    import pytest
+# ==========================================================================
+# CEM COMPILE PATH
+# ==========================================================================
+_EFF_NOTIONAL = np.array([1000.0, 2000.0, 3000.0, 4000.0])
+_SUP_FACTOR = np.array([0.01, 0.02, 0.03, 0.04])
 
-    raise SystemExit(pytest.main([__file__, "-v"]))
+
+def _compile_cem(**overrides):
+    kwargs = {
+        "trade_uids": TRADE_UIDS,
+        "trade_netting_set_id": TRADE_NS,
+        "trade_effective_notional": _EFF_NOTIONAL,
+        "trade_supervisory_factor": _SUP_FACTOR,
+        "netting_set_master": _master(),
+    }
+    kwargs.update(overrides)
+    return compile_exposure_cem(**kwargs)
+
+
+class TestCompileExposureCem:
+    def test_add_on_scalars_are_permuted_into_csr_order(self) -> None:
+        view = _compile_cem().current_exposure_method
+        # perm is [1, 3, 0, 2]; both scalars must follow it, together.
+        assert view.effective_notional.tolist() == [2000.0, 4000.0, 1000.0, 3000.0]
+        assert view.supervisory_factor.tolist() == [0.02, 0.04, 0.01, 0.03]
+        assert view.effective_notional.flags.c_contiguous
+        assert view.supervisory_factor.flags.c_contiguous
+
+    def test_structure_matches_the_rc_projection(self) -> None:
+        cem = _compile_cem().current_exposure_method
+        rc = compile_exposure_rc(
+            trade_uids=TRADE_UIDS,
+            trade_netting_set_id=TRADE_NS,
+            netting_set_master=_master(),
+        ).replacement_cost
+        assert cem.netting_set_uids.tolist() == rc.netting_set_uids.tolist()
+        assert cem.netting_set_offsets.tolist() == rc.netting_set_offsets.tolist()
+        assert cem.mtm_row_perm.tolist() == rc.mtm_row_perm.tolist()
+        assert cem.collateral.tolist() == rc.collateral.tolist()
+
+    @pytest.mark.parametrize(
+        "field", ["trade_effective_notional", "trade_supervisory_factor"]
+    )
+    def test_rejects_wrong_dtype(self, field) -> None:
+        with pytest.raises(TypeError, match="must be float64"):
+            _compile_cem(**{field: np.array([1, 2, 3, 4], dtype=np.int64)})
+
+    @pytest.mark.parametrize(
+        "field", ["trade_effective_notional", "trade_supervisory_factor"]
+    )
+    def test_rejects_misaligned_length(self, field) -> None:
+        with pytest.raises(ValueError, match="must align"):
+            _compile_cem(**{field: np.array([1.0, 2.0])})
+
+    @pytest.mark.parametrize("floor", [-0.01, 1.01])
+    def test_rejects_pfe_floor_outside_unit_interval(self, floor) -> None:
+        with pytest.raises(ValueError, match="pfe_floor"):
+            _compile_cem(pfe_floor=floor)
+
+    def test_rejects_negative_pfe_coefficient(self) -> None:
+        with pytest.raises(ValueError, match="pfe_coefficient"):
+            _compile_cem(pfe_coefficient=-0.1)
+
+    def test_floor_and_coefficient_are_carried_onto_the_view(self) -> None:
+        view = _compile_cem(
+            pfe_floor=0.25, pfe_coefficient=0.75
+        ).current_exposure_method
+        assert view.pfe_floor == 0.25
+        assert view.pfe_coefficient == 0.75
+
+
+# ==========================================================================
+# SA-CCR COMPILE PATH
+# ==========================================================================
+_SUBCLASS = np.array([0, 1, 0, 1], dtype=np.int32)
+
+
+def _compile_saccr(**overrides):
+    kwargs = {
+        "trade_uids": TRADE_UIDS,
+        "trade_netting_set_id": TRADE_NS,
+        "trade_effective_notional": _EFF_NOTIONAL,
+        "trade_subclass_uix": _SUBCLASS,
+        "netting_set_master": _master(),
+        "add_on_factors": _add_on_factors(),
+        "saccr_config": _saccr_config(),
+    }
+    kwargs.update(overrides)
+    return compile_exposure_saccr(**kwargs)
+
+
+class TestCompileExposureSaccr:
+    def test_structure_and_add_on_alignment(self) -> None:
+        view = _compile_saccr().saccr
+        assert view.netting_set_uids.tolist() == [10, 20, 30]
+        assert view.netting_set_offsets.tolist() == [0, 1, 2, 4]
+        assert view.collateral.tolist() == [11.0, 22.0, 33.0]
+        assert view.add_on.shape == (3,)
+        assert view.add_on.dtype == np.float64
+        assert view.alpha == 1.4 and view.multiplier_floor == 0.05
+
+    def test_add_on_is_hand_calculable_per_netting_set(self) -> None:
+        """ns 10 holds trade row 1 only: subclass 1, notional 2000, SF 0.40.
+        A single-entry hedging set collapses to A = SF*|D| for any rho."""
+        view = _compile_saccr().saccr
+        assert view.add_on[0] == pytest.approx(0.40 * 2000.0)
+        # ns 20 holds row 3 only: subclass 1, notional 4000.
+        assert view.add_on[1] == pytest.approx(0.40 * 4000.0)
+        # ns 30 holds rows 0 and 2: subclass 0 both -> D = 1000 + 3000 = 4000.
+        assert view.add_on[2] == pytest.approx(0.18 * 4000.0)
+
+    def test_unknown_subclass_fails_fast(self) -> None:
+        with pytest.raises(ValueError, match="subclass"):
+            _compile_saccr(trade_subclass_uix=np.array([0, 1, 0, 9], dtype=np.int32))
+
+    def test_only_the_saccr_view_is_populated(self) -> None:
+        compiled = _compile_saccr()
+        assert compiled.replacement_cost is None
+        assert compiled.current_exposure_method is None
+        assert compiled.saccr is not None

@@ -36,6 +36,7 @@ from riskquant.config.enums.asset_classes import (
     AssetClass,
     AssetSubclass,
 )
+from riskquant.config.enums.curve_input_types import VALID_CURVE_INPUT_TYPES
 from riskquant.config.enums.discount_basis import (
     DISCOUNT_BASES_EXCLUDING_SENTINEL,
     FIRM_DEFAULT_DISCOUNT_BASIS,
@@ -72,17 +73,15 @@ from riskquant.market_data.risk_factors.shift_types import SHIFT_TYPE_NAMES
 # Constants
 # ---------------------------------------------------------------------------
 
-REQUIRED_SHEETS: frozenset[str] = frozenset(
-    {
-        "ccy",
-        "holiday_calendars",
-        "node_meta",
-        "curve_meta",
-        "curve_point_meta",
-        "surface_meta",
-        "surface_point_meta",
-    }
-)
+REQUIRED_SHEETS: frozenset[str] = frozenset({
+    "ccy",
+    "holiday_calendars",
+    "node_meta",
+    "curve_meta",
+    "curve_point_meta",
+    "surface_meta",
+    "surface_point_meta",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +347,18 @@ def _validate_enums(dict_of_dfs: dict[str, pl.DataFrame]) -> None:
         "DiscountBasis",
         nullable=False,
     )
+    # D079 clause 3. Optional and nullable: a curve that has not declared its
+    # economic input representation is still a valid market-data input; only
+    # future curve construction needs the declaration, and that path is
+    # fail-closed under D061. A populated value must be a known member.
+    _check_enum_col(
+        curve_df,
+        "curve_input_type",
+        VALID_CURVE_INPUT_TYPES,
+        "curve_meta",
+        "CurveInputType",
+        nullable=True,
+    )
 
     # --- surface_meta ---
     surf_df = dict_of_dfs["surface_meta"]
@@ -496,9 +507,9 @@ def _validate_fks(dict_of_dfs: dict[str, pl.DataFrame]) -> None:
     )
 
     # node_meta.fx_base_ccy is nullable; FK only on populated rows
-    populated_fx_base = node_df.filter(pl.col("fx_base_ccy").is_not_null()).select(
-        ["fx_base_ccy"]
-    )
+    populated_fx_base = node_df.filter(pl.col("fx_base_ccy").is_not_null()).select([
+        "fx_base_ccy"
+    ])
     if not populated_fx_base.is_empty():
         _check_fk(
             populated_fx_base,
@@ -657,18 +668,24 @@ def _validate_fx_node_invariants(dict_of_dfs: dict[str, pl.DataFrame]) -> None:
 
     missing_base = is_fx_rate & df["fx_base_ccy"].is_null()
     if missing_base.any():
-        offending = df.filter(missing_base).select(
-            ["node_name", "quote_type", "fx_base_ccy", "quote_ccy"]
-        )
+        offending = df.filter(missing_base).select([
+            "node_name",
+            "quote_type",
+            "fx_base_ccy",
+            "quote_ccy",
+        ])
         raise ConfigurationError(
             f"Domain violation: FX_RATE nodes must specify fx_base_ccy.\n{offending}"
         )
 
     unexpected_base = ~is_fx_rate & df["fx_base_ccy"].is_not_null()
     if unexpected_base.any():
-        offending = df.filter(unexpected_base).select(
-            ["node_name", "asset_class", "quote_type", "fx_base_ccy"]
-        )
+        offending = df.filter(unexpected_base).select([
+            "node_name",
+            "asset_class",
+            "quote_type",
+            "fx_base_ccy",
+        ])
         raise ConfigurationError(
             "Domain violation: only FX_RATE nodes may specify fx_base_ccy.\n"
             f"{offending}"
@@ -686,9 +703,11 @@ def _validate_fx_node_invariants(dict_of_dfs: dict[str, pl.DataFrame]) -> None:
     name_mismatch = fx_rate_rows["node_name"] != expected_names
 
     if name_mismatch.any():
-        offending = fx_rate_rows.filter(name_mismatch).select(
-            ["node_name", "fx_base_ccy", "quote_ccy"]
-        )
+        offending = fx_rate_rows.filter(name_mismatch).select([
+            "node_name",
+            "fx_base_ccy",
+            "quote_ccy",
+        ])
 
         raise ConfigurationError(
             "Domain violation: FX_RATE node_name must equal "
@@ -754,9 +773,11 @@ def _validate_axis_roll_pairs(dict_of_dfs: dict[str, pl.DataFrame]) -> None:
         # Populated roll_method on LABEL container.
         extraneous = ~needs_roll & roll_populated
         if extraneous.any():
-            offending = df.filter(extraneous).select(
-                [name_col, "x_axis_kind", "roll_method"]
-            )
+            offending = df.filter(extraneous).select([
+                name_col,
+                "x_axis_kind",
+                "roll_method",
+            ])
             raise ConfigurationError(
                 f"{sheet}: LABEL containers with populated roll_method:\n{offending}"
             )
@@ -774,9 +795,11 @@ def _validate_axis_roll_pairs(dict_of_dfs: dict[str, pl.DataFrame]) -> None:
         )
         bad_mask = ~joined.is_in(list(allowed_join))
         if bad_mask.any():
-            offending = offset_rows.filter(bad_mask).select(
-                [name_col, "x_axis_kind", "roll_method"]
-            )
+            offending = offset_rows.filter(bad_mask).select([
+                name_col,
+                "x_axis_kind",
+                "roll_method",
+            ])
             raise ConfigurationError(
                 f"{sheet}: disallowed (x_axis_kind, roll_method) combinations:\n"
                 f"{offending}"
@@ -918,12 +941,10 @@ def _validate_curve_point_token_grammar(
     if cp_df.is_empty():
         return
 
-    parent_kind = cm_df.select(
-        [
-            pl.col("curve_id"),
-            pl.col("x_axis_kind").cast(pl.Utf8),
-        ]
-    )
+    parent_kind = cm_df.select([
+        pl.col("curve_id"),
+        pl.col("x_axis_kind").cast(pl.Utf8),
+    ])
     work = cp_df.select(["curve_id", "rf_id", "tenor_token"]).join(
         parent_kind, on="curve_id", how="left"
     )
@@ -958,12 +979,10 @@ def _validate_surface_point_token_grammar(
     if sp_df.is_empty():
         return
 
-    parent_kind = sm_df.select(
-        [
-            pl.col("surface_id"),
-            pl.col("x_axis_kind").cast(pl.Utf8),
-        ]
-    )
+    parent_kind = sm_df.select([
+        pl.col("surface_id"),
+        pl.col("x_axis_kind").cast(pl.Utf8),
+    ])
     work = sp_df.select(["surface_id", "rf_id", "x_tenor_token"]).join(
         parent_kind, on="surface_id", how="left"
     )
@@ -1033,9 +1052,12 @@ def _validate_discount_invariants(dict_of_dfs: dict[str, pl.DataFrame]) -> None:
         )
 
     # Exactly one default per currency that has any discount curve.
-    disc_curves = curve_df.filter(is_disc).select(
-        ["curve_name", "quote_ccy", "discount_basis", "is_default_discount_for_ccy"]
-    )
+    disc_curves = curve_df.filter(is_disc).select([
+        "curve_name",
+        "quote_ccy",
+        "discount_basis",
+        "is_default_discount_for_ccy",
+    ])
     default_counts = disc_curves.group_by("quote_ccy").agg(
         pl.col("is_default_discount_for_ccy").cast(pl.Int64).sum().alias("n_default")
     )
@@ -1059,13 +1081,12 @@ def _validate_discount_invariants(dict_of_dfs: dict[str, pl.DataFrame]) -> None:
     # Coverage: every currency that's a quote_ccy somewhere must have a
     # discount curve. (Skips currencies that exist in `ccy` but aren't used.)
     quote_ccys_used = (
-        pl.concat(
-            [
-                curve_df["quote_ccy"].cast(pl.Utf8),
-                surf_df["quote_ccy"].cast(pl.Utf8),
-                node_df["quote_ccy"].cast(pl.Utf8),
-            ]
-        )
+        pl
+        .concat([
+            curve_df["quote_ccy"].cast(pl.Utf8),
+            surf_df["quote_ccy"].cast(pl.Utf8),
+            node_df["quote_ccy"].cast(pl.Utf8),
+        ])
         .drop_nulls()
         .unique()
     )
@@ -1183,73 +1204,65 @@ def validate_static_config_dfs(dict_of_dfs: dict[str, pl.DataFrame]) -> None:
     expected_columns: dict[str, frozenset[str]] = {
         "ccy": frozenset({"ccy_name", "ccy_id"}),
         "holiday_calendars": frozenset({"holiday_calendar_name", "holiday_date"}),
-        "node_meta": frozenset(
-            {
-                "node_id",
-                "node_name",
-                "quote_ccy",
-                "asset_class",
-                "asset_subclass",
-                "quote_type",
-                "unit_scale",
-                "shift_type",
-                "fx_base_ccy",
-            }
-        ),
-        "curve_meta": frozenset(
-            {
-                "curve_id",
-                "curve_name",
-                "quote_ccy",
-                "asset_class",
-                "asset_subclass",
-                "quote_type",
-                "unit_scale",
-                "shift_type",
-                "x_axis_kind",
-                "x_interp_method",
-                "x_extrap_method",
-                "roll_method",
-                "anchor_offset",
-                "roll_month",
-                "roll_day",
-                "fh_bh_mmdd",
-                "discount_basis",
-                "is_default_discount_for_ccy",
-            }
-        ),
+        "node_meta": frozenset({
+            "node_id",
+            "node_name",
+            "quote_ccy",
+            "asset_class",
+            "asset_subclass",
+            "quote_type",
+            "unit_scale",
+            "shift_type",
+            "fx_base_ccy",
+        }),
+        "curve_meta": frozenset({
+            "curve_id",
+            "curve_name",
+            "quote_ccy",
+            "asset_class",
+            "asset_subclass",
+            "quote_type",
+            "unit_scale",
+            "shift_type",
+            "x_axis_kind",
+            "x_interp_method",
+            "x_extrap_method",
+            "roll_method",
+            "anchor_offset",
+            "roll_month",
+            "roll_day",
+            "fh_bh_mmdd",
+            "discount_basis",
+            "is_default_discount_for_ccy",
+        }),
         "curve_point_meta": frozenset({"rf_id", "curve_id", "tenor_token"}),
-        "surface_meta": frozenset(
-            {
-                "surface_id",
-                "surface_name",
-                "quote_ccy",
-                "asset_class",
-                "asset_subclass",
-                "quote_type",
-                "unit_scale",
-                "shift_type",
-                "x_axis_kind",
-                "x_interp_method",
-                "x_extrap_method",
-                "roll_method",
-                "anchor_offset",
-                "roll_month",
-                "roll_day",
-                "fh_bh_mmdd",
-                "y_axis_kind",
-                "y_interp_method",
-                "y_extrap_method",
-            }
-        ),
-        "surface_point_meta": frozenset(
-            {
-                "rf_id",
-                "surface_id",
-                "x_tenor_token",
-                "y_label",
-            }
-        ),
+        "surface_meta": frozenset({
+            "surface_id",
+            "surface_name",
+            "quote_ccy",
+            "asset_class",
+            "asset_subclass",
+            "quote_type",
+            "unit_scale",
+            "shift_type",
+            "x_axis_kind",
+            "x_interp_method",
+            "x_extrap_method",
+            "roll_method",
+            "anchor_offset",
+            "roll_month",
+            "roll_day",
+            "fh_bh_mmdd",
+            "y_axis_kind",
+            "y_interp_method",
+            "y_extrap_method",
+        }),
+        "surface_point_meta": frozenset({
+            "rf_id",
+            "surface_id",
+            "x_tenor_token",
+            "y_label",
+        }),
     }
     for sheet_name, cols in expected_columns.items():
         _check_columns(dict_of_dfs[sheet_name], cols, sheet_name)

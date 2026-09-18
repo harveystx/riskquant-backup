@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from riskquant.config.enums.discounting_modes import DiscountingMode
 from riskquant.config.static_config.compile import (
     compile_risk_static_config_from_dict_of_dfs,
 )
@@ -229,6 +230,8 @@ def test_non_discount_curve_is_rejected(rsc):
 
 # ---------------------------------------------------------------- D061 discount producer
 def test_discount_dependent_book_fails_closed_before_any_kernel(rsc):
+    # D061 is keyed on the requested discounting mode: CURVE (market-derived
+    # discounting) is unimplemented and fails before any curve machinery runs.
     batch = _ingest(rsc, [_fwd(1), _opt(2)])
     mapper = build_uix_mapper([batch])
     compile_portfolio_from_ingest_batch(ingest_batch=batch, uix_mapper=mapper)
@@ -239,7 +242,11 @@ def test_discount_dependent_book_fails_closed_before_any_kernel(rsc):
     )
     with pytest.raises(NotImplementedError, match="D061"):
         build_market_data_matrix_from_snapshot(
-            as_of_date=hf.AS_OF, uix_mapper=mapper, universe_map=um, snapshot=snap
+            discounting_mode=DiscountingMode.CURVE,
+            as_of_date=hf.AS_OF,
+            uix_mapper=mapper,
+            universe_map=um,
+            snapshot=snap,
         )
 
 
@@ -260,7 +267,11 @@ def test_snapshot_as_of_mismatch_is_rejected(rsc):
     )
     with pytest.raises(ValueError, match="D067"):
         build_market_data_matrix_from_snapshot(
-            as_of_date=hf.AS_OF, uix_mapper=mapper, universe_map=um, snapshot=snap
+            discounting_mode=DiscountingMode.NONE,
+            as_of_date=hf.AS_OF,
+            uix_mapper=mapper,
+            universe_map=um,
+            snapshot=snap,
         )
 
 
@@ -269,6 +280,7 @@ def test_mapper_as_of_must_equal_matrix_as_of(rsc, mapper_as_of):
     _, mapper, um = _spot_run(rsc, mapper_as_of)
     with pytest.raises(ValueError, match="D067"):
         build_market_data_matrix_from_flat_levels(
+            discounting_mode=DiscountingMode.NONE,
             as_of_date=hf.AS_OF,
             uix_mapper=mapper,
             universe_map=um,

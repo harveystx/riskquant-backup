@@ -48,6 +48,7 @@ from datetime import date
 import numpy as np
 import numpy.typing as npt
 
+from riskquant.config.enums.discounting_modes import DiscountingMode
 from riskquant.constants import DAYS_PER_YR_ACT_365_25, TTE_FLOOR
 from riskquant.market_data.curves.interp_defs import (
     interp_linear_on_log_values_flat_extrap_3d_numba_kernel,
@@ -514,6 +515,7 @@ def build_market_data_matrix(
     as_of_date: date,
     uix_mapper: UixMapper,
     num_scenarios: int,
+    discounting_mode: DiscountingMode,
     # ---- Raw scalar matrices (F/scalar-nodes, scenarios) ----
     raw_fx_spots: npt.NDArray[np.float64],
     fx_spot_uix_in_universe: npt.NDArray[np.int32],
@@ -544,6 +546,13 @@ def build_market_data_matrix(
     uix_mapper
         Source of truth for the FX-effective pair table and the unique-
         date axis. Built once per run by `build_uix_mapper`.
+    discounting_mode
+        D061, explicit and without a default. `NONE` produces
+        `DF(as_of, date) = 1.0` for every discount curve and date in the run's
+        universes, reading no curve level and consulting no `CurveInputType`.
+        `CURVE` is market-derived discounting and is not implemented: it raises
+        before any curve construction. The mode terminates here; nothing
+        downstream of the market-data matrix sees it.
 
     Returns
     -------
@@ -603,23 +612,29 @@ def build_market_data_matrix(
     written[fx_spot_uix_in_universe] = True
     _prove_scalar_row_ownership(uix_mapper=uix_mapper, written=written)
 
-    # ---- D061: no discount-factor or price-curve producer is supported -------
+    # ---- D079: the grid is spot-starting, so no target may precede the as-of --
+    if d_dates and int(unique_dates_ord32[0]) < int(as_of_ord32):
+        stale = unique_dates_ord32[unique_dates_ord32 < int(as_of_ord32)][:10]
+        raise ValueError(
+            f"target date ordinals {stale.tolist()} precede the run as-of "
+            f"{int(as_of_ord32)}; discount factors are DF(as_of, date) and a "
+            "pre-as-of target is not a supported discounting request (D079)."
+        )
+
+    # ---- D061: market-derived discounting is not implemented ----------------
     # The repository does not define the economic meaning of a curve point for
     # discounting (quote convention, compounding, day count, LABEL tenor -> date
     # mapping), and the interpolation kernels' coordinate domain is not the
     # int32 date-ordinal domain of this universe. Producing a grid would mean
-    # inventing that convention. Any run that needs one fails here, before a
-    # kernel is called, instead of raising a Numba TypeError or returning a
-    # plausible wrong DF.
-    if (
-        uix_mapper.discount_curve_id_universe.shape[0] > 0
-        or raw_discount_ln_dfs.shape[0] > 0
-    ):
+    # inventing that convention. A CURVE run fails here, before a kernel is
+    # called, instead of raising a Numba TypeError or returning a plausible
+    # wrong DF.
+    if discounting_mode is DiscountingMode.CURVE:
         raise NotImplementedError(
             "Discount-factor production is not supported (D061): the curve-point "
             "quote convention and tenor-axis contract are undecided. Runs that "
-            "reference discount curves (NODE forwards/options) cannot build a "
-            "MarketDataMatrix on the production path."
+            "request discounting_mode=CURVE cannot build a MarketDataMatrix on "
+            "the production path."
         )
     if raw_price_curve_values.shape[0] > 0:
         raise NotImplementedError(
@@ -636,11 +651,18 @@ def build_market_data_matrix(
     )
 
     # ---- 2. Discount factor grid -----------------------------------------
-    discount_factor_grid = _build_discount_factor_grid(
-        raw_tenors=raw_discount_tenors,
-        raw_ln_dfs=raw_discount_ln_dfs,
-        target_dates=unique_dates_ord32,
-        num_scenarios=num_scenarios,
+    # NONE mode (the only implemented one): DF(as_of, date) = 1.0 for every
+    # curve and date the run resolved. The curves' own levels
+    # (`raw_discount_tenors` / `raw_discount_ln_dfs`) are deliberately not read,
+    # and no `CurveInputType` is consulted; the linkage stays structural
+    # (D062/D066) while the economics say "do not discount" (D061).
+    discount_factor_grid = np.ones(
+        (
+            uix_mapper.discount_curve_id_universe.shape[0],
+            d_dates,
+            num_scenarios,
+        ),
+        dtype=np.float64,
     )
 
     # ---- 3. Price curve grid (universe-aligned, item C / A1 for curves) --

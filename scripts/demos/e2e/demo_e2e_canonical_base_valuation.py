@@ -42,6 +42,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from riskquant.config.enums.discounting_modes import DiscountingMode
 from riskquant.config.proxy_config.compile import compile_proxy_topology_from_df
 from riskquant.config.static_config.compile import (
     compile_risk_static_config_from_dict_of_dfs,
@@ -362,6 +363,7 @@ if __name__ == "__main__":
         uix_mapper=uix_mapper,
     )
     market_data_mtx = build_market_data_matrix_from_snapshot(
+        discounting_mode=DiscountingMode.NONE,
         as_of_date=as_of_date,
         uix_mapper=uix_mapper,
         universe_map=universe_map,

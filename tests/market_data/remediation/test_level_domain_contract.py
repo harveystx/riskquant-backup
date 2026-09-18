@@ -24,6 +24,7 @@ import polars as pl
 import pytest
 
 import riskquant.market_data.builder as builder_mod
+from riskquant.config.enums.discounting_modes import DiscountingMode
 from riskquant.config.static_config.compile import (
     compile_risk_static_config_from_dict_of_dfs,
 )
@@ -202,6 +203,7 @@ ILLEGAL = [
 def test_legal_levels_are_accepted_on_the_flat_route(universe, label, overrides):
     mapper, um, order = universe
     mdm = build_market_data_matrix_from_flat_levels(
+        discounting_mode=DiscountingMode.NONE,
         as_of_date=hf.AS_OF,
         uix_mapper=mapper,
         universe_map=um,
@@ -240,6 +242,7 @@ def test_illegal_levels_die_before_any_state_is_built_on_the_flat_route(
     del junk
     with pytest.raises(ValueError, match=DOMAIN_ERROR):
         build_market_data_matrix_from_flat_levels(
+            discounting_mode=DiscountingMode.NONE,
             as_of_date=hf.AS_OF,
             uix_mapper=mapper,
             universe_map=um,
@@ -255,6 +258,7 @@ def test_one_bad_scenario_among_many_is_rejected(universe, spy):
     flat[order.index("EURGBP"), 4095] = -1e-300
     with pytest.raises(ValueError, match="FX spot levels must be strictly positive"):
         build_market_data_matrix_from_flat_levels(
+            discounting_mode=DiscountingMode.NONE,
             as_of_date=hf.AS_OF,
             uix_mapper=mapper,
             universe_map=um,
@@ -281,7 +285,11 @@ def test_direct_snapshot_and_history_snapshot_routes_cannot_bypass_the_domain(
     )
     with pytest.raises(ValueError, match=DOMAIN_ERROR):
         build_market_data_matrix_from_snapshot(
-            as_of_date=hf.AS_OF, uix_mapper=mapper, universe_map=um, snapshot=snap
+            discounting_mode=DiscountingMode.NONE,
+            as_of_date=hf.AS_OF,
+            uix_mapper=mapper,
+            universe_map=um,
+            snapshot=snap,
         )
     # History frames carry DECLARED source units (VOL_EQ_USD is PERCENT).
     source = {n: lv[n] * (100.0 if n == "VOL_EQ_USD" else 1.0) for n in order}
@@ -293,6 +301,7 @@ def test_direct_snapshot_and_history_snapshot_routes_cannot_bypass_the_domain(
     )
     with pytest.raises(ValueError, match=DOMAIN_ERROR):
         build_market_data_matrix_from_snapshot(
+            discounting_mode=DiscountingMode.NONE,
             as_of_date=hf.AS_OF,
             uix_mapper=mapper,
             universe_map=um,
@@ -306,6 +315,7 @@ def test_builder_entry_point_enforces_the_contract_itself(universe, spy):
     flat = _flat(order, {"VOL_EQ_USD": -0.1}, 2)
     with pytest.raises(ValueError, match="VOL levels must be strictly positive"):
         builder_mod.build_market_data_matrix(
+            discounting_mode=DiscountingMode.NONE,
             as_of_date=hf.AS_OF,
             uix_mapper=mapper,
             num_scenarios=2,
@@ -341,6 +351,7 @@ def test_negative_rate_is_legal_and_curve_levels_must_be_finite(rsc, universe, s
     mapper, um, order = universe
     flat = _flat(order, {}, 1)
     kwargs = dict(
+        discounting_mode=DiscountingMode.NONE,
         as_of_date=hf.AS_OF,
         uix_mapper=mapper,
         num_scenarios=1,
@@ -365,9 +376,8 @@ def test_negative_rate_is_legal_and_curve_levels_must_be_finite(rsc, universe, s
     )
     with pytest.raises(ValueError, match="discount curve levels contain non-finite"):
         builder_mod.build_market_data_matrix(**kwargs)
-    kwargs["raw_discount_ln_dfs"] = np.full(
-        (1, 1, 1), -0.02
-    )  # finite, negative: passes; D061 then stops
+    kwargs["raw_discount_ln_dfs"] = np.full((1, 1, 1), -0.02)  # finite: domain passes
+    kwargs["discounting_mode"] = DiscountingMode.CURVE  # market-derived: D061 stops it
     with pytest.raises(NotImplementedError, match="D061"):
         builder_mod.build_market_data_matrix(**kwargs)
     assert "MarketDataMatrix" not in spy
@@ -378,6 +388,7 @@ def test_valid_levels_give_identical_state_on_every_route(rsc, universe):
     mapper, um, order = universe
     flat = _flat(order, {})
     via_flat = build_market_data_matrix_from_flat_levels(
+        discounting_mode=DiscountingMode.NONE,
         as_of_date=hf.AS_OF,
         uix_mapper=mapper,
         universe_map=um,
@@ -390,7 +401,11 @@ def test_valid_levels_give_identical_state_on_every_route(rsc, universe):
         static_config=rsc,
     )  # VOL_EQ_USD is quoted PERCENT; canonical decimal is BASE
     via_compiled = build_market_data_matrix_from_snapshot(
-        as_of_date=hf.AS_OF, uix_mapper=mapper, universe_map=um, snapshot=compiled
+        discounting_mode=DiscountingMode.NONE,
+        as_of_date=hf.AS_OF,
+        uix_mapper=mapper,
+        universe_map=um,
+        snapshot=compiled,
     )
     direct = RiskFactorLevelSnapshot(
         as_of_date=hf.AS_OF,
@@ -398,7 +413,11 @@ def test_valid_levels_give_identical_state_on_every_route(rsc, universe):
         factor_levels=flat[:, 0].copy(),
     )
     via_direct = build_market_data_matrix_from_snapshot(
-        as_of_date=hf.AS_OF, uix_mapper=mapper, universe_map=um, snapshot=direct
+        discounting_mode=DiscountingMode.NONE,
+        as_of_date=hf.AS_OF,
+        uix_mapper=mapper,
+        universe_map=um,
+        snapshot=direct,
     )
     for other in (via_compiled, via_direct):
         np.testing.assert_allclose(other.prices, via_flat.prices, rtol=1e-15, atol=0)
@@ -497,6 +516,7 @@ def test_full_pipeline_never_values_an_invalid_state(universe, spy):
     result = None
     with pytest.raises(ValueError, match=DOMAIN_ERROR):
         result = build_market_data_matrix_from_flat_levels(
+            discounting_mode=DiscountingMode.NONE,
             as_of_date=hf.AS_OF,
             uix_mapper=mapper,
             universe_map=um,

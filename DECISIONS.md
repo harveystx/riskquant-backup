@@ -8,7 +8,7 @@ an unresolved discussion into LOCKED. Mark superseded decisions clearly.
 > build-out. Audit remediations are recorded compactly; the demo/pipeline
 > decisions carry full rationale because they most constrain ongoing work.
 
----
+
 
 ## D001 — Four-tier model, one-way dependencies
 **Status:** LOCKED
@@ -796,7 +796,7 @@ architectural question is unchanged and deferred: Parametric's construction data
 construction-data API, NOT on the config union. Parametric remains unwired by
 deliberate choice.
 
----
+
 
 ## D034 — Parametric through the seam: heterogeneous construction data (typed data union + nested distribution union)
 
@@ -1238,7 +1238,7 @@ plus the new test. D037 remains deferred: archaeology confirms no production or
 demo caller constructs co-seeded independent engines. See
 `SIMLAB_PRODUCTION_CLOSURE.md`.
 
----
+
 
 ## D039 — seed domain bounded at the solution boundary (amends D032/D035 seed contract); D021 closed as superseded
 
@@ -1300,7 +1300,7 @@ column order, ParametricRiskData arrays, proxy/shift/shock_scale, risk-measure
 config, reporting FX, library versions). Verdict is therefore PRODUCTION CAPABLE
 BUT NOT HARDENED; the next increment is the RunManifest defined in the audit.
 
----
+
 
 ## D040 — Run identity: content-addressed reproducibility contract for a risk run
 
@@ -1382,7 +1382,7 @@ identifies snapshots but does not store them; and adoption is caller-side — th
 production runner and E2E demo do not yet build a manifest. Wiring it in is the
 next increment.
 
----
+
 
 ## D041 — Deterministic execution: the final risk result is bitwise invariant; batch_size is operational (supersedes part of D040)
 
@@ -1450,7 +1450,7 @@ production release. (2) Manifest adoption remains caller-side; a risk result
 without an identity should be considered incomplete. (3) A caller that reduces
 P&L with its own BLAS GEMV reintroduces 1-ULP batch sensitivity in its own code.
 
----
+
 
 ## D042 — Production run entry point: every risk result is inseparable from its identity
 
@@ -1546,7 +1546,7 @@ identity 3.3 ms (3.8%); verification 1.6 ms; artifact 11.9 kB.
 determinism remains structurally argued and empirically unverified on this
 single-core host (D041) — a required prerequisite for a multi-core release.
 
----
+
 
 ## D043 — SimLab RELEASE-CERTIFIED (corrects D041's multi-core limitation)
 
@@ -1600,7 +1600,7 @@ and `reporting` BYTE-IDENTICAL to pristine. Performance flat across thread count
 
 **SIMLAB = RELEASE-CERTIFIED for the documented scope. SimLab work is closed.**
 
----
+
 
 ## D044 — Correction to D043 + portable multi-core release gate
 
@@ -2741,35 +2741,194 @@ capability D052 assumed). Missing pairs raise `PrettyKeyError`. Pinned by
 `tests/market_data/remediation/test_contract_failure_paths.py` (FX section) and
 `test_structural_invariants.py::test_no_fx_rf_required_has_exactly_one_definition`.
 
-## D061 — No discount-factor or price-curve producer until the curve-point contract exists
 
-**Status:** OPEN — UPSTREAM ECONOMIC CONTRACT MISSING (fail-closed)
+## D061 - No non-trivial discount-factor or price-curve producer until the curve-point contract exists
+
+**Status:** OPEN - FUTURE CURVE CONSTRUCTION NOT IMPLEMENTED, CURRENT NO-DISCOUNTING MODE SUPPORTED
+
 **Findings:** MD-02a/b/c/d
 
-**Decision:** `build_market_data_matrix` raises `NotImplementedError(D061)` for any
-run whose universe references a discount curve or a price curve, before any
-interpolation kernel is called.
+### Decision
 
-**Reason:** the repository does not define:
+RiskQuant initially operates all pricing with an explicit **no-discounting** mode:
 
-* what a discount-curve point level means for discounting (configured as
-  `quote_type=RATE`, `unit_scale=PERCENT`, but with no compounding and no day
-  count);
-* how a LABEL tenor (`[ON]`, `[3M]`, `[1Y]`) maps to a date or year fraction.
-  Every canonical discount curve is LABEL;
-* how relative OFFSET tenors map onto the kernel's coordinate domain.
+```text
+discounting_mode = NONE
 
-The builder previously read the levels as `ln DF`, passed relative offsets as
-tenors and absolute int32 ordinals as targets, and hit a Numba `TypeError`.
-Fixing only the dtype would have produced DF ≈ 73.7 or 1.044 against ≈ 0.99 and
-collapsed all dates onto the last pillar. Selecting a convention here would
-invent market semantics.
+DF(as_of, target_date) = 1.0
+```
 
-**Implications:** NODE forwards and NODE options are NOT production-reachable
-through the market-data producer. Their valuation certification (D052, D057)
-stays scoped to contract-correct raw state. Lifting D061 requires a separate
-decision recording the quote convention, the day count, the tenor→date rule and
-the zero-pillar policy, followed by a producer oracle through the real path.
+for every valid pricing date `target_date >= as_of`.
+
+This is an explicit economic state and MUST NOT be represented by a missing curve, `NO_ID`, an invalid UIX, or any other sentinel.
+
+A run requesting a non-trivial discount curve or a constructed price curve remains fail-closed:
+
+```text
+discounting_mode = CURVE
+    -> raise NotImplementedError(D061)
+```
+
+before any curve construction, interpolation, extrapolation, or discount-factor evaluation is called.
+
+The canonical market-data snapshot MAY already contain curve risk factors. Those RFs are market-data inputs, not discount factors. Their presence does not imply that a constructed discount curve exists.
+
+No current pricing product requires market-derived discounting. Therefore the absence of a curve constructor is not a blocker for the initial pricing universe.
+
+### Reason
+
+RiskQuant already supports curve RFs as canonical market-data inputs, for example:
+
+```text
+USD_SOFR_OIS[1Y] -> 4.80
+USD_SOFR_OIS[5Y] -> 4.10
+```
+
+with the configured generic market-data representation such as:
+
+```text
+quote_type = RATE
+unit_scale = PERCENT
+x_axis_kind = LABEL
+```
+
+What is not yet implemented is the RiskQuant-owned transformation from those curve RF levels into a canonical pricing curve and, ultimately, resolved discount factors.
+
+The missing future contract includes, as applicable:
+
+* semantic meaning of the curve input;
+* distinction between par/instrument rates and zero rates;
+* quote units and normalization;
+* instrument-specific accrual and compounding conventions;
+* tenor / maturity construction;
+* conversion from market quotes to zero rates or discount factors;
+* curve pillar validation;
+* interpolation and extrapolation;
+* collateral / curve identity where relevant.
+
+A curve-level `CurveInputType` MUST make the economic input representation explicit rather than overloading generic `QuoteType`.
+
+For example:
+
+```text
+quote_type       = RATE
+unit_scale       = PERCENT
+curve_input_type = PAR_RATE
+```
+
+and:
+
+```text
+quote_type       = RATE
+unit_scale       = PERCENT
+curve_input_type = ZERO_RATE
+```
+
+are distinct economic contracts.
+
+The existing dormant implementation attempted to perform curve construction implicitly inside the market-data matrix builder. That path is contractually invalid because it conflates market quote interpretation, coordinate construction and numerical curve evaluation.
+
+Previously observed defects include:
+
+* configured `RATE` observations being treated as `ln DF`;
+* relative tenor offsets being passed where the interpolation kernel expects a time coordinate;
+* absolute `int32` date ordinals being passed against an incompatible kernel contract;
+* missing LABEL-to-date construction;
+* undefined quote accrual / compounding semantics;
+* undefined zero-pillar policy.
+
+These MUST NOT be repaired by selecting arbitrary conventions inside a numerical kernel.
+
+### Architectural contract
+
+D061 establishes the following boundary:
+
+```text
+canonical market-data RFs
+        |
+        v
+RiskQuant market-data / curve-construction layer
+        |
+        +-- interpret CurveInputType
+        +-- resolve maturities
+        +-- bootstrap / convert
+        +-- validate pillars
+        +-- interpolate
+        +-- extrapolate
+        +-- construct scenario curve
+        +-- evaluate requested dates
+        |
+        v
+resolved discount-factor / price grid
+        |
+        v
+valuation inputs / blocks
+        |
+        v
+pricer kernels
+```
+
+All curve intelligence belongs to the market-data / curve-construction side of the boundary.
+
+Valuation kernels consume already-resolved numerical quantities. They MUST NOT:
+
+* interpret `CurveInputType`;
+* interpret tenor labels;
+* construct maturities;
+* bootstrap market instruments;
+* infer day-count conventions;
+* interpolate curve pillars;
+* extrapolate curves;
+* convert rates to discount factors;
+* construct discount curves.
+
+Interpolation is a market-data operation, never a valuation operation.
+
+### Current implications
+
+The initial pricing universe uses:
+
+```text
+discounting_mode = NONE
+```
+
+Accordingly:
+
+```text
+DF(as_of, as_of) = 1.0
+
+DF(as_of, T) = 1.0
+for every valid T >= as_of
+```
+
+NODE forwards and NODE options therefore remain reachable through the market-data producer without requiring a market-derived discount curve, provided their other contracts are satisfied.
+
+Their valuation certification remains independent of future curve construction.
+
+The presence of IR curve RFs in the canonical market-data snapshot does not change this. Those RFs are currently unused for non-trivial discounting.
+
+### Future lifting condition
+
+D061 may be lifted for:
+
+```text
+discounting_mode = CURVE
+```
+
+only after RiskQuant has a locked curve-construction contract covering:
+
+1. curve input semantics;
+2. `CurveInputType`;
+3. quote normalization;
+4. maturity construction;
+5. curve construction / bootstrap method where required;
+6. canonical curve representation;
+7. interpolation and extrapolation;
+8. zero/as-of anchor policy;
+9. independent producer oracle;
+10. fail-fast validation of invalid curve inputs.
+
+The first implementation MAY be a deliberately small construction model. It MUST NOT require the full future multi-curve / IRS architecture merely to establish the first non-trivial discounting path.
 
 ## D062 — Packed effective-factor coordinates are in-domain by contract
 
@@ -3356,8 +3515,8 @@ to baseline.
    sentinels MUST NEVER be interpreted as `DF = 1`. Unresolved discounting
    fails closed at coordinate packing.
 8. **D078.8** If a future product requires an explicit "no discounting
-   required" economic state, it MUST be represented and validated as its own
-   economic value, distinct from missing-data sentinels, in the pattern already
+   required" economic state, it MUST be represented and validated as an explicit
+   economic state, distinct from missing-data sentinels, in the pattern already
    used by `NO_FX_RF_REQUIRED` for identity FX. No currently identified product
    needs it.
 9. **D078.9** The following remain **future product decisions**, not current
@@ -3388,3 +3547,581 @@ forward fixtures 100-105 are classified, not modified. The option half of D065
 (20 tests): two-leg forward pricing with non-unit per-leg DFs; `DF = 1` as
 ordinary data; `NO_ID` failing closed; the D063 predicate table; the spot
 sign-flip counterexample; and the fixture classification for uids 100-105.
+
+
+## D079 - RiskQuant-owned curve-input, curve-construction and canonical discount-factor contract
+
+**Status:** PARTIAL LOCK
+
+**Purpose:** Define what RiskQuant requires in order to transform configured curve RFs into resolved pricing curves and discount-factor grids. This is a RiskQuant-owned contract. It is not inferred from the implementation of any external market-data producer.
+
+The initial production state is:
+
+```text
+discounting_mode = NONE
+```
+
+The clauses below therefore distinguish the current production contract from the future:
+
+```text
+discounting_mode = CURVE
+```
+
+capability.
+
+### A. Current production contract
+
+#### 1. NO-DISCOUNTING MODE
+
+`discounting_mode = NONE` is an explicit supported economic state.
+
+For every valid target date:
+
+```text
+DF(as_of, target_date) = 1.0
+```
+
+`DF = 1` MUST NOT be inferred from:
+
+* missing data;
+* `NO_ID`;
+* invalid UIX;
+* absent curve;
+* NaN / infinity;
+* failed lookup.
+
+Those conditions remain invalid and MUST fail fast.
+
+#### 2. CANONICAL PRICING INTERFACE
+
+Valuation consumes resolved numerical discount factors, not raw curve quotes.
+
+The future curve-construction subsystem MUST ultimately produce:
+
+```text
+DF(as_of, target_date, scenario)
+```
+
+in the currency of the curve.
+
+Pricing kernels MUST NOT consume tenor labels, curve RFs or raw market rates as substitutes for discount factors.
+
+---
+
+### B. Curve RF semantic contract
+
+#### 3. CURVE INPUT TYPE
+
+Every curve specification that is eligible for future curve construction MUST declare an explicit:
+
+```text
+CurveInputType
+```
+
+at the **curve level**, not independently on each curve point.
+
+`CurveInputType` is orthogonal to the generic market-data `QuoteType`.
+
+For example:
+
+```text
+quote_type       = RATE
+unit_scale       = PERCENT
+curve_input_type = PAR_RATE
+```
+
+means the RFs represent market instrument rates requiring the appropriate curve construction / bootstrap.
+
+Whereas:
+
+```text
+quote_type       = RATE
+unit_scale       = PERCENT
+curve_input_type = ZERO_RATE
+```
+
+means the RFs already represent zero rates and do not require a par-instrument bootstrap.
+
+A future implementation MAY also support:
+
+```text
+curve_input_type = DISCOUNT_FACTOR
+curve_input_type = LOG_DISCOUNT_FACTOR
+```
+
+where the configured RF values directly represent those quantities.
+
+RiskQuant MUST NOT silently infer one `CurveInputType` from `QuoteType`, tenor labels, curve names, or numerical values.
+
+`CurveInputType` belongs to configuration / market-data metadata.
+
+It MUST NOT leak into valuation blocks or pricing kernels.
+
+#### 4. QUOTE ACCRUAL
+
+Where a construction model is based on quoted market instruments, the instrument's accrual convention MUST be explicit in the RiskQuant construction specification.
+
+Current intended conventions are:
+
+| Curve family     | Accrual  | Spot lag | Calendar                     |
+| ---------------- | -------- | -------: | ---------------------------- |
+| SOFR OIS         | ACT/360  |      T+2 | US                           |
+| LIBOR 3M         | ACT/360  |      T+2 | London + NY                  |
+| CSA_EUR, USD leg | ACT/360  |      T+2 | US / relevant CSA convention |
+| ESTR OIS         | ACT/360  |      T+2 | TARGET2                      |
+| EURIBOR 6M       | ACT/360  |      T+2 | TARGET2                      |
+| SONIA OIS        | ACT/365F |      T+0 | London                       |
+| SARON OIS        | ACT/360  |      T+2 | Zurich                       |
+| AONIA OIS        | ACT/365F |      T+1 | Sydney                       |
+
+Business-day convention is Modified Following with the applicable end-of-month rule.
+
+These are construction-model conventions. They are not required by valuation once the canonical discount-factor grid has been produced.
+
+They are relevant only where the declared `CurveInputType` requires instrument-level interpretation.
+
+#### 5. LABEL MATURITY
+
+Where the curve construction specification represents instruments by tenor labels, LABEL-to-date resolution MUST occur in the market-data / curve-construction layer.
+
+For the currently intended convention:
+
+```text
+spot = business_day_add(as_of, spot_lag, calendar)
+
+ON:
+    next_business_day(as_of, calendar)
+
+1W:
+    adjust(spot + 7 calendar days)
+
+nM / nY:
+    adjust(add_months/add_years(spot, n))
+```
+
+where `adjust` applies Modified Following with the applicable end-of-month rule.
+
+`3M` MUST NOT be interpreted as `0.25` years or as exactly 90 calendar days.
+
+#### 6. ON IS NOT THE ZERO ANCHOR
+
+`ON` is a market instrument / pillar with its own maturity.
+
+It MUST NOT be conflated with:
+
+```text
+DF(as_of, as_of) = 1.0
+```
+
+The as-of zero anchor is a mathematical identity and is separate from the ON market observation.
+
+#### 7. ZERO / AS-OF ANCHOR
+
+For a constructed curve:
+
+```text
+T(as_of) = 0
+DF(as_of, as_of) = 1.0
+```
+
+The zero anchor MUST be synthesized by the curve-construction layer.
+
+It MUST:
+
+* participate as the left-most curve point;
+* not be sourced from the feed;
+* not be scenario-shocked.
+
+#### 8. PILLAR VALIDITY
+
+Before numerical curve evaluation, the market-data / curve-construction layer MUST validate:
+
+* finite coordinates;
+* finite curve values;
+* strictly increasing curve coordinates;
+* no duplicate coordinates;
+* no zero-value market pillars;
+* valid relationship to the as-of anchor.
+
+A single valid market pillar plus the synthetic anchor is structurally permissible.
+
+No claim that such a structure represents a particular market extrapolation or "flat" economic convention is implied by that structural allowance.
+
+#### 9. CANONICAL GRID MEANING
+
+For a constructed discount curve:
+
+```text
+discount_factor_grid[curve, date, scenario]
+    = DF(run_as_of, date, scenario)
+```
+
+in the curve's `quote_ccy`.
+
+Required invariants:
+
+```text
+date == as_of  -> exactly 1.0
+date < as_of   -> fail
+DF > 0         -> always
+DF >= 1        -> legal for non-positive rates
+```
+
+This grid is a **market-data output**.
+
+Valuation receives the resolved grid values. It does not perform curve evaluation.
+
+#### 10. TIME COORDINATE
+
+The canonical curve evaluation coordinate SHOULD be:
+
+```text
+T = ACT/365F(as_of, target_date)
+```
+
+regardless of the quoted instrument's own accrual convention.
+
+The instrument-specific accrual convention belongs to quote interpretation / curve construction.
+
+It MUST NOT be silently reused as the universal curve interpolation coordinate merely because it was used to quote the source instrument.
+
+#### 11. INTERPOLATION
+
+The initial proposed model for a constructed discount curve is:
+
+```text
+linear interpolation in ln(DF)
+```
+
+on the canonical `T` coordinate, exact at pillars.
+
+This interpolation occurs entirely inside the market-data / curve-construction layer.
+
+It is never performed by valuation or pricing kernels.
+
+This remains a RiskQuant model decision and is not inferred from the existence of the market quotes.
+
+#### 12. EXTRAPOLATION
+
+Left extrapolation is unnecessary because the curve is explicitly anchored at `T = 0`.
+
+For the right side, the proposed initial model is **flat instantaneous forward**:
+
+```text
+extend ln(DF) using the final pillar interval slope
+```
+
+Flat DF extrapolation MUST NOT be adopted merely because it is convenient numerically.
+
+This remains a model decision until the curve-construction specification is formally locked.
+
+#### 13. SCENARIO SHOCKING
+
+For rate-based market inputs:
+
+```text
+normalised decimal RATE
+        |
+        v
+scenario shock
+        |
+        v
+curve construction / rate -> DF
+```
+
+Scenario shocks MUST therefore be applied to the normalized rate before the rate-to-curve / DF transformation.
+
+A discount factor MUST NOT be scenario-shocked additively.
+
+Maturity construction is independent of scenario shocking.
+
+#### 14. UNITS
+
+D069 normalization applies exactly once at the normalized market-data boundary.
+
+For a PERCENT rate:
+
+```text
+5.25% -> 0.0525
+```
+
+No downstream curve-construction or pricing component MAY apply another unit conversion.
+
+#### 15. CURRENCY / CURVE IDENTITY
+
+A discount factor belongs to the curve's declared `quote_ccy` and discounts cash flows denominated in that currency.
+
+Curve identity MUST NOT be reduced to currency alone.
+
+The identity MUST be capable of distinguishing economically distinct curves such as:
+
+```text
+USD OIS
+USD under EUR CSA
+USD projection
+```
+
+where such curves exist.
+
+A collateral basis such as `CSA_EUR` may alter curve construction and level, but does not change the currency of the resulting discount factor.
+
+---
+
+### C. External feed boundary
+
+#### 16. RISKQUANT OWNS THE CONTRACT
+
+The canonical snapshot is already a valid RiskQuant market-data boundary.
+
+For example:
+
+```text
+USD_SOFR_OIS[1Y] -> 4.80
+```
+
+is a curve RF level.
+
+It is not a discount factor.
+
+RiskQuant defines the economic meaning required for that RF through curve metadata, including `CurveInputType`.
+
+A future external producer MUST emit observations satisfying the RiskQuant-owned contract.
+
+The producer does not define the RiskQuant contract.
+
+Whether a future source provides:
+
+```text
+par instrument quotes
+```
+
+or:
+
+```text
+already-constructed zero rates
+```
+
+is therefore represented explicitly by the RiskQuant-side curve metadata rather than inferred from the producer implementation.
+
+#### 17. CURVE CONSTRUCTION METHOD
+
+The construction method remains a future implementation decision determined by `CurveInputType` and the corresponding curve specification.
+
+Examples:
+
+```text
+PAR_RATE
+    -> bootstrap / instrument-based construction
+
+ZERO_RATE
+    -> rate-to-DF conversion
+
+DISCOUNT_FACTOR
+    -> direct validated curve construction
+
+LOG_DISCOUNT_FACTOR
+    -> direct validated curve construction
+```
+
+RiskQuant MUST NOT silently reinterpret one input representation as another.
+
+A vendor-supplied zero curve and a RiskQuant-bootstrapped par-rate curve are both valid future implementations provided they produce the same canonical downstream contract.
+
+#### 18. USD_CSA_EUR
+
+`USD_CSA_EUR` requires an explicit construction specification.
+
+Its presence MUST NOT be treated as sufficient evidence that its construction is equivalent to USD SOFR OIS with a different label.
+
+Until that construction is specified, the curve remains unsupported in `discounting_mode = CURVE`.
+
+---
+
+### D. Architectural consequence
+
+The definitive boundary is:
+
+```text
+                    CANONICAL SNAPSHOT
+                           |
+                +----------+----------+
+                |                     |
+            NODE RFs              CURVE RFs
+                |                     |
+                |                     v
+                |          MARKET-DATA / CURVE LAYER
+                |                     |
+                |          interpret CurveInputType
+                |          resolve maturity
+                |          bootstrap / convert
+                |          build / validate pillars
+                |          interpolate
+                |          extrapolate
+                |          apply scenario
+                |          evaluate requested dates
+                |                     |
+                |                     v
+                |             RESOLVED DF GRID
+                |                     |
+                +----------+----------+
+                           |
+                           v
+                    VALUATION INPUTS
+                           |
+                           v
+                      PRICER KERNEL
+```
+
+The pricer sees only resolved numerical quantities.
+
+The pricer MUST NOT know that the discount factor came from:
+
+* an OIS bootstrap;
+* a vendor zero curve;
+* a direct DF curve;
+* interpolation;
+* extrapolation;
+* a particular tenor label;
+* a particular day-count convention;
+* a particular calendar.
+
+The initial production path is:
+
+```text
+discounting_mode = NONE
+        |
+        v
+DF = 1
+        |
+        v
+valuation
+```
+
+The future production path is:
+
+```text
+curve RFs
+        |
+        v
+market-data / curve construction
+        |
+        v
+resolved DF grid
+        |
+        v
+valuation
+```
+
+This preserves the "kernels just do dumb math" boundary while allowing RiskQuant to own the full future curve-construction contract.
+
+
+## D080 - TODO
+
+---
+
+# Decision Record for `riskquant.credit`
+
+## D-C01 — `obligor_uids_target` ordering (credit / exposure→JTD bridge)
+
+`obligor_uids_target` may be supplied in **any order**. Uids must be unique; duplicates raise. The output rows are emitted in exactly the caller's target order. Sorting is an internal implementation detail: `aggregate_ead_to_obligor` creates a sorted copy of the target, performs the `searchsorted` lookup against that sorted-unique array, and maps the returned ranks back through the sort permutation.
+
+**Rationale.** The canonical target is `jtd_portfolio.obligor_uids`, which `CompiledJtdPortfolio` builds by concatenating per-model block uid arrays. Band order is structurally unsorted, and `run_jtd` requires `ead_by_obligor` rows in exactly that order. Requiring a sorted target would force every caller to sort and then restore band order, unnecessarily exposing an internal ordering constraint at the composition boundary. `align_obligor_ead_to_portfolio` already supports UID-safe alignment independently of source ordering.
+
+**Superseded behaviour.** Before this decision, the bridge used `searchsorted` directly against `obligor_uids_target`, despite `riskquant._arrays` defining the `universe` argument as sorted-unique and leaving that invariant to the caller. When the documented JTD band order was supplied, the lookup could silently lose or mis-attribute exposure. In the reproduced two-block case, 60% of portfolio EAD was lost with no exception.
+
+**Unchanged.**
+
+* An EAD row naming an unknown netting set still fails fast.
+* A netting set whose obligor is absent from the target is still dropped, because modelling a subset of the obligor universe is legitimate.
+* The output remains `float64`, C-contiguous, with row `i` corresponding exactly to `obligor_uids_target[i]`.
+
+---
+
+## D-C03 — a modelled obligor with no netting-set exposure
+
+A JTD-modelled obligor with no corresponding netting-set exposure is an **input/composition error**, not an implicit zero. `aggregate_ead_to_obligor` raises and names the offending uid(s).
+
+**Rationale.** Zero EAD means zero loss in every scenario, so silently zeroing a modelled obligor removes it from EL, VaR and ES without any diagnostic. `align_obligor_ead_to_portfolio` already enforced this semantic and documents it explicitly: a modelled obligor with no exposure is a gap in the inputs, not something to silently zero. The two exposure-to-JTD alignment paths must therefore have the same answer to the same semantic question.
+
+**Effect on solutions-tier callers.** There is no effect on the default `run_credit_exposure` path. Its default target is `np.unique(master.obligor_uid)`, so every target obligor has at least one corresponding netting set by construction. The error is reachable when a caller supplies an explicit target containing an obligor not covered by the netting-set master. That state represents an inconsistent composition and must be surfaced.
+
+**Unchanged.**
+
+* A netting set whose obligor is absent from the modelled target remains a legitimate soft case and is dropped.
+* A genuinely modelled subset of the obligor universe remains supported.
+* No JTD modelled obligor may acquire an implicit zero EAD merely because its exposure mapping is missing.
+
+---
+
+## D-C04 — exact scenario coverage for batched credit execution
+
+All batched scenario producers consumed by the credit execution layer must cover the declared scenario range **exactly once**:
+
+```text
+[0, total_scenarios)
+```
+
+A valid batch stream therefore has:
+
+```text
+no gaps
+no overlaps
+no duplicate writes
+no negative offsets
+no zero-sized batches
+no out-of-range writes
+no truncation
+```
+
+Batch arrival order itself is not part of the contract. Valid batches may be yielded out of scenario order provided their spans still form an exact partition of `[0, total_scenarios)`.
+
+**Rationale.** `build_credit_factor_matrix` and `run_jtd_streaming` use `np.empty` for their destination accumulators. An unwritten scenario therefore contains uninitialised memory which can propagate directly into factor values, portfolio loss, EL, VaR and ES. A final length check is insufficient because overlapping batches can have the expected total size while leaving other scenarios unwritten. The implementation therefore records per-scenario write coverage, rejects overlap and overrun at the offending batch, and rejects gaps or truncation at completion.
+
+**Enforcement.**
+
+* Coverage is tracked at the Python streaming boundary.
+* Nothing related to coverage bookkeeping crosses a JIT boundary.
+* Successful return implies every scenario was written exactly once.
+* The producer cannot certify its own correctness through self-declared batch metadata; the consumer's declared `total_scenarios` is authoritative.
+
+**`CreditFactorBatch.scenario_count_total`.** This field is currently redundant metadata. It is not read anywhere in `src/` and is not authoritative for coverage. A later contract review may either remove it or explicitly make it authoritative and validate it. No decision to change it is made here.
+
+---
+
+## D-C15 — batch size is not a stochastic parameter
+
+Internal batch size is a **performance/execution parameter**, not a stochastic or risk parameter. At fixed economic inputs, seed and scenario count, changing the internal batch size MUST NOT change the generated scenario stream.
+
+`MixedCreditFactorGenerator` achieves this by using exactly one RNG consumer, the C-contiguous `standard_normal` fill, with every non-normal marginal derived deterministically from the normal already occupying its own cell through the corresponding probability-integral transform.
+
+### Reproducibility scope: environment-relative
+
+Cross-environment bitwise reproducibility is **not** claimed.
+
+Within a fixed supported NumPy/SciPy environment, with the required C-order buffer layout, the stream is contractually batch-invariant and bitwise reproducible. This has been verified across multiple factor dimensions, scenario counts and batch sizes, including mixed normal, uniform, indicator, chi and beta marginals.
+
+Across NumPy versions, reproducibility is not guaranteed because `numpy.random.Generator` explicitly provides no general version compatibility guarantee for its bit stream. In addition, the equality between one large `standard_normal(out=...)` call and concatenated smaller calls is an implementation property of the current NumPy implementation, not a cross-version API guarantee.
+
+The PIT construction additionally uses `scipy.special.ndtr`, `gammaincinv` and `betaincinv`. Consequently, the environment relevant to bitwise scenario reproduction now includes **both NumPy and SciPy**.
+
+The C-contiguous layout of the RNG output buffer is part of this implementation contract. It is not merely a performance choice: changing the output memory order can change the generated stream.
+
+### Backward compatibility
+
+The pre-D-C15 and post-D-C15 generators define different stochastic constructions. Therefore a historical scenario stream generated before this change is **not expected to reproduce from the same seed under the new construction**.
+
+Historical credit VaR/ES results are not thereby deemed mathematically invalid. The issue is reproducibility and provenance: a stored result must be distinguishable from results generated under the new stochastic construction.
+
+Any release containing this change must therefore identify the scenario-construction version in provenance. The reproducibility identity should include, at minimum:
+
+```text
+scenario construction identifier
+seed
+scenario count
+NumPy version
+SciPy version
+```
+
+and the package/release version must distinguish the pre-D-C15 and post-D-C15 implementations.
+
+**Required release condition.** The provenance change is part of the release contract for D-C15. The stochastic construction must not be treated as reproducible solely from `(seed, input_hash, engine_version)` when those fields do not identify the generator construction and numerical environment.

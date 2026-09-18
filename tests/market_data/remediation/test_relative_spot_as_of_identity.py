@@ -26,6 +26,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from riskquant.config.enums.discounting_modes import DiscountingMode
 from riskquant.config.proxy_config.compile import compile_proxy_topology_from_df
 from riskquant.config.static_config.compile import (
     compile_risk_static_config_from_dict_of_dfs,
@@ -132,7 +133,11 @@ def _run(rsc, book, *, as_of, levels, ingest_as_of=None, portfolio=None):
         as_of_date=as_of, levels_dict=levels, static_config=rsc
     )
     matrix = build_market_data_matrix_from_snapshot(
-        as_of_date=as_of, uix_mapper=mapper, universe_map=um, snapshot=snapshot
+        discounting_mode=DiscountingMode.NONE,
+        as_of_date=as_of,
+        uix_mapper=mapper,
+        universe_map=um,
+        snapshot=snapshot,
     )
     state = assemble_valuation_state(matrix=matrix, uix_mapper=mapper)
     out = np.empty((portfolio.total_trades, 1))
@@ -181,7 +186,11 @@ def test_missing_run_as_of_fails_before_market_data_state(rsc, name):
     )
     with pytest.raises(ValueError, match=r"UixMapper.as_of_ord32 None \(D067\)"):
         build_market_data_matrix_from_snapshot(
-            as_of_date=A, uix_mapper=mapper, universe_map=um, snapshot=snapshot
+            discounting_mode=DiscountingMode.NONE,
+            as_of_date=A,
+            uix_mapper=mapper,
+            universe_map=um,
+            snapshot=snapshot,
         )
 
 
@@ -336,7 +345,11 @@ def test_canonical_relative_spot_rows_resolve_at_the_canonical_as_of(rsc):
             static_config=rsc,
         )
         matrix = build_market_data_matrix_from_snapshot(
-            as_of_date=A, uix_mapper=mapper, universe_map=um, snapshot=snapshot
+            discounting_mode=DiscountingMode.NONE,
+            as_of_date=A,
+            uix_mapper=mapper,
+            universe_map=um,
+            snapshot=snapshot,
         )
         assert matrix.uix_fingerprint == mapper.fingerprint
         by_uid = dict(

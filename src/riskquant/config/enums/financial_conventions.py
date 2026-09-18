@@ -10,14 +10,14 @@ curve configurations.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 # ---------------------------------------------------------------------------
 # Day count conventions
 # ---------------------------------------------------------------------------
 
 
-class DayCount(str, Enum):
+class DayCount(StrEnum):
     ACT_365F = "ACT_365F"
     ACT_360 = "ACT_360"
     DC_30_360 = "30_360"
@@ -28,7 +28,7 @@ class DayCount(str, Enum):
 # ---------------------------------------------------------------------------
 
 
-class BusinessDayConvention(str, Enum):
+class BusinessDayConvention(StrEnum):
     FOLLOWING = "FOLLOWING"
     MOD_FOLLOWING = "MOD_FOLLOWING"
     PRECEDING = "PRECEDING"
@@ -41,7 +41,7 @@ class BusinessDayConvention(str, Enum):
 # ---------------------------------------------------------------------------
 
 
-class CompoundingType(str, Enum):
+class CompoundingType(StrEnum):
     SIMPLE = "SIMPLE"
     CONTINUOUS = "CONTINUOUS"
     PERIODIC = "PERIODIC"

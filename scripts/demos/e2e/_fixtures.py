@@ -42,6 +42,7 @@ import numpy.typing as npt
 import pandas as pd
 import polars as pl
 
+from riskquant.config.enums.discounting_modes import DiscountingMode
 from riskquant.config.proxy_config.audit import audit_proxy_topology
 from riskquant.config.proxy_config.compile import compile_proxy_topology_from_df
 from riskquant.config.proxy_config.proxy_topology import ProxyTopology
@@ -474,6 +475,7 @@ def _run_market_data(
     """
     universe_map = build_universe_mapping(static_config=rsc, uix_mapper=uix_mapper)
     return build_market_data_matrix_from_snapshot(
+        discounting_mode=DiscountingMode.NONE,
         as_of_date=_SNAPSHOT_AS_OF_DATE,
         uix_mapper=uix_mapper,
         universe_map=universe_map,

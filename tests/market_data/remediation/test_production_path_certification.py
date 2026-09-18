@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from riskquant.config.enums.discounting_modes import DiscountingMode
 from riskquant.config.static_config.compile import (
     compile_risk_static_config_from_dict_of_dfs,
 )
@@ -250,6 +251,7 @@ def test_container_underlying_cannot_reach_the_fold_even_when_ingest_is_bypassed
     del junk
     with pytest.raises(ValueError, match="D072"):
         build_market_data_matrix_from_flat_levels(
+            discounting_mode=DiscountingMode.NONE,
             as_of_date=hf.AS_OF,
             uix_mapper=mapper,
             universe_map=um,

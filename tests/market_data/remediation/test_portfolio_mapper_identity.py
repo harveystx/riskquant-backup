@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from riskquant.config.enums.discounting_modes import DiscountingMode
 from riskquant.config.static_config.compile import (
     compile_risk_static_config_from_dict_of_dfs,
 )
@@ -67,6 +68,7 @@ def _market(rsc, batch, levels):
     mapper = build_uix_mapper([batch], as_of_ord32=AS_OF_ORD)
     um = build_universe_mapping(static_config=rsc, uix_mapper=mapper)
     matrix = build_market_data_matrix_from_flat_levels(
+        discounting_mode=DiscountingMode.NONE,
         as_of_date=hf.AS_OF,
         uix_mapper=mapper,
         universe_map=um,

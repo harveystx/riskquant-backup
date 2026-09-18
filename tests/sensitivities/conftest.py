@@ -8,6 +8,7 @@ import pandas as pd
 import polars as pl
 import pytest
 
+from riskquant.config.enums.discounting_modes import DiscountingMode
 from riskquant.config.static_config.compile import (
     compile_risk_static_config_from_dict_of_dfs,
 )
@@ -163,6 +164,7 @@ def portfolio_mapper_market(rsc, raw_positions, as_of_date, golden_levels):
     )
     universe_map = build_universe_mapping(static_config=rsc, uix_mapper=mapper)
     market_data = build_market_data_matrix_from_snapshot(
+        discounting_mode=DiscountingMode.NONE,
         as_of_date=as_of_date,
         uix_mapper=mapper,
         universe_map=universe_map,

@@ -24,9 +24,9 @@ retained. Use `run_jtd` when that attribution is needed and the portfolio fits.
 from __future__ import annotations
 
 __all__ = [
+    "constant_ead_provider",
     "run_jtd_streaming",
     "run_jtd_streaming_from_generator",
-    "constant_ead_provider",
 ]
 
 from collections.abc import Callable, Iterable
@@ -35,6 +35,11 @@ from typing import Any, Final
 import numpy as np
 import numpy.typing as npt
 
+from riskquant.credit._scenario_coverage import (
+    assert_scenario_coverage_complete,
+    new_scenario_coverage,
+    record_scenario_span,
+)
 from riskquant.credit.factors.simulate.base import (
     CreditFactorBatch,
     CreditFactorGenerator,
@@ -73,7 +78,9 @@ def run_jtd_streaming(
         Scenario batches from a credit-factor generator
         (`generator.iter_batches(batch_size=...)`). Each batch carries
         ``(batch, F)`` scenario-major latent draws and its scenario offset; the
-        batches must partition ``[0, total_scenarios)``.
+        batches must partition ``[0, total_scenarios)`` — enforced, not assumed
+        (the ``(S,)`` accumulator is `np.empty`, so an uncovered scenario would
+        otherwise carry uninitialised memory into VaR/ES).
     ead_provider
         ``(scenario_offset, batch_size) -> (n_obligors, batch_size)`` EAD for that
         scenario slice, rows aligned to `jtd_portfolio.obligor_uids`.
@@ -82,6 +89,12 @@ def run_jtd_streaming(
     collect_by_model
         If True, also accumulate an ``(n_models, S)`` per-model breakdown (rows
         sum to the portfolio total). Costs one ``(S,)`` row per distinct model.
+
+    Raises
+    ------
+    ValueError
+        If the batches do not partition ``[0, total_scenarios)`` exactly, or the
+        EAD provider returns the wrong shape for a batch.
     """
     n_obligors = jtd_portfolio.total_obligors
     blocks = jtd_portfolio.blocks
@@ -104,9 +117,13 @@ def run_jtd_streaming(
 
     scratch: npt.NDArray[np.float64] | None = None  # (N, batch) reused across batches
 
+    ctx = "run_jtd_streaming"
+    coverage = new_scenario_coverage(total_scenarios, ctx=ctx)
+
     for batch in factor_batches:
-        offset = batch.scenario_offset
-        batch_size = batch.latent_factors.shape[0]
+        offset = int(batch.scenario_offset)
+        batch_size = int(batch.latent_factors.shape[0])
+        record_scenario_span(coverage, offset=offset, count=batch_size, ctx=ctx)
         end_s = offset + batch_size
 
         # (batch, F) scenario-major -> (F, batch) factor-major for the kernels.
@@ -147,6 +164,8 @@ def run_jtd_streaming(
                 model_loss[block_model_row[i], offset:end_s] = scratch[
                     start:stop, :
                 ].sum(axis=0)
+
+    assert_scenario_coverage_complete(coverage, ctx=ctx)
 
     return StreamingJtdResult(
         portfolio_loss=portfolio_loss,

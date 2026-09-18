@@ -134,6 +134,13 @@ class CurveMeta:
         fh_bh_mmdd     HALF_YEAR_BY_DATE / HALF_YEAR_BY_LABEL only. The
                        'MMDD|MMDD' half-year boundary convention.
 
+    curve_input_type contract (D079 clause 3):
+      The ECONOMIC representation of this curve's levels (PAR_RATE, ZERO_RATE,
+      DISCOUNT_FACTOR, LOG_DISCOUNT_FACTOR), orthogonal to quote_type. Declared
+      once here; curve points inherit it through curve_id. None means "not yet
+      declared": the curve may still be used as a market-data input, and any
+      future curve construction for it stays fail-closed under D061.
+
     discount_basis contract:
       "NOT_A_DISCOUNT_CURVE"   -> non-discount curve (e.g. commodity forward).
                                   is_default_discount_for_ccy must be False.
@@ -163,6 +170,8 @@ class CurveMeta:
     roll_month: int | None
     roll_day: int | None
     fh_bh_mmdd: str | None
+
+    curve_input_type: str | None
 
     discount_basis: str
     is_default_discount_for_ccy: bool

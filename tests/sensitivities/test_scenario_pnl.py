@@ -27,6 +27,7 @@ import numpy as np
 import polars as pl
 import pytest
 
+from riskquant.config.enums.discounting_modes import DiscountingMode
 from riskquant.config.proxy_config.compile import compile_proxy_topology_from_df
 from riskquant.market_data.assemble import (
     build_market_data_matrix_from_snapshot,
@@ -75,14 +76,12 @@ _SHOCKS = (
     (0.020, -0.015, -0.010),
 )
 
-_PROXY_DF = pl.DataFrame(
-    {
-        "proxying_level": ["RISK_FACTOR"],
-        "required_name": ["WTI_CRUDE"],
-        "proxy_name": ["BRENT_CRUDE"],
-        "vol_scaling_factor": [0.95],
-    }
-)
+_PROXY_DF = pl.DataFrame({
+    "proxying_level": ["RISK_FACTOR"],
+    "required_name": ["WTI_CRUDE"],
+    "proxy_name": ["BRENT_CRUDE"],
+    "vol_scaling_factor": [0.95],
+})
 
 
 # =============================================================================
@@ -166,6 +165,7 @@ def resolved(rsc, proxy_topology, snapshot, portfolio_and_mapper, raw_shocks):
 def pnl(rsc, portfolio_and_mapper, snapshot, resolved, as_of_date):
     portfolio, mapper = portfolio_and_mapper
     market_data = build_market_data_matrix_from_snapshot(
+        discounting_mode=DiscountingMode.NONE,
         as_of_date=as_of_date,
         uix_mapper=mapper,
         universe_map=build_universe_mapping(static_config=rsc, uix_mapper=mapper),
@@ -358,31 +358,25 @@ def test_pnl_shape_and_row_identity(pnl, position_uids) -> None:
 
 def _one_position_calculator(cross_value: float) -> SensitivityPnlCalculator:
     axis = FactorAxis.from_keys(pl.Series("factor_id", [10, 20], dtype=pl.Int32))
-    sens = pl.DataFrame(
-        {
-            "position_id": pl.Series([1, 1], dtype=pl.Int64),
-            "factor_id": pl.Series([10, 20], dtype=pl.Int32),
-            "first_order": pl.Series([0.0, 0.0], dtype=pl.Float64),
-            "second_order": pl.Series([0.0, 0.0], dtype=pl.Float64),
-        }
-    )
-    cross = pl.DataFrame(
-        {
-            "position_id": pl.Series([1], dtype=pl.Int64),
-            "factor_id_i": pl.Series([10], dtype=pl.Int32),
-            "factor_id_j": pl.Series([20], dtype=pl.Int32),
-            "cross_second_order": pl.Series([cross_value], dtype=pl.Float64),
-        }
-    )
-    meta = pl.DataFrame(
-        {
-            "factor_id": pl.Series([10, 20], dtype=pl.Int32),
-            "displacement_convention_id": pl.Series(
-                [int(DisplacementConvention.ABSOLUTE)] * 2, dtype=pl.Int8
-            ),
-            "quote_base": pl.Series([1.0, 1.0], dtype=pl.Float64),
-        }
-    )
+    sens = pl.DataFrame({
+        "position_id": pl.Series([1, 1], dtype=pl.Int64),
+        "factor_id": pl.Series([10, 20], dtype=pl.Int32),
+        "first_order": pl.Series([0.0, 0.0], dtype=pl.Float64),
+        "second_order": pl.Series([0.0, 0.0], dtype=pl.Float64),
+    })
+    cross = pl.DataFrame({
+        "position_id": pl.Series([1], dtype=pl.Int64),
+        "factor_id_i": pl.Series([10], dtype=pl.Int32),
+        "factor_id_j": pl.Series([20], dtype=pl.Int32),
+        "cross_second_order": pl.Series([cross_value], dtype=pl.Float64),
+    })
+    meta = pl.DataFrame({
+        "factor_id": pl.Series([10, 20], dtype=pl.Int32),
+        "displacement_convention_id": pl.Series(
+            [int(DisplacementConvention.ABSOLUTE)] * 2, dtype=pl.Int8
+        ),
+        "quote_base": pl.Series([1.0, 1.0], dtype=pl.Float64),
+    })
     return SensitivityPnlCalculator.compile(
         SensitivityBookSpec(
             sensitivities=sens,
@@ -407,23 +401,19 @@ def test_cross_term_has_no_half_multiplier() -> None:
 def test_diagonal_second_order_does_carry_a_half() -> None:
     """The DIAGONAL second-order term is `0.5 * d2 * x^2`."""
     axis = FactorAxis.from_keys(pl.Series("factor_id", [10], dtype=pl.Int32))
-    sens = pl.DataFrame(
-        {
-            "position_id": pl.Series([1], dtype=pl.Int64),
-            "factor_id": pl.Series([10], dtype=pl.Int32),
-            "first_order": pl.Series([0.0], dtype=pl.Float64),
-            "second_order": pl.Series([1.0], dtype=pl.Float64),
-        }
-    )
-    meta = pl.DataFrame(
-        {
-            "factor_id": pl.Series([10], dtype=pl.Int32),
-            "displacement_convention_id": pl.Series(
-                [int(DisplacementConvention.ABSOLUTE)], dtype=pl.Int8
-            ),
-            "quote_base": pl.Series([1.0], dtype=pl.Float64),
-        }
-    )
+    sens = pl.DataFrame({
+        "position_id": pl.Series([1], dtype=pl.Int64),
+        "factor_id": pl.Series([10], dtype=pl.Int32),
+        "first_order": pl.Series([0.0], dtype=pl.Float64),
+        "second_order": pl.Series([1.0], dtype=pl.Float64),
+    })
+    meta = pl.DataFrame({
+        "factor_id": pl.Series([10], dtype=pl.Int32),
+        "displacement_convention_id": pl.Series(
+            [int(DisplacementConvention.ABSOLUTE)], dtype=pl.Int8
+        ),
+        "quote_base": pl.Series([1.0], dtype=pl.Float64),
+    })
     calc = SensitivityPnlCalculator.compile(
         SensitivityBookSpec(
             sensitivities=sens,
@@ -446,23 +436,19 @@ def test_factor_axis_ordering_is_respected_not_assumed() -> None:
     """
     # Descending keys -> SLOT encoding (keys are not sorted ascending).
     axis = FactorAxis.from_keys(pl.Series("factor_id", [20, 10], dtype=pl.Int32))
-    sens = pl.DataFrame(
-        {
-            "position_id": pl.Series([1, 1], dtype=pl.Int64),
-            "factor_id": pl.Series([10, 20], dtype=pl.Int32),
-            "first_order": pl.Series([1.0, 1000.0], dtype=pl.Float64),
-            "second_order": pl.Series([0.0, 0.0], dtype=pl.Float64),
-        }
-    )
-    meta = pl.DataFrame(
-        {
-            "factor_id": pl.Series([10, 20], dtype=pl.Int32),
-            "displacement_convention_id": pl.Series(
-                [int(DisplacementConvention.ABSOLUTE)] * 2, dtype=pl.Int8
-            ),
-            "quote_base": pl.Series([1.0, 1.0], dtype=pl.Float64),
-        }
-    )
+    sens = pl.DataFrame({
+        "position_id": pl.Series([1, 1], dtype=pl.Int64),
+        "factor_id": pl.Series([10, 20], dtype=pl.Int32),
+        "first_order": pl.Series([1.0, 1000.0], dtype=pl.Float64),
+        "second_order": pl.Series([0.0, 0.0], dtype=pl.Float64),
+    })
+    meta = pl.DataFrame({
+        "factor_id": pl.Series([10, 20], dtype=pl.Int32),
+        "displacement_convention_id": pl.Series(
+            [int(DisplacementConvention.ABSOLUTE)] * 2, dtype=pl.Int8
+        ),
+        "quote_base": pl.Series([1.0, 1.0], dtype=pl.Float64),
+    })
     calc = SensitivityPnlCalculator.compile(
         SensitivityBookSpec(
             sensitivities=sens,
@@ -485,23 +471,19 @@ def test_missing_factor_row_fails_fast() -> None:
     RAISE, never contribute a silent zero in every scenario.
     """
     axis = FactorAxis.from_keys(pl.Series("factor_id", [10], dtype=pl.Int32))
-    sens = pl.DataFrame(
-        {
-            "position_id": pl.Series([1, 1], dtype=pl.Int64),
-            "factor_id": pl.Series([10, 999], dtype=pl.Int32),
-            "first_order": pl.Series([1.0, 1.0], dtype=pl.Float64),
-            "second_order": pl.Series([0.0, 0.0], dtype=pl.Float64),
-        }
-    )
-    meta = pl.DataFrame(
-        {
-            "factor_id": pl.Series([10, 999], dtype=pl.Int32),
-            "displacement_convention_id": pl.Series(
-                [int(DisplacementConvention.ABSOLUTE)] * 2, dtype=pl.Int8
-            ),
-            "quote_base": pl.Series([1.0, 1.0], dtype=pl.Float64),
-        }
-    )
+    sens = pl.DataFrame({
+        "position_id": pl.Series([1, 1], dtype=pl.Int64),
+        "factor_id": pl.Series([10, 999], dtype=pl.Int32),
+        "first_order": pl.Series([1.0, 1.0], dtype=pl.Float64),
+        "second_order": pl.Series([0.0, 0.0], dtype=pl.Float64),
+    })
+    meta = pl.DataFrame({
+        "factor_id": pl.Series([10, 999], dtype=pl.Int32),
+        "displacement_convention_id": pl.Series(
+            [int(DisplacementConvention.ABSOLUTE)] * 2, dtype=pl.Int8
+        ),
+        "quote_base": pl.Series([1.0, 1.0], dtype=pl.Float64),
+    })
     with pytest.raises((SensitivityPnlInputError, KeyError, ValueError)):
         SensitivityPnlCalculator.compile(
             SensitivityBookSpec(

@@ -10,10 +10,10 @@ asset_subclass columns.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class AssetClass(str, Enum):
+class AssetClass(StrEnum):
     FX = "FX"
     IR = "IR"
     CREDIT = "CREDIT"
@@ -21,7 +21,7 @@ class AssetClass(str, Enum):
     COMMODITY = "COMMODITY"
 
 
-class AssetSubclass(str, Enum):
+class AssetSubclass(StrEnum):
     # Commodity
     CM_AGRI = "CM_AGRI"
     CM_BIOFUEL = "CM_BIOFUEL"

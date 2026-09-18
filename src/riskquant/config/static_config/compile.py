@@ -229,6 +229,9 @@ def _compile_curve_meta(df: pl.DataFrame) -> dict[int, CurveMeta]:
             roll_month=_opt_int(r.get("roll_month")),
             roll_day=_opt_int(r.get("roll_day")),
             fh_bh_mmdd=_opt_str(r.get("fh_bh_mmdd")),
+            # D079 clause 3: declared once on the curve; points inherit it.
+            # Absent means "not yet declared" - never inferred from quote_type.
+            curve_input_type=_opt_str(r.get("curve_input_type"), upper=True),
             discount_basis=_str(r["discount_basis"], upper=True),
             is_default_discount_for_ccy=_bool(r.get("is_default_discount_for_ccy")),
         )

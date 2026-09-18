@@ -40,6 +40,8 @@ from datetime import date
 
 import numpy as np
 
+from riskquant.config.enums.discounting_modes import DiscountingMode
+
 # Config & Resolution
 from riskquant.config.proxy_config.proxy_topology import ProxyTopology
 from riskquant.config.static_config.static_config import RiskStaticConfig
@@ -71,8 +73,8 @@ from riskquant.valuation.engine import run_valuation
 __all__ = [
     "SimlabRunner",
     "UniverseMapping",
-    "extract_levels_from_snapshot",
     "build_market_data_matrix_from_flat_levels",
+    "extract_levels_from_snapshot",
 ]
 
 
@@ -154,6 +156,7 @@ class SimlabRunner:
 
         # ---- 3. Base valuation (t0) ----
         base_state = build_market_data_matrix_from_flat_levels(
+            discounting_mode=DiscountingMode.NONE,
             as_of_date=self.as_of_date,
             uix_mapper=self.uix_mapper,
             universe_map=self.universe_map,
@@ -199,6 +202,7 @@ class SimlabRunner:
 
             # Step B — hydrate market state (zero-copy slicing).
             market_state = build_market_data_matrix_from_flat_levels(
+                discounting_mode=DiscountingMode.NONE,
                 as_of_date=self.as_of_date,
                 uix_mapper=self.uix_mapper,
                 universe_map=self.universe_map,

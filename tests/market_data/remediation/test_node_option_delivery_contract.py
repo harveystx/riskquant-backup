@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from riskquant.config.enums.discounting_modes import DiscountingMode
 from riskquant.config.static_config.compile import (
     compile_risk_static_config_from_dict_of_dfs,
 )
@@ -123,8 +124,8 @@ def test_node_option_without_delivery_ingests_and_compiles(rsc):
     assert portfolio.uix_fingerprint == mapper.fingerprint
     assert float(option.sqrt_tte[0]) > 0.0
 
-    # The producer boundary is unchanged: discount-factor production is still
-    # blocked by D061, which is a market-data limitation, not a date contract.
+    # The producer builds under the supported NONE discounting mode: the
+    # option's discount rows are DF = 1 (D061), and no curve level is read.
     um = build_universe_mapping(static_config=rsc, uix_mapper=mapper)
     names = {v: k for k, v in rsc.rel_name_to_rf_id.items()}
     snapshot = compile_risk_factor_level_snapshot_from_levels_dict(
@@ -132,10 +133,15 @@ def test_node_option_without_delivery_ingests_and_compiles(rsc):
         levels_dict={names[int(i)]: 80.0 for i in um.required_factor_ids},
         static_config=rsc,
     )
-    with pytest.raises(NotImplementedError, match="D061"):
-        build_market_data_matrix_from_snapshot(
-            as_of_date=A, uix_mapper=mapper, universe_map=um, snapshot=snapshot
-        )
+    matrix = build_market_data_matrix_from_snapshot(
+        discounting_mode=DiscountingMode.NONE,
+        as_of_date=A,
+        uix_mapper=mapper,
+        universe_map=um,
+        snapshot=snapshot,
+    )
+    assert matrix.discount_factor_grid.shape[0] == 1  # the USD_SOFR_OIS curve
+    assert np.all(matrix.discount_factor_grid == 1.0)
 
 
 def test_option_economics_do_not_change_when_delivery_metadata_is_supplied(rsc):

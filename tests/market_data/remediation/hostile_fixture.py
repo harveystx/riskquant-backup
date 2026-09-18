@@ -32,6 +32,8 @@ import numpy as np
 import pandas as pd
 import polars as pl
 
+from riskquant.config.enums.discounting_modes import DiscountingMode
+
 AS_OF = date(2027, 1, 4)
 
 CCY = [("EUR", 1), ("USD", 2), ("GBP", 3), ("CHF", 4), ("JPY", 5)]
@@ -302,6 +304,7 @@ def run_spot_book(
     )
     um = build_universe_mapping(static_config=static_config, uix_mapper=mapper)
     matrix = build_market_data_matrix_from_flat_levels(
+        discounting_mode=DiscountingMode.NONE,
         as_of_date=AS_OF,
         uix_mapper=mapper,
         universe_map=um,

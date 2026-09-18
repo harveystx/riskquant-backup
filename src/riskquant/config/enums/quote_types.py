@@ -9,10 +9,10 @@ surface_meta under quote_type and unit_scale.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class QuoteType(str, Enum):
+class QuoteType(StrEnum):
     PRICE = "PRICE"
     FX_RATE = "FX_RATE"
     RATE = "RATE"
@@ -21,7 +21,7 @@ class QuoteType(str, Enum):
     SPREAD = "SPREAD"
 
 
-class UnitScale(str, Enum):
+class UnitScale(StrEnum):
     DECIMAL = "DECIMAL"
     PERCENT = "PERCENT"
     BP = "BP"

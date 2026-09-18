@@ -39,18 +39,49 @@ copula (a Cholesky over a designated systemic sub-block, with every other row
 left independent and PIT-transformed off that core) — is deferred until
 multi-factor copula support lands.
 
+REPRODUCIBILITY (D-C15): BATCH-INVARIANT BY CONSTRUCTION
+--------------------------------------------------------
+At a fixed ``seed``, factor universe and ``total_scenarios``, the generated
+matrix is bitwise identical for EVERY ``batch_size``. That is a contract, not an
+accident, and it is achieved by having exactly ONE consumer of the random
+stream: the ``standard_normal`` fill of the whole ``(bs, n_factors)`` buffer.
+Concatenating sequential fills of the same generator reproduces one large fill,
+so batching cannot move the stream.
+
+Every non-normal marginal is then derived from the standard normal already
+sitting in its own cell by an exact probability-integral transform (PIT):
+
+    uniform    U = Phi(Z)
+    indicator  1{Z < Phi^-1(p)}                    == 1{Phi(Z) < p}
+    chi        W = F_chi2(nu)^-1(Phi(Z)) = 2 * Gamma(nu/2)^-1(Phi(Z));
+               the column stores 1 / sqrt(W)
+    beta       P = F_Beta(alpha, beta)^-1(Phi(Z))
+
+The marginals are exactly those the previous per-column ``rng`` draws produced,
+and the columns remain mutually independent because the underlying normals are.
+The PREVIOUS design drew each special column from the shared generator INSIDE
+the batch loop, so a second batch interleaved those draws with the next normal
+fill and the whole stream shifted: same seed, different ``batch_size``,
+different scenarios. Nothing downstream detected it.
+
+Deriving the special columns off the normal core is also the construction the
+deferred multi-factor work needs (a Cholesky over a systemic sub-block with
+every other row PIT-transformed off that core), so this does not spend a design
+decision that belongs to a later tranche.
+
 CONTRACT: yielded `latent_factors` are views into a reused buffer.
 
 LAYOUT
 ------
 - Main buffer is C-order ``(batch_size, n_factors)`` so the partial-batch slice
   ``buffer[:bs, :]`` is C-contiguous — required by ``rng.standard_normal(out=
-  ...)`` and ``rng.random(out=...)``.
+  ...)``.
 - A 1D ``scratch`` buffer (length ``batch_size``) backs each non-normal column
-  fill: the draw targets the contiguous scratch, then the strided write
-  ``buffer[:bs, col] = scratch[:bs]`` lands it in the factor column. Filling a
-  factor column directly would require a non-contiguous ``out=``, which numpy
-  rejects. ``bool_scratch`` backs the indicator threshold the same way.
+  transform: the column is copied into the contiguous scratch, transformed in
+  place with ``out=`` ufuncs, then written back with the strided assignment
+  ``buffer[:bs, col] = scratch[:bs]``. Transforming the strided column view
+  directly would work but at strided-access cost. ``bool_scratch`` backs the
+  indicator threshold the same way.
 - Both scratch buffers are allocated once at setup and reused every batch — no
   heap allocation inside the streaming loop.
 """
@@ -67,6 +98,7 @@ from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import numpy.typing as npt
+from scipy.special import betaincinv, gammaincinv, ndtr, ndtri
 
 from riskquant.credit.factors.simulate.base import (
     CreditFactorBatch,
@@ -213,14 +245,12 @@ class MixedCreditFactorGenerator(CreditFactorGenerator):
         ):
             raise ValueError("beta_alpha and beta_beta must be strictly positive")
 
-        special = np.concatenate(
-            (
-                self.uniform_columns,
-                self.chi_columns,
-                self.indicator_columns,
-                self.beta_columns,
-            )
-        )
+        special = np.concatenate((
+            self.uniform_columns,
+            self.chi_columns,
+            self.indicator_columns,
+            self.beta_columns,
+        ))
         if special.size == 0:
             return
         if special.min() < 0 or special.max() >= n_factors:
@@ -235,6 +265,13 @@ class MixedCreditFactorGenerator(CreditFactorGenerator):
             )
 
     def iter_batches(self, *, batch_size: int) -> Iterator[CreditFactorBatch]:
+        """Stream `(batch_size, F)` latent batches; bitwise batch-invariant.
+
+        The only draw is the whole-buffer ``standard_normal`` fill. Non-normal
+        columns are exact PIT transforms of the normal already in the cell, so
+        the random stream advances by ``bs * n_factors`` variates per batch and
+        by nothing else — see the module docstring (D-C15).
+        """
         if batch_size <= 0:
             raise ValueError("batch_size must be positive")
 
@@ -245,7 +282,10 @@ class MixedCreditFactorGenerator(CreditFactorGenerator):
         chi_cols = self.chi_columns
         chi_shape_halved = self.chi_nu * 0.5  # chi^2(nu) = 2 * Gamma(nu/2)
         ind_cols = self.indicator_columns
-        ind_p = self.indicator_p
+        # 1{U < p} with U = Phi(Z) is exactly 1{Z < Phi^-1(p)}; hoisting the
+        # threshold keeps the indicator a single comparison on the raw normal.
+        # p = 0 -> -inf (never stressed), p = 1 -> +inf (always): both exact.
+        ind_threshold = ndtri(self.indicator_p)
         beta_cols = self.beta_columns
         beta_alpha = self.beta_alpha
         beta_beta = self.beta_beta
@@ -259,10 +299,9 @@ class MixedCreditFactorGenerator(CreditFactorGenerator):
 
         # Main buffer: C-order so [:bs, :] is C-contiguous for any bs.
         buffer = np.empty((batch_size, n_factors), dtype=np.float64, order="C")
-        # Reused scratch (allocated once): contiguous `out=` target for the
-        # per-column draws, plus a bool scratch for the indicator threshold.
+        # Reused scratch (allocated once): contiguous target for the per-column
+        # transforms, plus a bool scratch for the indicator threshold.
         scratch = np.empty(batch_size, dtype=np.float64)
-        scratch2 = np.empty(batch_size, dtype=np.float64)
         bool_scratch = np.empty(batch_size, dtype=np.bool_)
 
         scenario_offset = 0
@@ -272,46 +311,57 @@ class MixedCreditFactorGenerator(CreditFactorGenerator):
             bs = min(batch_size, total - scenario_offset)
             view = buffer[:bs, :]
 
-            # Fill the whole batch with independent standard normals; the
-            # normal (systemic / idiosyncratic) columns keep these draws.
+            # THE ONLY CONSUMER OF THE RANDOM STREAM. Everything below is a
+            # deterministic transform of these draws, which is what makes the
+            # batch size irrelevant to the result.
             rng.standard_normal(out=cast(np.ndarray, view))
 
-            # Overwrite uniform columns with U(0, 1).
+            # Uniform columns: U = Phi(Z).
             for c in range(n_uniform):
-                s = scratch[:bs]
-                rng.random(out=cast(np.ndarray, s))
-                buffer[:bs, uniform_cols[c]] = s
+                s_buf = scratch[:bs]
+                np.copyto(s_buf, buffer[:bs, uniform_cols[c]])
+                ndtr(s_buf, out=s_buf)
+                buffer[:bs, uniform_cols[c]] = s_buf
 
-            # Overwrite chi columns with 1 / sqrt(W), W ~ chi^2(nu).
+            # Chi columns: W = 2 * Gamma(nu/2)^-1(Phi(Z)) ~ chi^2(nu); store
+            # 1 / sqrt(W) so the t-copula kernel never takes a sqrt.
             for c in range(n_chi):
-                s = scratch[:bs]
-                rng.standard_gamma(chi_shape_halved[c], out=cast(np.ndarray, s))
-                s *= 2.0  # W ~ chi^2(nu)
-                np.reciprocal(np.sqrt(s), out=s)  # store 1 / sqrt(W)
-                buffer[:bs, chi_cols[c]] = s
+                s_buf = scratch[:bs]
+                np.copyto(s_buf, buffer[:bs, chi_cols[c]])
+                ndtr(s_buf, out=s_buf)
+                gammaincinv(chi_shape_halved[c], s_buf, out=s_buf)
+                s_buf *= 2.0  # W ~ chi^2(nu)
+                np.sqrt(s_buf, out=s_buf)
+                np.reciprocal(s_buf, out=s_buf)  # store 1 / sqrt(W)
+                if not bool(np.isfinite(s_buf).all()):
+                    # Only reachable if Phi(Z) underflows to exactly 0 (needs
+                    # Z < -37), which would make W = 0 and 1/sqrt(W) infinite.
+                    # Fail loud rather than ship an infinite latent scale.
+                    raise ValueError(
+                        "MixedCreditFactorGenerator: non-finite 1/sqrt(W) in "
+                        f"chi column {int(chi_cols[c])} (nu="
+                        f"{float(self.chi_nu[c])}) at scenario offset "
+                        f"{scenario_offset}."
+                    )
+                buffer[:bs, chi_cols[c]] = s_buf
 
-            # Overwrite indicator columns with {0.0, 1.0}, P(=1) = p.
+            # Indicator columns: {0.0, 1.0} with P(=1) = p.
             for c in range(n_ind):
-                s = scratch[:bs]
-                rng.random(out=cast(np.ndarray, s))
+                s_buf = scratch[:bs]
+                np.copyto(s_buf, buffer[:bs, ind_cols[c]])
                 b = bool_scratch[:bs]
-                np.less(s, ind_p[c], out=b)  # u < p  -> stressed
+                np.less(s_buf, ind_threshold[c], out=b)  # Z < Phi^-1(p)
                 buffer[:bs, ind_cols[c]] = b  # bool -> float64 on assignment
 
-            # Overwrite beta columns with P ~ Beta(alpha, beta). Drawn via the
-            # Gamma ratio Beta = G1 / (G1 + G2), G1 ~ Gamma(alpha), G2 ~
-            # Gamma(beta): standard_gamma supports out=, so the whole fill stays
-            # zero-allocation (rng.beta has no out= and would allocate). This is
-            # the per-scenario stochastic common PD the beta-binomial kernel
+            # Beta columns: P = F_Beta(alpha, beta)^-1(Phi(Z)). This is the
+            # per-scenario stochastic common PD the beta-binomial kernel
             # thresholds each obligor's independent uniform against.
             for c in range(n_beta):
-                g1 = scratch[:bs]
-                g2 = scratch2[:bs]
-                rng.standard_gamma(beta_alpha[c], out=cast(np.ndarray, g1))
-                rng.standard_gamma(beta_beta[c], out=cast(np.ndarray, g2))
-                np.add(g1, g2, out=g2)  # denom = G1 + G2
-                np.divide(g1, g2, out=g1)  # G1 / (G1 + G2) ~ Beta(alpha, beta)
-                buffer[:bs, beta_cols[c]] = g1
+                s_buf = scratch[:bs]
+                np.copyto(s_buf, buffer[:bs, beta_cols[c]])
+                ndtr(s_buf, out=s_buf)
+                betaincinv(beta_alpha[c], beta_beta[c], s_buf, out=s_buf)
+                buffer[:bs, beta_cols[c]] = s_buf
 
             yield CreditFactorBatch(
                 latent_factors=view,

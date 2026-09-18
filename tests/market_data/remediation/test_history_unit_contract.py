@@ -25,6 +25,7 @@ import pandas as pd
 import polars as pl
 import pytest
 
+from riskquant.config.enums.discounting_modes import DiscountingMode
 from riskquant.config.static_config.compile import (
     compile_risk_static_config_from_dict_of_dfs,
 )
@@ -275,7 +276,11 @@ def _pv(rsc, snap):
     )
     um = build_universe_mapping(static_config=rsc, uix_mapper=mapper)
     matrix = build_market_data_matrix_from_snapshot(
-        as_of_date=hf.AS_OF, uix_mapper=mapper, universe_map=um, snapshot=snap
+        discounting_mode=DiscountingMode.NONE,
+        as_of_date=hf.AS_OF,
+        uix_mapper=mapper,
+        universe_map=um,
+        snapshot=snap,
     )
     state = assemble_valuation_state(matrix=matrix, uix_mapper=mapper)
     out = np.empty((portfolio.total_trades, 1))
