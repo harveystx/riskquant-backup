@@ -16,6 +16,11 @@ class RiskFactorMatrix:
     """
     Canonical RiskFactorMatrix with God-Tier memory layout for time-series operations.
 
+    Unit contract (D069 / AUD-06): `values` are CANONICAL base units. Source-unit
+    histories enter only through `build_risk_factor_matrix_from_df` / `_xlsx`,
+    which normalise once; this container, `get_snapshot` and `from_snapshot`
+    never rescale.
+
     Invariants:
       - dates: 1D, sorted ascending, unique (int32 ordinal or datetime64[D])
       - factor_ids: 1D int32, sorted ascending, unique

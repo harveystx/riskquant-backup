@@ -2340,54 +2340,108 @@ Pinned by `test_cashflow_blocks_are_still_not_production_reachable` and
 `test_forward_rate_state_field_has_no_producer` so the blocker is a visible
 regression rather than folklore.
 
-## D054 — Cashflow production construction is blocked at ingest, not at valuation
+## D054 — Cashflow production construction is blocked at ingest and rate-model inputs, not at valuation
 
 **Status:** LOCKED (blocker recorded; Phase 6 not completed)
 
-**Decision:** the three authored cashflow block types (`FixedCashflowBlock`,
-`FloatingCashflowBlock`, `PrincipalCashflowBlock`) CANNOT be wired to a
-production compiler against the current repository, and no compiler was written.
+**Decision:** the three authored cashflow block types
+(`FixedCashflowBlock`, `FloatingCashflowBlock`, `PrincipalCashflowBlock`)
+CANNOT be wired to a production compiler against the current repository, and no
+cashflow compiler was written.
 
-**Evidence:** two independent blockers, both verified from source.
+The blockage is upstream of `riskquant.valuation` and consists of two separate
+missing contracts:
 
-1. `IngestBatch` carries none of the cashflow economics the blocks require --
-   no `notional`, `accrual_factor`, `fixed_rate`, `spread`, `amount`,
-   `pay_receive_mult`, and no reset/fixing date. This is closed at the schema,
-   not merely absent from the SoA container: `ALL_ALLOWED_COLS_SET` is the
-   entire permitted ingest universe and is
+1. **Cashflow economics are absent from the ingest schema.**
 
-       uid, instrument, quantity, underlying, settlement_ccy, netting_set_id,
-       strike_price, strike_ccy, is_call, expiry_date, delivery_date,
-       settlement_date, under_discount_curve, strike_discount_curve,
-       volatility_container_name
+   `IngestBatch` carries none of the economic fields required by the authored
+   cashflow blocks:
 
-   A rate-schedule column set does not exist at any layer.
+   * `notional`
+   * `accrual_factor`
+   * `fixed_rate`
+   * `spread`
+   * `amount`
+   * `pay_receive_mult`
+   * reset/fixing date
 
-2. `MarketDataMatrix` has no forward-rate producer.
-   `ValuationState.forward_rates` exists as a consumer field and measures
-   `size == 0` on every run. A simple forward rate is derivable from
-   `discount_factor_grid` as `(DF(0,s)/DF(0,T) - 1)/alpha`, but that presupposes
-   single-curve discounting -- a modelling decision (OIS/LIBOR basis) outside a
-   valuation-hardening phase -- and still needs `alpha` and the reset date from
-   an ingest that has neither.
+   This is not merely a missing SoA field. The permitted ingest universe is
+   closed by `ALL_ALLOWED_COLS_SET`:
 
-**Implications:** VAL-13 stays OPEN for cashflows; VAL-04 is NOT closed for the
-cashflow path; VAL-16's two-convention sign contract remains documented but
-untested in production. No ingest columns were added: that is an EDGE/schema
-change spanning `schema.py`, `parser.py`, `canonicalize.py`, `materialize.py`,
-`validate.py` and `IngestBatch`, plus a rate-curve market-data producer.
+   ```
+   uid, instrument, quantity, underlying, settlement_ccy, netting_set_id,
+   strike_price, strike_ccy, is_call, expiry_date, delivery_date,
+   settlement_date, under_discount_curve, strike_discount_curve,
+   volatility_container_name
+   ```
 
-Positive findings recorded for whoever does the work:
-* the D049 EDF key `(curve_uix, date_uix, fx_eff_uix)` is the correct SHAPE for
-  a cashflow -- curve, payment date, FX-to-settlement. Only the dedup POOL needs
-  extending with `(cashflow_curve, payment_date, fx_c2s)`. No redesign.
-* adding cashflow slots to `CompiledPortfolio` is safe: `simlab/runner.py` and
-  `valuation/engine.py` both read `total_trades` as a ROW count, which is
-  correct and stays correct, and nothing assumes `num_trades == num_rows`.
+   No cashflow schedule/rate column set exists elsewhere in the current ingest
+   stack.
 
-Pinned by `test_cashflow_blocks_are_still_not_production_reachable` and
-`test_forward_rate_state_field_has_no_producer` so the blocker is a visible
-regression rather than folklore.
+2. **No forward-rate economic source exists.**
+
+   `ValuationState.forward_rates` exists as a consumer field but is unpopulated.
+   `MarketDataMatrix` has no forward-rate producer in the raw market-data tier.
+
+   A forward rate can be mathematically derived from discount factors under a
+   particular single-curve convention, for example
+
+   ```
+   (DF(0,s) / DF(0,T) - 1) / alpha
+   ```
+
+   but that expression is NOT adopted by this decision. Doing so would select a
+   modelling convention for the floating-rate source and would still require
+   accrual and reset-date inputs that do not exist in the current ingest schema.
+
+**Implications:**
+
+* `VAL-13` remains OPEN for cashflows.
+* `VAL-04` remains NOT CLOSED for the cashflow path.
+* `VAL-16` sign conventions remain documented but are not production-tested for
+  cashflows.
+* No ingest columns or rate-market-data producers are added in the valuation
+  hardening phases.
+
+Any future cashflow implementation therefore requires a separate upstream
+specification covering both:
+
+```text
+cashflow ingest/schema
++
+forward-rate economic source
+```
+
+before the valuation compiler can be implemented.
+
+**Positive findings recorded for the future implementation:**
+
+* The D049 effective-discount-factor key
+
+  ```
+  (curve_uix, date_uix, fx_eff_uix)
+  ```
+
+  is structurally suitable for cashflows: discount curve, payment date and
+  FX-to-settlement. The existing EDF design therefore does not require a
+  conceptual redesign; the future implementation needs to extend the
+  deduplication pool with the cashflow economic key
+
+  ```
+  (cashflow_curve, payment_date, fx_c2s).
+  ```
+
+* Extending `CompiledPortfolio` with cashflow slots is safe once the inputs
+  exist. `simlab/runner.py` and `valuation/engine.py` consume `total_trades` as
+  a ROW count, and current code does not assume `num_trades == num_rows`.
+
+The blocker is pinned by:
+
+* `test_cashflow_blocks_are_still_not_production_reachable`
+* `test_forward_rate_state_field_has_no_producer`
+
+so the absence remains a tested repository fact rather than an undocumented
+assumption.
 
 ## D055 — Multi-row trade identity is PROVEN on the production path
 
@@ -2395,34 +2449,942 @@ regression rather than folklore.
 
 **Decision:** the row/trade cardinality model
 
-    one economic trade -> many valuation rows -> PV_trade = sum(PV_rows)
+```
+one economic trade
+→ one or many valuation rows
+→ PV_trade = sum(PV_rows)
+```
 
-is proven end-to-end through the production path, using a trade whose uid
-appears in TWO different blocks rather than in several cashflow rows.
+is proven end-to-end through the production valuation path.
 
-**Reason:** D045/VAL-05 established that `trade_uids` is neither unique nor
-sorted, and `ValuationResult.get_trade_pv` was written for exactly that. Phase 6
-intended to exercise it with cashflows. Cashflows are blocked (D054), but the
-invariant does not depend on them: a uid spanning the forward and option blocks
-is non-unique, non-contiguous, and straddles a `block_offsets` boundary --
-strictly harder than several rows inside one block.
+The proof uses one trade UID appearing in TWO different production block types,
+rather than relying on multiple cashflow rows.
 
-**Evidence:** fixture uids `[9007, 41, 120003, 9007]`, 9007 owning the forward
-row and the last option row.
+**Reason:** D045/VAL-05 established that `trade_uids` are neither required to be
+unique nor sorted, and `ValuationResult.get_trade_pv` is explicitly designed for
+that cardinality model. Phase 6 intended to exercise the same invariant through
+cashflow decomposition, but cashflow ingest is blocked by D054.
 
-    trade_uids : [9007, 41, 120003, 9007]   num_rows=4  num_trades=3
-         uid  rows     trade PV (scen 0)       oracle sum     max|rel|
-          41     1          -2062.425636     -2062.429386     2.22e-05
-        9007     2          69064.040900     69064.061214     4.64e-07
-      120003     1           5565.918426      5565.919014     2.81e-07
-    portfolio  : 72567.533690  vs oracle 72567.550842  rel 2.36e-07
+The invariant itself does not depend on cashflows. A UID appearing in both the
+forward and option blocks is:
 
-The oracle groups rows from the FIXTURE, never from production's lookup.
-13 tests, including: the two 9007 rows straddle `block_offsets`;
-`num_rows != num_trades`; `get_trade_pv` is a real sum asserted against each row
-individually, not a first-match; row-grouping and trade-grouping reach the same
-portfolio total; a wrong-grouping mutation is detected against the oracle.
+* non-unique;
+* non-contiguous;
+* distributed across a `block_offsets` boundary;
+* required to aggregate multiple valuation rows into one trade PV.
 
-**Implications:** VAL-05 closes on the production path. 199 valuation tests
-pass; no golden drift and no tolerance widened. D046, D052 and D053 untouched;
+This is sufficient to prove the result-container cardinality semantics.
+
+**Evidence:** production fixture UIDs:
+
+```
+[9007, 41, 120003, 9007]
+```
+
+UID `9007` owns both the forward row and the final option row.
+
+```
+trade_uids : [9007, 41, 120003, 9007]
+num_rows   = 4
+num_trades = 3
+
+     uid   rows     trade PV (scen 0)       oracle sum     max|rel|
+      41     1          -2062.425636        -2062.429386     2.22e-05
+    9007     2           69064.040900         69064.061214     4.64e-07
+  120003     1            5565.918426          5565.919014     2.81e-07
+
+portfolio  : 72567.533690
+oracle     : 72567.550842
+max rel    : 2.36e-07
+```
+
+The independent oracle groups rows from the fixture's economic ownership, not
+from production lookup results.
+
+The 13 dedicated tests prove, among other things:
+
+* one UID can span multiple block types;
+* the UID rows can straddle a `block_offsets` boundary;
+* `num_rows != num_trades`;
+* `get_trade_values()` returns all rows belonging to the UID;
+* `get_trade_pv()` is a true aggregation rather than a first-match lookup;
+* row aggregation and trade aggregation produce the same portfolio total;
+* incorrect trade grouping is detected against the independent oracle.
+
+**Implications:**
+
+* `VAL-05` is CLOSED on the production valuation path.
+* The result container is proven for non-unique, non-sorted trade UIDs.
+* Future cashflow decomposition may therefore reuse the established row/trade
+  model rather than introducing a special cashflow aggregation mechanism.
+
+199 valuation tests pass with no unexplained golden drift and no tolerance
+widening.
+
+D046, D052 and D053 are unchanged.
+
 D053 remains OPEN.
+
+
+## D056 — Cashflow blocks are first-class reusable valuation primitives
+
+**Status:** LOCKED
+
+**Decision:** `FixedCashflowBlock`, `FloatingCashflowBlock`, and
+`PrincipalCashflowBlock` are **first-class reusable valuation primitives** in
+`riskquant.valuation`.
+
+Their current lack of production reachability from `IngestBatch` does NOT mean
+they are dead code, provisional code, or scope that should be removed,
+simplified, or downgraded.
+
+The blocks exist intentionally as reusable economic building blocks for future
+instrument decomposition and downstream engines, including PFE/XVA use cases,
+where a single economic trade may decompose into multiple dated cashflows.
+
+### Rationale
+
+Cashflows are a canonical valuation primitive:
+
+```text
+economic trade
+    ↓
+one or many dated cashflows
+    ↓
+cashflow valuation
+    ↓
+trade aggregation
+```
+
+Many derivative products can ultimately be represented, wholly or partly, as
+collections of fixed, floating, and principal cashflows.
+
+The block family therefore belongs in the core valuation vocabulary independently
+of whether the current ingest schema can construct every such cashflow today.
+
+In particular, future products such as vanilla interest-rate swaps are expected
+to use these blocks as reusable decomposition/valuation primitives rather than
+introducing product-specific cashflow valuation kernels.
+
+### Current boundary
+
+The current repository does NOT provide the upstream contracts required to
+construct these blocks from `IngestBatch`.
+
+Specifically:
+
+* cashflow economic fields are absent from the current ingest schema;
+* no forward-rate producer currently populates `ValuationState.forward_rates`;
+* no production cashflow compiler is therefore implemented;
+* the cashflow blocks remain intentionally unregistered/unreachable from the
+  current production ingest path.
+
+This boundary is recorded by D054.
+
+### Architectural consequence
+
+The correct interpretation is:
+
+```text
+cashflow block exists
+        ≠
+cashflow block must currently be production-reachable
+```
+
+and:
+
+```text
+currently unreachable
+        ≠
+dead / removable / non-first-class
+```
+
+Future upstream work may add:
+
+* a cashflow/schedule ingest representation;
+* an explicit forward-rate economic source;
+* the corresponding compilers;
+* `CompiledPortfolio` cashflow slots;
+* state producers and UIX mappings.
+
+Such work must preserve the existing cashflow block semantics and must be
+specified as a separate upstream/product-construction effort.
+
+### PFE/XVA relevance
+
+The cashflow blocks are deliberately retained as reusable primitives for future
+PFE/XVA construction, where dated cashflows and their aggregation are natural
+objects for exposure profiling.
+
+This does NOT commit RiskQuant to a particular PFE/XVA trade decomposition,
+interest-rate model, curve framework, or cashflow ingest schema.
+
+Those are separate future decisions.
+
+### Non-goals
+
+This decision does not:
+
+* require immediate cashflow production reachability;
+* select a single-curve or multi-curve framework;
+* define IRS ingestion;
+* define a forward-rate model;
+* close VAL-13 for cashflows;
+* close VAL-04 for cashflows.
+
+Those remain governed by D054 and future dedicated decisions.
+
+### Invariant
+
+The current valuation architecture must preserve the three cashflow blocks as
+stable, reusable valuation primitives while keeping their construction boundary
+explicit.
+
+**Verdict: LOCKED — RETAIN AS FIRST-CLASS VALUATION PRIMITIVES.**
+
+## D057 — The supported valuation surface is closed; its production consumer is not
+
+**Status:** LOCKED
+
+**Decision:** the three production-supported blocks -- `SpotBlock`,
+`VanillaForwardBlock` (NODE) and `VanillaEuropeanOptionBlock` (NODE) -- are
+CLOSED as a system: every state universe they consume is populated, every UIX is
+range-proven against its own table, and row/trade/portfolio PVs reconcile to an
+independent oracle. `ValuationState` has eight fields; seven are produced and
+consumed by a supported block, and `forward_rates` is dormant future state whose
+only consumer (floating cashflow) has no `CompiledPortfolio` slot.
+
+**Evidence:** one production path, all three blocks, five rows, uids
+[9007, 41, 120003, 9007, 5] with 9007 spanning the spot and option blocks.
+Worst relative error 2.22e-05 on the deepest option (|d2| = 2.32, inside the
+D046 band); spot and forward at 1.29e-16 and 1.77e-15. Eleven semantic
+mutations detected, from 1.33e+03 down to 3.44e-02. 225 valuation tests pass.
+
+**However:** `SimLabRunner` -- the only non-demo production consumer -- CANNOT
+call the engine. At `simlab/runner.py:163` and `:210` it calls
+`run_valuation(portfolio=..., valuation_state=...)` with no `out=`, assigns the
+return, and reads `.values`. The current contract is
+`(*, portfolio, valuation_state, out) -> None`, so the call raises TypeError and
+the attribute read would raise AttributeError. It also passes a
+`MarketDataMatrix` where a `ValuationState` is required: SimLab never calls
+`assemble_valuation_state` (neither symbol appears in the module).
+
+This is NOT solely a VAL-03 regression. The MarketDataMatrix/ValuationState
+split already orphaned SimLab; VAL-03 added a second break on top. Out of scope
+for this phase and deliberately not fixed.
+
+**Implication:** certification is scoped to the supported SURFACE. The valuation
+package is not release-certified, and the estate has no working end-to-end
+revaluation path until the SimLab caller is repaired.
+
+## D058 — Dense UIX are range-checked, not type-checked; the compiler is the only guard
+
+**Status:** LOCKED
+
+**Decision:** every block UIX is a bare `int32` into a dense table, and the
+per-universe guards (`map_*_to_effective_uix` searchsort + `_require_resolved`
+bound) prove RANGE, not SEMANTICS. Where two universes overlap numerically, one
+universe's integer is a valid index into the other and the swap is silent at
+compile time.
+
+**Measured:** in the option block, every stamped `forward_price_strike_ccy_uix`
+and `vol_uix` value is in range for the other's table, and `_require_resolved`
+accepts `vol_uix` checked against the 4-row EDF universe.
+
+**Reason it is not a defect today:** a compiler cannot accidentally produce the
+swap, because each coordinate is resolved by a `map_*` method that searchsorts
+its OWN table and raises on a miss, and forward/log-forward are one integer by
+construction (VAL-11). The hazard is a future compiler stamping the wrong
+resolved coordinate.
+
+**Implication:** the independent oracle is the ONLY layer that can detect a
+cross-universe stamp. Every new block compiler must ship an oracle mutation test
+that swaps its UIX fields; a range test is not a substitute. Pinned by
+`test_cross_universe_uix_swap_is_detected_by_the_oracle`.
+
+## D059 — A mutation test must be proven to move the output before it proves anything
+
+**Status:** LOCKED
+
+**Decision:** every state-mutation test must first assert that the mutation
+CHANGES the production output, and only then assert that the independent oracle
+rejects it.
+
+**Reason:** during this phase a spot mutation permuting `effective_spot_prices`
+rows 0 and 2 passed vacuously -- the spot block consumes row 1. A mutation that
+touches rows no supported block reads changes nothing and proves nothing, while
+appearing as green coverage.
+
+**Implication:** `test_every_state_mutation_touches_a_consumed_row` guards the
+whole mutation matrix. Apply the same discipline to any future mutation suite.
+
+## D060 — One "no FX rf" sentinel; a missing FX quote fails at ingest
+
+**Status:** LOCKED
+**Findings closed:** MD-00, MD-08 (second market-data audit)
+
+**Decision:** `riskquant.constants.NO_FX_RF_REQUIRED` is the only representation
+of "this leg needs no FX conversion". `RiskStaticConfig.fx_spot_matrix` is filled
+with it; no module re-declares it. A negative FX id other than this constant is
+an unresolved quote: `lookup_fx_effective_uix` and `_dedup_fx_effective_pairs`
+raise on it. A currency pair must be configured in exactly one orientation;
+reciprocal FX nodes are rejected at static-config compile.
+
+**Reason:** `static_config._NO_FX_RF_REQUIRED` was a local alias equal to
+`NO_ID = -999_999`, while `fx_resolver` compared against `-1`. Every empty matrix
+cell therefore read as a valid direct quote. Inverse-only and missing pairs
+resolved to `NO_ID`, which downstream code mapped to identity FX. Measured in a
+mixed book: −14.39 % PV. The documented missing-pair error was unreachable.
+
+**Implications:** inverse quotes now emit `inv = 1` from production ingest (the
+capability D052 assumed). Missing pairs raise `PrettyKeyError`. Pinned by
+`tests/market_data/remediation/test_contract_failure_paths.py` (FX section) and
+`test_structural_invariants.py::test_no_fx_rf_required_has_exactly_one_definition`.
+
+## D061 — No discount-factor or price-curve producer until the curve-point contract exists
+
+**Status:** OPEN — UPSTREAM ECONOMIC CONTRACT MISSING (fail-closed)
+**Findings:** MD-02a/b/c/d
+
+**Decision:** `build_market_data_matrix` raises `NotImplementedError(D061)` for any
+run whose universe references a discount curve or a price curve, before any
+interpolation kernel is called.
+
+**Reason:** the repository does not define:
+
+* what a discount-curve point level means for discounting (configured as
+  `quote_type=RATE`, `unit_scale=PERCENT`, but with no compounding and no day
+  count);
+* how a LABEL tenor (`[ON]`, `[3M]`, `[1Y]`) maps to a date or year fraction.
+  Every canonical discount curve is LABEL;
+* how relative OFFSET tenors map onto the kernel's coordinate domain.
+
+The builder previously read the levels as `ln DF`, passed relative offsets as
+tenors and absolute int32 ordinals as targets, and hit a Numba `TypeError`.
+Fixing only the dtype would have produced DF ≈ 73.7 or 1.044 against ≈ 0.99 and
+collapsed all dates onto the last pillar. Selecting a convention here would
+invent market semantics.
+
+**Implications:** NODE forwards and NODE options are NOT production-reachable
+through the market-data producer. Their valuation certification (D052, D057)
+stays scoped to contract-correct raw state. Lifting D061 requires a separate
+decision recording the quote convention, the day count, the tenor→date rule and
+the zero-pillar policy, followed by a producer oracle through the real path.
+
+## D062 — Packed effective-factor coordinates are in-domain by contract
+
+**Status:** LOCKED
+**Finding closed:** MD-03
+
+**Decision:** `_mixed_radix_key` rejects any column value outside `[0, radix)`.
+The only admissible negative optional coordinate is `INVALID_UIX` in the FX
+column (identity FX). FX invert flags must be 0 or 1. The FORWARD family requires
+`delivery_date`, `settlement_date`, `under_discount_curve` and
+`strike_discount_curve` at ingest. The OPTION family additionally requires
+`settlement_date`, `delivery_date` and both curves.
+
+**Reason:** a missing settlement or delivery date packed as `INVALID_UIX` in a
+non-leading key column produced a valid key of another trade's curve/date row.
+The D051 range check ran after the lookup and accepted it.
+
+**Implications:** D051 range proofs remain; they are no longer the only guard
+against sentinel aliasing.
+
+## D063 — Market-linkage source kind is part of the contract
+
+**Status:** LOCKED
+**Findings closed:** NEW-01 (second audit), and the ingest half of MD-01b
+
+**Decision:** enforced at ingest by `portfolio/ingest/identity.py`:
+
+| Linkage | Admissible source |
+|---|---|
+| SPOT underlying | node or curve point with quote type PRICE, FX_RATE or INDEX |
+| NODE forward / NODE option underlying | curve point of a PRICE curve |
+| NODE option volatility | node with quote type VOL |
+
+A container id, a rate, or a volatility is never a spot price.
+
+**Reason:** `_resolve_underlying` accepted "rf OR container" for every instrument.
+A SPOT on a discount-curve container read an unwritten `prices` row: PV equal to
+prior allocator contents.
+
+**Implications:** a SPOT on an interest-rate curve point is rejected. The
+canonical base-valuation demo filter was changed accordingly: it now excludes
+rate-point spots and prices FX-rate spots.
+
+## D064 — A MarketDataMatrix is bound to the UixMapper that built it
+
+**Status:** LOCKED
+**Finding closed:** NEW-03
+
+**Decision:** `UixMapper.fingerprint` is a derived blake2b digest of every
+universe, every effective table and the as-of.
+`MarketDataMatrix.uix_fingerprint` is required. `assemble_valuation_state`
+raises when the two differ.
+
+**Reason:** a matrix and a mapper with equal universe sizes folded silently into
+foreign rows (measured: PV 18 518.00 against oracle 17 521.50).
+
+**Implications:** `UixMapper`, `MarketDataMatrix`, `ValuationState` and
+`UniverseMapping` use `eq=False` (identity equality, hashable). No semantic
+`__eq__` is provided (MD-13).
+
+## D065 — A relative forward point must be the contract the trade delivers
+
+**Status:** LOCKED (CALENDAR_PERIOD only)
+**Finding closed:** MD-06
+
+**Decision:** for NODE forwards and options, ingest resolves the underlying's
+relative name at the run as-of (`rf_resolution`). The trade's `delivery_date`
+must fall in the resolved contract period. Supported:
+
+* `OFFSET_M + CALENDAR_PERIOD` (label `YYYYMM`);
+* `OFFSET_Y + CALENDAR_PERIOD` (label `YYYY`).
+
+Every other roll method fails closed, because its period definition is not owned
+here. Forward/option rows require `as_of_date` at ingest.
+
+**Reason:** `BRENT_FWD[M+0]` (Feb-2027 at as-of 2027-01-04) accepted a 2029
+delivery and consumed the wrong contract's level.
+
+## D066 — A discount linkage is a discount curve in the leg's currency
+
+**Status:** LOCKED
+**Findings closed:** MD-04, NEW-02
+
+**Decision:** a linked curve must be a value of `discount_curve_lookup` (not
+`NOT_A_DISCOUNT_CURVE`), and its `container_ccy_id` must equal the currency of
+the leg it discounts (`under_ccy` for the asset leg, `strike_ccy` for the strike
+leg). CSA curves are not an exception: they are keyed `(ccy, basis)` and carry
+the cash-flow currency.
+
+## D067 — One run as-of
+
+**Status:** LOCKED
+**Finding closed:** MD-11, AUD-04
+
+**Decision:**
+
+* The as-of used at ingest to resolve relative names is carried on
+  `IngestBatch.as_of_ord32`.
+* An ingest batch may legitimately have no as-of; `NO_DATE_ORD32` denotes
+  "no as-of" and is not a valid run as-of value.
+* `build_uix_mapper` derives the run as-of from the batches. An explicit
+  argument must agree.
+* `build_uix_mapper` must reject `NO_DATE_ORD32` when supplied explicitly as
+  the run as-of.
+* A real calendar date whose ordinal equals `NO_DATE_ORD32` is invalid and
+  must fail fast rather than being interpreted as "no as-of".
+* `build_market_data_matrix` requires `uix_mapper.as_of_ord32 == as_of_date`.
+* `build_market_data_matrix_from_snapshot` requires
+  `snapshot.as_of_date == as_of_date`.
+
+**Reason:** snapshot, mapper and matrix as-ofs were independent and accepted in
+any combination. Relative names denote different contracts at different as-ofs.
+The `NO_DATE_ORD32` sentinel also occupied the same numeric domain as valid
+date ordinals, allowing a sentinel value to masquerade as a real run as-of and,
+conversely, allowing a real date to be silently erased into "no as-of".
+
+**Implications:** every producer caller passes the as-of to `build_uix_mapper`.
+SPOT ingest rows themselves do not require an ingest as-of; a downstream
+producer requiring date-bound market state must have a real run as-of.
+`SimLabRunner` was not changed (D057 remains).
+
+
+## D068 — Expired options are rejected
+
+**Status:** LOCKED
+**Finding closed:** NEW-05
+
+**Decision:** `compile_vanilla_european_option_block` rejects `expiry < as_of`.
+`expiry == as_of` is priced with `TTE_FLOOR`, which is the documented
+intrinsic-limit representation, not an accident.
+
+## D069 — One unit-normalisation engine for level inputs
+
+**Status:** LOCKED
+**Findings closed:** NEW-04, MD-10
+
+**Decision:** `compile_risk_factor_level_snapshot_from_levels_dict` is the only
+normalisation point. `build_risk_factor_level_snapshot_from_{dict,df,xlsx}`
+require `static_config` and delegate to it. Canonical snapshot levels are
+float64. The df route rejects missing levels instead of dropping rows.
+
+Scope extended by D076: the history edge (`build_risk_factor_matrix_from_{df,xlsx}`) uses the same engine.
+
+**Reason:** a PERCENT volatility of 18.3 was stored as 18.3 by one route and 0.183
+by another, with no unit state on the snapshot.
+
+## D070 — Market-data level finiteness and factor-domain rules
+
+**Status:** LOCKED
+**Finding closed:** MD-09a
+
+**Decision:** The market-data level contract is:
+
+* all market levels must be finite;
+* FX spot conversion factors must be strictly positive;
+* scalar-node levels are strictly positive where their configured quote type
+  requires it, currently VOL;
+* PRICE, RATE, SPREAD and INDEX levels may take any finite value, including
+  zero or negative values.
+
+`RiskFactorLevelSnapshot` and its compiler perform early validation where those
+routes apply. The authoritative enforcement boundary for every supported
+market-data production route is `build_market_data_matrix`, as defined by
+D075.
+
+**Reason:** Market-data domain validity must be independent of the particular
+entry route. Snapshot construction historically rejected non-finite values,
+and the snapshot compiler rejected non-positive FX_RATE and VOL levels, but
+flat levels and other direct routes could bypass those checks.
+
+**Implications:** D075 owns producer-level enforcement. Snapshot-level checks
+remain useful as earlier rejection points but are not sufficient by themselves
+to establish the producer invariant. Negative PRICE, RATE, SPREAD and INDEX
+values remain legal unless a more specific economic contract states otherwise.
+`F_K > 0` before the Black-76 logarithm remains a separate invariant owned by
+MD-09b.
+
+
+## D071 — FX gathers translate market rows to dense FX rows
+
+**Status:** LOCKED
+**Finding closed:** MD-01
+
+**Decision:** `UniverseMapping.fx_spot_uix_in_universe` records the market row
+of each dense FX-block row. `_build_fx_spots_effective` translates every
+`fx_effective_pairs` coordinate through it, with a membership proof. A market
+coordinate is never used as an FX-block row. Extends D058 to producer-internal
+gathers.
+
+## D072 — Every consumed scalar row has a producer owner
+
+**Status:** LOCKED
+**Finding closed:** MD-01b
+
+**Decision:** FX levels are scattered into `prices` alongside scalar nodes. Before
+state assembly, `build_market_data_matrix` proves that every market row
+referenced by `spot_effective_pairs`, `efp_effective_quads` or
+`vol_effective_uix` was written, and raises otherwise. `np.empty` rows (curve and
+surface containers) may exist only while nothing consumes them.
+
+**Evidence:** memory-poisoning tests (three poison values, S=1 and S=2000) on the
+real producer path. An ingest-bypassing container underlying raises
+`ValueError(D072)`.
+
+## D073 — Market-data remediation certification boundary
+
+**Status:** LOCKED AS CERTIFICATION BOUNDARY
+
+**Decision:**
+
+* **Certified on the REAL production producer path against independent
+  economic oracles:**
+
+  * `SpotBlock` inputs and PV;
+  * direct, inverse and identity FX handling;
+  * FX-rate underlying handling;
+  * sparse and interleaved market-factor IDs;
+  * multiple scenario counts;
+  * memory-poisoning cases;
+  * D059 identifying mutations.
+
+* **Certified valuation surface:**
+
+  * Spot valuation is certified through the supported production market-data
+    path and whole-surface valuation oracle.
+  * NODE Forward and NODE Option valuation mathematics remain certified only
+    for contract-correct raw state.
+
+* **Not certified:**
+
+  * NODE Forward and NODE Option market-data production, because the discount
+    curve producer remains blocked by D061.
+  * End-to-end SimLab, because the production consumer remains unresolved
+    under D057.
+
+* **Deferred / open:**
+
+  * AUD-03;
+  * AUD-04;
+  * AUD-06;
+  * D061;
+  * D053;
+  * MD-09b;
+  * MD-14;
+  * non-`CALENDAR_PERIOD` forward roll methods;
+  * the `SimLabRunner` consumer.
+
+**Certification evidence:** The current real-producer Spot/FX certification
+has been independently re-run under D074, D075 and D076 using hostile sparse
+and interleaved fixtures, direct/inverse/identity FX, multiple scenario counts,
+memory poisoning and identifying mutations. Current measured worst relative
+error is approximately `3.0e-16`. The whole-surface valuation certification
+suite executes again under the current contracts, with Spot and Forward
+errors at approximately `1.8e-15` relative and the worst observed option
+relative error approximately `2.2e-05`, within the established D046 numerical
+envelope.
+
+**Boundary:** "Market-data Spot and FX certified" means certified for the
+supported production routes and adversarial fixture domain actually exercised
+by this evidence. It does not constitute blanket certification of every
+possible market-data source, legacy helper or unresolved contract.
+
+## D074 — A compiled portfolio is bound to the UixMapper that stamped it
+
+**Status:** LOCKED
+
+**Findings closed:** AUD-01 (whole-surface fixture landing), AUD-02
+(portfolio ↔ mapper identity)
+
+**Extends:** D051, D058, D064
+
+**Decision:** Portfolio-to-market-data identity rests on two invariants. Both
+are required.
+
+### 1. Membership: global id → dense UIX
+
+Every translation of a global identifier into a dense universe coordinate
+must prove membership.
+
+`universe.translate_ids_to_uix_or_raise` is the single translator for this
+identity path.
+
+* Every non-negative identifier must be an element of the target universe.
+  Otherwise the translation raises and returns no coordinate.
+* Negative sentinel inputs supported by the translator represent absent
+  linkage and map to `INVALID_UIX`.
+* The translator is used by:
+
+  * `UixMapper.map_market_ids_to_uix`;
+  * `UixMapper.map_discount_ids_to_uix`;
+  * `UixMapper.map_dates_to_uix`;
+  * stage 1 of `lookup_fx_effective_uix`;
+  * every relevant producer translation in `portfolio/engine.py`.
+* `_arrays.searchsorted_or_propagate_sentinel_int32` remains an unsafe
+  left-join primitive and has no caller in the identity path.
+
+Therefore an absent non-negative `rf_id`, curve id or date cannot silently
+become the insertion position of another valid universe member.
+
+### 2. Mapper identity: portfolio ↔ state ↔ mapper
+
+* `CompiledPortfolio.uix_fingerprint` is stamped by
+  `compile_portfolio_from_ingest_batch` from the `UixMapper` that stamped the
+  portfolio block UIXs.
+* `ValuationState.uix_fingerprint` is stamped by
+  `assemble_valuation_state`.
+* Both fields are required and non-empty.
+* `run_valuation` raises when portfolio and state fingerprints differ, before
+  output validation and before any pricer runs.
+* `run_sensitivities` raises when the portfolio or matrix fingerprint differs
+  from the mapper fingerprint.
+* The fold retains the D064 matrix ↔ mapper check.
+
+The identity token is the existing `UixMapper.fingerprint` defined by D064.
+No mapper copy is stored inside the portfolio.
+
+**Reason:** `np.searchsorted` returns an insertion position for an absent id.
+That position can be a valid dense row and therefore pass every D051 range
+check described by D058. D064 alone binds the matrix to its mapper but does
+not bind a compiled portfolio to the mapper that stamped its UIXs.
+
+Membership and object identity are therefore separate and both necessary:
+
+```text
+rf_id absent from mapper
+    → membership proof fails
+
+portfolio compiled with mapper A
+    +
+state / mapper B
+    → fingerprint mismatch fails
+```
+
+**Implications:**
+
+* A portfolio must be compiled against a mapper whose universes contain every
+  identity it consumes.
+* A compiled portfolio may only be paired with state produced from the same
+  mapper identity, represented by equal fingerprints.
+* Market levels are not part of mapper identity. Rebuilding market state with
+  new levels on the same universe preserves the fingerprint.
+* Hand-built kernel/test portfolios and states may declare one explicit shared
+  token because they intentionally bypass production mapper construction.
+  This is a raw test boundary; production compilation stamps the token from
+  the mapper and does not permit callers to choose an arbitrary identity.
+* `SimLabRunner` remains governed by D057 and must eventually provide a
+  portfolio, mapper and valuation state from the same production lineage.
+
+**Evidence:**
+
+* `tests/market_data/remediation/test_portfolio_mapper_identity.py`
+  covering absent ids between, below and above the universe, absent FX,
+  absent dates, sparse/interleaved ids, same-shape foreign mappers,
+  sensitivity pairings, D064 preservation and D059 consumption tests.
+* `tests/valuation/oracle/test_whole_surface.py` with the current
+  `uix_fingerprint` contract.
+* Independent economic evidence demonstrated wrong valid PVs before the fix
+  and fail-fast rejection afterward.
+
+
+## D075 — The market-data producer owns the level-domain contract
+
+**Status:** LOCKED
+**Finding closed:** AUD-05
+**Amends:** D070 (ownership)
+
+**Decision:** `build_market_data_matrix` validates every level before any
+allocation, scatter or effective-FX construction, whatever route supplied it
+(compiled snapshot, direct snapshot, history snapshot, flat levels,
+scenario-shocked levels):
+
+* all levels finite;
+* FX spot rows > 0 (FX_RATE by config; conversion factor by role);
+* scalar-node rows > 0 where `UniverseMapping.scalar_node_strictly_positive`
+  is set;
+* curve and surface levels finite.
+
+The flag is resolved once per universe from `rf_id → quote type` by
+`strictly_positive_level_mask`, the same rule set as the snapshot compiler.
+PRICE, RATE, SPREAD and INDEX accept any finite value.
+
+**Reason:** flat levels bypassed both snapshot checks. Observed:
+`fx_spots_effective = [-1.0989]` for FX −0.91, `[inf]` for FX 0, and VOL ≤ 0
+stored in `prices`.
+
+**Implications:** snapshot-layer checks remain as early rejections. Scenario
+batches are validated per batch (vectorised) because each carries new levels.
+`MarketDataMatrix.__post_init__` stays structural; hand-built matrices are a
+test-only raw boundary. `F_K > 0` (MD-09b) remains separate.
+
+**Evidence:** `tests/market_data/remediation/test_level_domain_contract.py`
+(50 tests: every category on every route at S ∈ {1, 4096}; builder never
+reached; route consistency; D059 mutations; oracle reconciliation).
+
+
+## D076 — History inputs normalise once, at the matrix edge
+
+**Status:** LOCKED
+
+**Finding closed:** AUD-06
+
+**Extends:** D069, D017
+
+**Decision:** `build_risk_factor_matrix_from_df` and
+`build_risk_factor_matrix_from_xlsx` require `static_config`.
+
+They:
+
+* resolve history columns by relative name against the configured factor
+  universe;
+* reject unknown or unoccupied identifiers;
+* apply `canonical_unit_scale` exactly once;
+* use the same canonical unit-normalisation engine defined by D069;
+* produce `RiskFactorMatrix.values` in canonical base units.
+
+The `RiskFactorMatrix` constructor, `from_snapshot`, `get_snapshot` and
+scenario generators do not rescale values.
+
+`name_to_id_map` and integer-column input are removed from the supported
+history-builder interface.
+
+**Reason:** The history edge previously copied source-unit values directly
+into `RiskFactorMatrix.values`, while downstream consumers treated those
+values as canonical. This produced economically material scaling errors,
+including:
+
+* PERCENT volatility `18.3` remaining `18.3` instead of `0.183`;
+* a PERCENT-quoted price producing a Spot PV approximately 100× too large;
+* DIFFERENCE historical shocks being calculated against inconsistent units.
+
+**Implications:**
+
+* The source-unit history edge owns conversion from declared source units to
+  canonical units.
+* `canonical_unit_scale` is the single unit-normalisation engine shared with
+  the snapshot compiler.
+* Unit interpretation is metadata-driven from configured `rf_id` semantics;
+  numeric magnitude is never used to infer units.
+* Canonical units and canonical dtype are separate contracts: unit semantics
+  are owned here and by D069, while history dtype and kernel compatibility are
+  governed by D017.
+* Feeding already-canonical values into the source-unit history edge is a
+  caller contract violation and cannot be detected reliably from magnitude.
+* LOG_RETURN and SIMPLE_RETURN scenario semantics remain unchanged by this
+  normalisation because they are scale-invariant. DIFFERENCE shocks operate
+  on canonical base levels after this decision.
+* `RiskFactorMatrix.get_snapshot` has no production caller and is retained as
+  a helper under the same canonical-unit contract.
+
+**Evidence:** `tests/market_data/remediation/test_history_unit_contract.py`
+covers the supported quote families against an independent unit oracle,
+dict/df/xlsx/history route equivalence, Spot PV and historical-scenario
+reconciliation, D059 mutations, fail-closed metadata handling, AUD-05 domain
+validation and D074 identity preservation.
+
+Current evidence shows equivalent supported routes agreeing within the
+declared numerical tolerance, with the independent economic oracle deriving
+unit scales independently from configured unit semantics.
+
+
+## D077 — NODE and CURVE are market-data specifications, never pricing products
+
+**Status:** LOCKED
+**Findings closed:** F-1 (NODE option delivery), F-3 (D063 justification)
+**Amends:** D063 (wording only), D065 (option half)
+**Open, deliberately unresolved here:** OQ-1, OQ-2, OQ-3
+
+**Decision:**
+
+1. A configured NODE rf and a configured CURVE/SURFACE POINT rf are both
+   **EXACT MARKET POINTS**: each resolves to exactly one `rf_id`, occupies one
+   `market_id_universe` row, and is read directly. `MarketDataMatrix.prices`,
+   `.forward_nodes` and `.vol_nodes` are one array; `assemble.py` deliberately
+   does not branch on `rf_id_to_parent_topology_type` for scalar reads.
+
+2. An exact market point is **NEVER** interpolated, and no instrument date
+   selects **WHICH** exact market point is read.
+
+3. A **CURVE or SURFACE CONTAINER** is a market object requiring coordinate
+   resolution. Resolution is performed by the market-data layer before the
+   resulting numeric market input is consumed by the pricing block.
+   Interpolation never occurs in a valuation kernel.
+
+4. A relative name that denotes an exact market point, together with the
+   **RUN as-of**, resolves to exactly one `rf_id`, fixed for the run
+   (D067, D064, D074). Expiry and delivery never re-resolve that RF.
+   Relative container names resolve to their container identity and are
+   governed by the container-resolution contract in §3.
+
+5. NODE vs CURVE does not define separate economic pricing products. One
+   economic instrument uses one block and one kernel. Any residual source
+   distinction required to obtain a valuation input is represented at the
+   compile/fold boundary, never in the block taxonomy or the kernel contract.
+
+6. After the fold, a block holds only quantities, strikes, precomputed scalars,
+   and integer row coordinates. It holds no names, containers, topologies, or
+   lookup dates.
+
+7. **Date requirements:** a date is required only as a container coordinate,
+   an argument of the pricing formula, or an independently justified economic
+   property. It is never required because a sibling instrument uses it.
+
+   * **NODE forward:** delivery REQUIRED (asset-leg discount date); settlement
+     REQUIRED.
+   * **NODE option:** expiry REQUIRED; settlement REQUIRED; delivery NOT
+     REQUIRED.
+
+8. D063 stands unchanged as a **SCALAR QUOTE SEMANTICS** gate. Its current
+   topology condition is a configuration-level proxy for the forward-quote
+   semantics supported by the present market-data model. It is **not** an
+   interpolation rule. Whether broader scalar quote semantics are permitted
+   is deferred to OQ-1/OQ-2/OQ-3.
+
+9. The `InstrumentType` NODE/CURVE split is deferred technical debt. It is
+   removed only when CURVE-sourced valuation consumers exist and the required
+   compile/fold representation has been established.
+
+**Reason:** delivery was required for NODE options solely because the option
+family inherited the forward's `dated` classification. Evidence:
+the option compiler never reads `delivery_ord`; on the production-path option
+fixture, erasing or moving delivery leaves all four PVs bitwise identical and
+still matching the independent oracle at 2.22e-05. By contrast, moving a
+forward's delivery moved its PV from 176.154 to 151.070, and erasing it fails
+closed.
+
+**Implications:** canonical option rows 304/305 now ingest and compile.
+Rows 300-303 remain rejected by D063 pending OQ-1/OQ-2. Canonical forward
+fixtures are unchanged pending OQ-1/OQ-3.
+
+**Evidence:** `tests/market_data/remediation/test_node_option_delivery_contract.py`
+(5 tests) and `tests/valuation/oracle/test_option_delivery_independence.py`
+(2 tests). Full suite: 4,083 passed; the failure and error set is identical
+to baseline.
+
+**Open questions (NOT resolved here):**
+
+* **OQ-1:** May a spot-quoted node be a forward/option underlying, carried to
+  T by an asset-leg carry curve?
+
+* **OQ-2:** For an FX underlying, the asset is the BASE currency but the
+  derived leg currency is the QUOTE currency, so D066 rejects the CIP carry
+  curve. What is the correct asset/carry-leg currency contract?
+
+* **OQ-3:** How should an identity (undiscounted) asset leg be represented,
+  if such a leg is required by the supported product contract?
+
+
+## D078 — Scalar Underlying Quote Semantics
+
+**Status:** LOCKED
+**Closes:** OQ-1, OQ-2 (forward-quote half), OQ-3; audit findings G-2, G-9
+**Amends:** D063 (wording only)
+**Depends on:** D077 (market-data topology), D066 (discount linkage)
+
+**Decision**
+
+1. **D078.1** A scalar underlying consumed by the current vanilla forward /
+   European-option model MUST represent a **forward price for the relevant
+   underlying contract**, expressed in the currency in which that forward price
+   is quoted.
+2. **D078.2** The current model MUST NOT derive that forward price from a spot
+   level through an implicit carry assumption. No carry transformation exists in
+   the engine.
+3. **D078.3** The asset-leg factor in the current forward-quote model is a
+   **discount factor in the currency of the quoted forward**. `F x DF` is the
+   present value of that leg, which is what D066 enforces.
+4. **D078.4** For FX, `BASEQUOTE` means **quote-currency units per one
+   base-currency unit** (`fx_base_ccy` / `quote_ccy` in config, resolved through
+   `fx_spot_matrix` with `invert = 1` for the reciprocal). A forward-quoted FX
+   underlying uses quote-currency discounting under D078.3.
+5. **D078.5** A spot level MUST NOT be accepted as a forward/option underlying
+   under the current contract. This is not a universal mathematical
+   prohibition: it is outside the supported model because the carry semantics
+   that would make it correct (per-asset-class carry object, spot/forward
+   declaration) do not exist. Forcing a spot level through the present formula
+   prices a carry-free forward; with a EUR/USD example (S = 0.9137,
+   K = 0.9000, DF_USD = 0.9560, DF_EUR = 0.9800, Q = 1e7) the result is
+   +134,260 EUR against an independent covered-interest-parity value of
+   -85,028 EUR, a sign flip.
+6. **D078.6** `DF(0,T) = 1` is a valid numerical discount-factor outcome,
+   including for `T > as-of`. It is ordinary market data and does not by itself
+   imply a SPOT trade or any special state.
+7. **D078.7** `NO_ID`, invalid UIX values and other unresolved/missing-data
+   sentinels MUST NEVER be interpreted as `DF = 1`. Unresolved discounting
+   fails closed at coordinate packing.
+8. **D078.8** If a future product requires an explicit "no discounting
+   required" economic state, it MUST be represented and validated as its own
+   economic value, distinct from missing-data sentinels, in the pattern already
+   used by `NO_FX_RF_REQUIRED` for identity FX. No currently identified product
+   needs it.
+9. **D078.9** The following remain **future product decisions**, not current
+   implementation defects:
+   * **U-1** whether spot-underlying forwards/options are wanted at all;
+   * **U-2** which carry model applies by asset class (FX base/quote funding;
+     equity dividend or repo; commodity convenience yield), with day count and
+     compounding;
+   * **U-3** how spot-versus-forward semantics are declared in configuration
+     (topology is only a present-day correlate, never a proof — D077);
+   * **U-4** whether any product genuinely needs explicit no-discounting
+     semantics.
+
+**Reason.** The valuation algebra is the dated-forward model and nothing else.
+Control: with a forward quote (F = 82.35, K = 80, DF = 0.956, Q = 1e7)
+production returns 22,465,999.999999937 against an independent
+`Q(F - K)DF` of 22,465,999.999999944. Substituting a spot level is a sign flip
+for FX (above) and for equity (S = 185.50, K = 190, DF = 0.956: production
+-4,302 against +3,860 with zero dividends); production would be right there
+only if the asset-leg factor were `e^{-qT}` with q = 4.4997%, i.e. a dividend
+or repo curve, which the configuration does not contain.
+
+**Implications.** D063 stays restrictive until U-1..U-3 are answered. Canonical
+forward fixtures 100-105 are classified, not modified. The option half of D065
+(D077) is unaffected.
+
+**Evidence.** `tests/market_data/remediation/test_scalar_underlying_quote_semantics.py`
+(20 tests): two-leg forward pricing with non-unit per-leg DFs; `DF = 1` as
+ordinary data; `NO_ID` failing closed; the D063 predicate table; the spot
+sign-flip counterexample; and the fixture classification for uids 100-105.

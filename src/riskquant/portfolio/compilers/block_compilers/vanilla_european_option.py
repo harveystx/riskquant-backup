@@ -153,6 +153,24 @@ def compile_vanilla_european_option_block(
             "settlement, it is a malformed trade."
         )
 
+    # ---- EXPIRED-OPTION POLICY (D068) -------------------------------------
+    # An option whose expiry precedes the run as-of is not a live Black-76
+    # position: it has either exercised or lapsed, and its settlement belongs to
+    # the lifecycle feed, not to the pricer. It is rejected, not floored to
+    # TTE_FLOOR. Expiry ON the as-of stays priceable: TTE_FLOOR is then the
+    # documented representation of the intrinsic-value limit.
+    if uix_mapper.as_of_ord32 is None:
+        raise ValueError(
+            "vanilla european option: UixMapper was built without `as_of_ord32`, so "
+            "expiry cannot be checked or converted to time (D067)."
+        )
+    expired = expiry_ord < np.int32(uix_mapper.as_of_ord32)
+    if bool(expired.any()):
+        raise ValueError(
+            "vanilla european option: expiry precedes the run as-of on uid(s) "
+            f"{uids[expired][:10].tolist()} (D068: expired options are rejected)."
+        )
+
     # ---- TIME: one canonical T, two precomputed forms ---------------------
     tte = uix_mapper.tte_years(expiry_ord)
     sqrt_tte = np.ascontiguousarray(np.sqrt(tte))

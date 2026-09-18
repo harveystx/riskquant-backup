@@ -53,35 +53,33 @@ if TYPE_CHECKING:
 # Built once at module load. Each IngestBatch construction reads from these
 # rather than rebuilding the spec dict inline.
 
-_EXPECTED_DTYPES: Final = MappingProxyType(
-    {
-        # CORE
-        "instrument_ids": np.dtype(np.int32),
-        "uids": np.dtype(np.int64),
-        # MARKET RISK
-        "qty": np.dtype(np.float64),
-        "strike_price": np.dtype(np.float64),
-        "cp_mult": np.dtype(np.int8),
-        # DATES (Ordinals Only)
-        "settle_ord": np.dtype(np.int32),
-        "delivery_ord": np.dtype(np.int32),
-        "expiry_ord": np.dtype(np.int32),
-        # MARKET LINKAGES (Dense)
-        "underlying_ids": np.dtype(np.int32),
-        "volatility_ids": np.dtype(np.int32),
-        # FX
-        "fx_u2s_ids": np.dtype(np.int32),
-        "fx_u2s_inv": np.dtype(np.int8),
-        "fx_k2s_ids": np.dtype(np.int32),
-        "fx_k2s_inv": np.dtype(np.int8),
-        # CURVES & SURFACES
-        "under_discount_curve_ids": np.dtype(np.int32),
-        "strike_discount_curve_ids": np.dtype(np.int32),
-        "vol_surface_y_axis_type_ids": np.dtype(np.int8),
-        # NETTING SET
-        "netting_set_id": np.dtype(np.int64),
-    }
-)
+_EXPECTED_DTYPES: Final = MappingProxyType({
+    # CORE
+    "instrument_ids": np.dtype(np.int32),
+    "uids": np.dtype(np.int64),
+    # MARKET RISK
+    "qty": np.dtype(np.float64),
+    "strike_price": np.dtype(np.float64),
+    "cp_mult": np.dtype(np.int8),
+    # DATES (Ordinals Only)
+    "settle_ord": np.dtype(np.int32),
+    "delivery_ord": np.dtype(np.int32),
+    "expiry_ord": np.dtype(np.int32),
+    # MARKET LINKAGES (Dense)
+    "underlying_ids": np.dtype(np.int32),
+    "volatility_ids": np.dtype(np.int32),
+    # FX
+    "fx_u2s_ids": np.dtype(np.int32),
+    "fx_u2s_inv": np.dtype(np.int8),
+    "fx_k2s_ids": np.dtype(np.int32),
+    "fx_k2s_inv": np.dtype(np.int8),
+    # CURVES & SURFACES
+    "under_discount_curve_ids": np.dtype(np.int32),
+    "strike_discount_curve_ids": np.dtype(np.int32),
+    "vol_surface_y_axis_type_ids": np.dtype(np.int8),
+    # NETTING SET
+    "netting_set_id": np.dtype(np.int64),
+})
 
 _VARIABLE_LENGTH_FIELDS: Final[tuple[str, ...]] = tuple(_EXPECTED_DTYPES.keys())
 
@@ -214,6 +212,11 @@ class IngestBatch:
 
     # NETTING SET LINKAGE
     netting_set_id: npt.NDArray[np.int64]
+
+    # RUN AS-OF (D067). The as-of at which relative forward names were resolved
+    # to dated contracts. NO_DATE_ORD32 means the batch resolved nothing
+    # as-of-dependent. `build_uix_mapper` derives the run as-of from it.
+    as_of_ord32: int = int(NO_DATE_ORD32)
 
     # ==========================================================================
     # POST INIT VALIDATION
@@ -377,6 +380,7 @@ class IngestBatch:
             strike_discount_curve_ids=_reorder(self.strike_discount_curve_ids),
             vol_surface_y_axis_type_ids=_reorder(self.vol_surface_y_axis_type_ids),
             netting_set_id=_reorder(self.netting_set_id),
+            as_of_ord32=self.as_of_ord32,
         )
 
     @classmethod
@@ -404,4 +408,5 @@ class IngestBatch:
             strike_discount_curve_ids=c.strike_discount_curve_ids,
             vol_surface_y_axis_type_ids=c.vol_surface_y_axis_type_ids,
             netting_set_id=c.netting_set_id,
+            as_of_ord32=c.as_of_ord32,
         )

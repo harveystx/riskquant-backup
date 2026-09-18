@@ -166,6 +166,13 @@ def validate_forward_family(
         "settlement_ccy",
         "strike_price",
         "strike_ccy",
+        # D062: every coordinate a forward block packs into an effective-factor
+        # key is mandatory. A missing one used to pack as a sentinel and alias
+        # another trade's row (MD-03).
+        "delivery_date",
+        "settlement_date",
+        "under_discount_curve",
+        "strike_discount_curve",
     )
 
     _require_cols(df, cols)
@@ -195,6 +202,14 @@ def validate_option_family(
         # an int32 container id and derives the y-axis-type id off
         # `surface_meta_dict[id].y_axis_kind`.
         "volatility_container_name",
+        # D062: settlement discounting and both discount curves are mandatory.
+        # `delivery_date` is NOT required: the option's value is a function of
+        # expiry (forward measure, vol, TTE) and settlement (payoff discount)
+        # only, and its underlying is an exact market point that no instrument
+        # date selects (D065, option half).
+        "settlement_date",
+        "under_discount_curve",
+        "strike_discount_curve",
     )
 
     _require_cols(df, cols)

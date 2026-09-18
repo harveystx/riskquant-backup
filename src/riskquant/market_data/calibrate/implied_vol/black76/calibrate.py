@@ -4,6 +4,7 @@ from __future__ import annotations
 import numpy as np
 import numpy.typing as npt
 
+from riskquant.constants import IV_SOLVER_FAILED_SENTINEL
 from riskquant.market_data.calibrate.implied_vol.black76.kernels.black76_implied_vol_batch import (
     _kernel_black76_iv_from_undiscounted_call_prices,
 )
@@ -37,6 +38,10 @@ def calibrate_black76_iv_from_undiscounted_call_prices(
     # case) vs the negative failure sentinel. Single source of truth is the iv
     # sign; the master re-checks this invariant on construction.
     success_mask = iv >= 0.0
+
+    # Mask out the failed inversions by setting their iv and vega to sentinel values.
+    iv = np.where(success_mask, iv, IV_SOLVER_FAILED_SENTINEL)
+    vega = np.where(success_mask, vega, 0.0)
 
     return CalibratedOptionQuotes(
         fwd_price=quotes.fwd_price,

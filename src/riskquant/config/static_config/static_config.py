@@ -81,7 +81,7 @@ from riskquant.config.static_config.schema_objects import (
     SurfaceMeta,
     SurfacePointMeta,
 )
-from riskquant.constants import INVALID_UNIT_SCALE, NO_ID
+from riskquant.constants import INVALID_UNIT_SCALE, NO_FX_RF_REQUIRED, NO_ID
 from riskquant.market_data.curves.extrap_methods import EXTRAP_METHOD_REGISTRY
 from riskquant.market_data.curves.interp_methods import INTERP_METHOD_REGISTRY
 from riskquant.market_data.risk_factors.shift_types import (
@@ -98,7 +98,9 @@ if TYPE_CHECKING:
 # ============================================================
 
 _NO_DISCOUNT_CURVE_ID: np.int32 = NO_ID
-_NO_FX_RF_REQUIRED: np.int32 = NO_ID
+# D060: the FX matrix fill IS `riskquant.constants.NO_FX_RF_REQUIRED`. It is not
+# re-declared here, because a local alias drifted to NO_ID and every empty cell
+# then read as a valid direct quote in `fx_resolver` (MD-00).
 
 # ============================================================
 # Immutability helpers
@@ -629,6 +631,15 @@ def _build_fx_state(
         base_id = ccy_name_to_id[node.fx_base_ccy]
         quote_id = ccy_name_to_id[node.quote_ccy]
         key = (int(base_id), int(quote_id))
+        if (key[1], key[0]) in out:
+            # D060 / NEW-06: one orientation per currency pair. Two independently
+            # quoted reciprocals are two sources for one economic rate; the
+            # resolver would pick one silently and the other could disagree.
+            raise ValueError(
+                f"FX spot pair (base={node.fx_base_ccy}, quote={node.quote_ccy}): "
+                f"node {node.node_name} is the reciprocal of an FX node already "
+                "configured. Configure exactly one orientation per currency pair."
+            )
         if key in out:
             raise ValueError(
                 f"Duplicate FX spot pair "
@@ -669,7 +680,7 @@ def _build_fx_matrix_state(
     n = state.max_ccy_id + 1
     matrix = np.full(
         shape=(n, n),
-        fill_value=_NO_FX_RF_REQUIRED,
+        fill_value=NO_FX_RF_REQUIRED,
         dtype=np.int32,
     )
     for (b, q), rf_id in state.fx_spot_lookup.items():

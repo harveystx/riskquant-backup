@@ -58,6 +58,9 @@ from riskquant._arrays import searchsorted_or_raise
 from riskquant.config.namespace import GlobalIdNamespace
 from riskquant.config.static_config.static_config import RiskStaticConfig
 from riskquant.market_data.builder import build_market_data_matrix
+from riskquant.market_data.risk_factors.compile_snapshot import (
+    strictly_positive_level_mask,
+)
 from riskquant.market_data.risk_factors.snapshot import RiskFactorLevelSnapshot
 from riskquant.market_data.state import MarketDataMatrix
 from riskquant.universe import UixMapper
@@ -67,7 +70,7 @@ from riskquant.universe import UixMapper
 # =========================================================================
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class UniverseMapping:
     """
     Slicing plan to extract the structured market-data arrays from one
@@ -86,6 +89,11 @@ class UniverseMapping:
 
     # Scalars
     idx_fx_spots: slice
+    # `market_id_universe` row of each dense FX-block row, ascending (D071). The
+    # FX block is a DIFFERENT universe from `market_id_universe`: an
+    # `fx_effective_pairs` coordinate is translated through this array, never
+    # used directly as an FX-block row (MD-01).
+    fx_spot_uix_in_universe: npt.NDArray[np.int32]
 
     # Scalar-node universe alignment (item C / A1)
     # --------------------------------------------
@@ -101,6 +109,12 @@ class UniverseMapping:
     # its universe row regardless of which block reads it.
     idx_scalar_nodes: slice
     scalar_node_uix_in_universe: npt.NDArray[np.int32]
+    # Per scalar-node row: True where the factor's quote type requires a level
+    # > 0 (VOL). Resolved once from config (`rf_id -> quote type`), so the
+    # producer never infers a domain from a value (AUD-05, D070). FX-block rows
+    # need no flag: every FX spot rf is FX_RATE by config contract and is
+    # consumed as a conversion factor, so it is strictly positive by role.
+    scalar_node_strictly_positive: npt.NDArray[np.bool_]
 
     # Curves / surfaces
     idx_discount_curves: slice
@@ -329,14 +343,12 @@ def build_universe_mapping(
     n_disc = len(disc_children)
     n_price = len(price_children)
 
-    required = np.concatenate(
-        [
-            fx_spots,
-            scalar_rfs,
-            np.asarray(disc_children, dtype=np.int32),
-            np.asarray(price_children, dtype=np.int32),
-        ]
-    ).astype(np.int32, copy=False)
+    required = np.concatenate([
+        fx_spots,
+        scalar_rfs,
+        np.asarray(disc_children, dtype=np.int32),
+        np.asarray(price_children, dtype=np.int32),
+    ]).astype(np.int32, copy=False)
 
     off = 0
     idx_fx = slice(off, off + n_fx)
@@ -349,6 +361,7 @@ def build_universe_mapping(
     off += n_price
 
     # Scalar-RF + price-curve universe rows (A1 scatter targets).
+    fx_uix = np.searchsorted(mkt_uni, fx_spots).astype(np.int32, copy=False)
     scalar_uix = np.searchsorted(mkt_uni, scalar_rfs).astype(np.int32, copy=False)
     price_curve_uix = np.searchsorted(mkt_uni, price_ids).astype(np.int32, copy=False)
 
@@ -360,8 +373,12 @@ def build_universe_mapping(
         required_factor_ids=required,
         required_shift_type_ids=required_shift,
         idx_fx_spots=idx_fx,
+        fx_spot_uix_in_universe=fx_uix,
         idx_scalar_nodes=idx_scalar,
         scalar_node_uix_in_universe=scalar_uix,
+        scalar_node_strictly_positive=strictly_positive_level_mask(
+            rf_ids=scalar_rfs, static_config=static_config
+        ),
         idx_discount_curves=idx_disc,
         shape_discount_curves=(disc_ids.shape[0], disc_m),
         idx_price_curves=idx_price,
@@ -465,8 +482,10 @@ def build_market_data_matrix_from_flat_levels(
         uix_mapper=uix_mapper,
         num_scenarios=num_scenarios,
         raw_fx_spots=raw_fx_spots,
+        fx_spot_uix_in_universe=u.fx_spot_uix_in_universe,
         raw_scalar_nodes=raw_scalar_nodes,
         scalar_node_uix_in_universe=u.scalar_node_uix_in_universe,
+        scalar_node_strictly_positive=u.scalar_node_strictly_positive,
         raw_discount_tenors=u.raw_discount_tenors,
         raw_discount_ln_dfs=raw_discount_ln_dfs,
         raw_price_curve_tenors=u.raw_price_curve_tenors,
@@ -493,7 +512,16 @@ def build_market_data_matrix_from_snapshot(
 ) -> MarketDataMatrix:
     """
     Build a `MarketDataMatrix` directly from a `RiskFactorLevelSnapshot`.
+
+    D067: the snapshot's as-of is the market-data as-of. Relative risk-factor
+    names denote different dated contracts at different as-ofs, so a snapshot
+    taken at another date is a different market, not a stale copy of this one.
     """
+    if snapshot.as_of_date != as_of_date:
+        raise ValueError(
+            f"snapshot as_of_date {snapshot.as_of_date} != run as_of_date "
+            f"{as_of_date} (D067)."
+        )
     base_levels = extract_levels_from_snapshot(
         required_ids=universe_map.required_factor_ids,
         snapshot=snapshot,

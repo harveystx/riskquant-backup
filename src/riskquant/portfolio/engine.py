@@ -45,8 +45,8 @@ from collections.abc import Sequence
 import numpy as np
 import numpy.typing as npt
 
-from riskquant._arrays import searchsorted_or_propagate_sentinel_int32
-from riskquant.constants import INVALID_UIX, NO_FX_RF_REQUIRED
+from riskquant._arrays import searchsorted_or_raise
+from riskquant.constants import NO_DATE_ORD32, NO_FX_RF_REQUIRED
 from riskquant.portfolio.compiled import (
     CompiledPortfolio,
     CompiledPortfolioFields,
@@ -57,7 +57,11 @@ from riskquant.portfolio.instruments import (
     VANILLA_EUROPEAN_OPTION_NODE_ID,
     VANILLA_FORWARD_NODE_ID,
 )
-from riskquant.universe import UixMapper, lookup_fx_effective_uix
+from riskquant.universe import (
+    UixMapper,
+    lookup_fx_effective_uix,
+    translate_ids_to_uix_or_raise,
+)
 
 # `UixMapper` (the run's UIX universe contract type) was relocated to the leaf
 # module `riskquant.universe` (item C2) so market_data can import it at runtime
@@ -111,17 +115,26 @@ def _dedup_fx_effective_pairs(
     all_ids = np.concatenate(raw_fx_id_arrays)
     all_inv = np.concatenate(raw_fx_inv_arrays)
 
-    mask = all_ids != int(NO_FX_RF_REQUIRED)
+    # D060 / MD-08: only the canonical sentinel means "no FX leg". Any other
+    # negative id is an unresolved quote and fails here, before it can be
+    # searchsorted onto market row 0.
+    corrupt = (all_ids < 0) & (all_ids != int(NO_FX_RF_REQUIRED))
+    if bool(corrupt.any()):
+        raise ValueError(
+            "FX leg ids contain negative values other than NO_FX_RF_REQUIRED: "
+            f"{np.unique(all_ids[corrupt])[:10].tolist()}."
+        )
+    mask = all_ids >= 0
     if not mask.any():
         return np.empty((0, 2), dtype=np.int32)
 
     real_ids = all_ids[mask]
     real_inv = all_inv[mask]
 
-    # Translate raw IDs -> market-universe UIXs.
-    real_uix = np.searchsorted(market_id_universe, real_ids).astype(
-        np.int32, copy=False
-    )
+    # Translate raw IDs -> market-universe UIXs (membership proven).
+    real_uix = searchsorted_or_raise(
+        universe=market_id_universe, raw=real_ids, ctx="FX rf ids"
+    ).astype(np.int32, copy=False)
 
     pairs = np.stack(
         (real_uix, real_inv.astype(np.int32, copy=False)),
@@ -169,10 +182,10 @@ def _dedup_spot_effective_pairs(
     fx_ids = np.concatenate(raw_fx_u2s_id_arrays)
     fx_inv = np.concatenate(raw_fx_u2s_inv_arrays)
 
-    # Underlyings are always present (never sentinel), so a plain searchsorted
-    # matches `map_market_ids_to_uix` for these rows.
-    price_uix = np.searchsorted(market_id_universe, underlying_ids).astype(
-        np.int32, copy=False
+    # Same membership-proving translation `map_market_ids_to_uix` uses, so the
+    # table is keyed exactly as the spot compiler will look it up (AUD-02).
+    price_uix = translate_ids_to_uix_or_raise(
+        universe=market_id_universe, raw=underlying_ids, ctx="underlying ids"
     )
     fx_eff_uix = lookup_fx_effective_uix(
         market_id_universe=market_id_universe,
@@ -234,11 +247,11 @@ def _dedup_edf_effective_triples(
         curve_ids, date_ords = curve_ids[row_mask], date_ords[row_mask]
         fx_ids, fx_inv = fx_ids[row_mask], fx_inv[row_mask]
 
-    curve_uix = searchsorted_or_propagate_sentinel_int32(
-        universe=discount_curve_id_universe, raw=curve_ids, sentinel=INVALID_UIX
+    curve_uix = translate_ids_to_uix_or_raise(
+        universe=discount_curve_id_universe, raw=curve_ids, ctx="discount curve ids"
     )
-    date_uix = searchsorted_or_propagate_sentinel_int32(
-        universe=date_ord32_universe, raw=date_ords, sentinel=INVALID_UIX
+    date_uix = translate_ids_to_uix_or_raise(
+        universe=date_ord32_universe, raw=date_ords, ctx="date ordinals"
     )
     fx_eff_uix = lookup_fx_effective_uix(
         market_id_universe=market_id_universe,
@@ -288,14 +301,14 @@ def _dedup_efp_effective_quads(
     if under_ids.size == 0:
         return np.empty((0, 4), dtype=np.int32)
 
-    price_uix = searchsorted_or_propagate_sentinel_int32(
-        universe=market_id_universe, raw=under_ids, sentinel=INVALID_UIX
+    price_uix = translate_ids_to_uix_or_raise(
+        universe=market_id_universe, raw=under_ids, ctx="underlying ids"
     )
-    curve_uix = searchsorted_or_propagate_sentinel_int32(
-        universe=discount_curve_id_universe, raw=curve_ids, sentinel=INVALID_UIX
+    curve_uix = translate_ids_to_uix_or_raise(
+        universe=discount_curve_id_universe, raw=curve_ids, ctx="discount curve ids"
     )
-    date_uix = searchsorted_or_propagate_sentinel_int32(
-        universe=date_ord32_universe, raw=date_ords, sentinel=INVALID_UIX
+    date_uix = translate_ids_to_uix_or_raise(
+        universe=date_ord32_universe, raw=date_ords, ctx="date ordinals"
     )
     fx_eff_uix = lookup_fx_effective_uix(
         market_id_universe=market_id_universe,
@@ -345,8 +358,8 @@ def _dedup_vol_effective_uix(
     if vol_ids.size == 0:
         return np.empty(0, dtype=np.int32)
 
-    uix = searchsorted_or_propagate_sentinel_int32(
-        universe=market_id_universe, raw=vol_ids, sentinel=INVALID_UIX
+    uix = translate_ids_to_uix_or_raise(
+        universe=market_id_universe, raw=vol_ids, ctx="volatility ids"
     )
     keep = uix >= 0
     if not bool(keep.any()):
@@ -461,6 +474,35 @@ def build_uix_mapper(
             "No ingest batches provided to build_uix_mapper. At least one "
             "IngestBatch is required."
         )
+
+    # ---- RUN AS-OF (D067) ----
+    # The as-of that resolved relative forward names at ingest IS the run as-of.
+    # It is derived from the batches; an explicit argument must agree with it.
+    # AUD-04: the sentinel is "no as-of", never a run as-of. Relative pillar
+    # identity becomes a dated contract only through this value (it enters the
+    # mapper fingerprint), so the sentinel must not masquerade as a date.
+    if as_of_ord32 is not None and int(as_of_ord32) == int(NO_DATE_ORD32):
+        raise ValueError(
+            "as_of_ord32 is the NO_DATE_ORD32 sentinel; pass a real run as-of or "
+            "None (D067)."
+        )
+    batch_as_ofs = {
+        int(b.as_of_ord32)
+        for b in ingest_batches
+        if int(b.as_of_ord32) != int(NO_DATE_ORD32)
+    }
+    if len(batch_as_ofs) > 1:
+        raise ValueError(
+            f"Ingest batches were resolved at different as-of dates {sorted(batch_as_ofs)}."
+        )
+    if batch_as_ofs:
+        derived = batch_as_ofs.pop()
+        if as_of_ord32 is not None and int(as_of_ord32) != derived:
+            raise ValueError(
+                f"as_of_ord32={as_of_ord32} contradicts the as-of {derived} at which "
+                "the ingest batches resolved their forward contracts (D067)."
+            )
+        as_of_ord32 = derived
 
     # ---- MARKET IDs ----
     market_id_arrays = [
@@ -674,4 +716,7 @@ def compile_portfolio_from_ingest_batch(
     # ---- 4. Forward portfolio-level metadata to the compiled artifact. ----
     compiled_fields["unique_dates_ord32"] = uix_mapper.date_ord32_universe
 
-    return CompiledPortfolio(**compiled_fields)
+    # AUD-02: every UIX stamped above indexes THIS mapper's universes. The
+    # portfolio carries the mapper fingerprint so no valuation or sensitivity
+    # run can pair it with state built from any other mapper.
+    return CompiledPortfolio(**compiled_fields, uix_fingerprint=uix_mapper.fingerprint)

@@ -1,17 +1,14 @@
 # src/riskquant/market_data/risk_factors/builder_matrix.py
 from __future__ import annotations
 
-from collections.abc import Mapping
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from pandas.api.types import is_datetime64_any_dtype
 
-from riskquant.market_data.risk_factors.builder_utils import (
-    _require_mapping_key,
-    _validate_mapping_dict,
-)
+from riskquant.config.static_config.static_config import RiskStaticConfig
+from riskquant.market_data.risk_factors.compile_snapshot import canonical_unit_scale
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.utils.dates import (
     coerce_as_of_date_to_pd_timestamp,
@@ -24,19 +21,31 @@ from riskquant.utils.dates import (
 def build_risk_factor_matrix_from_df(
     *,
     df: pd.DataFrame,
-    name_to_id_map: Mapping[str, int] | None = None,
+    static_config: RiskStaticConfig,
     use_int32_dates: bool = True,
     float_dtype: type[np.floating] = np.float64,
 ) -> RiskFactorMatrix:
-    """Construct a RiskFactorMatrix from a wide pandas DataFrame.
+    """Construct a canonical-unit RiskFactorMatrix from a wide source-unit frame.
+
+    Unit contract (D069 / AUD-06)
+    -----------------------------
+    This is the history route's normalisation edge. Column values are in each
+    factor's DECLARED source `unit_scale` (e.g. PERCENT 18.3). They are
+    multiplied once by `canonical_unit_scale` (the same engine as the level
+    snapshot compiler), so the matrix holds canonical base units (0.183).
+    Every consumer downstream -- scenario generators (DIFFERENCE shocks are
+    therefore canonical), `get_snapshot`, `from_snapshot` -- sees canonical
+    units and never rescales. A matrix built directly with the
+    `RiskFactorMatrix` constructor is canonical by contract.
 
     Parameters
     ----------
     df : pd.DataFrame
-        Wide DataFrame with dates on the index and one column per risk factor.
-    name_to_id_map : Optional[Mapping[str, int]]
-        Optional mapping from column name (string) to integer factor id. If
-        omitted, columns are parsed as integers directly.
+        Wide DataFrame with dates on the index and one column per risk factor,
+        labelled by relative risk-factor name, values in declared source units.
+    static_config : RiskStaticConfig
+        Resolves names to rf_ids (`rel_name_to_rf_id`) and supplies the
+        per-rf unit scale. An unknown name or unit slot raises.
     use_int32_dates : bool
         If True convert dates to int32 ordinal representation; otherwise
         keep datetime64[D] dtype.
@@ -105,21 +114,16 @@ def build_risk_factor_matrix_from_df(
     cols = df.columns
     n = cols.size
 
-    if name_to_id_map is None:
-        # Parse column labels as integers; will raise on non-integer labels.
-        factor_ids = np.fromiter(
-            (int(c) for c in cols),
-            dtype=np.int32,
-            count=n,
+    name_to_rf_id = static_config.rel_name_to_rf_id
+    unknown = [str(c) for c in cols if str(c) not in name_to_rf_id]
+    if unknown:
+        raise KeyError(
+            f"History columns do not resolve through static_config.rel_name_to_rf_id: "
+            f"{unknown[:10]}"
         )
-    else:
-        # Validate mapping once (cheap for small config dicts) and then map.
-        _validate_mapping_dict(name_to_id_map)
-        factor_ids = np.fromiter(
-            (_require_mapping_key(name_to_id_map, str(c)) for c in cols),
-            dtype=np.int32,
-            count=n,
-        )
+    factor_ids = np.fromiter(
+        (int(name_to_rf_id[str(c)]) for c in cols), dtype=np.int32, count=n
+    )
 
     # Canonicalize factor axis BEFORE allocating `values` (avoids extra copies).
     if n > 1 and np.any(factor_ids[1:] < factor_ids[:-1]):
@@ -135,9 +139,14 @@ def build_risk_factor_matrix_from_df(
         if n > 1 and np.any(factor_ids[1:] == factor_ids[:-1]):
             raise ValueError("factor_ids must be unique!")
 
-    # Materialize the numeric matrix as a C-contiguous array with requested dtype.
+    # D069: one multiplication from declared source units to canonical units,
+    # computed in float64 per column (once per factor, not per observation
+    # loop), then materialised in the requested dtype.
+    scale = canonical_unit_scale(rf_ids=factor_ids, static_config=static_config)
     values = np.ascontiguousarray(
-        df.to_numpy(dtype=float_dtype, copy=True, na_value=np.nan)
+        (df.to_numpy(dtype=np.float64, copy=True, na_value=np.nan) * scale).astype(
+            float_dtype, copy=False
+        )
     )
 
     return RiskFactorMatrix(dates=dates, factor_ids=factor_ids, values=values)
@@ -149,8 +158,8 @@ def build_risk_factor_matrix_from_df(
 def build_risk_factor_matrix_from_xlsx(
     *,
     path: str | Path,
+    static_config: RiskStaticConfig,
     sheet_name: str | int = 0,
-    name_to_id_map: Mapping[str, int] | None = None,
     use_int32_dates: bool = True,
     float_dtype: type[np.floating] = np.float64,
     as_of_date: pd.Timestamp | None = None,
@@ -163,9 +172,9 @@ def build_risk_factor_matrix_from_xlsx(
         Path to the Excel file.
     sheet_name : str | int
         Sheet name or index to read (forwarded to pandas.read_excel).
-    name_to_id_map : Optional[Mapping[str, int]]
-        Optional mapping for column name -> factor id (same semantics as
-        `from_df`).
+    static_config : RiskStaticConfig
+        Name resolution and per-rf unit scale; values are declared source
+        units and are normalised exactly once (same contract as `from_df`).
     use_int32_dates : bool
         If True convert dates to int32 ordinal representation.
     float_dtype : numpy floating type
@@ -218,7 +227,7 @@ def build_risk_factor_matrix_from_xlsx(
     # Reuse the robust `from_df` constructor for the remaining work.
     return build_risk_factor_matrix_from_df(
         df=df,
-        name_to_id_map=name_to_id_map,
+        static_config=static_config,
         use_int32_dates=use_int32_dates,
         float_dtype=float_dtype,
     )

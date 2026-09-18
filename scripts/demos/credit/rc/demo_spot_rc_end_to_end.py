@@ -58,6 +58,7 @@ from riskquant.portfolio.ingest.batch import IngestBatch
 from riskquant.portfolio.ingest.pipeline import compile_raw_df_into_ingest_batch
 from riskquant.portfolio.instruments import InstrumentType
 from riskquant.portfolio.validation import validate_ingest_batches_against_uix_universe
+from riskquant.utils.dates import date_to_ord32
 from riskquant.utils.printer import (
     print_array,
     print_calling_file,
@@ -87,15 +88,13 @@ _NUM_SCENARIOS: int = 1
 
 # Instruments whose vol-resolution path is wired today. Filter the
 # exhaustive fixture down to these before ingest.
-_PRICEABLE_INSTRUMENTS: frozenset[str] = frozenset(
-    {
-        InstrumentType.SPOT.name,
-        InstrumentType.VANILLA_FORWARD_NODE.name,
-        InstrumentType.VANILLA_FORWARD_CURVE.name,
-        InstrumentType.VANILLA_EUROPEAN_OPTION_NODE.name,
-        InstrumentType.VANILLA_EUROPEAN_OPTION_CURVE.name,
-    }
-)
+_PRICEABLE_INSTRUMENTS: frozenset[str] = frozenset({
+    InstrumentType.SPOT.name,
+    InstrumentType.VANILLA_FORWARD_NODE.name,
+    InstrumentType.VANILLA_FORWARD_CURVE.name,
+    InstrumentType.VANILLA_EUROPEAN_OPTION_NODE.name,
+    InstrumentType.VANILLA_EUROPEAN_OPTION_CURVE.name,
+})
 
 
 # ============================================================
@@ -240,7 +239,9 @@ if __name__ == "__main__":
 
     print_header(title="SECTION: BUILD UIX MAPPER UNIVERSE FROM INGEST BATCHES")
 
-    uix_mapper = build_uix_mapper(ingest_batches)
+    uix_mapper = build_uix_mapper(
+        ingest_batches, as_of_ord32=int(date_to_ord32(as_of_date))
+    )
 
     print_array(
         uix_mapper.market_id_universe,

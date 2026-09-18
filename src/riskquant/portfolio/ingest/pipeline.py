@@ -8,6 +8,8 @@ any SoA payload is produced.
 
 from __future__ import annotations
 
+from datetime import date
+
 import pandas as pd
 
 from riskquant.config.static_config.static_config import RiskStaticConfig
@@ -27,6 +29,7 @@ def compile_raw_df_into_ingest_batch(
     raw_df: pd.DataFrame,
     static_config: RiskStaticConfig,
     copy: bool = False,
+    as_of_date: date | None = None,
 ) -> IngestBatch:
     """
     Run the full ingest pipeline: raw frame -> validated SoA `IngestBatch`.
@@ -69,6 +72,7 @@ def compile_raw_df_into_ingest_batch(
         df=df,
         instrument_ids=instrument_ids,
         static_config=static_config,
+        as_of_date=as_of_date,
     )
     # compiled_ingest_soa.print_soa()
 

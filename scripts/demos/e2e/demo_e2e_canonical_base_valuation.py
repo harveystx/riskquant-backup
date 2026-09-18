@@ -22,18 +22,11 @@ none has a registered block compiler yet
 (Constitution: fail fast, never silently drop a trade). This demo filters
 them out before compiling, rather than let the engine raise.
 
-Within SPOT, trades whose `underlying` is itself an FX-pair risk factor
-(`node_meta.asset_class == "FX"`, e.g. `USDEUR`, `USDGBP`, `EURCHF`) are
-ALSO excluded. Diagnosed, not guessed: for those trades
-`SpotBlock.effective_spot_price_uix` resolves a `price_uix` pointing at the
-FX-classified rf_id itself, but `MarketDataMatrix.prices` is populated only
-for non-FX (`scalar_levels`) risk factors -- FX rf_ids are otherwise only
-ever read through `fx_spots_effective`. The unread `prices` slot is
-uninitialized, so pricing such a trade silently returns either an
-accidental `0.0` or a raw denormalized float, never a raised error -- a
-production gap in the SPOT/market-data seam for this specific case, not
-something this demo script can correct (see the current-state notes
-alongside this file).
+Within SPOT, trades whose `underlying` is not an admissible scalar spot
+source (D063: a PRICE, FX_RATE or INDEX risk factor) are ALSO excluded -- e.g.
+a SPOT on an interest-rate curve point such as `USD_LIBOR_3M[10Y]`. The
+ingest identity gate rejects such rows by design. SPOT trades on FX-rate
+underlyings are priced: the producer now owns their `prices` rows (D072).
 
 The exhaustive fixture also carries VANILLA_IRS-only ingest columns
 (`fixed_rate`, `notional`, `maturity_date`, ...) not in
@@ -86,6 +79,7 @@ from riskquant.portfolio.ingest.pipeline import compile_raw_df_into_ingest_batch
 from riskquant.portfolio.ingest.schema import ALL_ALLOWED_COLS_SET
 from riskquant.portfolio.instruments import InstrumentType
 from riskquant.portfolio.validation import validate_ingest_batches_against_uix_universe
+from riskquant.utils.dates import date_to_ord32
 from riskquant.utils.printer import (
     print_array,
     print_calling_file,
@@ -120,15 +114,27 @@ _NUM_SCENARIOS: int = 1
 # exhaustive fixture ships for ingest coverage only.
 _PRICEABLE_INSTRUMENTS: frozenset[str] = frozenset({InstrumentType.SPOT.name})
 
-# `node_meta.asset_class == "FX"` names, read directly from the canonical
-# static-config fixture (no compiled RiskStaticConfig needed for this). SPOT
-# trades on these underlyings are excluded -- see the module docstring.
-_FX_UNDERLYING_NAMES: frozenset[str] = frozenset(
-    _RISK_STATIC_CONFIG_DICT_OF_DFS["node_meta"]
-    .filter(_RISK_STATIC_CONFIG_DICT_OF_DFS["node_meta"]["asset_class"] == "FX")[
+# Names that are NOT admissible SPOT sources under D063, read directly from the
+# canonical static-config tables: nodes and curve points whose quote type is
+# not PRICE / FX_RATE / INDEX. SPOT trades on these are excluded.
+_SPOT_QUOTE_TYPES: frozenset[str] = frozenset({"PRICE", "FX_RATE", "INDEX"})
+_NODE_META = _RISK_STATIC_CONFIG_DICT_OF_DFS["node_meta"]
+_CURVE_META = _RISK_STATIC_CONFIG_DICT_OF_DFS["curve_meta"]
+_CURVE_POINTS = _RISK_STATIC_CONFIG_DICT_OF_DFS["curve_point_meta"]
+_CURVE_POINT_KINDS = _CURVE_POINTS.join(
+    _CURVE_META.select(["curve_id", "curve_name", "quote_type"]), on="curve_id"
+)
+_NON_SPOT_SOURCE_NAMES: frozenset[str] = frozenset(
+    _NODE_META.filter(~_NODE_META["quote_type"].is_in(list(_SPOT_QUOTE_TYPES)))[
         "node_name"
+    ].to_list()
+    + [
+        f"{name}{token}"
+        for name, token in _CURVE_POINT_KINDS
+        .filter(~_CURVE_POINT_KINDS["quote_type"].is_in(list(_SPOT_QUOTE_TYPES)))
+        .select(["curve_name", "tenor_token"])
+        .iter_rows()
     ]
-    .to_list()
 )
 
 # VANILLA_IRS-only ingest columns present in the exhaustive fixture but not
@@ -176,11 +182,11 @@ if __name__ == "__main__":
     )
 
     # Filter exhaustive trade-data down to the pricer-runnable subset: SPOT
-    # only, excluding FX-underlying SPOT trades (see module docstring).
+    # only, excluding SPOT trades on non-spot source kinds (D063).
     full_trade_df = _PORTFOLIO_DATA_DF
     portfolio_trade_data_df = full_trade_df[
         full_trade_df["instrument"].isin(_PRICEABLE_INSTRUMENTS)
-        & ~full_trade_df["underlying"].isin(_FX_UNDERLYING_NAMES)
+        & ~full_trade_df["underlying"].isin(_NON_SPOT_SOURCE_NAMES)
     ].reset_index(drop=True)
     # Drop VANILLA_IRS-only / credit-exposure-only columns not needed for
     # SPOT valuation (see module docstring); every remaining column stays.
@@ -198,9 +204,8 @@ if __name__ == "__main__":
     print_text(
         f"Filtered to pricer-runnable subset: {len(portfolio_trade_data_df)} rows "
         f"(dropped {n_dropped} rows — forward-node/forward-curve/option/IRS "
-        f"families have no registered block compiler yet, and FX-underlying "
-        f"SPOT trades hit an unsupported market-data path; see module "
-        f"docstring)."
+        f"families have no registered block compiler yet, and SPOT trades on "
+        f"non-spot source kinds are rejected by D063; see module docstring)."
     )
     print_df(
         portfolio_trade_data_df,
@@ -298,7 +303,9 @@ if __name__ == "__main__":
 
     print_header(title="SECTION: BUILD UIX MAPPER UNIVERSE FROM INGEST BATCHES")
 
-    uix_mapper = build_uix_mapper(ingest_batches)
+    uix_mapper = build_uix_mapper(
+        ingest_batches, as_of_ord32=int(date_to_ord32(as_of_date))
+    )
 
     print_array(
         uix_mapper.market_id_universe,

@@ -11,11 +11,11 @@ compiled blocks.
 Key responsibilities
 --------------------
 1. FX effective matrix. Reads `UixMapper.fx_effective_pairs` to learn
-   which `(fx_uix, invert)` pairs are needed across the portfolio,
-   then materialises `fx_spots_effective: (K, S)` from the raw
-   `(F, S)` direct-quote scenario matrix. Inverted rows are resolved
-   via vectorised `np.reciprocal(out=...)`; direct rows are a single
-   block copy. The pricers see zero inversion math.
+   which `(market_uix, invert)` pairs are needed across the portfolio,
+   translates each market row to its dense FX-block row (D071), then
+   materialises `fx_spots_effective: (K, S)` from the raw `(F, S)`
+   direct-quote scenario matrix. Inverted rows are `1.0 / rate`; direct
+   rows are a single block copy. The pricers see zero inversion math.
 
 2. Discount-factor grid. Log-linear interpolation in time, flat
    extrapolation. Routed through the zero-allocation Numba kernel
@@ -32,7 +32,7 @@ Key responsibilities
 5. Vol surfaces. Two-step pipeline:
    (a) DELTA -> MONEYNESS_FWD calibration for DELTA-quoted surfaces
        via `market_data.calibrate.delta_to_moneyness`. Per-surface
-       (T_REF, σ_REF) scalars produce expiry/scenario-independent
+       (T_REF, sigma_REF) scalars produce expiry/scenario-independent
        moneyness pillars. The conversion is F-independent so the
        calibrator does not need FX or discount-curve context.
    (b) Time-slice interpolation onto the unique-date universe.
@@ -68,15 +68,18 @@ from riskquant.utils.dates import date_to_ord32
 def _build_fx_spots_effective(
     *,
     raw_fx_spots: npt.NDArray[np.float64],
+    fx_spot_uix_in_universe: npt.NDArray[np.int32],
     fx_effective_pairs: npt.NDArray[np.int32],
     num_scenarios: int,
 ) -> npt.NDArray[np.float64]:
     """
     Materialise the `(K, S)` effective FX matrix from the dedup pair table.
 
-    `fx_effective_pairs[k] == (fx_uix, invert)` — `fx_uix` is a row index
-    into `raw_fx_spots` (or `< 0` for an identity-row sentinel), `invert`
-    is `0` for direct and `1` for inverted (i.e. `1 / rate`).
+    `fx_effective_pairs[k] == (market_uix, invert)` — `market_uix` is a
+    `market_id_universe` row, NOT a row of `raw_fx_spots`. It is translated
+    to the dense FX-block row through `fx_spot_uix_in_universe` with a
+    membership proof (D071). `invert` is `0` for direct and `1` for inverted
+    (i.e. `1 / rate`); any other value raises.
 
     Scatter contract (CRITICAL)
     ---------------------------
@@ -92,8 +95,8 @@ def _build_fx_spots_effective(
     comment in that function.
 
     The fix is to use `__setitem__` directly:
-        out[direct_mask, :] = raw_fx_spots[fx_uixs[direct_mask]]
-        out[invert_mask, :] = 1.0 / raw_fx_spots[fx_uixs[invert_mask]]
+        out[direct_rows, :] = raw_fx_spots[fx_row[direct_rows]]
+        out[invert_rows, :] = 1.0 / raw_fx_spots[fx_row[invert_rows]]
 
     Both forms are scatter-assignment back into `out`. The invert path
     is one fused float64 division per scenario per inverted row — the
@@ -113,21 +116,36 @@ def _build_fx_spots_effective(
             f"fx_effective_pairs must have shape (K, 2); got {fx_effective_pairs.shape}"
         )
 
-    fx_uixs = fx_effective_pairs[:, 0]
+    market_uix = fx_effective_pairs[:, 0]
     invs = fx_effective_pairs[:, 1]
 
-    sentinel_mask = fx_uixs < 0
-    direct_mask = (~sentinel_mask) & (invs == 0)
-    invert_mask = (~sentinel_mask) & (invs == 1)
+    # D071 / MD-01: `fx_effective_pairs[:, 0]` is a `market_id_universe` row.
+    # `raw_fx_spots` rows are the DENSE FX block. Translate with a membership
+    # proof; a pair whose rf is not a laid-out FX spot fails here.
+    if raw_fx_spots.shape[0] != fx_spot_uix_in_universe.shape[0]:
+        raise ValueError(
+            f"raw_fx_spots rows ({raw_fx_spots.shape[0]}) != fx_spot_uix_in_universe "
+            f"entries ({fx_spot_uix_in_universe.shape[0]})."
+        )
+    fx_row = np.searchsorted(fx_spot_uix_in_universe, market_uix)
+    safe = np.minimum(fx_row, max(fx_spot_uix_in_universe.shape[0] - 1, 0))
+    if fx_spot_uix_in_universe.shape[0] == 0 or bool(
+        np.any(fx_spot_uix_in_universe[safe] != market_uix)
+    ):
+        raise ValueError(
+            "fx_effective_pairs reference market rows that are not FX spot rfs "
+            "laid out in the FX block (D071)."
+        )
+    if bool(np.any((invs != 0) & (invs != 1))):
+        raise ValueError("fx_effective_pairs invert flags must be 0 or 1.")
 
-    if sentinel_mask.any():
-        out[sentinel_mask, :] = 1.0
-
-    if direct_mask.any():
-        out[direct_mask, :] = raw_fx_spots[fx_uixs[direct_mask]]
-
-    if invert_mask.any():
-        out[invert_mask, :] = 1.0 / raw_fx_spots[fx_uixs[invert_mask]]
+    # Every row is written by exactly one of the two scatters below.
+    direct_rows = np.flatnonzero(invs == 0)
+    invert_rows = np.flatnonzero(invs == 1)
+    if direct_rows.size:
+        out[direct_rows, :] = raw_fx_spots[fx_row[direct_rows]]
+    if invert_rows.size:
+        out[invert_rows, :] = 1.0 / raw_fx_spots[fx_row[invert_rows]]
 
     return out
 
@@ -157,11 +175,10 @@ def _build_scalar_node_levels(
 
     Option A1: one backing array shared by all three pricer-facing scalar
     fields. The price / fwd / vol id sets are disjoint, so no row is written
-    twice and each pricer reads only the rows of its own class. Rows of the
-    universe that are NOT scalar nodes (FX-spot ids, etc.) are never read by
-    a scalar pricer, so they are left as `np.empty` garbage — touching them
-    would be a wiring bug the validator already rejects, not a silent
-    miss-read.
+    twice and each pricer reads only the rows of its own class. FX-spot rows
+    are scattered by `build_market_data_matrix` after this call (D072). Rows
+    that remain `np.empty` (curve / surface containers) are proven unconsumed
+    by `_prove_scalar_row_ownership` before the matrix is emitted.
 
     Scatter contract: `out[idx_rows, :] = src` is fancy-index SETITEM —
     in-place. Same trap documented in `_build_fx_spots_effective`.
@@ -384,6 +401,114 @@ def _build_vol_surfaces(
 # ==============================================================================
 
 
+def _prove_scalar_row_ownership(
+    *,
+    uix_mapper: UixMapper,
+    written: npt.NDArray[np.bool_],
+) -> None:
+    """
+    D072 / MD-01b: every `prices` row a supported fold gathers must have been
+    written by the producer. `np.empty` rows (curve/surface containers) are
+    legitimate only while no effective table references them.
+    """
+    consumed = np.concatenate((
+        uix_mapper.spot_effective_pairs[:, 0]
+        if uix_mapper.spot_effective_pairs.size
+        else np.empty(0, np.int32),
+        uix_mapper.efp_effective_quads[:, 0],
+        uix_mapper.vol_effective_uix,
+    ))
+    if consumed.size == 0:
+        return
+    unowned = ~written[consumed]
+    if bool(unowned.any()):
+        ids = np.unique(uix_mapper.market_id_universe[consumed[unowned]])[:10].tolist()
+        raise ValueError(
+            "market ids consumed by the valuation fold have no scalar producer row "
+            f"(D072): {ids}. A curve or surface container is not a scalar level."
+        )
+
+
+def _validate_level_domain(
+    *,
+    uix_mapper: UixMapper,
+    raw_fx_spots: npt.NDArray[np.float64],
+    fx_spot_uix_in_universe: npt.NDArray[np.int32],
+    raw_scalar_nodes: npt.NDArray[np.float64],
+    scalar_node_uix_in_universe: npt.NDArray[np.int32],
+    scalar_node_strictly_positive: npt.NDArray[np.bool_],
+    curve_and_surface_levels: tuple[tuple[str, npt.NDArray[np.float64]], ...],
+) -> None:
+    """
+    AUD-05 / D070: the market-level domain contract, enforced by the producer.
+
+    Every level that can enter `MarketDataMatrix` passes through this function,
+    whatever route supplied it (compiled snapshot, direct snapshot, history
+    snapshot, flat levels, scenario-shocked levels). Checked before any
+    allocation or scatter, so no matrix or effective state ever holds an
+    invalid level.
+
+        all levels          finite (no NaN, no +inf, no -inf)
+        FX spot rows        > 0   (FX_RATE by config; conversion factor by role)
+        VOL scalar rows     > 0   (flag resolved from rf_id -> quote type)
+        PRICE/RATE/SPREAD/INDEX: any finite value, including <= 0
+
+    Vectorised over (rows, scenarios); no per-scenario Python loop.
+    """
+    if raw_fx_spots.shape[0] != fx_spot_uix_in_universe.shape[0]:
+        raise ValueError(
+            f"raw_fx_spots rows ({raw_fx_spots.shape[0]}) != fx_spot_uix_in_universe "
+            f"entries ({fx_spot_uix_in_universe.shape[0]})."
+        )
+    if not (
+        raw_scalar_nodes.shape[0]
+        == scalar_node_uix_in_universe.shape[0]
+        == scalar_node_strictly_positive.shape[0]
+    ):
+        raise ValueError(
+            f"scalar-node rows ({raw_scalar_nodes.shape[0]}), universe indices "
+            f"({scalar_node_uix_in_universe.shape[0]}) and domain flags "
+            f"({scalar_node_strictly_positive.shape[0]}) must align."
+        )
+
+    def _rf_ids(
+        uix_rows: npt.NDArray[np.int32], bad_rows: npt.NDArray[np.bool_]
+    ) -> list[int]:
+        return [int(x) for x in uix_mapper.market_id_universe[uix_rows[bad_rows]][:10]]
+
+    for name, arr, uix_rows in (
+        ("FX spot", raw_fx_spots, fx_spot_uix_in_universe),
+        ("scalar node", raw_scalar_nodes, scalar_node_uix_in_universe),
+    ):
+        if arr.size:
+            bad = np.asarray(~np.isfinite(arr).all(axis=1), dtype=np.bool_)
+            if bool(bad.any()):
+                raise ValueError(
+                    f"{name} levels contain non-finite values for rf_ids "
+                    f"{_rf_ids(uix_rows, bad)} (AUD-05, D070)."
+                )
+    if raw_fx_spots.size:
+        bad = np.asarray((raw_fx_spots <= 0.0).any(axis=1), dtype=np.bool_)
+        if bool(bad.any()):
+            raise ValueError(
+                "FX spot levels must be strictly positive; offending rf_ids "
+                f"{_rf_ids(fx_spot_uix_in_universe, bad)} (AUD-05, D070)."
+            )
+    if raw_scalar_nodes.size and bool(scalar_node_strictly_positive.any()):
+        bad = np.asarray(
+            scalar_node_strictly_positive & (raw_scalar_nodes <= 0.0).any(axis=1),
+            dtype=np.bool_,
+        )
+        if bool(bad.any()):
+            raise ValueError(
+                "VOL levels must be strictly positive; offending rf_ids "
+                f"{_rf_ids(scalar_node_uix_in_universe, bad)} (AUD-05, D070)."
+            )
+    for name, arr in curve_and_surface_levels:
+        if arr.size and not bool(np.isfinite(arr).all()):
+            raise ValueError(f"{name} contain non-finite values (AUD-05, D070).")
+
+
 def build_market_data_matrix(
     *,
     as_of_date: date,
@@ -391,8 +516,10 @@ def build_market_data_matrix(
     num_scenarios: int,
     # ---- Raw scalar matrices (F/scalar-nodes, scenarios) ----
     raw_fx_spots: npt.NDArray[np.float64],
+    fx_spot_uix_in_universe: npt.NDArray[np.int32],
     raw_scalar_nodes: npt.NDArray[np.float64],
     scalar_node_uix_in_universe: npt.NDArray[np.int32],
+    scalar_node_strictly_positive: npt.NDArray[np.bool_],
     # ---- Curve configs ----
     raw_discount_tenors: npt.NDArray[np.float64],
     raw_discount_ln_dfs: npt.NDArray[np.float64],
@@ -426,6 +553,31 @@ def build_market_data_matrix(
     unique_dates_ord32 = uix_mapper.date_ord32_universe
     d_dates = unique_dates_ord32.shape[0]
 
+    # ---- D067: one run as-of ----------------------------------------------
+    as_of_ord32 = date_to_ord32(as_of_date)
+    if uix_mapper.as_of_ord32 is None or int(uix_mapper.as_of_ord32) != int(
+        as_of_ord32
+    ):
+        raise ValueError(
+            f"build_market_data_matrix as_of_date {as_of_date} (ordinal {int(as_of_ord32)}) "
+            f"!= UixMapper.as_of_ord32 {uix_mapper.as_of_ord32} (D067)."
+        )
+
+    # ---- AUD-05: level domain, before any allocation or scatter ------------
+    _validate_level_domain(
+        uix_mapper=uix_mapper,
+        raw_fx_spots=raw_fx_spots,
+        fx_spot_uix_in_universe=fx_spot_uix_in_universe,
+        raw_scalar_nodes=raw_scalar_nodes,
+        scalar_node_uix_in_universe=scalar_node_uix_in_universe,
+        scalar_node_strictly_positive=scalar_node_strictly_positive,
+        curve_and_surface_levels=(
+            ("discount curve levels", raw_discount_ln_dfs),
+            ("price curve levels", raw_price_curve_values),
+            ("vol surface levels", raw_vol_surface_values),
+        ),
+    )
+
     # ---- 0. Scalar-node levels (universe-aligned, item C / A1) -----------
     # One backing array indexed by `market_id_universe`; prices / forward_
     # nodes / vol_nodes alias it (disjoint id classes, each pricer reads
@@ -436,10 +588,49 @@ def build_market_data_matrix(
         num_market_ids=uix_mapper.market_id_universe.shape[0],
         num_scenarios=num_scenarios,
     )
+    # D072: FX spots are scalar levels too (a spot position on an FX rate reads
+    # them). They live in their own dense block; scatter it into its universe
+    # rows so no FX row is left as `np.empty`.
+    if raw_fx_spots.shape[0] != fx_spot_uix_in_universe.shape[0]:
+        raise ValueError(
+            f"raw_fx_spots rows ({raw_fx_spots.shape[0]}) != fx_spot_uix_in_universe "
+            f"entries ({fx_spot_uix_in_universe.shape[0]})."
+        )
+    if fx_spot_uix_in_universe.size:
+        scalar_levels[fx_spot_uix_in_universe, :] = raw_fx_spots
+    written = np.zeros(uix_mapper.market_id_universe.shape[0], dtype=np.bool_)
+    written[scalar_node_uix_in_universe] = True
+    written[fx_spot_uix_in_universe] = True
+    _prove_scalar_row_ownership(uix_mapper=uix_mapper, written=written)
+
+    # ---- D061: no discount-factor or price-curve producer is supported -------
+    # The repository does not define the economic meaning of a curve point for
+    # discounting (quote convention, compounding, day count, LABEL tenor -> date
+    # mapping), and the interpolation kernels' coordinate domain is not the
+    # int32 date-ordinal domain of this universe. Producing a grid would mean
+    # inventing that convention. Any run that needs one fails here, before a
+    # kernel is called, instead of raising a Numba TypeError or returning a
+    # plausible wrong DF.
+    if (
+        uix_mapper.discount_curve_id_universe.shape[0] > 0
+        or raw_discount_ln_dfs.shape[0] > 0
+    ):
+        raise NotImplementedError(
+            "Discount-factor production is not supported (D061): the curve-point "
+            "quote convention and tenor-axis contract are undecided. Runs that "
+            "reference discount curves (NODE forwards/options) cannot build a "
+            "MarketDataMatrix on the production path."
+        )
+    if raw_price_curve_values.shape[0] > 0:
+        raise NotImplementedError(
+            "Price-curve grid production is not supported (D061); curve-sourced "
+            "instruments are unregistered (D050)."
+        )
 
     # ---- 1. FX effective matrix ------------------------------------------
     fx_spots_effective = _build_fx_spots_effective(
         raw_fx_spots=raw_fx_spots,
+        fx_spot_uix_in_universe=fx_spot_uix_in_universe,
         fx_effective_pairs=uix_mapper.fx_effective_pairs,
         num_scenarios=num_scenarios,
     )
@@ -468,7 +659,6 @@ def build_market_data_matrix(
     )
 
     # ---- 4. TTE grid (act/365.25) ----------------------------------------
-    as_of_ord32 = date_to_ord32(as_of_date)
     if d_dates == 0:
         tte_grid = np.empty(0, dtype=np.float64)
     else:
@@ -515,6 +705,7 @@ def build_market_data_matrix(
 
     return MarketDataMatrix(
         num_scenarios=num_scenarios,
+        uix_fingerprint=uix_mapper.fingerprint,
         fx_spots_effective=fx_spots_effective,
         prices=scalar_levels,
         forward_nodes=scalar_levels,

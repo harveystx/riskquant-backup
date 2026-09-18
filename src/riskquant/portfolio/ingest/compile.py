@@ -23,6 +23,7 @@ Refactor history
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 
 import numpy as np
 import numpy.typing as npt
@@ -41,10 +42,12 @@ from riskquant.constants import (
 from riskquant.exceptions import PrettyKeyError
 from riskquant.market_data.surfaces.y_axes_types import surface_y_axis_kind_for_kernel
 from riskquant.portfolio.ingest.fx_resolver import resolve_fx_rf_ids_inplace
+from riskquant.portfolio.ingest.identity import validate_market_linkage_identity
 from riskquant.portfolio.ingest.parser import (
     parse_optional_date_series_to_ord32,
 )
 from riskquant.portfolio.ingest.rf_resolver import resolve_optional_ids
+from riskquant.utils.dates import date_to_ord32
 
 # ==============================================================================
 # OUTPUT STRUCTURE
@@ -101,6 +104,9 @@ class CompiledIngestSoA:
     # --- NETTING SET LINKAGE ---
     netting_set_id: npt.NDArray[np.int64]
 
+    # --- RUN AS-OF (D067) ---
+    as_of_ord32: int = int(NO_DATE_ORD32)
+
     def print_soa(
         self,
         *,
@@ -132,28 +138,26 @@ class CompiledIngestSoA:
             "net_set_id",
         ]
 
-        data = np.column_stack(
-            [
-                self.uids[:n],
-                self.instrument_ids[:n],
-                self.qty[:n],
-                self.strike[:n],
-                self.cp_mult[:n],
-                self.settle_ord[:n],
-                self.delivery_ord[:n],
-                self.expiry_ord[:n],
-                self.underlying_ids[:n],
-                self.volatility_ids[:n],
-                self.vol_surface_y_axis_type_ids[:n],
-                self.fx_u2s_ids[:n],
-                self.fx_u2s_inv[:n],
-                self.fx_k2s_ids[:n],
-                self.fx_k2s_inv[:n],
-                self.under_discount_curve_ids[:n],
-                self.strike_discount_curve_ids[:n],
-                self.netting_set_id[:n],
-            ]
-        )
+        data = np.column_stack([
+            self.uids[:n],
+            self.instrument_ids[:n],
+            self.qty[:n],
+            self.strike[:n],
+            self.cp_mult[:n],
+            self.settle_ord[:n],
+            self.delivery_ord[:n],
+            self.expiry_ord[:n],
+            self.underlying_ids[:n],
+            self.volatility_ids[:n],
+            self.vol_surface_y_axis_type_ids[:n],
+            self.fx_u2s_ids[:n],
+            self.fx_u2s_inv[:n],
+            self.fx_k2s_ids[:n],
+            self.fx_k2s_inv[:n],
+            self.under_discount_curve_ids[:n],
+            self.strike_discount_curve_ids[:n],
+            self.netting_set_id[:n],
+        ])
 
         fmts = [int_fmt] * len(headers)
         fmts[2] = fmts[3] = float_fmt  # qty, strike
@@ -298,7 +302,9 @@ def _resolve_underlying(
     if is_container.any():
         cont_int32 = container_hits[is_container].to_numpy(dtype=np.int32, copy=False)
         underlying_ids[is_container] = cont_int32
-        cont_slots = static_config.container_slots(cont_int32)
+        cont_slots = static_config.container_slots(
+            cont_int32.astype(np.int32, copy=False)
+        )
         ccy_ids[is_container] = static_config.container_ccy_id[cont_slots]
 
     return underlying_ids, ccy_ids
@@ -486,6 +492,7 @@ def compile_ingest_soa_payload_from_df(
     df: pd.DataFrame,
     instrument_ids: npt.NDArray[np.int32],
     static_config: RiskStaticConfig,
+    as_of_date: date | None = None,
 ) -> CompiledIngestSoA:
     """
     Compile a validated ingest frame into a flat SoA payload.
@@ -508,6 +515,18 @@ def compile_ingest_soa_payload_from_df(
     n = len(df)
     if n == 0:
         raise ValueError("Empty ingest dataframe.")
+
+    # D067 / AUD-04: the run as-of must be a real date. A date whose ordinal
+    # equals NO_DATE_ORD32 would be stored as the sentinel and read downstream
+    # as "no as-of", silently erasing the date that fixes relative identity.
+    as_of_ord32 = int(NO_DATE_ORD32)
+    if as_of_date is not None:
+        as_of_ord32 = int(date_to_ord32(as_of_date))
+        if as_of_ord32 == int(NO_DATE_ORD32):
+            raise ValueError(
+                f"as_of_date {as_of_date} has ordinal {as_of_ord32}, the "
+                "NO_DATE_ORD32 sentinel; it cannot be a run as-of (D067)."
+            )
 
     index = df.index
 
@@ -618,6 +637,25 @@ def compile_ingest_soa_payload_from_df(
     )
 
     # --------------------------------------------------------------------------
+    # SEMANTIC IDENTITY GATE (D063 source kind, D065 contract, D066 discounting)
+    # --------------------------------------------------------------------------
+    # Last layer that still knows what each integer id IS. Everything after this
+    # point indexes untyped ids.
+    validate_market_linkage_identity(
+        instrument_ids=np.ascontiguousarray(instrument_ids, dtype=np.int32),
+        uids=uids,
+        underlying_ids=underlying_ids,
+        volatility_ids=volatility_ids,
+        under_ccy=under_ccy,
+        strike_ccy=strike_ccy,
+        under_discount_curve_ids=under_df_curve_ids,
+        strike_discount_curve_ids=strike_df_curve_ids,
+        delivery_ord=delivery_ord,
+        as_of_date=as_of_date,
+        static_config=static_config,
+    )
+
+    # --------------------------------------------------------------------------
     # NETTING SET LINKAGE
     # --------------------------------------------------------------------------
     netting_set_id = _compile_netting_set_id(df, n)
@@ -645,4 +683,5 @@ def compile_ingest_soa_payload_from_df(
         strike_discount_curve_ids=strike_df_curve_ids,
         vol_surface_y_axis_type_ids=vol_surface_y_axis_type_ids,
         netting_set_id=netting_set_id,
+        as_of_ord32=as_of_ord32,
     )

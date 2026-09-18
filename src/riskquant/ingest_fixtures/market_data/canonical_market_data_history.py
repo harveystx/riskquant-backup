@@ -129,12 +129,11 @@ def _build_canonical_universe() -> list[tuple[str, _MarketRiskFactorParams]]:
 
     # ---- 3. Surface points ----
     surface_meta = CANONICAL_RISK_STATIC_CONFIG_DATA["surface_meta"]
-    surface_info: dict[object, tuple[str, str]] = {
-        sid: (str(name), str(y_kind))
-        for sid, name, y_kind in zip(
+    surface_names: dict[object, str] = {
+        sid: str(name)
+        for sid, name in zip(
             surface_meta["surface_id"],
             surface_meta["surface_name"],
-            surface_meta["y_axis_kind"],
             strict=True,
         )
     }
@@ -146,8 +145,10 @@ def _build_canonical_universe() -> list[tuple[str, _MarketRiskFactorParams]]:
         surface_point_meta["y_label"],
         strict=True,
     ):
-        surface_name, y_axis_kind = surface_info[sid]
-        factor_name = f"{surface_name}{x_tenor}[{y_axis_kind}={y_label}]"
+        # Canonical relative name, identical to `static_config.rel_name_to_rf_id`
+        # (D076): `{surface_name}{x_tenor_token}[{y_label}]`. The surface's
+        # `y_axis_kind` is metadata on `surface_meta`, never part of the name.
+        factor_name = f"{surface_names[sid]}{x_tenor}[{y_label}]"
         specs.append((factor_name, VOL_OF_VOL_DEFAULTS))
 
     return specs

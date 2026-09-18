@@ -48,7 +48,7 @@ def _mtx_f64_2d() -> _NDArrayF64:
     return np.empty((0, 0), dtype=_F64)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class ValuationState:
     """
     Fully-resolved valuation factors consumed directly by pricing kernels.
@@ -106,6 +106,10 @@ class ValuationState:
     # ==================================================================================
 
     batch_size: int
+
+    # `UixMapper.fingerprint` of the mapper that keyed every factor row (AUD-02).
+    # `run_valuation` requires it to equal the portfolio's fingerprint.
+    uix_fingerprint: str
 
     # ==================================================================================
     # RESOLVED FACTORS (RAW PRIMITIVES)
@@ -217,8 +221,14 @@ class ValuationState:
         default_factory=_mtx_f64_2d
     )
 
+    def __post_init__(self) -> None:
+        if not self.uix_fingerprint:
+            raise ValueError(
+                "uix_fingerprint must identify the UixMapper that keyed the state."
+            )
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class MarketDataMatrix:
     """
     Raw, universe-aligned market-data grids: the input tier to the effective-
@@ -269,6 +279,11 @@ class MarketDataMatrix:
     # ==================================================================================
 
     num_scenarios: int
+
+    # `UixMapper.fingerprint` of the mapper whose universes key every axis of this
+    # matrix (D064). Equal shapes do not imply equal identities; the fold refuses
+    # a mapper with any other fingerprint.
+    uix_fingerprint: str
 
     # ==================================================================================
     # FX
@@ -329,6 +344,10 @@ class MarketDataMatrix:
     surface_y_axis_type_ids: _NDArrayI8
 
     def __post_init__(self) -> None:
+        if not self.uix_fingerprint:
+            raise ValueError(
+                "uix_fingerprint must be the building UixMapper's fingerprint."
+            )
         # ---- dtype ----
         for name in (
             "fx_spots_effective",

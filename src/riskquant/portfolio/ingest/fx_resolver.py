@@ -27,10 +27,6 @@ from riskquant.config.static_config.static_config import RiskStaticConfig
 from riskquant.constants import NO_FX_RF_REQUIRED
 from riskquant.exceptions import PrettyKeyError
 
-# Per-row sentinel matching static_config._NO_FX_RF_REQUIRED.
-# Re-declared here so the resolver doesn't import from a private symbol.
-_NO_FX_INT: int = int(NO_FX_RF_REQUIRED)
-
 
 def resolve_fx_rf_ids_inplace(
     *,
@@ -81,7 +77,7 @@ def resolve_fx_rf_ids_inplace(
     if out_fx_invert.dtype != np.int8:
         raise TypeError(f"out_fx_invert must be int8; got {out_fx_invert.dtype}.")
 
-    out_fx_rf_ids.fill(np.int32(_NO_FX_INT))
+    out_fx_rf_ids.fill(NO_FX_RF_REQUIRED)
     out_fx_invert.fill(np.int8(0))
 
     # Only rows where base != settle need resolution.
@@ -112,8 +108,8 @@ def resolve_fx_rf_ids_inplace(
     std_hits = fx_matrix[base_ids, quote_ids]
     inv_hits = fx_matrix[quote_ids, base_ids]
 
-    std_valid = std_hits != _NO_FX_INT
-    inv_valid = inv_hits != _NO_FX_INT
+    std_valid = std_hits != int(NO_FX_RF_REQUIRED)
+    inv_valid = inv_hits != int(NO_FX_RF_REQUIRED)
 
     # ---- Unresolved rows are hard errors ----
     missing = ~(std_valid | inv_valid)

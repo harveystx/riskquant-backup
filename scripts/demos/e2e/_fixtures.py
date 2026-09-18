@@ -80,6 +80,7 @@ from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
 from riskquant.solutions.risk_run.schemas import ReportingSpec
 from riskquant.solutions.sensitivity_pnl.api import SensitivityPnlCalculator
 from riskquant.universe import UixMapper
+from riskquant.utils.dates import date_to_ord32
 from riskquant.utils.printer import print_df, print_header
 from riskquant.valuation.engine import run_valuation
 from riskquant.valuation.result import ValuationResult
@@ -399,7 +400,9 @@ def _run_portfolio(
         raw_df=_POSITIONS_DF,
         static_config=rsc,
     )
-    uix_mapper = build_uix_mapper([ingest_batch])
+    uix_mapper = build_uix_mapper(
+        [ingest_batch], as_of_ord32=int(date_to_ord32(_SNAPSHOT_AS_OF_DATE))
+    )
     portfolio = compile_portfolio_from_ingest_batch(
         ingest_batch=ingest_batch,
         uix_mapper=uix_mapper,
@@ -443,7 +446,7 @@ def _run_risk_factor_snapshot(
     snapshot = build_risk_factor_level_snapshot_from_dict(
         as_of_date=_SNAPSHOT_AS_OF_DATE,
         levels_dict=_RISK_FACTOR_LEVELS,
-        name_to_id_map=rsc.rel_name_to_rf_id,
+        static_config=rsc,
     )
 
     if verbose:
@@ -735,12 +738,7 @@ def _build_historical_matrix(rsc: RiskStaticConfig) -> RiskFactorMatrix:
         index=pd.to_datetime(list(_HISTORY_DATES)),
         columns=list(_SCENARIO_SOURCE_NAMES),
     )
-    return build_risk_factor_matrix_from_df(
-        df=frame,
-        name_to_id_map={
-            name: int(rsc.rel_name_to_rf_id[name]) for name in _SCENARIO_SOURCE_NAMES
-        },
-    )
+    return build_risk_factor_matrix_from_df(df=frame, static_config=rsc)
 
 
 # =============================================================================
@@ -966,10 +964,9 @@ def run_fixture_golden_checks(
     checks: list[tuple[str, bool, str]] = []
 
     def check(name: str, actual: float, expected: float, *, tol: float = 1e-2) -> None:
-        # tol accounts for the risk-factor snapshot's float32 level storage,
-        # not any computation error: 82.30 and 1.0800 are not exactly
-        # representable in float32, so PV/sensitivity values inherit ~1e-4
-        # relative rounding from the snapshot's own storage precision.
+        # tol is the D019 golden-fixture display tolerance (cents). Snapshot
+        # levels are canonical float64 (D069), so the computed values agree
+        # with the hand-derived identities far inside it.
         passed = abs(actual - expected) <= tol
         checks.append((name, passed, f"actual={actual:.6f} expected={expected:.6f}"))
 

@@ -87,6 +87,15 @@ def run_valuation(
         `(portfolio.total_trades, valuation_state.batch_size)`.
     """
 
+    # AUD-02: block UIXs are coordinates in ONE mapper's universes. State keyed
+    # by another mapper has in-range but economically foreign rows.
+    if portfolio.uix_fingerprint != valuation_state.uix_fingerprint:
+        raise ValueError(
+            "portfolio and valuation_state were built against different UixMappers "
+            f"(portfolio {portfolio.uix_fingerprint[:12]}..., state "
+            f"{valuation_state.uix_fingerprint[:12]}...)."
+        )
+
     expected_rows = portfolio.total_trades
     expected_cols = valuation_state.batch_size
 

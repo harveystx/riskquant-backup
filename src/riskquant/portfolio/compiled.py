@@ -77,6 +77,11 @@ class CompiledPortfolio:
     vanilla_forward: VanillaForwardBlock | None = None
     vanilla_european_option: VanillaEuropeanOptionBlock | None = None
 
+    # `UixMapper.fingerprint` of the mapper whose universes every block `_uix`
+    # indexes (AUD-02). `run_valuation` and `run_sensitivities` refuse state or a
+    # mapper with any other fingerprint.
+    uix_fingerprint: str
+
     # Derived, set in __post_init__.
     _blocks: tuple[BlockT, ...] = field(init=False, repr=False)
     _block_offsets: npt.NDArray[np.int64] = field(init=False, repr=False)
@@ -85,6 +90,10 @@ class CompiledPortfolio:
     _trade_uids: npt.NDArray[np.int64] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if not self.uix_fingerprint:
+            raise ValueError(
+                "uix_fingerprint must identify the UixMapper that stamped the blocks."
+            )
         # Construction-ordered slots; None slots are compacted out below. This
         # tuple order defines block ordering and therefore output-matrix bands.
         ordered: tuple[BlockT | None, ...] = (

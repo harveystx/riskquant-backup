@@ -1,16 +1,26 @@
 # src/riskquant/market_data/risk_factors/builder_snapshot.py
+"""
+Edge adapters that turn tabular level inputs into a `RiskFactorLevelSnapshot`.
+
+D069: there is exactly ONE unit-normalisation boundary for level snapshots,
+`compile_risk_factor_level_snapshot_from_levels_dict`. Every adapter here only
+reshapes its input into a `{relative_name: level}` mapping and delegates, so a
+level quoted `PERCENT` becomes the same canonical decimal value whichever
+public route ingests it. A separate unit-agnostic builder previously kept the
+raw value (18.3 for an 18.3 % volatility) while the compiler scaled it (0.183).
+"""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
-from riskquant.market_data.risk_factors.builder_utils import (
-    _require_mapping_key,
-    _validate_mapping_dict,
+from riskquant.config.static_config.static_config import RiskStaticConfig
+from riskquant.market_data.risk_factors.compile_snapshot import (
+    compile_risk_factor_level_snapshot_from_levels_dict,
 )
 from riskquant.market_data.risk_factors.snapshot import RiskFactorLevelSnapshot
 
@@ -19,36 +29,13 @@ def build_risk_factor_level_snapshot_from_dict(
     *,
     as_of_date: date,
     levels_dict: Mapping[str, float],
-    name_to_id_map: Mapping[str, int] | None = None,
-    float_dtype: type[np.floating] = np.float32,
+    static_config: RiskStaticConfig,
 ) -> RiskFactorLevelSnapshot:
-    """
-    Build a snapshot from a dictionary mapping risk factor names to their levels.
-    """
-    if not levels_dict:
-        raise ValueError("levels_dict cannot be empty.")
-
-    n = len(levels_dict)
-
-    if name_to_id_map is None:
-        # Assume the keys in the dictionary are already integer IDs formatted as strings.
-        ids = np.fromiter((int(k) for k in levels_dict.keys()), dtype=np.int32, count=n)
-    else:
-        # Resolve names to IDs
-        _validate_mapping_dict(name_to_id_map)
-        ids = np.fromiter(
-            (_require_mapping_key(name_to_id_map, str(k)) for k in levels_dict.keys()),
-            dtype=np.int32,
-            count=n,
-        )
-
-    # Extract levels into a contiguous array
-    levels = np.fromiter(levels_dict.values(), dtype=float_dtype, count=n)
-
-    return RiskFactorLevelSnapshot(
+    """Build a canonical (unit-normalised, float64) snapshot from `{name: level}`."""
+    return compile_risk_factor_level_snapshot_from_levels_dict(
         as_of_date=as_of_date,
-        factor_ids=ids,
-        factor_levels=levels,
+        levels_dict=levels_dict,
+        static_config=static_config,
     )
 
 
@@ -56,43 +43,35 @@ def build_risk_factor_level_snapshot_from_df(
     *,
     as_of_date: date,
     df: pd.DataFrame,
+    static_config: RiskStaticConfig,
     factor_col: str = "risk_factor_name",
     level_col: str = "level",
-    name_to_id_map: Mapping[str, int] | None = None,
-    float_dtype: type[np.floating] = np.float32,
 ) -> RiskFactorLevelSnapshot:
     """
-    Build a snapshot from a vertical pandas DataFrame.
+    Build a canonical snapshot from a vertical frame.
+
+    A row with a missing level is an error, not an omission: dropping it would
+    let an absent market quote surface later as a generic "missing factor".
     """
     if df.empty:
         raise ValueError("DataFrame is empty.")
-
     if factor_col not in df.columns or level_col not in df.columns:
         raise ValueError(
             f"DataFrame must contain columns '{factor_col}' and '{level_col}'."
         )
+    missing = df[level_col].isna().to_numpy()
+    if missing.any():
+        bad = df.loc[missing, factor_col].astype(str).tolist()[:10]
+        raise ValueError(f"Missing '{level_col}' for risk factors: {bad}")
+    if df[factor_col].duplicated().any():
+        dup = df.loc[df[factor_col].duplicated(), factor_col].unique().tolist()[:10]
+        raise ValueError(f"Duplicate factor names in column '{factor_col}': {dup}")
 
-    # Drop any rows where the level is NaN
-    df_clean = df.dropna(subset=[level_col])
-
-    # There must not be duplicate factor names after dropping NaNs, as this would lead to ambiguity in the snapshot.
-    if df_clean[factor_col].duplicated().any():
-        duplicated_factors = df_clean[factor_col][
-            df_clean[factor_col].duplicated()
-        ].unique()
-        raise ValueError(
-            f"Duplicate factor names found in column '{factor_col}' after dropping NaNs: {duplicated_factors}"
-        )
-
-    # Extract as a dictionary to reuse the highly-optimized dictionary builder
-    # zip is faster than df.set_index().to_dict() or df.itertuples()
-    levels_dict = dict(zip(df_clean[factor_col].astype(str), df_clean[level_col]))
-
-    return build_risk_factor_level_snapshot_from_dict(
+    levels_dict = dict(zip(df[factor_col].astype(str), df[level_col], strict=True))
+    return compile_risk_factor_level_snapshot_from_levels_dict(
         as_of_date=as_of_date,
         levels_dict=levels_dict,
-        name_to_id_map=name_to_id_map,
-        float_dtype=float_dtype,
+        static_config=static_config,
     )
 
 
@@ -100,22 +79,17 @@ def build_risk_factor_level_snapshot_from_xlsx(
     *,
     as_of_date: date,
     path: str | Path,
+    static_config: RiskStaticConfig,
     sheet_name: str | int = 0,
     factor_col: str = "risk_factor_name",
     level_col: str = "level",
-    name_to_id_map: Mapping[str, int] | None = None,
-    float_dtype: type[np.floating] = np.float32,
 ) -> RiskFactorLevelSnapshot:
-    """
-    Build a snapshot from a two-column Excel sheet.
-    """
+    """Build a canonical snapshot from a two-column Excel sheet."""
     df = pd.read_excel(str(path), sheet_name=sheet_name)
-
     return build_risk_factor_level_snapshot_from_df(
         as_of_date=as_of_date,
         df=df,
+        static_config=static_config,
         factor_col=factor_col,
         level_col=level_col,
-        name_to_id_map=name_to_id_map,
-        float_dtype=float_dtype,
     )

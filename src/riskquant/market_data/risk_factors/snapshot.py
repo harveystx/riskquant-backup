@@ -76,6 +76,18 @@ class RiskFactorLevelSnapshot:
         if lv.dtype not in (np.float32, np.float64):
             raise TypeError(f"factor_levels must be float32 or float64; got {lv.dtype}")
 
+        # ----- finiteness (D070) -----
+        # Non-finite levels are never market data. They are rejected here, at
+        # the container every snapshot route constructs, so a NaN or inf can
+        # not reach a producer, a fold, or a kernel (D004). Factor-specific
+        # domains (e.g. FX > 0) are checked by the compiler that knows the
+        # factor's quote type; a raw price may legitimately be negative.
+        if lv.size and not bool(np.all(np.isfinite(lv))):
+            bad = ids[~np.isfinite(lv)][:10].tolist()
+            raise ValueError(
+                f"factor_levels contain non-finite values for factor_ids {bad}"
+            )
+
         # ----- memory layout checks -----
         # Many numerical routines assume C-contiguous 1-D arrays; check early so
         # callers get an explicit error instead of subtle performance bugs.

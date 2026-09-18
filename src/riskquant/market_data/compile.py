@@ -226,7 +226,17 @@ def assemble_valuation_state(
 
     `batch_size` is taken from `matrix.num_scenarios`; the matrix has already
     validated that every grid's scenario axis agrees with it.
+
+    D064: the matrix must have been built against THIS mapper. Every effective
+    table read below indexes the matrix's axes, and two mappers with equal
+    universe sizes produce in-range but economically foreign rows.
     """
+    if matrix.uix_fingerprint != uix_mapper.fingerprint:
+        raise ValueError(
+            "MarketDataMatrix was built against a different UixMapper "
+            f"(matrix {matrix.uix_fingerprint[:12]}..., mapper "
+            f"{uix_mapper.fingerprint[:12]}...). Rebuild the matrix with this mapper."
+        )
     effective_spot_prices = _fold_effective_spot_prices(
         matrix=matrix,
         spot_effective_pairs=uix_mapper.spot_effective_pairs,
@@ -254,6 +264,7 @@ def assemble_valuation_state(
 
     return ValuationState(
         batch_size=matrix.num_scenarios,
+        uix_fingerprint=uix_mapper.fingerprint,
         effective_spot_prices=effective_spot_prices,
         effective_discount_factors=effective_discount_factors,
         effective_forward_prices=effective_forward_prices,

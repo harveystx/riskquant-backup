@@ -113,6 +113,12 @@ def run_sensitivities(
     """
     if portfolio.total_blocks == 0:
         raise ValueError("Portfolio contains no blocks; nothing to differentiate.")
+    # AUD-02 / D064: sensitizers gather `market_data` rows through the portfolio's
+    # block UIXs and `uix_mapper` tables; all three must share one universe.
+    if portfolio.uix_fingerprint != uix_mapper.fingerprint:
+        raise ValueError("portfolio was compiled against a different UixMapper.")
+    if market_data.uix_fingerprint != uix_mapper.fingerprint:
+        raise ValueError("MarketDataMatrix was built against a different UixMapper.")
 
     parts: list[BlockSensitivities] = []
     for block in portfolio.iter_blocks():

@@ -29,21 +29,67 @@ effective-spot-price table built one level up on it. Both share the same
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 
 import numpy as np
 import numpy.typing as npt
 
-from riskquant._arrays import searchsorted_or_propagate_sentinel_int32
 from riskquant.constants import (
     DAYS_PER_YR_ACT_365_25,
     INVALID_UIX,
+    NO_FX_RF_REQUIRED,
     TTE_FLOOR,
 )
 
 # ==============================================================================
 # FREE LOOKUP HELPERS (shared by the mapper methods and the engine producer)
 # ==============================================================================
+
+
+def translate_ids_to_uix_or_raise(
+    *,
+    universe: npt.NDArray[np.int32],
+    raw: npt.NDArray[np.int32],
+    ctx: str,
+) -> npt.NDArray[np.int32]:
+    """
+    Translate global ids into dense `universe` rows with a membership proof.
+
+    Negative `raw` values are the absent-linkage sentinels (NO_ID, NO_DATE_ORD32,
+    NO_FX_RF_REQUIRED) and map to `INVALID_UIX`. Every non-negative id must be
+    an element of `universe`; otherwise this raises before any coordinate is
+    returned.
+
+    Why not a plain `np.searchsorted`: for an absent id it returns the insertion
+    position, which is the dense row of a DIFFERENT, valid id (or one past the
+    end). That row passes every range check (D058) and silently re-points the
+    trade to another factor (AUD-02). Membership is therefore the contract of
+    every id -> uix translation, not an optional extra check.
+    """
+    out = np.full(raw.shape[0], INVALID_UIX, dtype=np.int32)
+    present = raw >= 0
+    if not bool(present.any()):
+        return out
+    ids = raw[present]
+    n = universe.shape[0]
+    if n == 0:
+        raise ValueError(
+            f"{ctx}: {int(ids.shape[0])} id(s) absent from the UixMapper universe "
+            f"(AUD-02; universe is empty): {np.unique(ids)[:10].tolist()}."
+        )
+    pos = np.searchsorted(universe, ids)
+    probe = np.minimum(pos, n - 1)
+    member = universe[probe] == ids
+    if not bool(member.all()):
+        missing = np.unique(ids[~member])[:10].tolist()
+        raise ValueError(
+            f"{ctx}: {int((~member).sum())} id(s) absent from the UixMapper "
+            f"universe (AUD-02): {missing}. The portfolio must be compiled "
+            "against a mapper built from the batches that contain it."
+        )
+    out[present] = pos.astype(np.int32, copy=False)
+    return out
 
 
 def lookup_fx_effective_uix(
@@ -60,19 +106,35 @@ def lookup_fx_effective_uix(
     Pulled out of `UixMapper.map_fx_legs_to_effective_uix` so the engine's
     effective-spot dedup can compute the same `fx_eff_uix` the compiler will
     stamp, without a `portfolio -> ... -> portfolio` import cycle (this is a
-    leaf module). Sentinel rows (`raw_fx_ids == NO_FX_RF_REQUIRED`, i.e. any
-    `raw < 0`) collapse to `INVALID_UIX` ("no FX conversion required").
+    leaf module). Only the canonical sentinel (`raw_fx_ids == NO_FX_RF_REQUIRED`)
+    collapses to `INVALID_UIX` ("no FX conversion required"); any other negative
+    id, or an invert flag outside {0, 1}, raises (D060, D062).
     """
     if raw_fx_ids.shape != raw_fx_inv.shape:
         raise ValueError(
             f"fx legs shape mismatch: ids={raw_fx_ids.shape}, inv={raw_fx_inv.shape}"
         )
+    # D060: the ONLY admissible negative FX id is the canonical
+    # NO_FX_RF_REQUIRED. Any other negative (e.g. NO_ID from an unresolved pair)
+    # is a missing quote, and a missing quote must never become identity FX.
+    bad_sentinel = (raw_fx_ids < 0) & (raw_fx_ids != NO_FX_RF_REQUIRED)
+    if bool(bad_sentinel.any()):
+        raise ValueError(
+            "FX leg carries a negative rf id that is not NO_FX_RF_REQUIRED: "
+            f"{np.unique(raw_fx_ids[bad_sentinel])[:10].tolist()}. An unresolved "
+            "FX quote cannot be treated as 'no FX required'."
+        )
+    # D062: the invert flag packs into bit 0 of the pair key; a value outside
+    # {0, 1} would alias the neighbouring FX rf.
+    if bool(((raw_fx_inv != 0) & (raw_fx_inv != 1)).any()):
+        raise ValueError("FX invert flags must be 0 or 1.")
 
-    # Stage 1: market-id universe lookup. Sentinels collapse to INVALID_UIX.
-    fx_market_uix = searchsorted_or_propagate_sentinel_int32(
+    # Stage 1: market-id universe lookup with membership proof. The
+    # NO_FX_RF_REQUIRED sentinel collapses to INVALID_UIX.
+    fx_market_uix = translate_ids_to_uix_or_raise(
         universe=market_id_universe,
         raw=raw_fx_ids,
-        sentinel=INVALID_UIX,
+        ctx="FX rf ids",
     )
 
     # Stage 2: dedup-pair lookup. Pack each (uix, inv) pair into a single int64
@@ -122,11 +184,16 @@ def _pack_spot_effective_key(
 
     `price_uix >= 0` always (a spot trade's underlying is always present).
     `fx_eff_uix` is in `{INVALID_UIX} u [0, K_fx)`; the only negative value is
-    the identity-FX sentinel, which must sort first. Remap `<0 -> 0`, valid
-    `v -> v + 1`: monotone, and the remapped lower word stays in `[0, K_fx]`,
-    well clear of the high word at bit 32.
+    the identity-FX sentinel, which must sort first. `_remap_optional_uix`
+    maps `INVALID_UIX -> 0` and valid `v -> v + 1` (any other negative raises):
+    monotone, and the remapped lower word stays in `[0, K_fx]`, well clear of
+    the high word at bit 32. A negative `price_uix` raises (D062).
     """
-    eff_key = np.where(fx_eff_uix < 0, 0, fx_eff_uix.astype(np.int64) + 1)
+    if price_uix.size and int(price_uix.min()) < 0:
+        raise ValueError(
+            "spot-effective key: price_uix holds an unresolved (negative) coordinate."
+        )
+    eff_key = _remap_optional_uix(fx_eff_uix)
     return (price_uix.astype(np.int64) << 32) | eff_key
 
 
@@ -164,6 +231,17 @@ def _mixed_radix_key(
                 "can address lexicographically."
             )
 
+    # D062: every packed coordinate must lie in [0, radix). A sentinel in a
+    # non-leading column otherwise packs to a VALID key of a different factor
+    # (MD-03: a missing settlement date aliased another trade's EDF row).
+    for i, (col, radix) in enumerate(zip(columns, radices, strict=True)):
+        if col.size and (int(col.min()) < 0 or int(col.max()) >= radix):
+            raise ValueError(
+                f"{ctx}: packed column {i} holds a coordinate outside [0, {radix}) "
+                f"(min={int(col.min())}, max={int(col.max())}). An unresolved or "
+                "sentinel coordinate cannot be packed into an effective-factor key."
+            )
+
     key = np.zeros(columns[0].shape[0], dtype=np.int64)
     for col, radix in zip(columns, radices, strict=True):
         key = key * np.int64(radix) + col
@@ -174,10 +252,14 @@ def _remap_optional_uix(uix: npt.NDArray[np.int32]) -> npt.NDArray[np.int64]:
     """
     Map an optional `_uix` (INVALID_UIX for "not required") onto `[0, K]`.
 
-    Any negative value is the identity/absent sentinel and must sort FIRST, so
-    `<0 -> 0` and valid `v -> v + 1`. Monotone, and the result stays inside the
-    radix `K + 1`.
+    Only `INVALID_UIX` is the identity/absent sentinel (D062); it must sort
+    FIRST, so `INVALID_UIX -> 0` and valid `v -> v + 1`. Any other negative value
+    is a corrupted coordinate and raises.
     """
+    if bool(((uix < 0) & (uix != INVALID_UIX)).any()):
+        raise ValueError(
+            "optional fx_eff_uix holds a negative value other than INVALID_UIX."
+        )
     return np.where(uix < 0, 0, uix.astype(np.int64) + 1)
 
 
@@ -226,7 +308,7 @@ def _pack_efp_effective_key(
     )
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class UixMapper:
     """
     Immutable execution-space translator.
@@ -287,6 +369,11 @@ class UixMapper:
         default_factory=lambda: np.empty((0, 2), dtype=np.int32),
     )
     as_of_ord32: int | None = None
+    # D064: deterministic content fingerprint of every universe/table plus the
+    # as-of. `MarketDataMatrix` carries the fingerprint of the mapper it was
+    # built against and the fold refuses any other mapper. Derived, never
+    # supplied.
+    fingerprint: str = field(init=False, default="")
 
     # --- INVARIANTS (CHECKED ONCE) -----------------------------------------
 
@@ -332,6 +419,28 @@ class UixMapper:
             )
         if self.vol_effective_uix.ndim != 1:
             raise ValueError("vol_effective_uix must be 1-D.")
+        self._validate_universe(self.vol_effective_uix, "vol_effective_uix")
+        object.__setattr__(self, "fingerprint", self._compute_fingerprint())
+
+    def _compute_fingerprint(self) -> str:
+        h = hashlib.blake2b(digest_size=16)
+        for name in (
+            "market_id_universe",
+            "discount_curve_id_universe",
+            "date_ord32_universe",
+            "fx_effective_pairs",
+            "spot_effective_pairs",
+            "edf_effective_triples",
+            "efp_effective_quads",
+            "vol_effective_uix",
+            "fk_effective_pairs",
+        ):
+            arr = getattr(self, name)
+            h.update(name.encode())
+            h.update(str(arr.shape).encode())
+            h.update(np.ascontiguousarray(arr, dtype=np.int32).tobytes())
+        h.update(repr(self.as_of_ord32).encode())
+        return h.hexdigest()
 
     @staticmethod
     def _validate_universe(arr: npt.NDArray[np.int32], name: str) -> None:
@@ -373,12 +482,13 @@ class UixMapper:
         """
         Translate global market IDs into `market_id_universe` UIXs.
 
-        Sentinel rows (`raw_ids < 0`) map to `INVALID_UIX`.
+        Sentinel rows (`raw_ids < 0`) map to `INVALID_UIX`; a non-negative id
+        absent from the universe raises (AUD-02).
         """
-        return searchsorted_or_propagate_sentinel_int32(
+        return translate_ids_to_uix_or_raise(
             universe=self.market_id_universe,
             raw=raw_ids,
-            sentinel=INVALID_UIX,
+            ctx="market ids",
         )
 
     def map_discount_ids_to_uix(
@@ -389,12 +499,13 @@ class UixMapper:
         Translate global discount-curve IDs into
         `discount_curve_id_universe` UIXs.
 
-        Sentinel rows (`raw_ids < 0`) map to `INVALID_UIX`.
+        Sentinel rows (`raw_ids < 0`) map to `INVALID_UIX`; a non-negative id
+        absent from the universe raises (AUD-02).
         """
-        return searchsorted_or_propagate_sentinel_int32(
+        return translate_ids_to_uix_or_raise(
             universe=self.discount_curve_id_universe,
             raw=raw_ids,
-            sentinel=INVALID_UIX,
+            ctx="discount curve ids",
         )
 
     def map_dates_to_uix(
@@ -404,12 +515,13 @@ class UixMapper:
         """
         Translate global day-ordinals into `date_ord32_universe` UIXs.
 
-        Sentinel rows (`ordinals < 0`) map to `INVALID_UIX`.
+        Sentinel rows (`ordinals < 0`) map to `INVALID_UIX`; a non-negative
+        ordinal absent from the universe raises (AUD-02).
         """
-        return searchsorted_or_propagate_sentinel_int32(
+        return translate_ids_to_uix_or_raise(
             universe=self.date_ord32_universe,
             raw=ordinals,
-            sentinel=INVALID_UIX,
+            ctx="date ordinals",
         )
 
     def map_fx_legs_to_effective_uix(
@@ -564,6 +676,11 @@ class UixMapper:
         It is sorted ascending, so a plain searchsorted plus a membership proof
         resolves it.
         """
+        if market_uix.size and int(market_uix.min()) < 0:
+            raise ValueError(
+                "volatility: a trade's volatility factor did not resolve to a "
+                "market_id_universe coordinate."
+            )
         return self._lookup_effective(
             needed=market_uix.astype(np.int64),
             table=self.vol_effective_uix.reshape(-1, 1),
