@@ -24,6 +24,7 @@ from __future__ import annotations
 import dataclasses
 import pathlib
 
+import numpy as np
 import polars as pl
 import pytest
 
@@ -86,9 +87,7 @@ def test_enum_follows_repository_conventions():
     assert all(e.name == e.value for e in CurveInputType)
     assert frozenset(members) == VALID_CURVE_INPUT_TYPES
     path = pathlib.Path("src/riskquant/config/enums/curve_input_types.py")
-    assert (
-        str(CurveInputType.PAR_RATE) == "PAR_RATE"
-    )  # CurveInputType is a String-based Enum
+    assert CurveInputType.PAR_RATE == "PAR_RATE"
     assert path.name == "curve_input_types.py"
 
 
@@ -123,11 +122,18 @@ def test_every_member_survives_compilation(value):
 
 
 def test_absent_column_compiles_and_leaves_every_curve_undeclared():
-    rsc = compile_risk_static_config_from_dict_of_dfs(_dfs())
+    """
+    D080 declares `curve_input_type` for USD_SOFR_OIS, so the canonical column
+    now exists. The contract pinned here is unchanged: a config WITHOUT the
+    column still compiles, and then every curve is undeclared.
+    """
     assert (
         "curve_input_type"
-        not in CANONICAL_RISK_STATIC_CONFIG_DICT_OF_DFS["curve_meta"].columns
+        in CANONICAL_RISK_STATIC_CONFIG_DICT_OF_DFS["curve_meta"].columns
     )
+    dfs = dict(CANONICAL_RISK_STATIC_CONFIG_DICT_OF_DFS)
+    dfs["curve_meta"] = dfs["curve_meta"].drop("curve_input_type")
+    rsc = compile_risk_static_config_from_dict_of_dfs(dfs)
     assert all(c.curve_input_type is None for c in rsc.curve_meta_dict.values())
 
 
@@ -220,21 +226,28 @@ def test_declaring_a_curve_input_type_does_not_make_curve_discounting_reachable(
         raw_df=frame, static_config=rsc, copy=True, as_of_date=as_of
     )
     mapper = build_uix_mapper([batch])
-    um = build_universe_mapping(static_config=rsc, uix_mapper=mapper)
+    # Declaring a CurveInputType alone does not make a curve constructible; the
+    # canonical USD_SOFR_OIS IS constructible because it also carries the full
+    # D080 maturity/compounding metadata, so under CURVE it now constructs
+    # (Phase 3). The enum still never reaches valuation.
+    um = build_universe_mapping(
+        discounting_mode=DiscountingMode.CURVE, static_config=rsc, uix_mapper=mapper
+    )
     names = {v: k for k, v in rsc.rel_name_to_rf_id.items()}
     snapshot = compile_risk_factor_level_snapshot_from_levels_dict(
         as_of_date=as_of,
-        levels_dict={names[int(i)]: 80.0 for i in um.required_factor_ids},
+        levels_dict={names[int(i)]: 4.80 for i in um.required_factor_ids},
         static_config=rsc,
     )
-    with pytest.raises(NotImplementedError, match="D061"):
-        build_market_data_matrix_from_snapshot(
-            discounting_mode=DiscountingMode.CURVE,
-            as_of_date=as_of,
-            uix_mapper=mapper,
-            universe_map=um,
-            snapshot=snapshot,
-        )
+    matrix = build_market_data_matrix_from_snapshot(
+        discounting_mode=DiscountingMode.CURVE,
+        as_of_date=as_of,
+        uix_mapper=mapper,
+        universe_map=um,
+        snapshot=snapshot,
+    )
+    assert matrix.discount_factor_grid.shape[0] == 1
+    assert np.all(matrix.discount_factor_grid < 1.0)
 
 
 def test_commodity_curves_are_not_forced_to_declare_a_curve_input_type():

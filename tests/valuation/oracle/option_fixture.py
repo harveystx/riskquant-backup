@@ -35,16 +35,17 @@ discount rows distinct and therefore swappable.
 from __future__ import annotations
 
 import numpy as np
-from oracle.economic_oracle import (
-    CrossCurrencyOptionTrade,
-    EconomicMarket,
-    ForwardTrade,
-)
 
 from riskquant.market_data.state import MarketDataMatrix
 from riskquant.portfolio.instruments import (
     VANILLA_EUROPEAN_OPTION_NODE_ID,
     VANILLA_FORWARD_NODE_ID,
+)
+
+from .economic_oracle import (
+    CrossCurrencyOptionTrade,
+    EconomicMarket,
+    ForwardTrade,
 )
 
 SETTLE_CCY = "EUR"

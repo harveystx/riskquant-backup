@@ -12,7 +12,7 @@ from riskquant.credit.jtd.blocks.base import _JtdBlock
 from riskquant.credit.jtd.models import INDEPENDENT_BERNOULLI_ID
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class IndependentBernoulliJtdBlock(_JtdBlock):
     """
     Independent-default credit model.

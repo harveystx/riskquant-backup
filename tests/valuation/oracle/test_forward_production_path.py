@@ -16,8 +16,6 @@ import dataclasses
 
 import numpy as np
 import pytest
-from oracle import economic_oracle as oracle
-from oracle import forward_fixture as ff
 
 from riskquant.market_data.compile import assemble_valuation_state
 from riskquant.portfolio.engine import (
@@ -26,6 +24,9 @@ from riskquant.portfolio.engine import (
 )
 from riskquant.valuation.blocks.vanilla_forward_block import VanillaForwardBlock
 from riskquant.valuation.engine import run_valuation
+
+from . import economic_oracle as oracle
+from . import forward_fixture as ff
 
 RTOL = 1e-13
 

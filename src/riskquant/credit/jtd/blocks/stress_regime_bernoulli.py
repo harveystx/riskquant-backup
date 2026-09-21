@@ -14,7 +14,7 @@ from riskquant.credit.jtd.models import (
 )
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class StressRegimeBernoulliJtdBlock(_JtdBlock):
     """
     Stress regime bernoulli credit model.

@@ -149,6 +149,15 @@ def _bool(v: object) -> bool:
     raise ValueError(f"Cannot interpret {v!r} as boolean.")
 
 
+def _opt_bool(v: object) -> bool | None:
+    """Nullable boolean: absent/blank stays None, never a silent False."""
+    if v is None:
+        return None
+    if isinstance(v, str) and v.strip() == "":
+        return None
+    return _bool(v)
+
+
 # ---------------------------------------------------------------------------
 # Per-table compilers
 # ---------------------------------------------------------------------------
@@ -232,6 +241,16 @@ def _compile_curve_meta(df: pl.DataFrame) -> dict[int, CurveMeta]:
             # D079 clause 3: declared once on the curve; points inherit it.
             # Absent means "not yet declared" - never inferred from quote_type.
             curve_input_type=_opt_str(r.get("curve_input_type"), upper=True),
+            # D080 construction metadata. Optional like curve_input_type: a
+            # curve that is not declared constructible carries None, and the
+            # construction layer rejects it rather than defaulting.
+            curve_compounding=_opt_str(r.get("curve_compounding"), upper=True),
+            maturity_calendar=_opt_str(r.get("maturity_calendar"), upper=True),
+            spot_lag_days=_opt_int(r.get("spot_lag_days")),
+            business_day_convention=_opt_str(
+                r.get("business_day_convention"), upper=True
+            ),
+            end_of_month=_opt_bool(r.get("end_of_month")),
             discount_basis=_str(r["discount_basis"], upper=True),
             is_default_discount_for_ccy=_bool(r.get("is_default_discount_for_ccy")),
         )

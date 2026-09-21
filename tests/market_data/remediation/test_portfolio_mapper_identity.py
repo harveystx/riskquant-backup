@@ -66,7 +66,9 @@ def _batch(rsc, book):
 
 def _market(rsc, batch, levels):
     mapper = build_uix_mapper([batch], as_of_ord32=AS_OF_ORD)
-    um = build_universe_mapping(static_config=rsc, uix_mapper=mapper)
+    um = build_universe_mapping(
+        discounting_mode=DiscountingMode.NONE, static_config=rsc, uix_mapper=mapper
+    )
     matrix = build_market_data_matrix_from_flat_levels(
         discounting_mode=DiscountingMode.NONE,
         as_of_date=hf.AS_OF,

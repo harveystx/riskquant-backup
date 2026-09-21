@@ -9,7 +9,7 @@ from riskquant.credit.jtd.blocks.sf_copula import _SingleFactorCopulaBlock
 from riskquant.credit.jtd.models import COPULA_SF_T_ID
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class SfStudentsTCopulaJtdBlock(_SingleFactorCopulaBlock):
     """
     A_i = sqrt(nu_i / W) * (beta_i * Z + sqrt(1 - beta_i^2) * eps_i).

@@ -30,7 +30,7 @@ from riskquant.credit.jtd.registry import model_field_order
 _MODEL_FIELD_ORDER: Final[tuple[tuple[JtdModel, str], ...]] = model_field_order()
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class JtdIngestBundle:
     """Mixed JTD ingest master: optional per-model frames + shared loadings."""
 

@@ -12,7 +12,7 @@ from riskquant.credit.exposure.models import CURRENT_EXPOSURE_METHOD_ID
 from riskquant.credit.exposure.views.base import _NettingSetView
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class CemNettingSetView(_NettingSetView):
     """Current Exposure Method view: RC CSR grouping + net collateral + the two
     per-trade add-on scalars.

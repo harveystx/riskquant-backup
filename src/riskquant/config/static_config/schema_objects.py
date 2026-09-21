@@ -134,6 +134,13 @@ class CurveMeta:
         fh_bh_mmdd     HALF_YEAR_BY_DATE / HALF_YEAR_BY_LABEL only. The
                        'MMDD|MMDD' half-year boundary convention.
 
+    D080 construction metadata (curve_compounding, maturity_calendar,
+    spot_lag_days, business_day_convention, end_of_month):
+      Everything a constructed discount curve needs beyond its levels. All are
+      None unless the curve is declared constructible; a missing field is a
+      configuration error at construction time, never a default. They are read
+      only by the market-data curve layer and never reach valuation.
+
     curve_input_type contract (D079 clause 3):
       The ECONOMIC representation of this curve's levels (PAR_RATE, ZERO_RATE,
       DISCOUNT_FACTOR, LOG_DISCOUNT_FACTOR), orthogonal to quote_type. Declared
@@ -172,6 +179,11 @@ class CurveMeta:
     fh_bh_mmdd: str | None
 
     curve_input_type: str | None
+    curve_compounding: str | None
+    maturity_calendar: str | None
+    spot_lag_days: int | None
+    business_day_convention: str | None
+    end_of_month: bool | None
 
     discount_basis: str
     is_default_discount_for_ccy: bool

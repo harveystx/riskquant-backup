@@ -126,7 +126,9 @@ def test_node_option_without_delivery_ingests_and_compiles(rsc):
 
     # The producer builds under the supported NONE discounting mode: the
     # option's discount rows are DF = 1 (D061), and no curve level is read.
-    um = build_universe_mapping(static_config=rsc, uix_mapper=mapper)
+    um = build_universe_mapping(
+        discounting_mode=DiscountingMode.NONE, static_config=rsc, uix_mapper=mapper
+    )
     names = {v: k for k, v in rsc.rel_name_to_rf_id.items()}
     snapshot = compile_risk_factor_level_snapshot_from_levels_dict(
         as_of_date=A,

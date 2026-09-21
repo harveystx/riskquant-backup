@@ -203,10 +203,26 @@ _FIXTURE = textwrap.dedent(
             "factor_id": FIDS.tolist(),
             "displacement_convention_id": [int(DisplacementConvention.ABSOLUTE)] * K,
             "quote_base": [1.0] * K}})
+        # P1-A: a certified SECOND_ORDER_TRUNCATED book bound to the run's base
+        from riskquant.solutions.sensitivity_pnl import taylor_contract as tc
+        binding = tc.TaylorBaseBinding(
+            as_of_ord32=20000,
+            base_levels_digest=tc.base_levels_digest(
+                factor_ids=FIDS, base_levels=VALS[-1].astype(np.float64)),
+            discounting_mode="NONE",
+            static_config_digest=tc.static_config_content_digest({{}}),
+            valuation_contract_fingerprint=tc.valuation_contract_fingerprint(),
+            base_settlement_values_digest=tc.base_settlement_values_digest(
+                position_uids=list(range(1, M + 1)), values=np.zeros(M)))
+        decl = tc.TaylorDeclaration(
+            order=tc.TaylorOrder.SECOND_ORDER_TRUNCATED,
+            dependencies=df.select(pl.col("position_id").cast(pl.Int64),
+                                   pl.col("factor_id").cast(pl.Int32)),
+            zero_exposure_position_uids=(), base_binding=binding)
         return SensitivityPnlCalculator.compile(SensitivityBookSpec(
             sensitivities=df, factor_meta=meta,
             factor_axis=FactorAxis.from_keys(FIDS.tolist()),
-            position_uids=list(range(1, M + 1))))
+            position_uids=list(range(1, M + 1)), taylor_declaration=decl))
 
     CFGS = {{
         "historical": {{"model": "historical", "horizon": 1}},
@@ -235,6 +251,8 @@ _FIXTURE = textwrap.dedent(
             calculator=calculator(),
             reporting=ReportingSpec(
                 reporting_ccy="USD", settlement_ccys=settle,
+                base_settlement_values=np.zeros(len(settle), dtype=np.float64),  # D081: declared V0 = 0
+                base_binding=calculator().taylor_declaration.base_binding,  # P1-A
                 fx_factor_names=("USDEUR",),
                 fx_factor_rows=np.array([K - 1], np.int32)),
             confidence_level=0.99, batch_size=batch_size)

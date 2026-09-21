@@ -104,6 +104,7 @@ class GroupRow(BaseModel):
     name: str = Field(min_length=1)
     params: dict[str, float] = Field(default_factory=dict)
 
+_PREVIEW = 10  # bounded offender preview in validation errors
 
 class CreditVarRequest(BaseModel):
     """A single credit-VaR run, as a JSON payload."""
@@ -250,6 +251,51 @@ class CreditVarRequest(BaseModel):
                         f"group '{g.name}' param '{p.key}' = {g.params[p.key]} out of "
                         f"range {p.interval_repr}."
                     )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_marshall_olkin_systemic_pd(self) -> CreditVarRequest:
+        """Reject a common-shock probability no obligor can carry (P2-07).
+
+        Marshall-Olkin decouples each obligor's total PD into an idiosyncratic
+        and a systemic leg::
+
+            p_idio_i = 1 - (1 - PD_i) / (1 - systemic_pd)
+
+        which is a probability only when ``PD_i >= systemic_pd``. Equality is
+        legal: it means the obligor defaults through the shared shock alone.
+        Below it the decoupling is negative and the model is undefined.
+
+        The builder enforces the same inequality and keeps doing so — this is
+        the earliest boundary at which the request already holds BOTH the
+        obligor PDs and the shock probability, so the failure lands on the
+        request the author wrote rather than after factor-universe and master
+        construction. Scoped to the Marshall-Olkin key: no other model carries
+        this constraint.
+        """
+        if self.model != "marshall_olkin":
+            return self
+
+        spec = next(
+            (p for p in model_entry(self.model).params if p.key == "systemic_pd"),
+            None,
+        )
+        if spec is None:  # pragma: no cover - catalog would have to change
+            return self
+        systemic_pd = float(self.params.get("systemic_pd", spec.default))
+
+        offenders = [o for o in self.obligors if o.pd < systemic_pd]
+        if offenders:
+            preview = ", ".join(
+                f"uid {o.obligor_uid} (PD={o.pd})" for o in offenders[:_PREVIEW]
+            )
+            raise ValueError(
+                f"model 'marshall_olkin': {len(offenders)} obligor(s) have a total "
+                f"PD below systemic_pd={systemic_pd}: {preview}. The common shock "
+                "cannot be more likely than an obligor's own default: the "
+                "decoupling 1 - (1 - PD) / (1 - systemic_pd) would be negative. "
+                "Lower systemic_pd or remove the obligor(s)."
+            )
         return self
 
     @model_validator(mode="after")

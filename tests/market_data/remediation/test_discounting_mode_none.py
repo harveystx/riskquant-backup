@@ -109,7 +109,9 @@ def _run(rsc, frame, levels, mode=DiscountingMode.NONE, as_of=AS_OF):
     portfolio = compile_portfolio_from_ingest_batch(
         ingest_batch=batch, uix_mapper=mapper
     )
-    um = build_universe_mapping(static_config=rsc, uix_mapper=mapper)
+    um = build_universe_mapping(
+        discounting_mode=mode, static_config=rsc, uix_mapper=mapper
+    )
     names = {v: k for k, v in rsc.rel_name_to_rf_id.items()}
     snapshot = compile_risk_factor_level_snapshot_from_levels_dict(
         as_of_date=as_of,
@@ -136,10 +138,10 @@ def spy(monkeypatch):
     """Records any entry into curve construction."""
     calls: list[str] = []
     for module, name in (
-        (builder_mod, "_build_discount_factor_grid"),
+        (builder_mod, "build_zero_curve_discount_factor_grid"),
         (builder_mod, "_build_price_curve_grid"),
         (builder_mod, "_scatter_price_curve_grid_to_universe"),
-        (interp_defs, "interp_linear_on_log_values_flat_extrap_3d_numba_kernel"),
+        (interp_defs, "interp_linear_on_log_values_linear_extrap_3d_numba_kernel"),
     ):
         real = getattr(module, name)
 
@@ -245,7 +247,9 @@ def test_pre_as_of_date_is_rejected_at_the_producer(rsc):
         np.append(mapper.date_ord32_universe, np.int32(int(date_to_ord32(AS_OF)) - 10))
     ).astype(np.int32)
     poisoned = dataclasses.replace(mapper, date_ord32_universe=stale)
-    um = build_universe_mapping(static_config=rsc, uix_mapper=poisoned)
+    um = build_universe_mapping(
+        discounting_mode=DiscountingMode.NONE, static_config=rsc, uix_mapper=poisoned
+    )
     snapshot = compile_risk_factor_level_snapshot_from_levels_dict(
         as_of_date=AS_OF,
         levels_dict={PILLAR: 82.30, f"{CURVE}[3M]": 4.25},
@@ -278,6 +282,12 @@ def test_target_date_equal_to_the_as_of_is_one(rsc):
     [None, *(m.value for m in CurveInputType)],
 )
 def test_curve_mode_fails_closed_for_every_curve_input_type(rsc, spy, curve_input_type):
+    """
+    Declaring an input type on every discount curve of the HOSTILE fixture does
+    not unlock CURVE: none of its curves carries D080 maturity metadata, so the
+    layout plan fails the whole run before any level is gathered and before any
+    curve function is entered.
+    """
     import polars as pl
 
     dfs = hf.static_config_dfs()
@@ -368,7 +378,9 @@ def test_discount_curve_levels_are_not_even_required_under_none(rsc):
         raw_df=_forward(), static_config=rsc, copy=True, as_of_date=AS_OF
     )
     mapper = build_uix_mapper([batch])
-    um = build_universe_mapping(static_config=rsc, uix_mapper=mapper)
+    um = build_universe_mapping(
+        discounting_mode=DiscountingMode.NONE, static_config=rsc, uix_mapper=mapper
+    )
     names = {v: k for k, v in rsc.rel_name_to_rf_id.items()}
     required = [names[int(i)] for i in um.required_factor_ids]
     assert required == [PILLAR]  # no USD_OIS pillar

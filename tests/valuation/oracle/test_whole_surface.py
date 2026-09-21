@@ -20,8 +20,6 @@ import dataclasses
 
 import numpy as np
 import pytest
-from oracle import economic_oracle as oracle
-from oracle import whole_surface_fixture as ws
 
 from riskquant.market_data.compile import assemble_valuation_state
 from riskquant.portfolio.engine import (
@@ -30,6 +28,9 @@ from riskquant.portfolio.engine import (
 )
 from riskquant.valuation.engine import run_valuation
 from riskquant.valuation.result import ValuationResult
+
+from . import economic_oracle as oracle
+from . import whole_surface_fixture as ws
 
 # D046 envelope. Spot and forward carry no CDF and are held to fp noise; the
 # options in this fixture span |d2| <= 2.32, whose D046 band is 5e-5.

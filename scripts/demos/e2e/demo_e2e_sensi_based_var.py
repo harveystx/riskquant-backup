@@ -241,23 +241,31 @@ def _run_validation(fixture: fx.DemoFixture) -> bool:
         reporting_ccy=fx._REPORTING_CCY,
         fx_factor_names=("USDEUR",),
     )
+    # D081: ordinary-MTM reporting P&L, dW = dV*q_s + V0*(q_s - q0), with V0 the
+    # book position's base settlement value from the SAME pricing pass.
+    base_values = np.ascontiguousarray(
+        fixture.reporting.base_settlement_values, dtype=np.float64
+    )
     reporting = convert_scenario_pnl_to_reporting_currency(
         settlement_pnl=settlement_pnl,
         fx_levels=usdeur_row[None, :],
         plan=plan,
+        base_settlement_values=base_values,
+        base_fx_levels=np.array([f0], dtype=np.float64),
     )
-
     oracle_converted = np.empty_like(settlement_pnl)
     oracle_portfolio = np.zeros(num_scenarios, dtype=np.float64)
     for s in range(num_scenarios):
         total = 0.0
         for i, uid in enumerate(uids):
-            rate = (
-                1.0
-                if settle_by_uid[uid] == fx._REPORTING_CCY
-                else 1.0 / float(usdeur_row[s])
+            if settle_by_uid[uid] == fx._REPORTING_CCY:
+                rate_s, rate_0 = 1.0, 1.0
+            else:
+                rate_s, rate_0 = 1.0 / float(usdeur_row[s]), 1.0 / f0
+            # independent L0 reference: V_s*q_s - V_0*q_0 = dV*q_s + V0*(q_s - q0)
+            converted = float(settlement_pnl[i, s]) * rate_s + float(base_values[i]) * (
+                rate_s - rate_0
             )
-            converted = float(settlement_pnl[i, s]) * rate
             oracle_converted[i, s] = converted
             total += converted
         oracle_portfolio[s] = total

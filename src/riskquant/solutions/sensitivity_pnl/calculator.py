@@ -82,6 +82,10 @@ from riskquant.solutions.sensitivity_pnl.schemas import (
     SensitivityPnlProvenance,
     SensitivityPnlResult,
 )
+from riskquant.solutions.sensitivity_pnl.taylor_contract import (
+    TaylorDeclaration,
+    validate_taylor_completeness,
+)
 from riskquant.solutions.sensitivity_pnl.validate import (
     validate_book_spec,
     validate_market_against_book,
@@ -96,6 +100,9 @@ class SensitivityPnlCalculator:
     axis: FactorAxis
     """The factor axis the book was compiled against. Use it to build every
     market priced through this calculator: `calc.axis.shocks(matrix)`."""
+    taylor_declaration: TaylorDeclaration | None = None
+    """P1-A contract certified at compile; None = UNCERTIFIED (the production
+    entry point refuses it)."""
 
     @classmethod
     def compile(cls, spec: SensitivityBookSpec) -> SensitivityPnlCalculator:
@@ -113,9 +120,17 @@ class SensitivityPnlCalculator:
         """
         factor_meta = scope_factor_meta(spec)
         validate_book_spec(spec, factor_meta=factor_meta)
+        if spec.taylor_declaration is not None:
+            validate_taylor_completeness(
+                declaration=spec.taylor_declaration,
+                sensitivities=spec.sensitivities,
+                cross_sensitivities=spec.cross_sensitivities,
+                position_uids=spec.position_uids,
+            )
         return cls(
             book=compile_book(spec, factor_meta=factor_meta),
             axis=spec.factor_axis,
+            taylor_declaration=spec.taylor_declaration,
         )
 
     # ------------------------------------------------------------------

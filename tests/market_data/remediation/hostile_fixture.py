@@ -302,7 +302,11 @@ def run_spot_book(
     portfolio = compile_portfolio_from_ingest_batch(
         ingest_batch=batch, uix_mapper=mapper
     )
-    um = build_universe_mapping(static_config=static_config, uix_mapper=mapper)
+    um = build_universe_mapping(
+        discounting_mode=DiscountingMode.NONE,
+        static_config=static_config,
+        uix_mapper=mapper,
+    )
     matrix = build_market_data_matrix_from_flat_levels(
         discounting_mode=DiscountingMode.NONE,
         as_of_date=AS_OF,

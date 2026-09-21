@@ -4,10 +4,22 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from riskquant.dependence_stress.types import FloatArray
+
+# The suite imports its sibling helpers (`canonical_measures`, `phase0_support`)
+# by bare name. Under pytest's importlib import mode (pyproject) the test
+# directory is not on sys.path automatically, so put it there explicitly --
+# the same pattern tests/market_data/remediation/conftest.py uses.
+_HERE = str(Path(__file__).resolve().parent)
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
 
 K = 6
 S = 400
@@ -49,4 +61,3 @@ def tied() -> FloatArray:
         ],
         dtype=np.float64,
     )
-

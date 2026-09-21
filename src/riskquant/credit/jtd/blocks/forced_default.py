@@ -16,7 +16,7 @@ from riskquant.credit.jtd.blocks.base import _JtdBlock
 from riskquant.credit.jtd.models import FORCED_DEFAULT_ID
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class ForcedDefaultJtdBlock(_JtdBlock):
     """Worst-case JTD: loss_i = ead_i * lgd_i (default indicator forced to 1)."""
 

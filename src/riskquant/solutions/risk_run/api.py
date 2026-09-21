@@ -49,6 +49,12 @@ from riskquant.solutions.sensitivity_pnl.api import (
     FactorAxis,
     SensitivityPnlCalculator,
 )
+from riskquant.solutions.sensitivity_pnl.taylor_contract import (
+    TaylorContractError,
+    base_levels_digest,
+    base_settlement_values_digest,
+    verify_base_binding,
+)
 
 __all__ = ["run_scenario_var_es"]
 
@@ -190,8 +196,56 @@ def run_scenario_var_es(
     fx_levels = np.ascontiguousarray(
         shocked_levels[reporting.fx_factor_rows], dtype=np.float64
     )
+    # P1-A: only a CERTIFIED Taylor representation may reach production P&L,
+    # and only at the exact base it was certified at. The run re-derives the
+    # levels and V_0 digests from its own inputs (so q_0, read from these same
+    # base levels, is bound too) and requires the reporting spec's binding to
+    # be the calculator's.
+    declaration = calculator.taylor_declaration
+    if declaration is None:
+        raise TaylorContractError(
+            "the sensitivity book is UNCERTIFIED (no TaylorDeclaration): its "
+            "order, F(p), completeness and base binding are unproven, so it "
+            "cannot produce production P&L."
+        )
+    verify_base_binding(
+        representation=declaration.base_binding, expected=reporting.base_binding
+    )
+    if (
+        base_levels_digest(
+            factor_ids=np.asarray(required_factor_ids, dtype=np.int32),
+            base_levels=np.asarray(base_levels, dtype=np.float64),
+        )
+        != declaration.base_binding.base_levels_digest
+    ):
+        raise TaylorContractError(
+            "the run's base levels are not the base the Taylor representation "
+            "was produced at (base_levels_digest mismatch)."
+        )
+    if (
+        base_settlement_values_digest(
+            position_uids=calculator.book.position_uids,
+            values=reporting.base_settlement_values,
+        )
+        != declaration.base_binding.base_settlement_values_digest
+    ):
+        raise TaylorContractError(
+            "V_0 is not the base value the Taylor representation was bound to "
+            "(base_settlement_values_digest mismatch)."
+        )
+    # D081: ordinary MTM needs the base-state FX (q_0) and base values (V_0);
+    # both come from the same run inputs as the scenario levels and the book.
+    base_fx_levels = np.ascontiguousarray(
+        base_levels[reporting.fx_factor_rows], dtype=np.float64
+    )
     converted = convert_scenario_pnl_to_reporting_currency(
-        settlement_pnl=settlement_pnl, fx_levels=fx_levels, plan=plan
+        settlement_pnl=settlement_pnl,
+        fx_levels=fx_levels,
+        plan=plan,
+        base_settlement_values=np.ascontiguousarray(
+            reporting.base_settlement_values, dtype=np.float64
+        ),
+        base_fx_levels=base_fx_levels,
     )
 
     # ---- VaR / ES: positions then portfolio, one canonical call ---------------

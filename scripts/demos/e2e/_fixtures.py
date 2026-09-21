@@ -34,6 +34,7 @@ Do not change a value here without updating both together.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from datetime import date
 
@@ -75,11 +76,22 @@ from riskquant.portfolio.ingest.pipeline import compile_raw_df_into_ingest_batch
 from riskquant.proxy_resolver.proxy import (
     resolve_required_factor_ids_to_market_data_factor_ids,
 )
-from riskquant.sensitivities.book_adapter import build_sensitivity_book_spec
+from riskquant.sensitivities.book_adapter import (
+    build_sensitivity_book_spec,
+    derive_taylor_declaration,
+)
 from riskquant.sensitivities.engine import run_sensitivities
 from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
 from riskquant.solutions.risk_run.schemas import ReportingSpec
 from riskquant.solutions.sensitivity_pnl.api import SensitivityPnlCalculator
+from riskquant.solutions.sensitivity_pnl.taylor_contract import (
+    TaylorBaseBinding,
+    TaylorOrder,
+    base_levels_digest,
+    base_settlement_values_digest,
+    static_config_content_digest,
+    valuation_contract_fingerprint,
+)
 from riskquant.universe import UixMapper
 from riskquant.utils.dates import date_to_ord32
 from riskquant.utils.printer import print_df, print_header
@@ -473,7 +485,9 @@ def _run_market_data(
     state, not a simulation batch. Simulation batches are produced later by
     whichever `ScenarioGenerator` `run_scenario_var_es` builds internally.
     """
-    universe_map = build_universe_mapping(static_config=rsc, uix_mapper=uix_mapper)
+    universe_map = build_universe_mapping(
+        discounting_mode=DiscountingMode.NONE, static_config=rsc, uix_mapper=uix_mapper
+    )
     return build_market_data_matrix_from_snapshot(
         discounting_mode=DiscountingMode.NONE,
         as_of_date=_SNAPSHOT_AS_OF_DATE,
@@ -634,7 +648,9 @@ def _run_shock_universe(
     in the sensitivity book; only the shock driving it is sourced from
     BRENT_CRUDE and scaled by 0.95.
     """
-    universe_map = build_universe_mapping(static_config=rsc, uix_mapper=uix_mapper)
+    universe_map = build_universe_mapping(
+        discounting_mode=DiscountingMode.NONE, static_config=rsc, uix_mapper=uix_mapper
+    )
     required_factor_ids = universe_map.required_factor_ids
 
     base_levels = extract_levels_from_snapshot(
@@ -795,11 +811,62 @@ def _build_parametric_data(rsc: RiskStaticConfig) -> ParametricRiskData:
 _REPORTING_CCY: str = "USD"
 
 
+def _certify_sensitivities(
+    *,
+    rsc: RiskStaticConfig,
+    portfolio: CompiledPortfolio,
+    uix_mapper: UixMapper,
+    market_data: MarketDataMatrix,
+    pricing: ValuationResult,
+    required_factor_ids: npt.NDArray[np.int32],
+    base_levels: npt.NDArray[np.float64],
+) -> SensitivityPnlCalculator:
+    """
+    P1-A: the production book is a CERTIFIED TAYLOR/DERIVED representation.
+
+    Same sensitizer output as `_run_sensitivities`, declared SECOND_ORDER_FULL
+    over the sensitizer's structural F(p), and bound to the exact base it was
+    produced at: as-of, the run's axis base levels, discounting mode, the
+    static-config content digest, the valuation-contract fingerprint and the
+    V_0 of the same pricing pass.
+    """
+    sensitivities = run_sensitivities(
+        portfolio=portfolio, market_data=market_data, uix_mapper=uix_mapper
+    )
+    pv_by_uid = dict(
+        zip(pricing.trade_uids.tolist(), pricing.values[:, 0].tolist(), strict=True)
+    )
+    book_uids = np.unique(np.asarray(sensitivities.position_uids, dtype=np.int64))
+    v0 = np.array([pv_by_uid[int(u)] for u in book_uids.tolist()], dtype=np.float64)
+    binding = TaylorBaseBinding(
+        as_of_ord32=int(date_to_ord32(_SNAPSHOT_AS_OF_DATE)),
+        base_levels_digest=base_levels_digest(
+            factor_ids=required_factor_ids, base_levels=base_levels
+        ),
+        discounting_mode=DiscountingMode.NONE.value,
+        static_config_digest=static_config_content_digest(rsc),
+        valuation_contract_fingerprint=valuation_contract_fingerprint(),
+        base_settlement_values_digest=base_settlement_values_digest(
+            position_uids=book_uids, values=v0
+        ),
+    )
+    spec = build_sensitivity_book_spec(sensitivities=sensitivities)
+    declaration = derive_taylor_declaration(
+        sensitivities=sensitivities,
+        order=TaylorOrder.SECOND_ORDER_FULL,
+        base_binding=binding,
+    )
+    return SensitivityPnlCalculator.compile(
+        dataclasses.replace(spec, taylor_declaration=declaration)
+    )
+
+
 def _build_reporting_spec(
     *,
     rsc: RiskStaticConfig,
     calculator: SensitivityPnlCalculator,
     required_factor_ids: npt.NDArray[np.int32],
+    pricing: ValuationResult,
 ) -> ReportingSpec:
     """Settlement -> reporting currency routing, in `book.position_uids` order.
 
@@ -819,9 +886,21 @@ def _build_reporting_spec(
         for row, rf in enumerate(required_factor_ids)
         if rf_id_to_name[int(rf)] == "USDEUR"
     ]
+    # D081: base settlement values V_0 per book position, taken from the SAME
+    # valuation the sensitivities were derived from (ordinary-MTM reporting
+    # P&L needs V_0 for the base-value translation term).
+    pv_by_uid = dict(
+        zip(pricing.trade_uids.tolist(), pricing.values[:, 0].tolist(), strict=True)
+    )
+    base_values = np.array(
+        [pv_by_uid[int(uid)] for uid in calculator.book.position_uids.tolist()],
+        dtype=np.float64,
+    )
     return ReportingSpec(
         reporting_ccy=_REPORTING_CCY,
         settlement_ccys=settlement_ccys,
+        base_settlement_values=base_values,
+        base_binding=calculator.taylor_declaration.base_binding,
         fx_factor_names=("USDEUR",) if fx_rows else (),
         fx_factor_rows=np.array(fx_rows, dtype=np.int32),
     )
@@ -890,12 +969,24 @@ def build_fixture(*, verbose: bool = True) -> DemoFixture:
         snapshot=snapshot,
         verbose=verbose,
     )
+    # P1-A: the risk run consumes a CERTIFIED TAYLOR/DERIVED book bound to the
+    # shock universe's base levels and the pricing pass's V_0.
+    calculator = _certify_sensitivities(
+        rsc=rsc,
+        portfolio=portfolio,
+        uix_mapper=uix_mapper,
+        market_data=market_data,
+        pricing=pricing,
+        required_factor_ids=shock_universe.required_factor_ids,
+        base_levels=shock_universe.base_levels,
+    )
     historical_matrix = _build_historical_matrix(rsc)
     parametric_data = _build_parametric_data(rsc)
     reporting = _build_reporting_spec(
         rsc=rsc,
         calculator=calculator,
         required_factor_ids=shock_universe.required_factor_ids,
+        pricing=pricing,
     )
 
     return DemoFixture(

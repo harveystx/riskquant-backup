@@ -23,7 +23,7 @@ import numpy as np
 import numpy.typing as npt
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class CompiledObligorEad:
     """
     Per-obligor EAD with its uid join key.

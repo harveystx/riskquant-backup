@@ -9,7 +9,7 @@ import numpy.typing as npt
 from riskquant.credit.jtd.blocks.base import _JtdBlock
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class _MultiFactorCopulaBlock(_JtdBlock):
     """
     Multi-factor copula family base: K systemic loadings per obligor, CSR-packed.

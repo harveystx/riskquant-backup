@@ -16,8 +16,6 @@ from __future__ import annotations
 import dataclasses
 
 import numpy as np
-from oracle import economic_oracle as oracle
-from oracle import option_fixture as of
 
 from riskquant.constants import NO_DATE_ORD32
 from riskquant.market_data.compile import assemble_valuation_state
@@ -26,6 +24,9 @@ from riskquant.portfolio.engine import (
     compile_portfolio_from_ingest_batch,
 )
 from riskquant.valuation.engine import run_valuation
+
+from . import economic_oracle as oracle
+from . import option_fixture as of
 
 # D046: the production path uses the Abramowitz-Stegun CDF, the oracle SciPy.
 # Same band as `test_option_production_path.py` for this fixture's |d2| span.

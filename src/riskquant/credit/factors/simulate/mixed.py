@@ -36,8 +36,12 @@ the independent-Bernoulli model into a Gaussian copula — that is what
 `COPULA_SF_GAUSSIAN` is for. The one correlation that legitimately belongs at
 the generator level — covariance AMONG systemic factors in a multi-factor
 copula (a Cholesky over a designated systemic sub-block, with every other row
-left independent and PIT-transformed off that core) — is deferred until
-multi-factor copula support lands.
+left independent and PIT-transformed off that core) — remains UNIMPLEMENTED.
+The multi-factor models therefore run against mutually independent systemic
+factors, which is exactly what their `w_i = sqrt(1 - sum beta^2)` normalisation
+assumes; loadings calibrated against a correlated factor model would break that
+normalisation. Correlated systemic factors are a model extension, not a gap in
+the current contract (see STABLE_API.md, C-07).
 
 REPRODUCIBILITY (D-C15): BATCH-INVARIANT BY CONSTRUCTION
 --------------------------------------------------------
@@ -119,7 +123,7 @@ def _empty_f64() -> npt.NDArray[np.float64]:
     return np.empty(0, dtype=np.float64)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class MixedCreditFactorGenerator(CreditFactorGenerator):
     """Zero-allocation heterogeneous-marginal latent-factor generator.
 

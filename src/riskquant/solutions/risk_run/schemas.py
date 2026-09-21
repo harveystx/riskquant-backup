@@ -22,6 +22,7 @@ import numpy.typing as npt
 
 from riskquant.solutions.run_identity.schemas import RunManifest
 from riskquant.solutions.sensitivity_pnl.schemas import SensitivityPnlProvenance
+from riskquant.solutions.sensitivity_pnl.taylor_contract import TaylorBaseBinding
 
 __all__ = [
     "NonReproducibleRunError",
@@ -55,6 +56,16 @@ class ReportingSpec:
 
     reporting_ccy: str
     settlement_ccys: tuple[str, ...]
+    #: D081: each position's BASE value in its own settlement currency (V_0),
+    #: in `book.position_uids` order. Required — ordinary-MTM reporting P&L is
+    #: dV*q_s + V_0*(q_s - q_0), and the translation term needs V_0. No default:
+    #: a Taylor-only book that cannot state its base values cannot report in
+    #: a foreign currency.
+    base_settlement_values: npt.NDArray[np.float64]
+    #: P1-A: the base the V_0 above (and the book's Greeks) were produced at.
+    #: The run requires it to equal the calculator's certified binding, and
+    #: re-derives the levels and V_0 digests from the run's own inputs.
+    base_binding: TaylorBaseBinding
     fx_factor_names: tuple[str, ...] = ()
     fx_factor_rows: npt.NDArray[np.int32] = field(
         default_factory=lambda: np.zeros(0, dtype=np.int32)
@@ -71,6 +82,16 @@ class ReportingSpec:
             )
         if len(self.settlement_ccys) == 0:
             raise ValueError("settlement_ccys must be non-empty.")
+        v0 = self.base_settlement_values
+        if v0.ndim != 1 or v0.dtype != np.float64:
+            raise TypeError("base_settlement_values must be 1-D float64.")
+        if v0.shape[0] != len(self.settlement_ccys):
+            raise ValueError(
+                f"base_settlement_values has {v0.shape[0]} value(s) but "
+                f"{len(self.settlement_ccys)} settlement_ccys."
+            )
+        if not np.isfinite(v0).all():
+            raise ValueError("base_settlement_values must be finite.")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

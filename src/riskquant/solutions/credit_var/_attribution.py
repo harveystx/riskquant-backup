@@ -50,7 +50,7 @@ _I64 = npt.NDArray[np.int64]
 _LOO_CELL_BUDGET = 50_000_000
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class ObligorAttribution:
     """Per-obligor arrays (aligned to the loss-matrix row order) + tail totals."""
 

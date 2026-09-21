@@ -14,7 +14,7 @@ import numpy as np
 import numpy.typing as npt
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class JtdLossResult:
     """
     Jump-to-default loss, resolved per obligor.
@@ -26,7 +26,7 @@ class JtdLossResult:
     loss: npt.NDArray[np.float64]  # (N, S)  default loss per obligor, per scenario
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class StreamingJtdResult:
     """
     Accumulated JTD loss from a streaming run — the per-scenario PORTFOLIO total,

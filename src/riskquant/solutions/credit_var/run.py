@@ -87,16 +87,14 @@ def _engine_version() -> str:
 
 
 def _obligor_frame(obligors: list) -> pd.DataFrame:
-    return pd.DataFrame(
-        {
-            "uid": [o.obligor_uid for o in obligors],
-            "ead": [o.ead for o in obligors],
-            "pd": [o.pd for o in obligors],
-            "lgd": [o.lgd for o in obligors],
-            "group": [o.group for o in obligors],
-            "rho": [o.rho for o in obligors],
-        }
-    )
+    return pd.DataFrame({
+        "uid": [o.obligor_uid for o in obligors],
+        "ead": [o.ead for o in obligors],
+        "pd": [o.pd for o in obligors],
+        "lgd": [o.lgd for o in obligors],
+        "group": [o.group for o in obligors],
+        "rho": [o.rho for o in obligors],
+    })
 
 
 def _group_params(
@@ -144,13 +142,11 @@ def _loadings_frame(
     rows = [lo for lo in request.loadings if lo.obligor_uid in keep_uids]
     if not rows:
         return None
-    return pd.DataFrame(
-        {
-            "uid": [lo.obligor_uid for lo in rows],
-            "factor": [lo.factor for lo in rows],
-            "loading": [lo.loading for lo in rows],
-        }
-    )
+    return pd.DataFrame({
+        "uid": [lo.obligor_uid for lo in rows],
+        "factor": [lo.factor for lo in rows],
+        "loading": [lo.loading for lo in rows],
+    })
 
 
 def _input_hash(request: CreditVarRequest) -> str:
@@ -217,7 +213,7 @@ def _stress_test_result(request: CreditVarRequest) -> StressTestResult | None:
     )
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class _Simulated:
     loss: np.ndarray  # (m, S)
     uids: np.ndarray  # (m,)
@@ -279,7 +275,7 @@ def _simulate(request: CreditVarRequest, obligors: list) -> _Simulated:
     )
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class _LossMatrix:
     """The combined obligor loss matrix (modelled rows + forced-default rows) plus
     the model-level summary scaffolding the overlay produces. Single source of the

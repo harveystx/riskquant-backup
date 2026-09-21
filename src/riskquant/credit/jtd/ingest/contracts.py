@@ -108,41 +108,44 @@ JTD_MODEL_CONTRACTS: Final[dict[JtdModel, JtdModelContract]] = {
     ),
     JtdModel.STRESS_REGIME_BERNOULLI: JtdModelContract(
         model=JtdModel.STRESS_REGIME_BERNOULLI,
-        required_columns=frozenset(
-            {
-                OBLIGOR_KEY,
-                "uniform_factor",
-                "stress_regime_factor",
-                "stress_pd_multiplier",
-            }
-        ),
+        required_columns=frozenset({
+            OBLIGOR_KEY,
+            "uniform_factor",
+            "stress_regime_factor",
+            "stress_pd_multiplier",
+        }),
         factor_name_columns=frozenset({"uniform_factor", "stress_regime_factor"}),
         float_columns=frozenset({"stress_pd_multiplier"}),
         distinct_columns=frozenset({"uniform_factor"}),
     ),
     JtdModel.COPULA_SF_GAUSSIAN: JtdModelContract(
         model=JtdModel.COPULA_SF_GAUSSIAN,
-        required_columns=frozenset(
-            {OBLIGOR_KEY, "factor_loading", "systemic_factor", "idiosyncratic_factor"}
-        ),
+        required_columns=frozenset({
+            OBLIGOR_KEY,
+            "factor_loading",
+            "systemic_factor",
+            "idiosyncratic_factor",
+        }),
+        distinct_columns=frozenset({"idiosyncratic_factor"}),
         factor_name_columns=frozenset({"systemic_factor", "idiosyncratic_factor"}),
         float_columns=frozenset({"factor_loading"}),
     ),
     JtdModel.COPULA_SF_STUDENTS_T: JtdModelContract(
         model=JtdModel.COPULA_SF_STUDENTS_T,
-        required_columns=frozenset(
-            {
-                OBLIGOR_KEY,
-                "factor_loading",
-                "systemic_factor",
-                "idiosyncratic_factor",
-                "chi_squared_factor",
-                "nu",
-            }
-        ),
-        factor_name_columns=frozenset(
-            {"systemic_factor", "idiosyncratic_factor", "chi_squared_factor"}
-        ),
+        required_columns=frozenset({
+            OBLIGOR_KEY,
+            "factor_loading",
+            "systemic_factor",
+            "idiosyncratic_factor",
+            "chi_squared_factor",
+            "nu",
+        }),
+        distinct_columns=frozenset({"idiosyncratic_factor"}),
+        factor_name_columns=frozenset({
+            "systemic_factor",
+            "idiosyncratic_factor",
+            "chi_squared_factor",
+        }),
         float_columns=frozenset({"factor_loading", "nu"}),
     ),
     # MF Copula models
@@ -150,28 +153,31 @@ JTD_MODEL_CONTRACTS: Final[dict[JtdModel, JtdModelContract]] = {
         model=JtdModel.COPULA_MF_GAUSSIAN,
         required_columns=frozenset({OBLIGOR_KEY, "idiosyncratic_factor"}),
         factor_name_columns=frozenset({"idiosyncratic_factor"}),
+        distinct_columns=frozenset({"idiosyncratic_factor"}),
         uses_mf_loadings=True,
     ),
     JtdModel.COPULA_MF_STUDENTS_T: JtdModelContract(
         model=JtdModel.COPULA_MF_STUDENTS_T,
-        required_columns=frozenset(
-            {OBLIGOR_KEY, "idiosyncratic_factor", "chi_squared_factor", "nu"}
-        ),
+        required_columns=frozenset({
+            OBLIGOR_KEY,
+            "idiosyncratic_factor",
+            "chi_squared_factor",
+            "nu",
+        }),
         factor_name_columns=frozenset({"idiosyncratic_factor", "chi_squared_factor"}),
         float_columns=frozenset({"nu"}),
+        distinct_columns=frozenset({"idiosyncratic_factor"}),  
         uses_mf_loadings=True,
     ),
     # Marshall-Olkin
     JtdModel.MARSHALL_OLKIN: JtdModelContract(
         model=JtdModel.MARSHALL_OLKIN,
-        required_columns=frozenset(
-            {
-                OBLIGOR_KEY,
-                "uniform_factor",
-                "systemic_uniform_factor",
-                "systemic_pd",
-            }
-        ),
+        required_columns=frozenset({
+            OBLIGOR_KEY,
+            "uniform_factor",
+            "systemic_uniform_factor",
+            "systemic_pd",
+        }),
         factor_name_columns=frozenset({"uniform_factor", "systemic_uniform_factor"}),
         float_columns=frozenset({"systemic_pd"}),
         distinct_columns=frozenset({"uniform_factor"}),

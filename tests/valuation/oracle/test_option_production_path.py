@@ -16,8 +16,6 @@ import dataclasses
 
 import numpy as np
 import pytest
-from oracle import economic_oracle as oracle
-from oracle import option_fixture as of
 
 from riskquant.market_data.compile import assemble_valuation_state
 from riskquant.portfolio.engine import (
@@ -28,6 +26,9 @@ from riskquant.valuation.blocks.vanilla_european_option_block import (
     VanillaEuropeanOptionBlock,
 )
 from riskquant.valuation.engine import run_valuation
+
+from . import economic_oracle as oracle
+from . import option_fixture as of
 
 # D046: the production price path uses the Abramowitz-Stegun CDF; the oracle uses
 # scipy, so every option deviation here is attributable to that approximation.

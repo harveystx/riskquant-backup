@@ -29,18 +29,19 @@ the spot row AND an option row -- rows separated by two block boundaries.
 from __future__ import annotations
 
 import numpy as np
-from oracle.economic_oracle import (
-    CrossCurrencyOptionTrade,
-    EconomicMarket,
-    ForwardTrade,
-    SpotTrade,
-)
 
 from riskquant.market_data.state import MarketDataMatrix
 from riskquant.portfolio.instruments import (
     SPOT_ID,
     VANILLA_EUROPEAN_OPTION_NODE_ID,
     VANILLA_FORWARD_NODE_ID,
+)
+
+from .economic_oracle import (
+    CrossCurrencyOptionTrade,
+    EconomicMarket,
+    ForwardTrade,
+    SpotTrade,
 )
 
 SETTLE_CCY = "EUR"

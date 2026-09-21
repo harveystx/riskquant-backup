@@ -39,7 +39,7 @@ from riskquant.credit.masters.netting_set.compiled import CompiledNettingSetMast
 from riskquant.credit.masters.obligors.compiled import CompiledObligorCredit
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class CompiledCreditMasters:
     """
     A mutually-consistent set of compiled credit masters.

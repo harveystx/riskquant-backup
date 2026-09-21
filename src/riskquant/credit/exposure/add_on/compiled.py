@@ -22,7 +22,7 @@ import numpy as np
 import numpy.typing as npt
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class CompiledAddOnFactors:
     """Per-subclass supervisory add-on factors with their UIX join key."""
 

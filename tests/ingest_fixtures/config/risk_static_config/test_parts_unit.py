@@ -279,23 +279,28 @@ def test_holiday_calendars_column_lengths_consistent():
     assert len(_col_lengths(CANONICAL_HOLIDAY_CALENDARS_DATA)) == 1
 
 
-def test_holiday_calendars_are_currently_unreferenced_by_anything_else():
+def test_holiday_calendars_are_consumed_by_the_d080_maturity_layer():
     """
-    Documents a real audit finding: holiday_calendars is a genuinely
-    standalone table today -- no other table's column references
-    holiday_calendar_name, and (per repo-wide grep during the audit) no
-    production code reads `RiskStaticConfig.holiday_calendars_dict` at all.
-    It compiles correctly and is presumably forward-looking scaffolding for
-    a not-yet-implemented business-day/roll-adjustment engine.
+    Replaces the old documentation pin that asserted nothing referenced this
+    table. D080 wires it into production: `curve_meta.maturity_calendar` is a
+    name in this table, and `market_data.curves.label_maturity` resolves LABEL
+    pillars through the compiled `holiday_dates_ord` array.
 
-    This test is intentionally a documentation pin, not a correctness
-    check: if a future change wires holiday_calendars into another table
-    (e.g. a `holiday_calendar_name` FK on `ccy`), this test should be
-    deleted rather than "fixed", since its premise (nothing references
-    this table) will no longer hold.
+    The naming convention is still a mix of country codes (US, GB, CH, AU) and
+    one currency code (EUR); a curve referencing a name that is not here fails
+    closed at construction.
     """
     calendar_names = set(CANONICAL_HOLIDAY_CALENDARS_DATA["holiday_calendar_name"])
-    # Naming convention is currently a mix of country codes (US, GB, CH, AU)
-    # and one currency code (EUR) -- harmless while nothing consumes the
-    # table by name, but worth a heads-up for whoever wires it up next.
     assert calendar_names == {"US", "GB", "CH", "AU", "EUR"}
+
+    declared = {
+        name: cal
+        for name, cal in zip(
+            CANONICAL_CURVE_META_DATA["curve_name"],
+            CANONICAL_CURVE_META_DATA["maturity_calendar"],
+            strict=True,
+        )
+        if cal is not None
+    }
+    assert declared == {"USD_SOFR_OIS": "US"}
+    assert set(declared.values()) <= calendar_names

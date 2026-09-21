@@ -1,7 +1,10 @@
+# tests/solutions/risk_run/_certfix.py
+
 """Certification fixture: production-representative, drives the OFFICIAL API."""
 
 import numpy as np
 import polars as pl
+from _binding import synthetic_binding, synthetic_declaration
 
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID
@@ -14,6 +17,7 @@ from riskquant.solutions.sensitivity_pnl.api import (
     SensitivityBookSpec,
     SensitivityPnlCalculator,
 )
+from riskquant.solutions.sensitivity_pnl.taylor_contract import TaylorOrder
 
 K, T, S, M = 250, 600, 2000, 200
 FIDS = np.arange(1, K + 1, dtype=np.int32)
@@ -67,12 +71,23 @@ def calculator():
         "displacement_convention_id": [int(DisplacementConvention.ABSOLUTE)] * K,
         "quote_base": [1.0] * K,
     })
+    binding = synthetic_binding(
+        factor_ids=FIDS,
+        base_levels=VALS[-1],
+        position_uids=list(range(1, M + 1)),
+        v0=np.zeros(M),
+    )
     return SensitivityPnlCalculator.compile(
         SensitivityBookSpec(
             sensitivities=df,
             factor_meta=meta,
             factor_axis=FactorAxis.from_keys(FIDS.tolist()),
             position_uids=list(range(1, M + 1)),
+            taylor_declaration=synthetic_declaration(
+                sensitivities=df,
+                order=TaylorOrder.SECOND_ORDER_TRUNCATED,
+                binding=binding,
+            ),
         )
     )
 
@@ -120,6 +135,10 @@ def inputs(model="sbb", batch_size=256, seed=7, calc=None):
         reporting=ReportingSpec(
             reporting_ccy="USD",
             settlement_ccys=settle,
+            # D081: synthetic Taylor book with an explicitly DECLARED zero base
+            # value, i.e. the V0 = 0 special case in which dW = dV*q_s exactly.
+            base_settlement_values=np.zeros(M, dtype=np.float64),
+            base_binding=(calculator() if calc is None else calc).taylor_declaration.base_binding,
             fx_factor_names=("USDEUR",),
             fx_factor_rows=np.array([K - 1], np.int32),
         ),

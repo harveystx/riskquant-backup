@@ -54,7 +54,9 @@ FORBIDDEN: Mapping[str, str] = {
 def _executable_source(path: Path) -> str:
     """Source text with comments and string literals blanked out."""
     pieces: list[str] = []
-    tokens = tokenize.generate_tokens(io.StringIO(path.read_text()).readline)
+    tokens = tokenize.generate_tokens(
+        io.StringIO(path.read_text(encoding="utf-8")).readline
+    )
     for token_type, token_text, _, _, _ in tokens:
         if token_type in (tokenize.COMMENT, tokenize.STRING):
             pieces.append(" ")
@@ -95,7 +97,7 @@ def run() -> int:
         path
         for path in modules
         if path.stat().st_size
-        and not path.read_text().splitlines()[0].startswith("# src/")
+        and not path.read_text(encoding="utf-8").splitlines()[0].startswith("# src/")
     ]
     violations += len(path_headers)
     print(

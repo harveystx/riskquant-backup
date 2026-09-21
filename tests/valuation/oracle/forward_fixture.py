@@ -37,15 +37,16 @@ yields the required non-ascending uid ordering.
 from __future__ import annotations
 
 import numpy as np
-from oracle.economic_oracle import (
-    EconomicMarket,
-    ForwardTrade,
-    SpotTrade,
-)
 
 from riskquant.constants import NO_FX_RF_REQUIRED
 from riskquant.market_data.state import MarketDataMatrix
 from riskquant.portfolio.instruments import SPOT_ID, VANILLA_FORWARD_NODE_ID
+
+from .economic_oracle import (
+    EconomicMarket,
+    ForwardTrade,
+    SpotTrade,
+)
 
 SETTLE_CCY = "EUR"
 N_SCENARIOS = 3

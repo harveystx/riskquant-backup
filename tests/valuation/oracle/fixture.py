@@ -32,12 +32,6 @@ different magnitude, so permuting any two rows moves the PV.
 from __future__ import annotations
 
 import numpy as np
-from oracle.economic_oracle import (
-    EconomicMarket,
-    ForwardTrade,
-    OptionTrade,
-    SpotTrade,
-)
 
 from riskquant.market_data.state import ValuationState
 from riskquant.portfolio.compiled import CompiledPortfolio
@@ -46,6 +40,13 @@ from riskquant.valuation.blocks.vanilla_european_option_block import (
     VanillaEuropeanOptionBlock,
 )
 from riskquant.valuation.blocks.vanilla_forward_block import VanillaForwardBlock
+
+from .economic_oracle import (
+    EconomicMarket,
+    ForwardTrade,
+    OptionTrade,
+    SpotTrade,
+)
 
 SETTLE_CCY = "EUR"
 N_SCENARIOS = 3

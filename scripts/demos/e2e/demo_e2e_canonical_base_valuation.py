@@ -359,6 +359,7 @@ if __name__ == "__main__":
     print_header(title="SECTION: BUILD MARKET DATA MATRIX")
 
     universe_map = build_universe_mapping(
+        discounting_mode=DiscountingMode.NONE,
         static_config=risk_static_config,
         uix_mapper=uix_mapper,
     )

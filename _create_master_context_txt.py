@@ -177,13 +177,13 @@ def main(profile: str | None = None):
         "riskquant_all": [
             # CODE
             rq_src_path,
-            rq_lab_src_path,
+            # rq_lab_src_path,
             # SCRIPTS
             rq_project_directory / "scripts",
             # TESTS
             rq_project_directory / "tests",
             # OTHER
-            rq_project_directory / "pyproject.toml",
+            # rq_project_directory / "pyproject.toml",
         ],
         #######
         # NEW #
@@ -811,33 +811,41 @@ def main(profile: str | None = None):
 
         out.write("</symbol_index>\n\n")
 
-        # Isolate the code blocks cleanly
+        # # Isolate the code blocks cleanly
+        # out.write("<files>\n")
+        # for summary in file_summaries:
+        #     subpath = summary.path
+
+        #     rel_path = subpath.relative_to(project_folder)
+
+        #     out.write("<file_summary>\n")
+        #     out.write(f"path: {rel_path}\n")
+
+        #     if summary.module_docstring:
+        #         out.write(f"module_docstring: {summary.module_docstring[:120]}...\n")
+
+        #     if summary.classes:
+        #         out.write(f"classes: {', '.join(summary.classes)}\n")
+
+        #     if summary.functions:
+        #         out.write(f"functions: {', '.join(summary.functions)}\n")
+
+        #     if summary.imports:
+        #         out.write("imports:\n")
+
+        #         for imp in summary.imports:
+        #             if imp.startswith("riskquant"):
+        #                 out.write(f"- {imp}\n")
+
+        #     out.write("</file_summary>\n\n")
+
+        #     content = subpath.read_text(encoding="utf-8").strip()
+
         out.write("<files>\n")
         for summary in file_summaries:
             subpath = summary.path
 
             rel_path = subpath.relative_to(project_folder)
-
-            out.write("<file_summary>\n")
-            out.write(f"path: {rel_path}\n")
-
-            if summary.module_docstring:
-                out.write(f"module_docstring: {summary.module_docstring[:120]}...\n")
-
-            if summary.classes:
-                out.write(f"classes: {', '.join(summary.classes)}\n")
-
-            if summary.functions:
-                out.write(f"functions: {', '.join(summary.functions)}\n")
-
-            if summary.imports:
-                out.write("imports:\n")
-
-                for imp in summary.imports:
-                    if imp.startswith("riskquant"):
-                        out.write(f"- {imp}\n")
-
-            out.write("</file_summary>\n\n")
 
             content = subpath.read_text(encoding="utf-8").strip()
 
@@ -848,6 +856,14 @@ def main(profile: str | None = None):
             out.write(f"```python\n{content}\n```\n")
             out.write("</file>\n\n")
         out.write("</files>\n")
+
+        out.write("<files>\n")
+        for summary in file_summaries:
+            subpath = summary.path
+
+            rel_path = subpath.relative_to(project_folder)
+
+            content = subpath.read_text(encoding="utf-8").strip()
 
     print(
         f"SUCCESS! Successfully generated {out_file.name} containing {len(valid_files)} files."

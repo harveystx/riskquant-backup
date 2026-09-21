@@ -43,6 +43,10 @@ from riskquant.config.enums.discount_basis import (
     VALID_DISCOUNT_BASES,
     DiscountBasis,
 )
+from riskquant.config.enums.financial_conventions import (
+    VALID_BUSINESS_DAY_CONVENTIONS,
+    VALID_COMPOUNDING_CONVENTIONS,
+)
 from riskquant.config.enums.quote_types import (
     VALID_QUOTE_TYPES,
     VALID_UNIT_SCALES,
@@ -357,6 +361,25 @@ def _validate_enums(dict_of_dfs: dict[str, pl.DataFrame]) -> None:
         VALID_CURVE_INPUT_TYPES,
         "curve_meta",
         "CurveInputType",
+        nullable=True,
+    )
+    # D080 construction metadata. Optional and nullable for the same reason as
+    # curve_input_type: only a curve declared constructible carries them, and
+    # the construction layer rejects a partially declared curve.
+    _check_enum_col(
+        curve_df,
+        "curve_compounding",
+        VALID_COMPOUNDING_CONVENTIONS,
+        "curve_meta",
+        "CompoundingConvention",
+        nullable=True,
+    )
+    _check_enum_col(
+        curve_df,
+        "business_day_convention",
+        VALID_BUSINESS_DAY_CONVENTIONS,
+        "curve_meta",
+        "BusinessDayConvention",
         nullable=True,
     )
 

@@ -246,7 +246,9 @@ def test_container_underlying_cannot_reach_the_fold_even_when_ingest_is_bypassed
     bypass = dataclasses.replace(batch, underlying_ids=np.ascontiguousarray(und))
     mapper = build_uix_mapper([bypass], as_of_ord32=int(date_to_ord32(hf.AS_OF)))
     compile_portfolio_from_ingest_batch(ingest_batch=bypass, uix_mapper=mapper)
-    um = build_universe_mapping(static_config=rsc, uix_mapper=mapper)
+    um = build_universe_mapping(
+        discounting_mode=DiscountingMode.NONE, static_config=rsc, uix_mapper=mapper
+    )
     junk = [np.full((4, 1), poison) for _ in range(32)]
     del junk
     with pytest.raises(ValueError, match="D072"):

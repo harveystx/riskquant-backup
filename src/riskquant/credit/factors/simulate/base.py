@@ -35,7 +35,7 @@ from riskquant.credit._scenario_coverage import (
 from riskquant.credit.factors.state import CreditFactorMatrix
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class CreditFactorBatch:
     """
     A streamed batch of latent credit-factor draws.

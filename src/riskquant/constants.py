@@ -94,6 +94,11 @@ RNG_SEED: int = 42
 # ==============================================================================
 
 DAYS_PER_YR_ACT_365_25: float = 365.25
+
+#: ACT/365F year length. The canonical DISCOUNT-CURVE evaluation coordinate
+#: (D080): T = (date_ord - as_of_ord) / 365.0. Deliberately distinct from
+#: DAYS_PER_YR_ACT_365_25, which is the option TTE convention and is untouched.
+DAYS_PER_YR_ACT_365F: float = 365.0
 TTE_FLOOR: float = 1e-9
 
 # ==============================================================================

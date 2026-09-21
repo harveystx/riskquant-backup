@@ -29,7 +29,7 @@ def _modules(package: str) -> Iterator[Path]:
 
 def _imported_modules(path: Path) -> set[str]:
     """Absolute module names imported by a file."""
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     imported: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -43,7 +43,7 @@ def _executable_source(path: Path) -> str:
     """Source with comments and string literals blanked, so prose cannot trip a gate."""
     pieces: list[str] = []
     for token_type, token_text, _, _, _ in tokenize.generate_tokens(
-        io.StringIO(path.read_text()).readline
+        io.StringIO(path.read_text(encoding="utf-8")).readline
     ):
         pieces.append(
             " " if token_type in (tokenize.COMMENT, tokenize.STRING) else token_text
@@ -96,7 +96,7 @@ def test_every_module_declares_its_repository_relative_path() -> None:
     for path in sorted(SOURCE_ROOT.rglob("*.py")):
         if path.name == "__init__.py":
             continue
-        first_line = path.read_text().splitlines()[0]
+        first_line = path.read_text(encoding="utf-8").splitlines()[0]
         expected = f"# src/riskquant/{path.relative_to(SOURCE_ROOT).as_posix()}"
         assert first_line == expected, f"{path}: got {first_line!r}"
 

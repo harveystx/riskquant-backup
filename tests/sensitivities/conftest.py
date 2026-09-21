@@ -162,7 +162,9 @@ def portfolio_mapper_market(rsc, raw_positions, as_of_date, golden_levels):
         levels_dict=golden_levels,
         static_config=rsc,
     )
-    universe_map = build_universe_mapping(static_config=rsc, uix_mapper=mapper)
+    universe_map = build_universe_mapping(
+        discounting_mode=DiscountingMode.NONE, static_config=rsc, uix_mapper=mapper
+    )
     market_data = build_market_data_matrix_from_snapshot(
         discounting_mode=DiscountingMode.NONE,
         as_of_date=as_of_date,

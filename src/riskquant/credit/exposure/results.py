@@ -8,7 +8,7 @@ import numpy as np
 import numpy.typing as npt
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class NettingSetExposurePaths:
     """
     NettingSetExposurePaths holds the exposure paths for a set of netting sets across

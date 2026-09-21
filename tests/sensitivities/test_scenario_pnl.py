@@ -121,7 +121,9 @@ def raw_shocks() -> np.ndarray:
 def resolved(rsc, proxy_topology, snapshot, portfolio_and_mapper, raw_shocks):
     """Run the full production scenario path once."""
     _portfolio, mapper = portfolio_and_mapper
-    universe_map = build_universe_mapping(static_config=rsc, uix_mapper=mapper)
+    universe_map = build_universe_mapping(
+        discounting_mode=DiscountingMode.NONE, static_config=rsc, uix_mapper=mapper
+    )
     required = universe_map.required_factor_ids
     base_levels = extract_levels_from_snapshot(required_ids=required, snapshot=snapshot)
 
@@ -168,7 +170,9 @@ def pnl(rsc, portfolio_and_mapper, snapshot, resolved, as_of_date):
         discounting_mode=DiscountingMode.NONE,
         as_of_date=as_of_date,
         uix_mapper=mapper,
-        universe_map=build_universe_mapping(static_config=rsc, uix_mapper=mapper),
+        universe_map=build_universe_mapping(
+            discounting_mode=DiscountingMode.NONE, static_config=rsc, uix_mapper=mapper
+        ),
         snapshot=snapshot,
         num_scenarios=1,
     )

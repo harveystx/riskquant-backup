@@ -11,7 +11,7 @@ from riskquant.credit.jtd.blocks.base import _JtdBlock
 from riskquant.credit.jtd.models import MARSHALL_OLKIN_ID
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class MarshallOlkinJtdBlock(_JtdBlock):
     """
     Marshall-Olkin (Common Shock) default model.

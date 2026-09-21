@@ -50,6 +50,7 @@ from riskquant.credit.masters.obligors.ingest import compile_obligor_master
 from riskquant.solutions.credit_var.constants import (
     SF_BETA_BINOMIAL_ALPHA,
     SF_BETA_BINOMIAL_BETA,
+    SF_MO_SYSTEMIC_PD,
     SF_NU,
     SF_RHO,
     SF_STRESS_REGIME_MULT,
@@ -63,7 +64,8 @@ _CHI_GLOBAL = "CHI_GLOBAL"
 # forced-default reads no factor; the generator needs >=1
 _FORCED_DUMMY = "FORCED_DUMMY"
 _SYSTEMIC_SHOCK = "SYSTEMIC_SHOCK"  # Marshall-Olkin shared common-shock (UNIFORM)
-_DEFAULT_MO_SYSTEMIC_PD = 0.02
+
+_DEFAULT_MO_SYSTEMIC_PD = SF_MO_SYSTEMIC_PD
 
 _DEFAULT_RHO = SF_RHO
 _DEFAULT_NU = SF_NU
@@ -73,7 +75,7 @@ _DEFAULT_STRESS_PROB = SF_STRESS_REGIME_PROB
 _DEFAULT_STRESS_MULT = SF_STRESS_REGIME_MULT
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class AssembledInputs:
     """Compiled engine inputs for one run.
 
@@ -170,13 +172,11 @@ def _assemble_independent_bernoulli(
     uids = _uids(obligor_table)
     uniform_names = [f"U_{int(u):03d}" for u in uids]
     universe = _universe([_FactorRow(name=n, kind="UNIFORM") for n in uniform_names])
-    frame = pd.DataFrame(
-        {
-            "uid": uids,
-            "instrument": JtdModel.INDEPENDENT_BERNOULLI.name,
-            "uniform_factor": uniform_names,
-        }
-    )
+    frame = pd.DataFrame({
+        "uid": uids,
+        "instrument": JtdModel.INDEPENDENT_BERNOULLI.name,
+        "uniform_factor": uniform_names,
+    })
     return AssembledInputs(
         masters=_masters(obligor_table, universe),
         bundle=JtdIngestBundle.from_instrument_frame(frame),
@@ -201,14 +201,12 @@ def _assemble_beta_binomial(
         [_FactorRow(name=n, kind="UNIFORM") for n in uniform_names]
         + [_FactorRow(name=_BETA_PD_GLOBAL, kind="BETA_PD", alpha=alpha, beta=beta)]
     )
-    frame = pd.DataFrame(
-        {
-            "uid": uids,
-            "instrument": JtdModel.BETA_BINOMIAL.name,
-            "uniform_factor": uniform_names,
-            "beta_factor": _BETA_PD_GLOBAL,
-        }
-    )
+    frame = pd.DataFrame({
+        "uid": uids,
+        "instrument": JtdModel.BETA_BINOMIAL.name,
+        "uniform_factor": uniform_names,
+        "beta_factor": _BETA_PD_GLOBAL,
+    })
     return AssembledInputs(
         masters=_masters(obligor_table, universe),
         bundle=JtdIngestBundle.from_instrument_frame(frame),
@@ -237,15 +235,13 @@ def _assemble_stress_regime_bernoulli(
         [_FactorRow(name=n, kind="UNIFORM") for n in uniform_names]
         + [_FactorRow(name=_STRESS_GLOBAL, kind="STRESS_INDICATOR")]
     )
-    frame = pd.DataFrame(
-        {
-            "uid": uids,
-            "instrument": JtdModel.STRESS_REGIME_BERNOULLI.name,
-            "uniform_factor": uniform_names,
-            "stress_regime_factor": _STRESS_GLOBAL,
-            "stress_pd_multiplier": np.full(uids.shape[0], stress_mult, np.float64),
-        }
-    )
+    frame = pd.DataFrame({
+        "uid": uids,
+        "instrument": JtdModel.STRESS_REGIME_BERNOULLI.name,
+        "uniform_factor": uniform_names,
+        "stress_regime_factor": _STRESS_GLOBAL,
+        "stress_pd_multiplier": np.full(uids.shape[0], stress_mult, np.float64),
+    })
     stress_p_by_uix = {int(u): stress_prob for u in universe.stress_indicator_uix}
     return AssembledInputs(
         masters=_masters(obligor_table, universe),
@@ -432,13 +428,11 @@ def _mf_universe_and_bundle(
         rows.append(_FactorRow(name=_CHI_GLOBAL, kind="CHI", nu=nu))
     universe = _universe(rows)
 
-    mf_loadings_df = pd.DataFrame(
-        {
-            "obligor_uid": loadings_table["uid"].to_numpy(dtype=np.int64),
-            "factor_name": loadings_table["factor"].astype(str).to_numpy(),
-            "factor_loading": loadings_table["loading"].to_numpy(dtype=np.float64),
-        }
-    )
+    mf_loadings_df = pd.DataFrame({
+        "obligor_uid": loadings_table["uid"].to_numpy(dtype=np.int64),
+        "factor_name": loadings_table["factor"].astype(str).to_numpy(),
+        "factor_loading": loadings_table["loading"].to_numpy(dtype=np.float64),
+    })
 
     frame_data: dict[str, object] = {
         "uid": uids,
@@ -532,14 +526,12 @@ def _assemble_beta_binomial_grouped(
             _FactorRow(name=beta_factor[g], kind="BETA_PD", alpha=alpha, beta=beta)
         )
     universe = _universe(rows)
-    frame = pd.DataFrame(
-        {
-            "uid": uids,
-            "instrument": JtdModel.BETA_BINOMIAL.name,
-            "uniform_factor": uniform_names,
-            "beta_factor": [beta_factor[g] for g in groups],
-        }
-    )
+    frame = pd.DataFrame({
+        "uid": uids,
+        "instrument": JtdModel.BETA_BINOMIAL.name,
+        "uniform_factor": uniform_names,
+        "beta_factor": [beta_factor[g] for g in groups],
+    })
     return AssembledInputs(
         masters=_masters(obligor_table, universe),
         bundle=JtdIngestBundle.from_instrument_frame(frame),
@@ -596,17 +588,15 @@ def _assemble_stress_regime_bernoulli_grouped(
         mult_by_group[g] = mult
         rows.append(_FactorRow(name=stress_factor[g], kind="STRESS_INDICATOR"))
     universe = _universe(rows)
-    frame = pd.DataFrame(
-        {
-            "uid": uids,
-            "instrument": JtdModel.STRESS_REGIME_BERNOULLI.name,
-            "uniform_factor": uniform_names,
-            "stress_regime_factor": [stress_factor[g] for g in groups],
-            "stress_pd_multiplier": np.array(
-                [mult_by_group[g] for g in groups], dtype=np.float64
-            ),
-        }
-    )
+    frame = pd.DataFrame({
+        "uid": uids,
+        "instrument": JtdModel.STRESS_REGIME_BERNOULLI.name,
+        "uniform_factor": uniform_names,
+        "stress_regime_factor": [stress_factor[g] for g in groups],
+        "stress_pd_multiplier": np.array(
+            [mult_by_group[g] for g in groups], dtype=np.float64
+        ),
+    })
     name_to_uix = universe.factor_name_to_uix
     stress_p_by_uix = {
         int(name_to_uix[stress_factor[g]]): prob_by_group[g] for g in distinct
@@ -646,15 +636,13 @@ def _assemble_marshall_olkin(
         [_FactorRow(name=n, kind="UNIFORM") for n in uniform_names]
         + [_FactorRow(name=_SYSTEMIC_SHOCK, kind="UNIFORM")]
     )
-    frame = pd.DataFrame(
-        {
-            "uid": uids,
-            "instrument": JtdModel.MARSHALL_OLKIN.name,
-            "uniform_factor": uniform_names,
-            "systemic_uniform_factor": _SYSTEMIC_SHOCK,
-            "systemic_pd": np.full(uids.shape[0], systemic_pd, np.float64),
-        }
-    )
+    frame = pd.DataFrame({
+        "uid": uids,
+        "instrument": JtdModel.MARSHALL_OLKIN.name,
+        "uniform_factor": uniform_names,
+        "systemic_uniform_factor": _SYSTEMIC_SHOCK,
+        "systemic_pd": np.full(uids.shape[0], systemic_pd, np.float64),
+    })
     return AssembledInputs(
         masters=_masters(obligor_table, universe),
         bundle=JtdIngestBundle.from_instrument_frame(frame),

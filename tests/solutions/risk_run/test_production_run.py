@@ -204,6 +204,57 @@ def test_foreign_environment_is_refused_before_execution() -> None:
 # ---- mutation matrix: result-defining -> result AND identity change ------------
 
 
+def _rebased(base, levels):
+    calc = calculator(base_levels=levels)
+    rep = base["reporting"]
+    return {
+        "base_levels": levels,
+        "calculator": calc,
+        "reporting": ReportingSpec(
+            reporting_ccy=rep.reporting_ccy,
+            settlement_ccys=rep.settlement_ccys,
+            base_settlement_values=rep.base_settlement_values,
+            base_binding=calc.taylor_declaration.base_binding,
+            fx_factor_names=rep.fx_factor_names,
+            fx_factor_rows=rep.fx_factor_rows,
+        ),
+    }
+
+
+def test_greeks_from_another_base_fail_closed() -> None:
+    """P1-A case H at the production entry point: same book, moved levels."""
+    from riskquant.solutions.sensitivity_pnl.taylor_contract import TaylorContractError
+
+    inp = inputs()
+    inp["base_levels"] = inp["base_levels"] * 1.001
+    with pytest.raises(TaylorContractError, match="base_levels_digest"):
+        run_scenario_var_es(**inp)
+
+
+def test_reporting_fx_base_from_another_base_fails_closed() -> None:
+    """P1-A case L: identical Greeks and V_0, but q_0 (the USDEUR base level the
+    reporting layer reads from base_levels) taken from another base."""
+    from riskquant.solutions.sensitivity_pnl.taylor_contract import TaylorContractError
+
+    inp = inputs()
+    levels = inp["base_levels"].copy()
+    levels[2] *= 1.05  # FACTOR_IDS[2] = 30 = USDEUR, the reporting FX row
+    inp["base_levels"] = levels
+    with pytest.raises(TaylorContractError, match="base_levels_digest"):
+        run_scenario_var_es(**inp)
+
+
+def test_uncertified_book_is_refused_by_the_production_entry_point() -> None:
+    import dataclasses
+
+    from riskquant.solutions.sensitivity_pnl.taylor_contract import TaylorContractError
+
+    inp = inputs()
+    inp["calculator"] = dataclasses.replace(inp["calculator"], taylor_declaration=None)
+    with pytest.raises(TaylorContractError, match="UNCERTIFIED"):
+        run_scenario_var_es(**inp)
+
+
 def _mutations():
     base = inputs()
     revised = np.array(base["data"].values, copy=True)
@@ -218,12 +269,18 @@ def _mutations():
         "source_factor_ids": {"source_factor_ids": np.array([20, 10, 30], np.int32)},
         "shift_type": {"required_shift_type_id": np.array([2] * K, np.int8)},
         "shock_scale": {"shock_scale": np.array([0.9, 1.0, 1.0], np.float32)},
-        "base_levels": {"base_levels": base["base_levels"] * 1.001},
+        # P1-A: a new base is a new Taylor representation. Moving the levels
+        # under a book certified at the OLD base now fails closed (see
+        # test_greeks_from_another_base_fail_closed); the result-defining
+        # mutation re-certifies the book and the V_0 binding at the new base.
+        "base_levels": _rebased(base, base["base_levels"] * 1.001),
         "confidence_level": {"confidence_level": 0.95},
         "reporting_currency": {
             "reporting": ReportingSpec(
                 reporting_ccy="EUR",
                 settlement_ccys=("EUR", "USD"),
+                base_settlement_values=np.zeros(2, dtype=np.float64),
+                base_binding=calculator().taylor_declaration.base_binding,
                 fx_factor_names=("USDEUR",),
                 fx_factor_rows=np.array([2], np.int32),
             )

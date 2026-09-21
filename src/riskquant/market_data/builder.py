@@ -49,11 +49,11 @@ import numpy as np
 import numpy.typing as npt
 
 from riskquant.config.enums.discounting_modes import DiscountingMode
-from riskquant.constants import DAYS_PER_YR_ACT_365_25, TTE_FLOOR
-from riskquant.market_data.curves.interp_defs import (
-    interp_linear_on_log_values_flat_extrap_3d_numba_kernel,
-)
+from riskquant.constants import DAYS_PER_YR_ACT_365_25, DAYS_PER_YR_ACT_365F, TTE_FLOOR
 from riskquant.market_data.curves.interp_dispatch import CURVE_MATH_REGISTRY
+from riskquant.market_data.curves.zero_curve import (
+    build_zero_curve_discount_factor_grid,
+)
 from riskquant.market_data.state import MarketDataMatrix
 from riskquant.market_data.transformers.delta_to_moneyness import (
     calibrate_delta_surfaces_to_moneyness,
@@ -293,44 +293,6 @@ def _build_price_curve_grid(
     return out_grid
 
 
-def _build_discount_factor_grid(
-    *,
-    raw_tenors: npt.NDArray[np.float64],
-    raw_ln_dfs: npt.NDArray[np.float64],
-    target_dates: npt.NDArray[np.int32],
-    num_scenarios: int,
-) -> npt.NDArray[np.float64]:
-    """
-    Discount-factor grid: log-linear interpolation in time, flat extrap.
-
-    Domain-convention: every discount curve in the system is quoted as
-    log(DF) at pillar dates and interpolated linearly on log(DF), which
-    is equivalent to linear interpolation on zero rates between pillars.
-    The flat extrapolation prevents pathological exponentials at the long
-    end and matches the front-office convention.
-    """
-    c_curves = raw_ln_dfs.shape[0]
-    d_dates = target_dates.shape[0]
-
-    out_grid = np.empty((c_curves, d_dates, num_scenarios), dtype=np.float64)
-
-    if d_dates == 0 or c_curves == 0:
-        return out_grid
-
-    interp_linear_on_log_values_flat_extrap_3d_numba_kernel(
-        raw_tenors,
-        raw_ln_dfs,
-        target_dates,
-        out_grid,
-    )
-    return out_grid
-
-
-# ==============================================================================
-# VOL SURFACES
-# ==============================================================================
-
-
 def _build_vol_surfaces(
     *,
     raw_vol_surface_tenors: npt.NDArray[np.float64],
@@ -524,7 +486,7 @@ def build_market_data_matrix(
     scalar_node_strictly_positive: npt.NDArray[np.bool_],
     # ---- Curve configs ----
     raw_discount_tenors: npt.NDArray[np.float64],
-    raw_discount_ln_dfs: npt.NDArray[np.float64],
+    raw_discount_levels: npt.NDArray[np.float64],
     raw_price_curve_tenors: npt.NDArray[np.float64],
     raw_price_curve_values: npt.NDArray[np.float64],
     curve_interp_methods: npt.NDArray[np.int8],
@@ -581,7 +543,7 @@ def build_market_data_matrix(
         scalar_node_uix_in_universe=scalar_node_uix_in_universe,
         scalar_node_strictly_positive=scalar_node_strictly_positive,
         curve_and_surface_levels=(
-            ("discount curve levels", raw_discount_ln_dfs),
+            ("discount curve levels", raw_discount_levels),
             ("price curve levels", raw_price_curve_values),
             ("vol surface levels", raw_vol_surface_values),
         ),
@@ -629,13 +591,26 @@ def build_market_data_matrix(
     # inventing that convention. A CURVE run fails here, before a kernel is
     # called, instead of raising a Numba TypeError or returning a plausible
     # wrong DF.
-    if discounting_mode is DiscountingMode.CURVE:
-        raise NotImplementedError(
-            "Discount-factor production is not supported (D061): the curve-point "
-            "quote convention and tenor-axis contract are undecided. Runs that "
-            "request discounting_mode=CURVE cannot build a MarketDataMatrix on "
-            "the production path."
-        )
+    # ---- D061 -> D080: market-derived discounting is live for exactly the
+    # curves the layout plan proved constructible (ZERO_RATE + CONTINUOUS +
+    # complete maturity metadata, checked in `build_universe_mapping`). A CURVE
+    # plan that carries a discount curve with no pillars is a wiring defect,
+    # never a silent fallback to DF = 1.
+    n_disc_curves = int(uix_mapper.discount_curve_id_universe.shape[0])
+    if discounting_mode is DiscountingMode.CURVE and n_disc_curves > 0:
+        if raw_discount_tenors.shape != (n_disc_curves, raw_discount_levels.shape[1]):
+            raise ValueError(
+                "discounting_mode=CURVE: raw_discount_tenors "
+                f"{raw_discount_tenors.shape} and raw_discount_levels "
+                f"{raw_discount_levels.shape[:2]} disagree with the "
+                f"{n_disc_curves}-curve universe (D080 layout plan)."
+            )
+        if raw_discount_levels.shape[1] == 0:
+            raise NotImplementedError(
+                "Discount-factor production is not supported (D061): the CURVE "
+                "layout plan carries no pillars for a discount curve in the "
+                "universe; only a fully declared D080 curve can be constructed."
+            )
     if raw_price_curve_values.shape[0] > 0:
         raise NotImplementedError(
             "Price-curve grid production is not supported (D061); curve-sourced "
@@ -651,19 +626,29 @@ def build_market_data_matrix(
     )
 
     # ---- 2. Discount factor grid -----------------------------------------
-    # NONE mode (the only implemented one): DF(as_of, date) = 1.0 for every
-    # curve and date the run resolved. The curves' own levels
-    # (`raw_discount_tenors` / `raw_discount_ln_dfs`) are deliberately not read,
-    # and no `CurveInputType` is consulted; the linkage stays structural
-    # (D062/D066) while the economics say "do not discount" (D061).
-    discount_factor_grid = np.ones(
-        (
-            uix_mapper.discount_curve_id_universe.shape[0],
-            d_dates,
-            num_scenarios,
-        ),
-        dtype=np.float64,
-    )
+    if discounting_mode is DiscountingMode.NONE:
+        # NONE: DF(as_of, date) = 1.0 for every curve and date the run resolved.
+        # The curves' own levels (`raw_discount_tenors` / `raw_discount_levels`)
+        # are deliberately not read, and no `CurveInputType` is consulted; the
+        # linkage stays structural (D062/D066) while the economics say "do not
+        # discount" (D061).
+        discount_factor_grid = np.ones(
+            (n_disc_curves, d_dates, num_scenarios), dtype=np.float64
+        )
+    else:
+        # CURVE (D080): the levels are D069-normalised, already-shocked decimal
+        # zero rates on the canonical ACT/365F pillar coordinate the layout plan
+        # resolved (maturities are scenario-independent; only the rate varies
+        # with s). Targets are the run's date universe on the same coordinate.
+        # No unit scaling happens here: D069 ran once at the snapshot boundary.
+        target_t = (
+            unique_dates_ord32.astype(np.float64) - float(as_of_ord32)
+        ) / DAYS_PER_YR_ACT_365F
+        discount_factor_grid = build_zero_curve_discount_factor_grid(
+            pillar_t=np.ascontiguousarray(raw_discount_tenors, dtype=np.float64),
+            pillar_rates=np.ascontiguousarray(raw_discount_levels, dtype=np.float64),
+            target_t=np.ascontiguousarray(target_t),
+        )
 
     # ---- 3. Price curve grid (universe-aligned, item C / A1 for curves) --
     dense_price_curve_grid = _build_price_curve_grid(

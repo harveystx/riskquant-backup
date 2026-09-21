@@ -20,7 +20,7 @@ import numpy as np
 import numpy.typing as npt
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class CompiledSaccrConfig:
     subclass_uix: npt.NDArray[np.int32]  # (K,) ascending, unique — commodity types
     subclass_hedging_set: npt.NDArray[np.int32]  # (K,) hedging set per subclass

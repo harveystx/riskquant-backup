@@ -17,10 +17,11 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from oracle import economic_oracle as oracle
-from oracle import fixture as fx
 
 from riskquant.valuation.engine import run_valuation
+
+from . import economic_oracle as oracle
+from . import fixture as fx
 
 # D046: Abramowitz-Stegun is the accepted price-path CDF. Near-the-money
 # relative error is <= 6e-6; these options sit at |d2| < 2. Spot and forward

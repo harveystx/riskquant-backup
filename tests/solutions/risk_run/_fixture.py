@@ -4,6 +4,7 @@ position converted through a USDEUR factor, on the official entry point."""
 
 import numpy as np
 import polars as pl
+from _binding import synthetic_binding, synthetic_declaration
 
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID
@@ -15,6 +16,7 @@ from riskquant.solutions.sensitivity_pnl.api import (
     SensitivityBookSpec,
     SensitivityPnlCalculator,
 )
+from riskquant.solutions.sensitivity_pnl.taylor_contract import TaylorOrder
 
 K, T, S = 3, 80, 64
 FACTOR_IDS = np.array([10, 20, 30], dtype=np.int32)  # 30 = USDEUR fx factor
@@ -33,7 +35,7 @@ def matrix():
     )
 
 
-def calculator():
+def calculator(base_levels=None):
     abs_id = int(DisplacementConvention.ABSOLUTE)
     sens = pl.DataFrame({
         "position_id": [1, 1, 2],
@@ -46,12 +48,23 @@ def calculator():
         "displacement_convention_id": [abs_id] * K,
         "quote_base": [1.0] * K,
     })
+    binding = synthetic_binding(
+        factor_ids=FACTOR_IDS,
+        base_levels=np.asarray(matrix().values)[-1]
+        if base_levels is None
+        else base_levels,
+        position_uids=[1, 2],
+        v0=np.zeros(2),
+    )
     return SensitivityPnlCalculator.compile(
         SensitivityBookSpec(
             sensitivities=sens,
             factor_meta=meta,
             factor_axis=FactorAxis.from_keys(FACTOR_IDS.tolist()),
             position_uids=[1, 2],
+            taylor_declaration=synthetic_declaration(
+                sensitivities=sens, order=TaylorOrder.FIRST_ORDER, binding=binding
+            ),
         )
     )
 
@@ -86,6 +99,10 @@ def inputs(seed=7, model="sbb"):
         reporting=ReportingSpec(
             reporting_ccy="USD",
             settlement_ccys=("EUR", "USD"),
+            # D081: synthetic Taylor book with an explicitly DECLARED zero base
+            # value, i.e. the V0 = 0 special case in which dW = dV*q_s exactly.
+            base_settlement_values=np.zeros(2, dtype=np.float64),
+            base_binding=calculator().taylor_declaration.base_binding,
             fx_factor_names=("USDEUR",),
             fx_factor_rows=np.array([2], np.int32),
         ),

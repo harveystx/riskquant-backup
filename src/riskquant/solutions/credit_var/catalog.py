@@ -21,6 +21,15 @@ __all__ = [
 
 from dataclasses import dataclass, field
 
+from riskquant.solutions.credit_var.constants import (
+    SF_BETA_BINOMIAL_ALPHA,
+    SF_BETA_BINOMIAL_BETA,
+    SF_MO_SYSTEMIC_PD,
+    SF_NU,
+    SF_RHO,
+    SF_STRESS_REGIME_MULT,
+    SF_STRESS_REGIME_PROB,
+)
 from riskquant.solutions.credit_var.recipes import SUPPORTED_RECIPES
 
 
@@ -59,10 +68,14 @@ class ModelEntry:
     accepts_obligor_rho: bool = False  # SF copulas: optional per-obligor rho column
 
 
+# Every ParamSpec default is the shared constant the recipe also resolves an
+# omitted param to (see `constants.py`). The catalog is the published surface a
+# caller reads (`MODEL_CATALOG` is exported from `api`), so an advertised
+# default that differs from the effective one is a lie to the author.
 _RHO = ParamSpec(
     key="rho",
     label="Asset Correlation (rho)",
-    default=0.20,
+    default=SF_RHO,
     min_value=0.0,
     max_value=1.0,
     min_inclusive=True,
@@ -71,7 +84,7 @@ _RHO = ParamSpec(
 _NU = ParamSpec(
     key="nu",
     label="Degrees of Freedom (nu)",
-    default=7.0,
+    default=SF_NU,
     min_value=2.0,
     max_value=250.0,
     min_inclusive=True,
@@ -80,7 +93,7 @@ _NU = ParamSpec(
 _BETA_ALPHA = ParamSpec(
     key="alpha",
     label="Beta Shape - Alpha",
-    default=1.5,
+    default=SF_BETA_BINOMIAL_ALPHA,
     min_value=0.0,
     max_value=1000.0,
     min_inclusive=False,
@@ -89,7 +102,7 @@ _BETA_ALPHA = ParamSpec(
 _BETA_BETA = ParamSpec(
     key="beta",
     label="Beta Shape - Beta",
-    default=6.0,
+    default=SF_BETA_BINOMIAL_BETA,
     min_value=0.0,
     max_value=1000.0,
     min_inclusive=False,
@@ -98,7 +111,7 @@ _BETA_BETA = ParamSpec(
 _STRESS_PROB = ParamSpec(
     key="stress_prob",
     label="Stress-Regime Probability",
-    default=0.10,
+    default=SF_STRESS_REGIME_PROB,
     min_value=0.0,
     max_value=1.0,
     min_inclusive=True,
@@ -107,7 +120,7 @@ _STRESS_PROB = ParamSpec(
 _STRESS_MULT = ParamSpec(
     key="stress_pd_multiplier",
     label="Stress-Regime PD Multiplier",
-    default=3.0,
+    default=SF_STRESS_REGIME_MULT,
     min_value=1.0,
     max_value=50.0,
     min_inclusive=True,
@@ -116,7 +129,8 @@ _STRESS_MULT = ParamSpec(
 _SYSTEMIC_PD = ParamSpec(
     key="systemic_pd",
     label="Systemic Common-Shock Probability",
-    default=0.02,
+    # Single source of truth, shared with the recipe that builds the model.
+    default=SF_MO_SYSTEMIC_PD,
     min_value=0.0,
     max_value=1.0,
     min_inclusive=True,

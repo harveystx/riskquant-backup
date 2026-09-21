@@ -19,22 +19,24 @@ Pipeline position
         -> portfolio aggregation                   (THIS MODULE)
         -> risk measure
 
-Conversion convention (deliberate, and load-bearing)
-----------------------------------------------------
-Reporting P&L is obtained by converting the SETTLEMENT-CURRENCY scenario P&L
-at the SCENARIO FX rate:
+Reporting P&L equation (ordinary mark-to-market; D081, superseding D014)
+------------------------------------------------------------------------
+Reporting-currency value is ``W = V * q`` with ``V`` the settlement-currency
+value and ``q`` the settlement -> reporting rate. Reporting P&L is the exact
+identity
 
-    dV_report[i, s] = dV_settlement[i, s] * F[i, s]
+    dW[i, s] = V_s * q_s - V_0 * q_0
+             = dV[i, s] * q_s  +  V_0 * (q_s - q_0)
 
-where ``F[i, s]`` is the settlement -> reporting rate in scenario ``s``.
-
-It is NOT computed as ``V_shocked*F_shocked - V_base*F_base``. For a trade
-whose payoff already contains the FX factor (a USD-priced, EUR-settled
-position, say), that alternative cancels the FX term algebraically and
-silently DELETES the FX exposure the sensitivity book explicitly carries.
-The two conventions disagree in sign once FX moves, so this is a correctness
-choice, not a formatting one. See
-`tests/reporting/test_fx_conversion.py::test_moving_fx_distinguishes_the_two_conventions`.
+where ``dV`` is the settlement-currency scenario P&L, ``q_s`` the scenario
+rate, ``q_0`` the base rate and ``V_0`` the position's base settlement value.
+The second term translates the BASE value. Omitting it (the former D014
+convention ``dV * q_s``) is not reporting-currency P&L: for a USD-priced,
+EUR-settled position under USD reporting it manufactures an FX P&L on an asset
+that has none and flips the sign of the true P&L once FX moves (see
+`tests/reporting/test_fx_conversion.py::test_ordinary_mtm_brent_internal_fx_cancels`).
+``V_0`` and ``q_0`` are REQUIRED inputs, so the D014 form is unreachable by
+construction rather than by discipline.
 
 Quotation convention
 --------------------
@@ -249,12 +251,15 @@ def convert_scenario_pnl_to_reporting_currency(
     settlement_pnl: npt.NDArray[np.float64],
     fx_levels: npt.NDArray[np.float64],
     plan: FxConversionPlan,
+    base_settlement_values: npt.NDArray[np.float64],
+    base_fx_levels: npt.NDArray[np.float64],
 ) -> ReportingCurrencyPnl:
     """
-    Convert settlement-currency scenario P&L and aggregate the portfolio.
+    Convert settlement-currency scenario P&L to reporting currency (ordinary
+    mark-to-market, D081) and aggregate the portfolio.
 
-    ``dV_report[i, s] = dV_settlement[i, s] * rate[i, s]`` with
-    ``rate = fx_levels[row, s]`` (or its reciprocal when ``invert`` is set,
+    ``dW[i, s] = dV[i, s] * rate_s[i, s] + V0[i] * (rate_s[i, s] - rate_0[i])``
+    with ``rate_s = fx_levels[row, s]`` (or its reciprocal when ``invert`` is set,
     or exactly 1.0 for an identity conversion).
 
     Parameters
@@ -262,6 +267,13 @@ def convert_scenario_pnl_to_reporting_currency(
     settlement_pnl
         ``(M, S) float64`` C-contiguous, finite. Each row is denominated in
         that position's own settlement currency.
+    base_settlement_values
+        ``(M,) float64`` finite: each position's BASE value in its own
+        settlement currency (``V_0``). Required; no default exists and the
+        former ``dV * q_s`` convention cannot be requested.
+    base_fx_levels
+        ``(K,) float64``: BASE-state FX levels row-aligned with `fx_levels`
+        (``q_0``); finite and positive for the rates in use.
     fx_levels
         ``(K, S) float64`` C-contiguous, finite, strictly positive. Scenario
         FX levels, row-aligned with the `fx_factor_names` used to build the
@@ -284,6 +296,29 @@ def convert_scenario_pnl_to_reporting_currency(
 
     _require(settlement_pnl.ndim == 2, "settlement_pnl must be 2-D (M, S).")
     _require(fx_levels.ndim == 2, "fx_levels must be 2-D (K, S).")
+    if base_settlement_values.dtype != np.dtype(np.float64):
+        raise TypeError(
+            "base_settlement_values must be float64; got "
+            f"{base_settlement_values.dtype}."
+        )
+    if base_fx_levels.dtype != np.dtype(np.float64):
+        raise TypeError(f"base_fx_levels must be float64; got {base_fx_levels.dtype}.")
+    _require(base_settlement_values.ndim == 1, "base_settlement_values must be (M,).")
+    _require(base_fx_levels.ndim == 1, "base_fx_levels must be (K,).")
+    _require(
+        base_settlement_values.shape[0] == settlement_pnl.shape[0],
+        f"base_settlement_values has {base_settlement_values.shape[0]} value(s) "
+        f"but settlement_pnl has {settlement_pnl.shape[0]} position(s).",
+    )
+    _require(
+        base_fx_levels.shape[0] == fx_levels.shape[0],
+        f"base_fx_levels has {base_fx_levels.shape[0]} row(s) but fx_levels has "
+        f"{fx_levels.shape[0]}.",
+    )
+    _require(
+        bool(np.isfinite(base_settlement_values).all()),
+        "base_settlement_values must contain only finite values.",
+    )
     _require(
         settlement_pnl.flags["C_CONTIGUOUS"], "settlement_pnl must be C-contiguous."
     )
@@ -330,14 +365,25 @@ def convert_scenario_pnl_to_reporting_currency(
     # Per-position rate matrix. Identity rows are exactly 1.0 -- an explicit
     # conversion, not a fallback for a missing rate.
     rates = np.ones((num_positions, num_scenarios), dtype=np.float64)
+    base_rates = np.ones(num_positions, dtype=np.float64)
     if np.any(needs_fx):
         rows = plan.fx_row_index[needs_fx].astype(np.intp)
+        used_base = base_fx_levels[rows]
+        _require(
+            bool(np.isfinite(used_base).all()) and bool((used_base > 0.0).all()),
+            "base_fx_levels must be finite and strictly positive for the rates in use.",
+        )
         gathered = fx_levels[rows]
         inverted = plan.invert[needs_fx].astype(bool)
         gathered = np.where(inverted[:, None], 1.0 / gathered, gathered)
         rates[needs_fx] = gathered
-
-    converted = np.ascontiguousarray(settlement_pnl * rates, dtype=np.float64)
+        base_rates[needs_fx] = np.where(inverted, 1.0 / used_base, used_base)
+    # Ordinary MTM (D081): dW = dV*q_s + V0*(q_s - q0). The second term is the
+    # translation of the base value; it vanishes only when q_s == q0 or V0 == 0.
+    translation = base_settlement_values[:, None] * (rates - base_rates[:, None])
+    converted = np.ascontiguousarray(
+        settlement_pnl * rates + translation, dtype=np.float64
+    )
 
     # Aggregate ONLY after every row is in the reporting currency.
     portfolio = np.ascontiguousarray(converted.sum(axis=0), dtype=np.float64)

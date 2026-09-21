@@ -12,7 +12,7 @@ from riskquant.credit.exposure.models import SACCR_ID
 from riskquant.credit.exposure.views.base import _NettingSetView
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class SaccrNettingSetView(_NettingSetView):
     """SA-CCR view: RC CSR grouping + collateral + the scenario-independent add-on.
 

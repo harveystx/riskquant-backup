@@ -49,7 +49,7 @@ from riskquant.credit.exposure.saccr.ingest import compile_saccr_config
 from riskquant.credit.masters.netting_set.compiled import CompiledNettingSetMaster
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class AssembledExposureInputs:
     """Compiled engine inputs for one exposure run (what a recipe produces)."""
 

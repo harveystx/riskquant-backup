@@ -128,3 +128,8 @@ disallow_untyped_decorators = false
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+# Test modules share basenames across packages (test_engine.py, test_compile.py,
+# test_demo_scripts_are_runnable.py); the default prepend import mode refuses
+# the second one ("import file mismatch") and silently drops those tests from
+# the full run. importlib mode gives each file a unique module identity.
+addopts = "--import-mode=importlib"

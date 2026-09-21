@@ -11,7 +11,7 @@ from riskquant.credit.jtd.blocks.base import _JtdBlock
 from riskquant.credit.jtd.models import BETA_BINOMIAL_ID
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class BetaBinomialJtdBlock(_JtdBlock):
     """
     Beta-binomial default model.

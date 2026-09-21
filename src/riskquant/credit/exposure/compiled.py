@@ -27,7 +27,7 @@ from riskquant.credit.exposure.views.saccr import SaccrNettingSetView
 ViewT: TypeAlias = RcNettingSetView | CemNettingSetView | SaccrNettingSetView
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class CompiledExposure:
     """EAD-ready exposure: an ordered set of per-model netting-set views."""
 

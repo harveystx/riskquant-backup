@@ -25,8 +25,6 @@ import dataclasses
 
 import numpy as np
 import pytest
-from oracle import economic_oracle as oracle
-from oracle import option_fixture as of
 
 from riskquant.market_data.compile import assemble_valuation_state
 from riskquant.portfolio.engine import (
@@ -35,6 +33,9 @@ from riskquant.portfolio.engine import (
 )
 from riskquant.valuation.engine import run_valuation
 from riskquant.valuation.result import ValuationResult
+
+from . import economic_oracle as oracle
+from . import option_fixture as of
 
 RTOL_CDF = 5e-5
 RTOL_LINEAR = 1e-13

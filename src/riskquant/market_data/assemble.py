@@ -55,10 +55,13 @@ import numpy as np
 import numpy.typing as npt
 
 from riskquant._arrays import searchsorted_or_raise
+from riskquant.config.enums.curve_input_types import CurveInputType
 from riskquant.config.enums.discounting_modes import DiscountingMode
 from riskquant.config.namespace import GlobalIdNamespace
 from riskquant.config.static_config.static_config import RiskStaticConfig
+from riskquant.constants import DAYS_PER_YR_ACT_365F
 from riskquant.market_data.builder import build_market_data_matrix
+from riskquant.market_data.curves.label_maturity import resolve_label_maturity_ords
 from riskquant.market_data.risk_factors.compile_snapshot import (
     strictly_positive_level_mask,
 )
@@ -83,8 +86,13 @@ class UniverseMapping:
     All `np.ndarray` fields hold per-config metadata pinned to the run's
     universe. Validation lives at build time; the runner trusts the
     contract.
+
+    `discounting_mode` is carried here because it decides WHETHER discount-curve
+    pillars are laid out at all (D080). A mapping and a matrix call must agree on
+    it; a mismatch is a wiring defect and fails loud.
     """
 
+    discounting_mode: DiscountingMode
     required_factor_ids: npt.NDArray[np.int32]
     required_shift_type_ids: npt.NDArray[np.int8]
 
@@ -235,10 +243,141 @@ def _classify_run_universe(
     return scalar_rfs, fx_spots, price_curve_containers, vol_surface_containers
 
 
+#: D080.1: the ONLY curve identity market-derived discounting is live for.
+#: Constructibility is tied to identity, not to metadata completeness: another
+#: curve declaring the same ZERO_RATE/CONTINUOUS/calendar metadata still fails
+#: closed until a decision adds it here. Keyed by curve_id (never by currency).
+D080_CONSTRUCTIBLE_CURVE_IDS: frozenset[int] = frozenset({250_000_000})
+
+
+def _discount_curve_block_for_construction(
+    *,
+    container_ids: npt.NDArray[np.int32],
+    static_config: RiskStaticConfig,
+    uix_mapper: UixMapper,
+) -> tuple[list[int], list[float], int]:
+    """
+    Lay out constructed discount-curve pillars in canonical maturity order.
+
+    Source row order carries no meaning (D080): every pillar is resolved to a
+    maturity ordinal, converted to the canonical ACT/365F coordinate `T`, then
+    sorted by `T`. Duplicate coordinates are a hard failure, never a silent
+    de-duplication or a last-write-wins.
+
+    Returns `(child_rf_ids, T_pillars, m_pillars)`. The synthetic `T = 0` anchor
+    is NOT a market pillar and is not emitted here: the constructor prepends it.
+    """
+    if container_ids.size == 0:
+        return [], [], 0
+    as_of_ord32 = uix_mapper.as_of_ord32
+    if as_of_ord32 is None:
+        raise ValueError(
+            "discount-curve construction requires the run as-of on the UixMapper "
+            "(D067); discounting_mode=CURVE cannot lay out pillars without it."
+        )
+
+    # D061 / D080 constructibility gate: DECLARATION only, evaluated for every
+    # curve in the run so one diagnostic names them all. A run that mixes a
+    # constructible curve with a non-constructible one fails whole; there is no
+    # partial construction.
+    offenders: list[str] = []
+    for cid in container_ids.tolist():
+        curve = static_config.curve_meta_dict[int(cid)]
+        reasons: list[str] = []
+        if int(cid) not in D080_CONSTRUCTIBLE_CURVE_IDS:
+            reasons.append(
+                f"curve_id {int(cid)} is not a D080-supported curve identity "
+                "(only USD_SOFR_OIS / 250000000 is constructible)"
+            )
+        if curve.curve_input_type != CurveInputType.ZERO_RATE.value:
+            reasons.append(
+                f"curve_input_type={curve.curve_input_type} "
+                f"(D080 supports {CurveInputType.ZERO_RATE.value} only)"
+            )
+        if curve.curve_compounding != "CONTINUOUS":
+            reasons.append(
+                f"curve_compounding={curve.curve_compounding} "
+                "(D080 supports CONTINUOUS only)"
+            )
+        for field_name, value in (
+            ("maturity_calendar", curve.maturity_calendar),
+            ("spot_lag_days", curve.spot_lag_days),
+            ("business_day_convention", curve.business_day_convention),
+            ("end_of_month", curve.end_of_month),
+        ):
+            if value is None:
+                reasons.append(f"{field_name} undeclared")
+        if (
+            curve.maturity_calendar is not None
+            and curve.maturity_calendar not in static_config.holiday_calendars_dict
+        ):
+            reasons.append(f"maturity_calendar {curve.maturity_calendar!r} unknown")
+        if reasons:
+            offenders.append(f"{curve.curve_name}: " + ", ".join(reasons))
+    if offenders:
+        raise NotImplementedError(
+            "D061: CURVE construction unavailable:\n  " + "\n  ".join(offenders)
+        )
+
+    child_ids: list[int] = []
+    tenors: list[float] = []
+    m_ref: int | None = None
+    for cid in container_ids.tolist():
+        curve = static_config.curve_meta_dict[int(cid)]
+        index = static_config.curve_id_to_tenor_index[int(cid)]
+        labels = tuple(sorted(index.label_to_rf_id))
+        if not labels:
+            raise ValueError(
+                f"curve {curve.curve_name!r} has no LABEL pillars to construct from."
+            )
+        tokens = tuple(f"[{label}]" for label in labels)
+        maturity_ords = resolve_label_maturity_ords(
+            curve=curve,
+            tenor_tokens=tokens,
+            as_of_ord32=int(as_of_ord32),
+            static_config=static_config,
+        )
+        t_years = [
+            (int(m) - int(as_of_ord32)) / DAYS_PER_YR_ACT_365F for m in maturity_ords
+        ]
+        stale = [(labels[i], t) for i, t in enumerate(t_years) if t <= 0.0]
+        if stale:
+            raise ValueError(
+                f"curve {curve.curve_name!r}: pillar(s) {stale} do not mature after "
+                "the run as-of; a constructed curve carries only forward-dated "
+                "market pillars (the T = 0 anchor is synthetic)."
+            )
+        order = sorted(range(len(labels)), key=lambda i: t_years[i])
+        ordered_t = [t_years[i] for i in order]
+        duplicates = [
+            (labels[order[i - 1]], labels[order[i]], ordered_t[i])
+            for i in range(1, len(ordered_t))
+            if ordered_t[i] == ordered_t[i - 1]
+        ]
+        if duplicates:
+            raise ValueError(
+                f"curve {curve.curve_name!r}: pillars resolve to duplicate maturities "
+                f"{duplicates}; a constructed curve requires a strictly increasing "
+                "coordinate (D080)."
+            )
+        if m_ref is None:
+            m_ref = len(labels)
+        elif len(labels) != m_ref:
+            raise ValueError(
+                f"curve {curve.curve_name!r} has {len(labels)} pillars but the batch "
+                f"expects a rectangular {m_ref}; ragged curve grids are not supported "
+                "in one batch."
+            )
+        child_ids.extend(int(index.label_to_rf_id[labels[i]]) for i in order)
+        tenors.extend(ordered_t)
+    return child_ids, tenors, (m_ref or 0)
+
+
 def build_universe_mapping(
     *,
     static_config: RiskStaticConfig,
     uix_mapper: UixMapper,
+    discounting_mode: DiscountingMode,
     vol_surface_ids: Sequence[int] = (),
 ) -> UniverseMapping:
     """
@@ -331,9 +470,20 @@ def build_universe_mapping(
     disc_ids = np.asarray(disc_uni, dtype=np.int32)
     price_ids = np.asarray(price_curve_ids, dtype=np.int32)  # CURVE members of mkt_uni
 
-    disc_children, disc_tenors, _disc_interp, _disc_extrap, disc_m = _curve_block(
-        disc_ids
-    )
+    # D080 / C4: discount pillars are emitted ONLY for a CURVE run. Under NONE
+    # no discount level is read, so requiring one would change the meaning of
+    # every existing NONE call site. `_curve_block` yields nothing for a LABEL
+    # curve (its offset axis is empty), which is exactly the NONE behaviour.
+    if discounting_mode is DiscountingMode.CURVE:
+        disc_children, disc_tenors, disc_m = _discount_curve_block_for_construction(
+            container_ids=disc_ids,
+            static_config=static_config,
+            uix_mapper=uix_mapper,
+        )
+    else:
+        disc_children, disc_tenors, _disc_interp, _disc_extrap, disc_m = _curve_block(
+            disc_ids
+        )
     price_children, price_tenors, price_interp, price_extrap, price_m = _curve_block(
         price_ids
     )
@@ -371,6 +521,7 @@ def build_universe_mapping(
     )
 
     return UniverseMapping(
+        discounting_mode=discounting_mode,
         required_factor_ids=required,
         required_shift_type_ids=required_shift,
         idx_fx_spots=idx_fx,
@@ -430,7 +581,7 @@ def extract_levels_from_snapshot(
         raw=required_ids,
         ctx="risk factors required by the compiled portfolio but missing "
         "from the snapshot",
-    )   
+    )
     return np.ascontiguousarray(snapshot.factor_levels[idx]).astype(
         np.float64, copy=False
     )
@@ -461,7 +612,7 @@ def build_market_data_matrix_from_flat_levels(
     raw_fx_spots = flat_levels[u.idx_fx_spots, :]
     raw_scalar_nodes = flat_levels[u.idx_scalar_nodes, :]
 
-    raw_discount_ln_dfs = flat_levels[u.idx_discount_curves, :].reshape(
+    raw_discount_levels = flat_levels[u.idx_discount_curves, :].reshape(
         u.shape_discount_curves[0],
         u.shape_discount_curves[1],
         num_scenarios,
@@ -479,6 +630,13 @@ def build_market_data_matrix_from_flat_levels(
         num_scenarios,
     )
 
+    if universe_map.discounting_mode is not discounting_mode:
+        raise ValueError(
+            f"universe_map was built for discounting_mode="
+            f"{universe_map.discounting_mode.value} but the matrix call requests "
+            f"{discounting_mode.value}; the layout plan and the producer must agree "
+            "(D080)."
+        )
     return build_market_data_matrix(
         as_of_date=as_of_date,
         discounting_mode=discounting_mode,
@@ -490,7 +648,7 @@ def build_market_data_matrix_from_flat_levels(
         scalar_node_uix_in_universe=u.scalar_node_uix_in_universe,
         scalar_node_strictly_positive=u.scalar_node_strictly_positive,
         raw_discount_tenors=u.raw_discount_tenors,
-        raw_discount_ln_dfs=raw_discount_ln_dfs,
+        raw_discount_levels=raw_discount_levels,
         raw_price_curve_tenors=u.raw_price_curve_tenors,
         raw_price_curve_values=raw_price_curve_values,
         curve_interp_methods=u.curve_interp_methods,

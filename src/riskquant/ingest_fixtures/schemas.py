@@ -78,6 +78,12 @@ class RiskStaticConfigCurveMeta(TypedDict):
     roll_month: Sequence[int | None]
     roll_day: Sequence[int | None]
     fh_bh_mmdd: Sequence[str | None]
+    curve_input_type: Sequence[str | None]
+    curve_compounding: Sequence[str | None]
+    maturity_calendar: Sequence[str | None]
+    spot_lag_days: Sequence[int | None]
+    business_day_convention: Sequence[str | None]
+    end_of_month: Sequence[bool | None]
     discount_basis: Sequence[str]
     is_default_discount_for_ccy: Sequence[bool]
 

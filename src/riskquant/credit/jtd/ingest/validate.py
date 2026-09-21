@@ -306,17 +306,27 @@ def assert_uniforms_distinct(
     uix: npt.NDArray[np.int32],
     *,
     ctx: str,
+    role: str = "uniform",
 ) -> None:
-    """Each obligor needs its OWN uniform row. Sharing a uniform column makes
-    the conditionally-independent default draws comonotonic (rank-identical),
-    silently breaking the independence the Bernoulli-family models assume."""
+    """Each obligor needs its OWN private row for `role`.
+
+    For the Bernoulli family that row is the uniform: sharing it makes the
+    conditionally-independent default draws comonotonic (rank-identical).
+
+    For the copula family it is the idiosyncratic normal: the latent correlation
+    contract `Corr(A_i, A_j) = sum_k beta_ik beta_jk` assumes `eps_i` is private,
+    and a shared epsilon silently adds `w_i * w_j` to every affected pair (C-07).
+
+    `role` only names the offender in the message; the invariant is identical.
+    """
     vals, counts = np.unique(uix, return_counts=True)
     shared = vals[counts > 1][:_PREVIEW].tolist()
     if shared:
         raise ValueError(
-            f"{ctx}: uniform factor UIX {shared} are shared across obligors. "
-            "Each obligor requires a distinct uniform factor for conditional "
-            "independence (a shared uniform makes defaults comonotonic)."
+            f"{ctx}: {role} factor UIX {shared} are shared across obligors. "
+            f"Each obligor requires a distinct {role} factor; sharing one "
+            "introduces dependence the model's correlation contract does not "
+            "account for."
         )
 
 
@@ -517,7 +527,8 @@ def _assert_column_kinds(frame, contract, factor_name_to_uix, factor_kind, *, ct
 def _assert_distinct_columns(frame, contract, factor_name_to_uix, *, ctx):
     for col in sorted(contract.distinct_columns):
         uix = _resolve(frame, col, factor_name_to_uix, ctx=ctx)
-        assert_uniforms_distinct(uix, ctx=f"{ctx}.{col}")
+        role = col.removesuffix("_factor")
+        assert_uniforms_distinct(uix, ctx=f"{ctx}.{col}", role=role)
 
 
 def _semantic_sf_gaussian(
@@ -588,9 +599,8 @@ def _semantic_mf_gaussian(
     # No factor referenced twice for one obligor.
     if sub.duplicated(subset=["obligor_uid", "factor_name"]).any():
         dups = (
-            sub.loc[
-                sub.duplicated(subset=["obligor_uid", "factor_name"]), "obligor_uid"
-            ]
+            sub
+            .loc[sub.duplicated(subset=["obligor_uid", "factor_name"]), "obligor_uid"]
             .unique()
             .tolist()[:_PREVIEW]
         )

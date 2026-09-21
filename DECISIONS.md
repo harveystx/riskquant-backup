@@ -164,6 +164,8 @@ Never sum mixed-currency P&L before conversion.
 FX risk); a reporting-ccy concept threaded through `solutions.sensitivity_pnl`
 (the engine is deliberately currency-agnostic).
 
+**Status: SUPERSEDED by D081 (2026-09-20).** The equation `dV_report = dV_settlement × F_scenario` is retained here as history. It is the `V_0 = 0` special case of ordinary MTM and omits base-value translation `V_0(q_s − q_0)`. Its justification was inverted: for a USD-priced, EUR-settled position under USD reporting, `W = V_EUR / F = Q·B` has no USDEUR exposure, so ordinary MTM does not "delete" a USD risk — the EUR-book exposure and the translation exposure net exactly. On D014's own example the two measures give −40.5 versus +40.9 USD (a short into a falling price); the sign flip is the omitted translation. Production now uses D081 §2; the former form is unreachable because `V_0` and `q_0` are required inputs.
+
 ## D015 — VaR/ES via `scenario_metrics`; VaR is the negative lower quantile
 **Status:** LOCKED
 **Decision:** reuse `scenario_metrics.api.var_es.compute_var_es`. VaR is the
@@ -218,6 +220,9 @@ cross term), which validates the approximation without switching the main path.
 **Implications:** oracle tests reconcile linear spot (1e-12), quanto-with-cross
 (1e-9), simulated quanto (1e-8). Do not route the main pipeline through
 `run_valuation` per scenario.
+
+**Status: SUPERSEDED by D081 (2026-09-20).** "Full revaluation is an ORACLE, not the risk path" predates batch valuation and encoded a performance judgement. Under D081 the production methodologies are FULL_REVAL, TAYLOR/SUPPLIED and TAYLOR/DERIVED; FULL_REVAL is a production methodology and the exact valuation route, and additionally serves as the consistency reference for Taylor positions that have a raw representation. D018's reconciliation evidence (Taylor ≡ full revaluation for affine/bilinear spot payoffs) is retained as the certification standard for DERIVED on spot.
+
 
 ## D019 — Demo constants are a golden fixture; do not drift
 **Status:** LOCKED
@@ -2930,6 +2935,9 @@ only after RiskQuant has a locked curve-construction contract covering:
 
 The first implementation MAY be a deliberately small construction model. It MUST NOT require the full future multi-curve / IRS architecture merely to establish the first non-trivial discounting path.
 
+
+**Amended 2026-09-18 by D080:** the "Future lifting condition" is met for exactly one curve. `discounting_mode = CURVE` is live for `USD_SOFR_OIS` under D080 and remains fail-closed for every other curve; the gate moved from "any discount curve present" to per-curve constructibility evaluated in the layout plan. `NONE` semantics are unchanged. The dormant log-DF discount producer described under "Previously observed defects" has been deleted rather than repaired.
+
 ## D062 — Packed effective-factor coordinates are in-domain by contract
 
 **Status:** LOCKED
@@ -4015,7 +4023,160 @@ valuation
 This preserves the "kernels just do dumb math" boundary while allowing RiskQuant to own the full future curve-construction contract.
 
 
-## D080 - TODO
+**Amended 2026-09-18 by D080:** §10 (time coordinate), §11 (interpolation) and §12 (extrapolation) are LOCKED as written for `USD_SOFR_OIS`; §13 gains the clause that DF-valued and log-DF-valued inputs have no shock contract and MUST NOT be constructed; §17 is answered for `ZERO_RATE`: `DF = exp(-zT)` with `curve_compounding = CONTINUOUS`. The axis-method fields resolve to Option B (price-curve/surface only). §18 (`USD_CSA_EUR`) remains OPEN.
+
+
+## D080 - First non-trivial discount curve: USD_SOFR_OIS as a continuously compounded zero curve
+
+**Status:** LOCKED (Phases 1-3 implemented and certified)
+**Date:** 2026-09-18
+**Related:** D061 (mode and fail-closed gate), D066 (curve currency), D067 (run as-of), D069 (single normalisation), D077 (topology), D078 (DF semantics), D079 (curve-input contract)
+**Supersedes:** the `D080 - TODO` placeholder. Amends D079 §10-§13 and §17 (see D080.9).
+
+### Context
+D061 left `discounting_mode = CURVE` fail-closed because no economic convention existed for turning configured curve levels into discount factors. D079 fixed the surrounding contract but left the time coordinate, interpolation, extrapolation and the first input representation as open model decisions. Three implementation gaps blocked any constructor regardless of those decisions: LABEL discount curves contributed no pillars to the run universe, no business-day engine existed, and `curve_meta` could not express calendars, spot lags, business-day conventions, compounding or end-of-month behaviour.
+
+### Decision
+**D080.1 Scope.** Exactly one curve is constructible: `USD_SOFR_OIS` (`curve_id 250000000`, USD, basis OIS, LABEL axis, pillars ON/1W/1M/3M/6M/1Y/2Y/5Y/10Y), with `curve_input_type = ZERO_RATE` and `curve_compounding = CONTINUOUS`. Constructibility is tied to **curve identity** (`D080_CONSTRUCTIBLE_CURVE_IDS = {250000000}` in `market_data/assemble.py`), keyed by `curve_id` and never by currency or `(ccy, basis)`: another curve declaring the same metadata fails closed until a decision adds its identity. No other curve, input type, compounding, currency or basis is constructible. *(Clarified at closure: the identity gate is enforced in code, not only by which fixture rows are declared.)*
+
+**D080.2 Metadata.** `CurveMeta` carries six nullable, curve-level construction fields: `curve_input_type`, `curve_compounding`, `maturity_calendar`, `spot_lag_days`, `business_day_convention`, `end_of_month`. They reuse the existing `CurveInputType`, `COMPOUNDING_CONVENTIONS` and `BusinessDayConvention` vocabularies; no new enum was created. A curve is **constructible** only when all six are declared and coherent; absence is `None`, never a default. Curve points inherit through `curve_id`.
+
+**D080.3 Canonical calendar stays sparse (C1, option b).** The canonical US holiday fixture is intentionally sparse (four holidays per year) and is NOT extended by D080. Real-world completeness of any holiday calendar is outside D080. Consequently, for `as_of = 2026-01-15`, `spot = 2026-01-19` (2026-01-19 is not a fixture holiday), and every D080 worked example uses that fixture-true value. Alternative rejected: adding MLK and other federal holidays, because it changes fixture semantics for every future consumer of the calendar.
+
+**D080.4 LABEL vocabulary: rejection, not inference.** `XAxisKind.LABEL` admits `ON, SN, TN, nD, nW, nM, nY`. D080 defines maturities only for `ON, 1W, 1M, 3M, 6M, 1Y, 2Y, 5Y, 10Y`. `SN`, `TN` and `nD` are rejected by the D080 maturity layer with a named error; their semantics are not inferred. The generic LABEL axis is NOT narrowed.
+
+**D080.5 Maturity construction.** `spot = business_day_add(as_of, spot_lag_days, calendar)`; `ON = next_business_day(as_of)` (bypasses spot, never T+3); `1W = adjust(spot + 7 days)`; `nM/nY = adjust(add_months/add_years(spot, n))`; `adjust` = the curve's business-day convention (MOD_FOLLOWING for USD_SOFR_OIS) with the end-of-month rule: if **spot** is its month's last **business** day, the maturity is the target month's last business day. Maturities are scenario-independent and are built once per run. The engine (`riskquant.utils.business_days`) is pandas-free and operates on the compiled `HolidayCalendar.holiday_dates_ord` int32 axis.
+
+**D080.6 Canonical coordinate.** `T = (date_ord - as_of_ord) / 365.0` (ACT/365F, `DAYS_PER_YR_ACT_365F`), float64, for pillars and targets alike. It is independent of the instrument's own accrual convention (SOFR ACT/360 is not used) and distinct from the option `tte_grid` (ACT/365.25), which is untouched.
+
+**D080.7 Mode-gated universe.** `build_universe_mapping` takes `discounting_mode` with no default and carries it on `UniverseMapping`. Under `NONE` no discount pillar is emitted and no discount level is required. Byte identity with the pre-D080 form was measured for exactly four artefacts, and the guarantee is stated at that scope: `UniverseMapping.required_factor_ids`, `shape_discount_curves`, `raw_discount_tenors.shape`, and `MarketDataMatrix.discount_factor_grid` (all ones). Beyond those artefacts, the evidence is semantic rather than a blanket bitwise guarantee: the full-suite failure and error set is unchanged from baseline, and the D019 golden VaR/ES remains unchanged.
+
+**D080.8 Canonical ordering.** Source row order carries no semantic meaning: the layout plan resolves every pillar to its maturity and canonical `T`, then sorts by `T`; an unsorted snapshot is never rejected for being unsorted. After sorting the coordinate sequence MUST be strictly increasing, so duplicate maturities/coordinates are a hard failure (never last-write-wins). Pillars with `T <= 0`, zero market pillars and non-finite levels are hard failures. A single market pillar plus the synthetic anchor is structurally valid. *(Amended at closure: the earlier phrase "unsorted-unfixable input" was misleading and is withdrawn.)*
+
+**D080.9 Mathematics (amends D079 §10-§13, §17 from proposed/open to LOCKED for this curve).**
+- `z` is the D069-normalised decimal zero rate, already scenario-shocked additively upstream (`shift_type = DIFFERENCE` on the rate). The constructor never rescales.
+- `lnDF_p = -z_p * T_p` per pillar and scenario.
+- Anchor `(T = 0, lnDF = 0)` is synthesised per curve, prepended, unshocked, and not a market pillar; `DF(as_of, as_of) = 1.0` exactly.
+- Interpolation: **linear in `lnDF` on `T`**, exact at pillars (piecewise-constant instantaneous forwards, `f = -d lnDF/dT`).
+- Extrapolation: left does not exist (anchored); right **extends the final `lnDF` slope** (`s_last = (lnDF_K - lnDF_{K-1})/(T_K - T_{K-1})`, `forward_last = -s_last`). Flat-DF extrapolation is forbidden.
+- `DF = exp(lnDF)`, strictly positive; `DF > 1` under negative rates is valid and never clipped.
+- Targets with `T < 0` fail before construction.
+
+**D080.10 Kernel reuse.** The constructor (`market_data.curves.zero_curve`) reuses the existing `interp_linear_on_log_values_linear_extrap_3d_numba_kernel`, whose semantics are exactly D080.9 (linear in supplied log values, unclamped right tail). The `..._flat_extrap_...` sibling clamps the weight and would assert zero forward rates; it is not used for discount curves. The dormant `builder._build_discount_factor_grid`, which assumed log-DF quotes and int32 targets, is deleted. The builder's level argument is renamed `raw_discount_levels` because it carries rates, not log-DFs.
+
+**D080.11 Axis-method fields (D079 Option B).** `x_interp_method` / `x_extrap_method` govern price-curve and surface axes only. They are not consulted for discount curves; the discount policy is D080.9.
+
+**D080.12 D061 transition.** `NONE -> DF = 1` unchanged. `CURVE + constructible USD_SOFR_OIS -> construct`. `CURVE + any non-constructible curve -> D061 error at the layout plan`. A CURVE plan carrying a discount curve with no pillars is a wiring defect and raises; it never falls back to `DF = 1`.
+
+### Rationale
+The canonical fixture values (5.30 … 4.00 PERCENT at ON … 10Y) do **not** mathematically distinguish `ZERO_RATE` from `PAR_RATE`: both readings are consistent with those numbers, and the feed contract that would settle it lives in `stx-data-god`, outside this repository (D079 §16). `ZERO_RATE + CONTINUOUS` was therefore selected on constructibility grounds, not on evidence from the fixture: it is the only candidate that needs no bootstrap or schedule machinery (none exists in `riskquant`), already has a locked shock contract (D079 §13), and admits a low-complexity independent oracle. Declaring `curve_input_type = ZERO_RATE` on `USD_SOFR_OIS` is a **data-contract assertion by RiskQuant** about what its feed publishes. If the feed is later confirmed to publish par rates, this declaration must change and D080 must be reopened for that curve; the remaining clauses (coordinate, anchor, interpolation, extrapolation, shock ordering) are independent of that choice and stand. Linear-in-`lnDF` is the one candidate whose economic content is a statement about forwards and which is positivity-preserving under negative rates. Flat-forward extrapolation avoids the zero-forward artefact of flat DF (503 bp at 12y, 2 165 bp at 20y on the canonical curve). Mode-gating is required because unconditional pillar emission would change the meaning of every existing NONE call.
+
+
+
+### Consequences
+NODE forwards and options price with market-derived USD discount factors under `CURVE`. Valuation blocks, `ValuationState`, the fold and every kernel are unchanged: the constructor fills the same `(C, D, S)` grid the NONE branch fills. Certified against `tests/market_data/remediation/d080_oracle.py` (stdlib + numpy only, import-guarded) with max absolute error 0.0 at 21 targets including all pillars, every interior gap, the anchor and the right tail; an asymmetric pillar x scenario shock grid `(1, 13, 3)` reproduces the oracle with max absolute error 0.0; five source-row permutations give bitwise-identical grids; a NODE forward and a NODE option priced by the real pricers reconcile to 1e-12 and 6e-7 respectively.
+
+### Non-scope (deferred, explicitly)
+`PAR_RATE` (schedules, accrual, solver, bootstrap-time interpolation); `DISCOUNT_FACTOR` / `LOG_DISCOUNT_FACTOR` (no shock contract); every other curve family and currency; `USD_CSA_EUR`; IRS; multi-curve; price-curve construction; per-curve interpolation choices; a curve as-of distinct from the run as-of; real-world holiday completeness.
+
+---
+
+
+## D081 — Production P&L constitution: FULL_REVAL, Taylor orders, and ordinary-MTM reporting P&L
+
+**Status:** LOCKED (mathematics and architecture); the policy items listed at the end remain open.
+**Date:** 2026-09-20
+**Supersedes:** D014 (reporting equation), D018 (full revaluation as oracle only).
+**Related:** D019 (sensitivity VaR golden — must be re-pinned), D029, D040, D057, D069, D079, D080.
+
+### 1. Definitions [IDENTITY]
+
+- `p` a production position, one int64 UID, one row.
+- `x` the canonical market state on the run's required-factor axis; `x_0` the bound base state; `x_s` the state of scenario `s` = the shocked levels the scenario stream produces (D029/D040), never the raw shock.
+- `V_p(x)` the position's value in its **settlement currency**, from the declared valuation function.
+- `q_p(x)` the settlement→reporting conversion factor (`{settle}{report}` pair from `portfolio/fx.py`, reciprocal with `invert=1` when only the opposite pair exists).
+- `V_0 = V_p(x_0)`, `V_s = V_p(x_s)`, `q_0 = q_p(x_0)`, `q_s = q_p(x_s)`, `ΔV = V_s − V_0`.
+- **Reporting-currency value** `W_p(x) = V_p(x) · q_p(x)`.
+
+### 2. Reporting P&L [IDENTITY, then POLICY]
+
+$$\Delta W_{p,s} = V_s q_s - V_0 q_0 = \Delta V\, q_s + V_0\,(q_s - q_0)$$
+
+The equality is algebraic: $V_sq_s - V_0q_0 = (V_s - V_0)q_s + V_0q_s - V_0q_0$. **[POLICY]** RiskQuant production P&L is this ordinary mark-to-market quantity, base-value translation included. Consequences that are identities, not choices: `V_s = V_0, q_s = q_0 ⟹ ΔW = 0`; `V_s = V_0 ⟹ ΔW = V_0(q_s − q_0)`; `q_s = q_0 = q ⟹ ΔW = qΔV`; `V_0 = 0 ⟹ ΔW = ΔV q_s`; sign follows ordinary multiplication (`V_0 < 0` and `q_s > q_0` ⟹ negative translation); reciprocal quotation leaves `W` invariant.
+
+### 3. FULL_REVAL [METHOD]
+
+$$\Delta V_{\text{FULL}} = V_p(x_s) - V_p(x_0),\qquad \Delta W_{\text{FULL}} = V_p(x_s)q_s - V_p(x_0)q_0 = \Delta V_{\text{FULL}}\,q_s + V_0(q_s - q_0)$$
+
+Exact with respect to the declared valuation function; no truncation, no derivative. Base and scenario valuation use one valuation route (`producer(mode) → assemble_valuation_state → run_valuation`), one `discounting_mode`, one static configuration; `V_0` is computed once at `S = 1`. FULL_REVAL is a **production methodology** and, where a raw representation exists, also the reference for Taylor consistency.
+
+### 4. Taylor displacement and coordinates [IDENTITY]
+
+For a factor with declared derivative coordinate: ABSOLUTE `Δx_i = x_{i,s} − x_{i,0}`; RELATIVE `Δx_i = x_{i,s}/x_{i,0} − 1` (`x_{i,0} ≠ 0`); LOG `Δx_i = ln(x_{i,s}/x_{i,0})` (`x_{i,0} > 0`, `x_{i,s} > 0`). `Δx` is always recovered from the canonical shocked level and the base level in the derivative's declared coordinate; the scenario's shift representation (DIFFERENCE/SIMPLE/LOG) is independent of it and never enters the Taylor evaluation directly. Derivatives are evaluated at `x_0` in their declared coordinate. Non-native coordinate declarations are either transformed exactly (§8) or rejected; relabelling is forbidden.
+
+### 5. Settlement-currency Taylor orders [METHOD]
+
+With `V_i = ∂V/∂x_i|_{x_0}`, `V_{ii} = ∂²V/∂x_i²|_{x_0}`, `V_{ij} = ∂²V/∂x_i∂x_j|_{x_0}`:
+
+- **FIRST_ORDER** $\Delta V_{\text{FO}} = \sum_i V_i \Delta x_i$ — first order in every settlement factor; all second and higher orders omitted.
+- **SECOND_ORDER_TRUNCATED** $\Delta V_{\text{SO,T}} = \sum_i V_i\Delta x_i + \tfrac12\sum_i V_{ii}\Delta x_i^2$ — a **declared truncation**: cross derivatives are omitted by declaration; second order only in the retained diagonal directions; not complete second order and never described as such.
+- **SECOND_ORDER_FULL** $\Delta V_{\text{SO,F}} = \sum_i V_i\Delta x_i + \tfrac12\sum_i V_{ii}\Delta x_i^2 + \sum_{i<j} V_{ij}\Delta x_i\Delta x_j$ — the reduced symmetric form of $\tfrac12\sum_{i,j}V_{ij}\Delta x_i\Delta x_j$: the diagonal keeps its ½; each unordered pair `i<j` appears once with coefficient 1 because $V_{ij} = V_{ji}$ contributes twice in the double sum and ½·2 = 1. **[IMPL]** the cross CSR stores each unordered pair exactly once; a duplicated pair or an extra ½ on the `i<j` sum is a defect.
+
+Derivation of the expansion: $V(x_0+\Delta x) = V(x_0) + \sum_i V_i\Delta x_i + \tfrac12\sum_{i,j}V_{ij}\Delta x_i\Delta x_j + O(\|\Delta x\|^3)$; each order is the truncation of this series at the stated term.
+
+### 6. Architecture A — Taylor in settlement space, exact reporting transformation [METHOD]
+
+For every Taylor order `T`:
+
+$$\Delta W_T = \Delta V_T\, q_s + V_0\,(q_s - q_0)$$
+
+Taylor Greeks are settlement-currency Greeks; reporting FX is **not** a Taylor factor merely because reporting P&L is required; `V_0` is required for every Taylor position; the reporting transformation is the same one FULL uses. Explicit forms:
+
+$\Delta W_{\text{FO}} = q_s\sum_i V_i\Delta x_i + V_0(q_s-q_0)$; $\Delta W_{\text{SO,T}} = q_s[\sum_i V_i\Delta x_i + \tfrac12\sum_i V_{ii}\Delta x_i^2] + V_0(q_s-q_0)$; $\Delta W_{\text{SO,F}} = q_s[\ldots + \sum_{i<j}V_{ij}\Delta x_i\Delta x_j] + V_0(q_s-q_0)$.
+
+### 7. Order semantics under Architecture A [IDENTITY]
+
+With $\Delta V_T = A_1 + A_2$ ($A_1$ first-order sum, $A_2$ second-order sum) and $q_s = q_0 + \Delta q$:
+
+$$\Delta W_T = q_0A_1 + V_0\Delta q \;+\; q_0A_2 + A_1\Delta q \;+\; A_2\Delta q$$
+
+first order · second order · **third order**. Therefore `SECOND_ORDER_FULL` under Architecture A is *second order in settlement-factor displacement and exact in reporting FX*; jointly expanded it contains the third-order interaction `A_2Δq`. It is **not** a globally second-order expansion in reporting-currency state variables, and the truncated variant is likewise "truncated in settlement space, exact in FX".
+
+For comparison (Architecture B, **not adopted**): the true Taylor of `W = Vq` with `q` a factor has $W_i = q_0V_i$, $W_q = V_0$, $W_{ii} = q_0V_{ii}$, $W_{ij} = q_0V_{ij}$, $W_{qq} = 0$, $W_{iq} = V_i$, giving $\Delta W^{(2)} = q_0A_1 + V_0\Delta q + q_0A_2 + A_1\Delta q$ — identical to Architecture A through second order, lacking only $A_2\Delta q$. Architecture A is selected because it is exact in FX, keeps the sensitivity engine currency-agnostic, requires no FX factor or `W_{iq}` cross terms in any book, and applies one reporting transformation to FULL and Taylor alike. The former D014 measure equals Architecture B with `W_q` set to zero — it drops the only first-order FX term.
+
+### 8. Coordinate transformation and quote scaling [IDENTITY]
+
+For `y = g(x)`: $V_y = V_x\,x'(y)$, $V_{yy} = V_{xx}\,x'(y)^2 + V_x\,x''(y)$, $V_{y_iy_j} = V_{x_ix_j}\,x_i'x_j'$. RELATIVE (`x = x_0(1+y)`): $V_y = V_xx_0$, $V_{yy} = V_{xx}x_0^2$. LOG (`x = x_0e^y`): $V_y = V_xx_0$, $V_{yy} = V_{xx}x_0^2 + V_xx_0$ — the first-derivative term is mandatory. `quote_base` is a **linear** rescale only: $V_i' = b_iV_i$, $V_{ii}' = b_i^2V_{ii}$, $V_{ij}' = b_ib_jV_{ij}$; it must never stand in for a nonlinear coordinate change.
+
+### 9. Reconciliation identity [IDENTITY]
+
+$$\Delta W_{\text{FULL}} - \Delta W_T = q_s\left(\Delta V_{\text{FULL}} - \Delta V_T\right)$$
+
+The translation term cancels because both routes apply the same transformation to the same `V_0` and `q`. Hence reporting conversion is certified independently (L0 oracle) and FULL-vs-Taylor comparison isolates settlement-space approximation error; it is a consistency check, not a proof of either side.
+
+### 10. Dependency set and completeness [METHOD]
+
+`F(p)` = the canonical scenario-axis factors on which `V_p` depends mathematically at the bound base configuration — not arrays a constructor reads, not non-zero Greeks. `V(x,y) = xy` at `y_0 = 0`: `F = {x,y}`, `V_x = 0`, `V_y = x_0`, `V_{xx} = V_{yy} = 0`, `V_{xy} = 1`. Completeness: FIRST_ORDER needs `V_i` for all `i ∈ F(p)`; SECOND_ORDER_TRUNCATED adds `V_{ii}`; SECOND_ORDER_FULL adds `V_{ij}` for all `i<j` in `F(p)`. Known zero is a value; unknown, missing, truncated-by-declaration and unsupported are distinct states, and a sparse lookup miss is a known zero **only** under a full-structure declaration.
+
+### 11. Methodology and universe [METHOD]
+
+`production_method ∈ {FULL_REVAL, TAYLOR}`; `taylor_provenance ∈ {SUPPLIED, DERIVED}` meaningful only under TAYLOR; DERIVED requires a compiled valuation representation. $U_{\text{FULL}} \sqcup U_{\text{SUPPLIED}} \sqcup U_{\text{DERIVED}} = U$ with exact disjointness; undeclared, duplicated or extra positions fail; no default methodology (**P-4 resolved: undeclared fails closed**).
+
+### 12. Precision [IDENTITY]
+
+Displacements are computed in float64 and stored as float32; coefficients and accumulation float64; final P&L float32. With $\varepsilon = 2^{-24}$: $|\delta P| \le \varepsilon(\sum_i|V_i\Delta x_i| + \sum_i|V_{ii}\Delta x_i^2| + 2\sum_{i<j}|V_{ij}\Delta x_i\Delta x_j|) + \varepsilon|P|$. No relative bound on net P&L exists under cancellation and none is claimed.
+
+### 13. Regulatory position [POLICY]
+
+Prudential market-risk frameworks require foreign-currency positions to be translated into the reporting currency and FX/translation risk to be captured; the ordinary-MTM identity above is the direct economic definition of reporting-currency value change and is adopted as RiskQuant's internal methodology in alignment with that principle. No claim is made that any regulation prescribes this formula literally.
+
+### Implications [IMPL]
+
+`reporting.fx_conversion.convert_scenario_pnl_to_reporting_currency` requires `base_settlement_values` and `base_fx_levels`; `ReportingSpec` carries `base_settlement_values` in book order; `risk_run.api` passes `base_levels[fx_factor_rows]` as `q_0`. D019's golden VaR/ES must be re-pinned: every position whose settlement currency differs from the reporting currency now carries base translation. The L0 oracle lives in `tests/reporting/test_fx_conversion.py` and the D019 demo's hand loop.
+
+### Open policy [POLICY]
+
+P-1 admissibility of `SUPPLIED/ATTESTED`; P-2 Taylor eligibility per instrument family; P-3 aggregation stays unsupported below the P&L matrix.
 
 ---
 

@@ -24,7 +24,7 @@ import numpy.typing as npt
 _UNSET_EXPOSURE_MODEL_ID: int = -999
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class _NettingSetView:
     """Universal CSR base for compiled netting-set views."""
 

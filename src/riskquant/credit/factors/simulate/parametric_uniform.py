@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     )
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class IndependentUniformGenerator(CreditFactorGenerator):
     """Zero-allocation independent Uniform(0, 1) latent-factor generator."""
 

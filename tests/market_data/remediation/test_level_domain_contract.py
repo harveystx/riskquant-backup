@@ -126,7 +126,9 @@ def universe(rsc):
     vol[1] = rsc.rel_name_to_rf_id["SPRD_EUR"]
     batch = dataclasses.replace(batch, volatility_ids=np.ascontiguousarray(vol))
     mapper = build_uix_mapper([batch], as_of_ord32=AS_OF_ORD)
-    um = build_universe_mapping(static_config=rsc, uix_mapper=mapper)
+    um = build_universe_mapping(
+        discounting_mode=DiscountingMode.NONE, static_config=rsc, uix_mapper=mapper
+    )
     names = {v: k for k, v in rsc.rel_name_to_rf_id.items()}
     order = [names[int(i)] for i in um.required_factor_ids]
     return mapper, um, order
@@ -325,7 +327,7 @@ def test_builder_entry_point_enforces_the_contract_itself(universe, spy):
             scalar_node_uix_in_universe=um.scalar_node_uix_in_universe,
             scalar_node_strictly_positive=um.scalar_node_strictly_positive,
             raw_discount_tenors=um.raw_discount_tenors,
-            raw_discount_ln_dfs=np.empty((0, 0, 2)),
+            raw_discount_levels=np.empty((0, 0, 2)),
             raw_price_curve_tenors=um.raw_price_curve_tenors,
             raw_price_curve_values=np.empty((0, 0, 2)),
             curve_interp_methods=um.curve_interp_methods,
@@ -361,7 +363,7 @@ def test_negative_rate_is_legal_and_curve_levels_must_be_finite(rsc, universe, s
         scalar_node_uix_in_universe=um.scalar_node_uix_in_universe,
         scalar_node_strictly_positive=um.scalar_node_strictly_positive,
         raw_discount_tenors=np.zeros((1, 1)),
-        raw_discount_ln_dfs=np.full((1, 1, 1), np.nan),
+        raw_discount_levels=np.full((1, 1, 1), np.nan),
         raw_price_curve_tenors=um.raw_price_curve_tenors,
         raw_price_curve_values=np.empty((0, 0, 1)),
         curve_interp_methods=um.curve_interp_methods,
@@ -376,11 +378,16 @@ def test_negative_rate_is_legal_and_curve_levels_must_be_finite(rsc, universe, s
     )
     with pytest.raises(ValueError, match="discount curve levels contain non-finite"):
         builder_mod.build_market_data_matrix(**kwargs)
-    kwargs["raw_discount_ln_dfs"] = np.full((1, 1, 1), -0.02)  # finite: domain passes
-    kwargs["discounting_mode"] = DiscountingMode.CURVE  # market-derived: D061 stops it
-    with pytest.raises(NotImplementedError, match="D061"):
-        builder_mod.build_market_data_matrix(**kwargs)
-    assert "MarketDataMatrix" not in spy
+    # A finite NEGATIVE rate is legal (D078/D080): under CURVE the D080
+    # constructor builds DF = exp(-zT) > 1 for it, with no clipping. The pillar
+    # coordinate here is a positive canonical T because the layout plan would
+    # have produced one; the domain gate is what this test certifies.
+    kwargs["raw_discount_levels"] = np.full((1, 1, 1), -0.02)  # finite: domain passes
+    kwargs["raw_discount_tenors"] = np.full((1, 1), 0.5)
+    kwargs["discounting_mode"] = DiscountingMode.CURVE
+    matrix = builder_mod.build_market_data_matrix(**kwargs)
+    assert np.all(matrix.discount_factor_grid > 0.0)
+    assert np.all(matrix.discount_factor_grid[:, 1:, :] >= 1.0)
 
 
 # ------------------------------------------------------------ route consistency

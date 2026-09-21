@@ -65,6 +65,7 @@ from pydantic import BaseModel, ConfigDict
 from riskquant.pnl.results import PnlMatrix
 from riskquant.sensitivity_pnl.compile import DuplicatePolicy
 from riskquant.solutions.sensitivity_pnl.market import FactorAxis, MarketScenarios
+from riskquant.solutions.sensitivity_pnl.taylor_contract import TaylorDeclaration
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -109,6 +110,10 @@ class SensitivityBookSpec:
     position_uids: Sequence[int] | npt.NDArray[Any] | None = None
     cross_sensitivities: pl.DataFrame | None = None
     duplicate_policy: DuplicatePolicy = DuplicatePolicy.RAISE
+    #: P1-A: the Taylor contract this book claims (order, F(p), base binding).
+    #: None = UNCERTIFIED: compiles for engine-level use, but the production
+    #: entry point refuses it. Present = validated for completeness at compile.
+    taylor_declaration: TaylorDeclaration | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

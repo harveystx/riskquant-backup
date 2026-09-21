@@ -44,7 +44,7 @@ from riskquant.credit.jtd.blocks.stress_regime_bernoulli import (
 from riskquant.credit.jtd.blocks.type_alias import JtdBlockTypeUnion
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class CompiledJtdPortfolio:
     """JTD-ready credit portfolio: an ordered set of compiled obligor blocks."""
 

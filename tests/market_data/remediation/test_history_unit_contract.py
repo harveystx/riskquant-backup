@@ -274,7 +274,9 @@ def _pv(rsc, snap):
     portfolio = compile_portfolio_from_ingest_batch(
         ingest_batch=batch, uix_mapper=mapper
     )
-    um = build_universe_mapping(static_config=rsc, uix_mapper=mapper)
+    um = build_universe_mapping(
+        discounting_mode=DiscountingMode.NONE, static_config=rsc, uix_mapper=mapper
+    )
     matrix = build_market_data_matrix_from_snapshot(
         discounting_mode=DiscountingMode.NONE,
         as_of_date=hf.AS_OF,

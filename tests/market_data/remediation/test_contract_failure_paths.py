@@ -235,26 +235,40 @@ def test_discount_dependent_book_fails_closed_before_any_kernel(rsc):
     batch = _ingest(rsc, [_fwd(1), _opt(2)])
     mapper = build_uix_mapper([batch])
     compile_portfolio_from_ingest_batch(ingest_batch=batch, uix_mapper=mapper)
-    um = build_universe_mapping(static_config=rsc, uix_mapper=mapper)
+    # The constructibility gate is now the earliest edge: this fixture's USD_OIS
+    # declares no D080 metadata, so the CURVE layout plan itself fails closed and
+    # no level is ever gathered.
+    with pytest.raises(NotImplementedError, match="D061"):
+        build_universe_mapping(
+            discounting_mode=DiscountingMode.CURVE,
+            static_config=rsc,
+            uix_mapper=mapper,
+        )
+    # NONE still lays out and builds exactly as before.
+    um = build_universe_mapping(
+        discounting_mode=DiscountingMode.NONE, static_config=rsc, uix_mapper=mapper
+    )
     levels = {"BRENT_FWD[M+0]": 81.0, "VOL_EQ_USD": 18.3, "USD_OIS[3M]": 4.25}
     snap = build_risk_factor_level_snapshot_from_dict(
         as_of_date=hf.AS_OF, levels_dict=levels, static_config=rsc
     )
-    with pytest.raises(NotImplementedError, match="D061"):
-        build_market_data_matrix_from_snapshot(
-            discounting_mode=DiscountingMode.CURVE,
-            as_of_date=hf.AS_OF,
-            uix_mapper=mapper,
-            universe_map=um,
-            snapshot=snap,
-        )
+    matrix = build_market_data_matrix_from_snapshot(
+        discounting_mode=DiscountingMode.NONE,
+        as_of_date=hf.AS_OF,
+        uix_mapper=mapper,
+        universe_map=um,
+        snapshot=snap,
+    )
+    assert np.all(matrix.discount_factor_grid == 1.0)
 
 
 # ---------------------------------------------------------------- D067 as-of identity
 def _spot_run(rsc, mapper_as_of=AS_OF_ORD):
     batch = _ingest(rsc, [_spot(1, "EQ_USD", "EUR")], as_of=None)
     mapper = build_uix_mapper([batch], as_of_ord32=mapper_as_of)
-    um = build_universe_mapping(static_config=rsc, uix_mapper=mapper)
+    um = build_universe_mapping(
+        discounting_mode=DiscountingMode.NONE, static_config=rsc, uix_mapper=mapper
+    )
     return batch, mapper, um
 
 

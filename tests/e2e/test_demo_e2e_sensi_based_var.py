@@ -206,6 +206,11 @@ def test_unregistered_instrument_fails_loud_not_silent(
         "settlement_ccy": ["USD"],
         "strike_price": [100.0],
         "strike_ccy": ["USD"],
+        # Added as test was failing because of missing columns
+        "delivery_date": ["2024-12-31"],
+        "settlement_date": ["2025-01-02"],
+        "under_discount_curve": ["USD"],
+        "strike_discount_curve": ["USD"],
     })
 
     ingest_batch = compile_raw_df_into_ingest_batch(raw_df=raw, static_config=rsc)
@@ -471,10 +476,81 @@ def test_demo_fixture_drives_the_production_entry_point(canonical_risk_run) -> N
     assert np.all(np.isfinite(run.es))
 
 
+def _independent_reporting_pnl(fixture) -> np.ndarray:
+    """
+    L0 oracle for the D019 book: settlement Taylor P&L converted to reporting
+    currency by the ordinary-MTM identity dW = dV*q_s + V0*(q_s - q0) (D081 §2),
+    written as a plain per-position loop that never calls
+    `riskquant.reporting`. USDEUR quotes EUR per USD, so EUR->USD is 1/USDEUR.
+    """
+    import polars as pl
+
+    from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
+    from riskquant.solutions.scenario_models.api import build_scenario_generator
+    from riskquant.solutions.sensitivity_pnl.api import FactorAxis
+
+    su = fixture.shock_universe
+    gen = build_scenario_generator(
+        HistoricalGeneratorConfig(model="historical", horizon=1),
+        data=fixture.historical_matrix,
+    )
+    k, s_total = su.required_factor_ids.shape[0], gen.total_scenarios
+    shocked = np.empty((k, s_total), dtype=np.float64)
+    for batch in gen.iter_batches(
+        required_shift_type_id=su.required_shift_type_id,
+        source_factor_ids=su.source_factor_ids,
+        shock_scale=su.shock_scale,
+        batch_size=s_total,
+    ):
+        out = np.empty((k, batch.shocks.shape[0]), dtype=np.float64)
+        apply_shocks_to_base_levels(base_levels=su.base_levels, batch=batch, out=out)
+        shocked[:, batch.scenario_offset : batch.scenario_offset + out.shape[1]] = out
+    axis = FactorAxis.from_keys(
+        pl.Series("factor_id", su.required_factor_ids.tolist(), dtype=pl.Int32)
+    )
+    dv = np.asarray(
+        fixture.calculator.run(
+            axis.levels(base_levels=su.base_levels, shocked_levels=shocked)
+        ).pnl,
+        dtype=np.float64,
+    )
+    rep = fixture.reporting
+    usdeur_s = shocked[rep.fx_factor_rows][0]
+    usdeur_0 = float(su.base_levels[rep.fx_factor_rows][0])
+    out = np.empty_like(dv)
+    for i, ccy in enumerate(rep.settlement_ccys):
+        if ccy == rep.reporting_ccy:
+            rate_s, rate_0 = np.ones(s_total), 1.0
+        else:
+            rate_s, rate_0 = 1.0 / usdeur_s, 1.0 / usdeur_0
+        out[i] = dv[i] * rate_s + float(rep.base_settlement_values[i]) * (
+            rate_s - rate_0
+        )
+    return out
+
+
 def test_demo_fixture_reconciles_with_pinned_golden_var_es(canonical_risk_run) -> None:
-    """D019 golden fixture: this exact universe, 10-day history, proxy
-    scale, and confidence level pin the portfolio VaR/ES. Change any of
-    those only together with this value."""
-    run, _fixture = canonical_risk_run
-    assert run.portfolio_var == pytest.approx(-159.4309, abs=5e-3)
-    assert run.portfolio_es == pytest.approx(-257.1254, abs=5e-3)
+    """
+    D019 golden fixture under D081: this exact universe, 10-day history, proxy
+    scale and confidence level pin the portfolio VaR/ES.
+
+    History of the pin. Under D014 (`dW = dV*q_s`, superseded) the portfolio VaR
+    was -159.4309 / ES -257.1254. Under D081 ordinary MTM
+    (`dW = V_s*q_s - V_0*q_0 = dV*q_s + V_0*(q_s - q_0)`) the EUR-settled Brent
+    position (V_0 = -4444.20 EUR) carries base-value translation at each
+    scenario's USDEUR, which moves the pin to -172.8161 / -269.8449. Both sets
+    were reproduced by the independent per-position loop below (not by
+    `riskquant.reporting`), so the change is the contract, not a defect.
+    """
+    from riskquant.scenario_metrics.api.var_es import compute_var_es
+
+    run, fixture = canonical_risk_run
+    assert run.portfolio_var == pytest.approx(-172.8161, abs=5e-3)
+    assert run.portfolio_es == pytest.approx(-269.8449, abs=5e-3)
+
+    # independent recomputation from the same inputs
+    rows = _independent_reporting_pnl(fixture)
+    groups = np.ascontiguousarray(np.vstack([rows, rows.sum(axis=0)[None, :]]))
+    ref = compute_var_es(groups, confidence_level=2.0 / 3.0)
+    assert run.portfolio_var == pytest.approx(float(ref.var[-1]), abs=1e-9)
+    assert run.portfolio_es == pytest.approx(float(ref.es[-1]), abs=1e-9)

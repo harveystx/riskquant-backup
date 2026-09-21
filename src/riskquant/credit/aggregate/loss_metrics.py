@@ -19,14 +19,14 @@ the mean beyond it.
 from __future__ import annotations
 
 __all__ = [
-    "expected_loss",
-    "loss_var_es",
-    "value_at_risk",
-    "expected_shortfall",
-    "tail_var_es_by_group",
-    "loss_var_es_contribution",
-    "loss_quantiles",
     "PortfolioLossDistribution",
+    "expected_loss",
+    "expected_shortfall",
+    "loss_quantiles",
+    "loss_var_es",
+    "loss_var_es_contribution",
+    "tail_var_es_by_group",
+    "value_at_risk",
 ]
 
 from dataclasses import dataclass
@@ -135,7 +135,7 @@ def loss_quantiles(portfolio_loss: _F64_1D, alphas: _F64_1D) -> _F64_1D:
     return np.ascontiguousarray(np.quantile(portfolio_loss, alphas), dtype=np.float64)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class PortfolioLossDistribution:
     """
     The portfolio loss distribution — a per-scenario total-loss vector with the

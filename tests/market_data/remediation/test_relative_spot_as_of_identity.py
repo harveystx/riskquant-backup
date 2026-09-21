@@ -128,7 +128,9 @@ def _run(rsc, book, *, as_of, levels, ingest_as_of=None, portfolio=None):
     portfolio = portfolio or compile_portfolio_from_ingest_batch(
         ingest_batch=batch, uix_mapper=mapper
     )
-    um = build_universe_mapping(static_config=rsc, uix_mapper=mapper)
+    um = build_universe_mapping(
+        discounting_mode=DiscountingMode.NONE, static_config=rsc, uix_mapper=mapper
+    )
     snapshot = compile_risk_factor_level_snapshot_from_levels_dict(
         as_of_date=as_of, levels_dict=levels, static_config=rsc
     )
@@ -180,7 +182,9 @@ def test_missing_run_as_of_fails_before_market_data_state(rsc, name):
     assert int(batch.as_of_ord32) == int(NO_DATE_ORD32)
     mapper = build_uix_mapper([batch])
     assert mapper.as_of_ord32 is None
-    um = build_universe_mapping(static_config=rsc, uix_mapper=mapper)
+    um = build_universe_mapping(
+        discounting_mode=DiscountingMode.NONE, static_config=rsc, uix_mapper=mapper
+    )
     snapshot = compile_risk_factor_level_snapshot_from_levels_dict(
         as_of_date=A, levels_dict={name: 80.0}, static_config=rsc
     )
@@ -334,7 +338,9 @@ def test_canonical_relative_spot_rows_resolve_at_the_canonical_as_of(rsc):
         portfolio = compile_portfolio_from_ingest_batch(
             ingest_batch=batch, uix_mapper=mapper
         )
-        um = build_universe_mapping(static_config=rsc, uix_mapper=mapper)
+        um = build_universe_mapping(
+            discounting_mode=DiscountingMode.NONE, static_config=rsc, uix_mapper=mapper
+        )
         names = {v: k for k, v in rsc.rel_name_to_rf_id.items()}
         snapshot = compile_risk_factor_level_snapshot_from_levels_dict(
             as_of_date=A,

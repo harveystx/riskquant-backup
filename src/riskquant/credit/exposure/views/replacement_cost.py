@@ -12,7 +12,7 @@ from riskquant.credit.exposure.models import REPLACEMENT_COST_ID
 from riskquant.credit.exposure.views.base import _NettingSetView
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class RcNettingSetView(_NettingSetView):
     """Replacement Cost netting-set view: CSR grouping + net collateral."""
 
