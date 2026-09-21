@@ -9,7 +9,7 @@ no Polars, no DataFrames, and no risk-factor names.
 
 Conversion into the validated edge contract
 (`solutions.sensitivity_pnl.SensitivityBookSpec`) is deliberately NOT done
-here -- that is the job of `sensitivities.book_adapter`, so that Polars and
+here -- that is the job of `solutions.sensitivity_pnl.book_adapter`, so that Polars and
 Pydantic never reach a kernel. See `sensitivities.engine` for the full flow.
 
 Layout

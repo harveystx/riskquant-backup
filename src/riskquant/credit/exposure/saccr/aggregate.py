@@ -6,7 +6,7 @@ The add-on depends only on effective notionals, never on marks, so it is compute
 once here, not in the per-scenario kernel. Chain of segment reductions:
 
   trade -> (netting set, hedging set, subclass):  D_jk = sum(effective_notional)
-  add-on per (ns,hs,subclass):                    A_jk = SF_subclass * |D_jk|
+  add-on per (ns,hs,subclass):                    A_jk = SF_subclass * D_jk (signed)
   hedging-set correlation:  A_hs = sqrt( (rho*sum_k A_jk)^2 + (1-rho^2)*sum_k A_jk^2 )
   netting set:              AddOn = sum_hs A_hs
 
@@ -54,7 +54,11 @@ def compute_saccr_add_on(
 
     # D_jk over (netting set, hedging set, subclass)
     key3 = np.stack(
-        [trade_netting_set_id, hedging_set.astype(np.int64), trade_subclass_uix.astype(np.int64)],
+        [
+            trade_netting_set_id,
+            hedging_set.astype(np.int64),
+            trade_subclass_uix.astype(np.int64),
+        ],
         axis=1,
     )
     uniq3, inv3 = np.unique(key3, axis=0, return_inverse=True)
@@ -67,14 +71,16 @@ def compute_saccr_add_on(
             ctx="saccr add-on: group subclass->SF",
         )
     ]
-    add_on_jk = sf_jk * np.abs(d_jk)
+    add_on_jk = sf_jk * d_jk
 
     # hedging-set correlation over (netting set, hedging set)
     key2 = uniq3[:, :2]
     uniq2, inv2 = np.unique(key2, axis=0, return_inverse=True)
     inv2 = inv2.ravel()
     sum_a = np.bincount(inv2, weights=add_on_jk, minlength=uniq2.shape[0])
-    sum_a_sq = np.bincount(inv2, weights=add_on_jk * add_on_jk, minlength=uniq2.shape[0])
+    sum_a_sq = np.bincount(
+        inv2, weights=add_on_jk * add_on_jk, minlength=uniq2.shape[0]
+    )
     rho = saccr_config.hedging_set_rho[
         searchsorted_or_raise(
             universe=saccr_config.hedging_set_uix,

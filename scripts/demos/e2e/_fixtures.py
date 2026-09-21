@@ -76,14 +76,14 @@ from riskquant.portfolio.ingest.pipeline import compile_raw_df_into_ingest_batch
 from riskquant.proxy_resolver.proxy import (
     resolve_required_factor_ids_to_market_data_factor_ids,
 )
-from riskquant.sensitivities.book_adapter import (
-    build_sensitivity_book_spec,
-    derive_taylor_declaration,
-)
 from riskquant.sensitivities.engine import run_sensitivities
 from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
 from riskquant.solutions.risk_run.schemas import ReportingSpec
-from riskquant.solutions.sensitivity_pnl.api import SensitivityPnlCalculator
+from riskquant.solutions.sensitivity_pnl.api import (
+    SensitivityPnlCalculator,
+    build_sensitivity_book_spec,
+    derive_taylor_declaration,
+)
 from riskquant.solutions.sensitivity_pnl.taylor_contract import (
     TaylorBaseBinding,
     TaylorOrder,

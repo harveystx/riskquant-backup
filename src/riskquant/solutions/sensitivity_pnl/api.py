@@ -39,6 +39,8 @@ __all__ = [
     "allocate_pnl_grid",
     "assess_characteristic_displacement",
     "assess_taylor_validity",
+    "build_sensitivity_book_spec",
+    "derive_taylor_declaration",
     "run_sensitivity_pnl",
     "write_sensitivity_pnl",
 ]
@@ -52,6 +54,10 @@ from riskquant.sensitivity_pnl.conventions import (
     DisplacementConvention,
 )
 from riskquant.sensitivity_pnl.grid import PnlGrid, allocate_pnl_grid
+from riskquant.solutions.sensitivity_pnl.book_adapter import (
+    build_sensitivity_book_spec,
+    derive_taylor_declaration,
+)
 from riskquant.solutions.sensitivity_pnl.calculator import SensitivityPnlCalculator
 from riskquant.solutions.sensitivity_pnl.errors import (
     InputDefect,

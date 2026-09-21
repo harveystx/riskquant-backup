@@ -1,4 +1,4 @@
-# src/riskquant/sensitivities/book_adapter.py
+# src/riskquant/solutions/sensitivity_pnl/book_adapter.py
 """
 Edge adapter: `BlockSensitivities` -> `SensitivityBookSpec`.
 
@@ -40,15 +40,15 @@ import numpy as np
 import numpy.typing as npt
 import polars as pl
 
-from riskquant.solutions.sensitivity_pnl.api import (
-    DisplacementConvention,
-    FactorAxis,
-    SensitivityBookSpec,
-)
+from riskquant.sensitivity_pnl.conventions import DisplacementConvention
+from riskquant.solutions.sensitivity_pnl.market import FactorAxis
+from riskquant.solutions.sensitivity_pnl.schemas import SensitivityBookSpec
 from riskquant.solutions.sensitivity_pnl.taylor_contract import (
     TaylorBaseBinding,
+    TaylorContractError,
     TaylorDeclaration,
     TaylorOrder,
+    base_levels_digest,
 )
 
 if TYPE_CHECKING:
@@ -61,6 +61,7 @@ def build_sensitivity_book_spec(
     displacement_convention: DisplacementConvention = DisplacementConvention.ABSOLUTE,
     quote_base: float = 1.0,
     base_levels_by_factor: Mapping[int, float] | None = None,
+    base_binding: TaylorBaseBinding | None = None,
 ) -> SensitivityBookSpec:
     """
     Convert computed block sensitivities into the canonical, validated book.
@@ -94,6 +95,7 @@ def build_sensitivity_book_spec(
     d2 = np.asarray(sensitivities.second_order, dtype=np.float64)
     cx = np.asarray(sensitivities.cross_second_order, dtype=np.float64)
     convention = DisplacementConvention(displacement_convention)
+    transform_base_digest: str | None = None
     if convention is not DisplacementConvention.ABSOLUTE:
         if base_levels_by_factor is None:
             raise ValueError(
@@ -101,6 +103,13 @@ def build_sensitivity_book_spec(
                 "base levels (base_levels_by_factor): sensitizers emit ABSOLUTE "
                 "derivatives and relabelling them is mathematically invalid."
             )
+        # P1-A closure: the transformation base IS the bound Taylor base. The
+        # mapping must be the full bound axis, and its identity-keyed digest
+        # (the one authoritative levels digest) must equal the binding's --
+        # checked BEFORE any coefficient is transformed.
+        transform_base_digest = _require_bound_transform_base(
+            base_levels_by_factor, base_binding, convention
+        )
         rf = np.asarray(sensitivities.factor_rf_ids, dtype=np.int64)
         x0 = _base_levels_for(rf, base_levels_by_factor, convention)
         d1_native = d1
@@ -164,6 +173,7 @@ def build_sensitivity_book_spec(
         factor_axis=axis,
         position_uids=np.unique(sensitivities.position_uids).tolist(),
         cross_sensitivities=cross,
+        coordinate_transform_base_digest=transform_base_digest,
     )
 
 
@@ -218,3 +228,29 @@ def derive_taylor_declaration(
         zero_exposure_position_uids=(),
         base_binding=base_binding,
     )
+
+
+def _require_bound_transform_base(
+    base_levels_by_factor: Mapping[int, float],
+    base_binding: TaylorBaseBinding | None,
+    convention: DisplacementConvention,
+) -> str:
+    """Digest of the transformation base, proven equal to the bound base."""
+    if base_binding is None:
+        raise TaylorContractError(
+            f"a {convention.name} coordinate transformation is evaluated at a base "
+            "and must be bound to it: pass the TaylorBaseBinding the book will "
+            "carry (base_binding)."
+        )
+    ids = np.fromiter((int(k) for k in base_levels_by_factor), dtype=np.int32)
+    levels = np.fromiter(
+        (float(base_levels_by_factor[int(k)]) for k in ids.tolist()), dtype=np.float64
+    )
+    digest = base_levels_digest(factor_ids=ids, base_levels=levels)
+    if digest != base_binding.base_levels_digest:
+        raise TaylorContractError(
+            "coordinate transformation base differs from the bound Taylor base "
+            "(base_levels_digest mismatch): transforming at one base and binding "
+            "the result to another is mathematically invalid."
+        )
+    return digest

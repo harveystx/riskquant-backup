@@ -48,7 +48,6 @@ from riskquant.proxy_resolver.proxy import (
     RES_ID_PROXY,
     resolve_required_factor_ids_to_market_data_factor_ids,
 )
-from riskquant.sensitivities.book_adapter import build_sensitivity_book_spec
 from riskquant.sensitivities.engine import run_sensitivities
 from riskquant.simlab.builder.shock_universe import build_shock_universe
 from riskquant.simlab.scenarios.base import ScenarioSetBatch
@@ -61,6 +60,7 @@ from riskquant.solutions.sensitivity_pnl.api import (
     FactorAxis,
     SensitivityBookSpec,
     SensitivityPnlCalculator,
+    build_sensitivity_book_spec,
 )
 from riskquant.solutions.sensitivity_pnl.errors import SensitivityPnlInputError
 from riskquant.utils.dates import date_to_ord32

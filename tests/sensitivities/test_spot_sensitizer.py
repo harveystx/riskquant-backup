@@ -16,14 +16,16 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from riskquant.sensitivities.book_adapter import build_sensitivity_book_spec
 from riskquant.sensitivities.result import BlockSensitivities
 from riskquant.sensitivities.sensitizer_registry import (
     BLOCK_SENSITIZERS,
     UNREGISTERED_BLOCK_TYPE_NAMES,
     resolve_sensitizer,
 )
-from riskquant.solutions.sensitivity_pnl.api import SensitivityPnlCalculator
+from riskquant.solutions.sensitivity_pnl.api import (
+    SensitivityPnlCalculator,
+    build_sensitivity_book_spec,
+)
 from riskquant.valuation.blocks.block_type import SPOT_BLOCK_TYPE_ID, BlockType
 
 

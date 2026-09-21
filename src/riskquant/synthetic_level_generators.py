@@ -1,3 +1,4 @@
+# src/riskquant/synthetic_level_generators.py
 """
 Synthetic level generators for testing, demonstrations, and diagnostics.
 
@@ -1600,13 +1601,11 @@ class SyntheticLevelGenerator:
                 specification=specification,
             )
 
-            normalised_specs.append(
-                (
-                    name,
-                    kind,
-                    kwargs,
-                )
-            )
+            normalised_specs.append((
+                name,
+                kind,
+                kwargs,
+            ))
 
         shocks = self._draw_correlated_shocks(
             num_series=len(normalised_specs),

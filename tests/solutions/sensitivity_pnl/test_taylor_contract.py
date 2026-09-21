@@ -17,16 +17,14 @@ import numpy as np
 import polars as pl
 import pytest
 
-from riskquant.sensitivities.book_adapter import (
-    build_sensitivity_book_spec,
-    derive_taylor_declaration,
-)
 from riskquant.sensitivities.result import BlockSensitivities
 from riskquant.sensitivity_pnl.conventions import DisplacementConvention
 from riskquant.solutions.sensitivity_pnl.api import (
     FactorAxis,
     SensitivityBookSpec,
     SensitivityPnlCalculator,
+    build_sensitivity_book_spec,
+    derive_taylor_declaration,
 )
 from riskquant.solutions.sensitivity_pnl.taylor_contract import (
     TaylorBaseBinding,
@@ -121,6 +119,17 @@ def _block(d1, d2, *, rf=X):
     )
 
 
+def _lv(mapping):
+    """Authoritative identity-keyed levels digest of a {factor: level} base."""
+    return base_levels_digest(
+        factor_ids=np.array(list(mapping), np.int32),
+        base_levels=np.array(list(mapping.values()), np.float64),
+    )
+
+
+BOUND = {X: 2.0, Y: 0.0}  # the base `_binding()` is bound to
+
+
 # Oracle for B/C/G: V(x) = x^3 + 2x^2 + 7x at x0 = 2 -> V_x = 27, V_xx = 16.
 X0, VX, VXX = 2.0, 27.0, 16.0
 
@@ -138,7 +147,8 @@ def test_b_relative_transformation_is_exact():
     spec = build_sensitivity_book_spec(
         sensitivities=_block(VX, VXX),
         displacement_convention=DisplacementConvention.RELATIVE,
-        base_levels_by_factor={X: X0},
+        base_levels_by_factor=BOUND,
+        base_binding=_binding(),
     )
     row = spec.sensitivities.row(0, named=True)
     assert row["first_order"] == pytest.approx(VX * X0)  # 54
@@ -149,7 +159,8 @@ def test_c_log_transformation_carries_the_first_derivative_term():
     spec = build_sensitivity_book_spec(
         sensitivities=_block(VX, VXX),
         displacement_convention=DisplacementConvention.LOG,
-        base_levels_by_factor={X: X0},
+        base_levels_by_factor=BOUND,
+        base_binding=_binding(),
     )
     row = spec.sensitivities.row(0, named=True)
     assert row["first_order"] == pytest.approx(54.0)
@@ -162,7 +173,8 @@ def test_c_log_taylor_matches_the_exact_second_order_expansion_in_log_space():
     spec = build_sensitivity_book_spec(
         sensitivities=_block(VX, VXX),
         displacement_convention=DisplacementConvention.LOG,
-        base_levels_by_factor={X: X0},
+        base_levels_by_factor=BOUND,
+        base_binding=_binding(),
     )
     calc = SensitivityPnlCalculator.compile(
         SensitivityBookSpec(
@@ -185,7 +197,8 @@ def test_d_relative_zero_base_fails_closed():
         build_sensitivity_book_spec(
             sensitivities=_block(VX, VXX),
             displacement_convention=DisplacementConvention.RELATIVE,
-            base_levels_by_factor={X: 0.0},
+            base_levels_by_factor={X: 0.0, Y: 0.0},
+            base_binding=_binding(base_levels_digest=_lv({X: 0.0, Y: 0.0})),
         )
 
 
@@ -195,7 +208,8 @@ def test_e_log_non_positive_base_fails_closed(x0):
         build_sensitivity_book_spec(
             sensitivities=_block(VX, VXX),
             displacement_convention=DisplacementConvention.LOG,
-            base_levels_by_factor={X: x0},
+            base_levels_by_factor={X: x0, Y: 0.0},
+            base_binding=_binding(base_levels_digest=_lv({X: x0, Y: 0.0})),
         )
 
 
@@ -203,7 +217,8 @@ def test_f_log_non_positive_scenario_level_fails_closed():
     spec = build_sensitivity_book_spec(
         sensitivities=_block(VX, VXX),
         displacement_convention=DisplacementConvention.LOG,
-        base_levels_by_factor={X: X0},
+        base_levels_by_factor=BOUND,
+        base_binding=_binding(),
     )
     calc = SensitivityPnlCalculator.compile(
         SensitivityBookSpec(
@@ -466,3 +481,100 @@ def test_derived_declaration_keeps_zero_greek_dependencies():
         build_sensitivity_book_spec(sensitivities=blk), taylor_declaration=decl
     )
     SensitivityPnlCalculator.compile(spec)
+
+
+# ============================================ P1-A closure: transform base = bound base
+@pytest.mark.parametrize(
+    "convention", [DisplacementConvention.RELATIVE, DisplacementConvention.LOG]
+)
+def test_coordinate_transform_rejects_base_mismatch(convention):
+    """
+    Bound at base A (x0 = 2), transformed at base B (x0 = 3). A wrong-base LOG
+    transform would give V_y = 81, V_yy = 225 -- plausible numbers -- so the
+    OPERATION itself must be refused, before any coefficient is produced.
+    """
+    produced = None
+    with pytest.raises(TaylorContractError, match="transformation base differs"):
+        produced = build_sensitivity_book_spec(
+            sensitivities=_block(VX, VXX),
+            displacement_convention=convention,
+            base_levels_by_factor={X: 3.0, Y: 0.0},
+            base_binding=_binding(),
+        )
+    assert produced is None
+
+
+def test_coordinate_transform_accepts_the_bound_base_with_oracle_values():
+    spec = build_sensitivity_book_spec(
+        sensitivities=_block(VX, VXX),
+        displacement_convention=DisplacementConvention.LOG,
+        base_levels_by_factor=BOUND,
+        base_binding=_binding(),
+    )
+    row = spec.sensitivities.row(0, named=True)
+    assert row["first_order"] == pytest.approx(VX * X0)
+    assert row["second_order"] == pytest.approx(VXX * X0**2 + VX * X0)
+    assert spec.coordinate_transform_base_digest == _binding().base_levels_digest
+
+
+def test_coordinate_transform_base_is_identity_keyed_not_positional():
+    reordered = {Y: 0.0, X: 2.0}  # same factor -> level associations
+    build_sensitivity_book_spec(
+        sensitivities=_block(VX, VXX),
+        displacement_convention=DisplacementConvention.LOG,
+        base_levels_by_factor=reordered,
+        base_binding=_binding(),
+    )
+    swapped = {X: 0.0, Y: 2.0}  # levels exchanged between identities
+    with pytest.raises(TaylorContractError, match="transformation base differs"):
+        build_sensitivity_book_spec(
+            sensitivities=_block(VX, VXX),
+            displacement_convention=DisplacementConvention.RELATIVE,
+            base_levels_by_factor=swapped,
+            base_binding=_binding(),
+        )
+
+
+def test_transformed_book_cannot_be_rebound_to_another_base():
+    """Transform at A, then attach a declaration bound at B: compile refuses."""
+    spec = build_sensitivity_book_spec(
+        sensitivities=_block(VX, VXX),
+        displacement_convention=DisplacementConvention.LOG,
+        base_levels_by_factor=BOUND,
+        base_binding=_binding(),
+    )
+    at_b = _binding(base_levels_digest=_lv({X: 3.0, Y: 0.0}))
+    rebound = dataclasses.replace(
+        spec,
+        factor_axis=FactorAxis.from_keys(pl.Series("factor_id", [X], dtype=pl.Int32)),
+        position_uids=[1],
+        taylor_declaration=TaylorDeclaration(
+            order=TaylorOrder.SECOND_ORDER_TRUNCATED,
+            dependencies=pl.DataFrame(
+                {"position_id": [1], "factor_id": [X]},
+                schema={"position_id": pl.Int64, "factor_id": pl.Int32},
+            ),
+            zero_exposure_position_uids=(),
+            base_binding=at_b,
+        ),
+    )
+    with pytest.raises(TaylorContractError, match="transformation base differs"):
+        SensitivityPnlCalculator.compile(rebound)
+
+
+def test_transform_without_a_binding_is_refused():
+    with pytest.raises(TaylorContractError, match="must be bound"):
+        build_sensitivity_book_spec(
+            sensitivities=_block(VX, VXX),
+            displacement_convention=DisplacementConvention.LOG,
+            base_levels_by_factor=BOUND,
+        )
+
+
+def test_native_absolute_needs_no_transformation_base():
+    """Rule D: ABSOLUTE is the sensitizer's native coordinate, so no
+    base-dependent operation happens and no transformation base is recorded."""
+    spec = build_sensitivity_book_spec(sensitivities=_block(VX, VXX))
+    assert spec.coordinate_transform_base_digest is None
+    row = spec.sensitivities.row(0, named=True)
+    assert (row["first_order"], row["second_order"]) == (VX, VXX)
