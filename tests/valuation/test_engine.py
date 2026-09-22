@@ -2,10 +2,6 @@
 """
 Current `run_valuation` semantics.
 
-Replaces the stale module of the same name, which imported
-`VanillaForwardNodeBlock`, constructed `SpotBlock(spot_price_uix=, fx_uix=,
-fx_invert=)` and called `run_valuation` without `out=`. None of those exist.
-
 Current signature:
 
     run_valuation(*, portfolio, valuation_state, out) -> None

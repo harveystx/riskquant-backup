@@ -1722,26 +1722,10 @@ This is a genuine valuation/model-primitive defect and is live.
 
 **VAL-02 — CRITICAL — current valuation test suite is substantially dead.**
 
-Six of eight modules beneath `tests/valuation/` import modules/classes that do not
-exist in the current repository, including:
-
-* `riskquant.valuation.models.black_scholes`;
-* `pricers._deprecated.*`;
-* `VanillaForwardNodeBlock`;
-* `VanillaForwardCurveBlock`;
-* `VanillaEuropeanOptionNodeBlock`;
-* `VanillaEuropeanOptionCurveBlock`.
-
-`test_engine.py` also constructs the current `SpotBlock` using fields that no
-longer exist and calls `run_valuation` without its required `out=` argument.
-
-These are collection/API failures rather than failed mathematical assertions.
-
-The only live mathematical valuation test found is a small Spot-kernel smoke
-test and does not establish correctness of the broader valuation package.
-
-Therefore prior mathematical conclusions are audit evidence, not repository
-assurance.
+<!-- # TODO: We need to update this. src/riskquant/valuation/pricers/_deprecated was
+removed from RiskQuant. It was legacy dead code that survived from a previous
+refactor. It is now gone. Any reference to src/riskquant/valuation/pricers/_deprecated
+are invalid and stale and should be ignored. -->
 
 ### Reachability state
 
@@ -4086,101 +4070,334 @@ NODE forwards and options price with market-derived USD discount factors under `
 
 ---
 
-## D081 — Production P&L constitution: FULL_REVAL, Taylor orders, and ordinary-MTM reporting P&L
+## D081 — Production P&L constitution: FULL_REVAL, Taylor orders, ordinary-MTM reporting P&L
 
-**Status:** LOCKED (mathematics and architecture); the policy items listed at the end remain open.
+**Status:** LOCKED (mathematics and architecture)
 **Date:** 2026-09-20
-**Supersedes:** D014 (reporting equation), D018 (full revaluation as oracle only).
-**Related:** D019 (sensitivity VaR golden — must be re-pinned), D029, D040, D057, D069, D079, D080.
+**Supersedes:** D014 (reporting equation), D018 (FULL_REVAL as oracle only)
+**Related:** D019, D029, D040, D057, D067, D069, D079, D080, P1-B run-identity contract
 
-### 1. Definitions [IDENTITY]
+---
 
-- `p` a production position, one int64 UID, one row.
-- `x` the canonical market state on the run's required-factor axis; `x_0` the bound base state; `x_s` the state of scenario `s` = the shocked levels the scenario stream produces (D029/D040), never the raw shock.
-- `V_p(x)` the position's value in its **settlement currency**, from the declared valuation function.
-- `q_p(x)` the settlement→reporting conversion factor (`{settle}{report}` pair from `portfolio/fx.py`, reciprocal with `invert=1` when only the opposite pair exists).
-- `V_0 = V_p(x_0)`, `V_s = V_p(x_s)`, `q_0 = q_p(x_0)`, `q_s = q_p(x_s)`, `ΔV = V_s − V_0`.
-- **Reporting-currency value** `W_p(x) = V_p(x) · q_p(x)`.
+### 1. Economic identity and state [IDENTITY]
+
+* `p` is a production position identified by exactly one int64 economic UID. Final production P&L has exactly one row per economic UID.
+* The underlying valuation representation may contain multiple rows for one economic UID. Such rows must be aggregated to the economic UID before entering the production P&L grid.
+* `x` is the canonical market state on the run's authoritative ordered factor axis.
+* `x_0` is the authoritative bound base state.
+* `x_s` is the canonical shocked-level state for scenario `s`, exactly as produced by the scenario stream. It is a shocked **level state**, never a raw shock representation.
+* `V_p(x)` is the position value in its settlement currency under the declared valuation function.
+* `q_p(x)` is the settlement-to-reporting conversion factor for the declared settlement/reporting currency pair. When only the reciprocal quotation exists, the reciprocal conversion is used exactly once.
+* `W_p(x)` is the reporting-currency value:
+
+$$
+W_p(x)=V_p(x)\,q_p(x)
+$$
+
+* `V_0 = V_p(x_0)`, `V_s = V_p(x_s)`, and `\Delta V = V_s - V_0`.
+
+---
 
 ### 2. Reporting P&L [IDENTITY, then POLICY]
 
-$$\Delta W_{p,s} = V_s q_s - V_0 q_0 = \Delta V\, q_s + V_0\,(q_s - q_0)$$
+Production reporting-currency P&L is the ordinary mark-to-market change in reporting-currency value:
 
-The equality is algebraic: $V_sq_s - V_0q_0 = (V_s - V_0)q_s + V_0q_s - V_0q_0$. **[POLICY]** RiskQuant production P&L is this ordinary mark-to-market quantity, base-value translation included. Consequences that are identities, not choices: `V_s = V_0, q_s = q_0 ⟹ ΔW = 0`; `V_s = V_0 ⟹ ΔW = V_0(q_s − q_0)`; `q_s = q_0 = q ⟹ ΔW = qΔV`; `V_0 = 0 ⟹ ΔW = ΔV q_s`; sign follows ordinary multiplication (`V_0 < 0` and `q_s > q_0` ⟹ negative translation); reciprocal quotation leaves `W` invariant.
+$$
+\Delta W_{p,s}
+=
+V_s q_s - V_0 q_0
+=
+\Delta V\,q_s + V_0(q_s-q_0)
+$$
+
+The equality is algebraic:
+
+$$
+V_sq_s - V_0q_0
+=
+(V_s-V_0)q_s + V_0q_s - V_0q_0
+$$
+
+The production policy is therefore:
+
+> **Reporting P&L is the change in the position's reporting-currency value, including base-value FX translation.**
+
+The following are consequences of that identity, not independent policy choices:
+
+* `V_s = V_0` and `q_s = q_0` implies `\Delta W = 0`.
+* `V_s = V_0` implies `\Delta W = V_0(q_s-q_0)`.
+* `q_s = q_0 = q` implies `\Delta W = q\,\Delta V`.
+* `V_0 = 0` implies `\Delta W = \Delta V\,q_s`.
+* Sign follows ordinary multiplication. For example, `V_0 < 0` and `q_s > q_0` implies a negative translation contribution.
+* Reciprocal FX quotation produces the same reporting-currency value `W` when applied consistently.
+* Reporting FX is not a Taylor factor and is not included in Taylor displacement coordinates.
+
+---
 
 ### 3. FULL_REVAL [METHOD]
 
-$$\Delta V_{\text{FULL}} = V_p(x_s) - V_p(x_0),\qquad \Delta W_{\text{FULL}} = V_p(x_s)q_s - V_p(x_0)q_0 = \Delta V_{\text{FULL}}\,q_s + V_0(q_s - q_0)$$
+FULL_REVAL computes settlement-currency valuation movement directly from the declared valuation function:
 
-Exact with respect to the declared valuation function; no truncation, no derivative. Base and scenario valuation use one valuation route (`producer(mode) → assemble_valuation_state → run_valuation`), one `discounting_mode`, one static configuration; `V_0` is computed once at `S = 1`. FULL_REVAL is a **production methodology** and, where a raw representation exists, also the reference for Taylor consistency.
+$$
+\Delta V_{\mathrm{FULL}}
+=
+V_p(x_s)-V_p(x_0)
+$$
+
+and reporting P&L is:
+
+$$
+\Delta W_{\mathrm{FULL}}
+=
+V_p(x_s)q_s - V_p(x_0)q_0
+=
+\Delta V_{\mathrm{FULL}}q_s
++
+V_0(q_s-q_0)
+$$
+
+FULL_REVAL is exact with respect to the declared valuation function and its numerical implementation. It is not Taylor-truncated and does not use derivatives.
+
+Base and scenario valuation use the same valuation route, static configuration, valuation contract, and `discounting_mode`. The base valuation is computed once from the authoritative base state.
+
+For Taylor production, **`V_0` is run-computed from the authoritative valuation representation and base state. It is not an independent caller-authoritative Taylor input.**
+
+FULL_REVAL is a production methodology. Where a raw representation exists, FULL_REVAL also provides the reference valuation for Taylor consistency checks.
+
+---
 
 ### 4. Taylor displacement and coordinates [IDENTITY]
 
-For a factor with declared derivative coordinate: ABSOLUTE `Δx_i = x_{i,s} − x_{i,0}`; RELATIVE `Δx_i = x_{i,s}/x_{i,0} − 1` (`x_{i,0} ≠ 0`); LOG `Δx_i = ln(x_{i,s}/x_{i,0})` (`x_{i,0} > 0`, `x_{i,s} > 0`). `Δx` is always recovered from the canonical shocked level and the base level in the derivative's declared coordinate; the scenario's shift representation (DIFFERENCE/SIMPLE/LOG) is independent of it and never enters the Taylor evaluation directly. Derivatives are evaluated at `x_0` in their declared coordinate. Non-native coordinate declarations are either transformed exactly (§8) or rejected; relabelling is forbidden.
+For each factor with a declared derivative coordinate:
+
+**ABSOLUTE**
+
+$$
+\Delta x_i=x_{i,s}-x_{i,0}
+$$
+
+**RELATIVE**
+
+$$
+\Delta x_i=\frac{x_{i,s}}{x_{i,0}}-1,
+\qquad x_{i,0}\neq0
+$$
+
+**LOG**
+
+$$
+\Delta x_i=\ln\left(\frac{x_{i,s}}{x_{i,0}}\right),
+\qquad x_{i,0}>0,\;x_{i,s}>0
+$$
+
+`Δx` is recovered from the canonical shocked level state and the authoritative base level using the derivative's declared coordinate.
+
+The scenario stream's shock representation, including DIFFERENCE, SIMPLE, and LOG, is a representation of how shocked levels are generated. It is independent of the Taylor derivative coordinate and does not enter Taylor evaluation directly.
+
+Derivatives are evaluated at `x_0` in their declared coordinate.
+
+Non-native coordinate declarations are either transformed exactly under the declared coordinate contract or rejected. Coordinate relabelling is forbidden.
+
+---
 
 ### 5. Settlement-currency Taylor orders [METHOD]
 
-With `V_i = ∂V/∂x_i|_{x_0}`, `V_{ii} = ∂²V/∂x_i²|_{x_0}`, `V_{ij} = ∂²V/∂x_i∂x_j|_{x_0}`:
+Let:
 
-- **FIRST_ORDER** $\Delta V_{\text{FO}} = \sum_i V_i \Delta x_i$ — first order in every settlement factor; all second and higher orders omitted.
-- **SECOND_ORDER_TRUNCATED** $\Delta V_{\text{SO,T}} = \sum_i V_i\Delta x_i + \tfrac12\sum_i V_{ii}\Delta x_i^2$ — a **declared truncation**: cross derivatives are omitted by declaration; second order only in the retained diagonal directions; not complete second order and never described as such.
-- **SECOND_ORDER_FULL** $\Delta V_{\text{SO,F}} = \sum_i V_i\Delta x_i + \tfrac12\sum_i V_{ii}\Delta x_i^2 + \sum_{i<j} V_{ij}\Delta x_i\Delta x_j$ — the reduced symmetric form of $\tfrac12\sum_{i,j}V_{ij}\Delta x_i\Delta x_j$: the diagonal keeps its ½; each unordered pair `i<j` appears once with coefficient 1 because $V_{ij} = V_{ji}$ contributes twice in the double sum and ½·2 = 1. **[IMPL]** the cross CSR stores each unordered pair exactly once; a duplicated pair or an extra ½ on the `i<j` sum is a defect.
+$$
+V_i=\left.\frac{\partial V}{\partial x_i}\right|_{x_0}
+$$
 
-Derivation of the expansion: $V(x_0+\Delta x) = V(x_0) + \sum_i V_i\Delta x_i + \tfrac12\sum_{i,j}V_{ij}\Delta x_i\Delta x_j + O(\|\Delta x\|^3)$; each order is the truncation of this series at the stated term.
+$$
+V_{ii}=
+\left.\frac{\partial^2V}{\partial x_i^2}\right|_{x_0}
+$$
 
-### 6. Architecture A — Taylor in settlement space, exact reporting transformation [METHOD]
+$$
+V_{ij}=
+\left.\frac{\partial^2V}{\partial x_i\partial x_j}\right|_{x_0}
+$$
 
-For every Taylor order `T`:
+Then:
 
-$$\Delta W_T = \Delta V_T\, q_s + V_0\,(q_s - q_0)$$
+#### FIRST_ORDER
 
-Taylor Greeks are settlement-currency Greeks; reporting FX is **not** a Taylor factor merely because reporting P&L is required; `V_0` is required for every Taylor position; the reporting transformation is the same one FULL uses. Explicit forms:
+$$
+\Delta V_{\mathrm{FO}}
+=
+\sum_i V_i\Delta x_i
+$$
 
-$\Delta W_{\text{FO}} = q_s\sum_i V_i\Delta x_i + V_0(q_s-q_0)$; $\Delta W_{\text{SO,T}} = q_s[\sum_i V_i\Delta x_i + \tfrac12\sum_i V_{ii}\Delta x_i^2] + V_0(q_s-q_0)$; $\Delta W_{\text{SO,F}} = q_s[\ldots + \sum_{i<j}V_{ij}\Delta x_i\Delta x_j] + V_0(q_s-q_0)$.
+First order in every settlement factor. All second and higher orders are omitted.
 
-### 7. Order semantics under Architecture A [IDENTITY]
+#### SECOND_ORDER_TRUNCATED
 
-With $\Delta V_T = A_1 + A_2$ ($A_1$ first-order sum, $A_2$ second-order sum) and $q_s = q_0 + \Delta q$:
+$$
+\Delta V_{\mathrm{SO,T}}
+=
+\sum_i V_i\Delta x_i
++
+\frac12\sum_iV_{ii}\Delta x_i^2
+$$
 
-$$\Delta W_T = q_0A_1 + V_0\Delta q \;+\; q_0A_2 + A_1\Delta q \;+\; A_2\Delta q$$
+This is a declared truncation. Cross derivatives are omitted by declaration. It is second order only in the retained diagonal directions. It is **not** complete second order and must never be described as such.
 
-first order · second order · **third order**. Therefore `SECOND_ORDER_FULL` under Architecture A is *second order in settlement-factor displacement and exact in reporting FX*; jointly expanded it contains the third-order interaction `A_2Δq`. It is **not** a globally second-order expansion in reporting-currency state variables, and the truncated variant is likewise "truncated in settlement space, exact in FX".
+#### SECOND_ORDER_FULL
 
-For comparison (Architecture B, **not adopted**): the true Taylor of `W = Vq` with `q` a factor has $W_i = q_0V_i$, $W_q = V_0$, $W_{ii} = q_0V_{ii}$, $W_{ij} = q_0V_{ij}$, $W_{qq} = 0$, $W_{iq} = V_i$, giving $\Delta W^{(2)} = q_0A_1 + V_0\Delta q + q_0A_2 + A_1\Delta q$ — identical to Architecture A through second order, lacking only $A_2\Delta q$. Architecture A is selected because it is exact in FX, keeps the sensitivity engine currency-agnostic, requires no FX factor or `W_{iq}` cross terms in any book, and applies one reporting transformation to FULL and Taylor alike. The former D014 measure equals Architecture B with `W_q` set to zero — it drops the only first-order FX term.
+$$
+\Delta V_{\mathrm{SO,F}}
+=
+\sum_iV_i\Delta x_i
++
+\frac12\sum_iV_{ii}\Delta x_i^2
++
+\sum_{i<j}V_{ij}\Delta x_i\Delta x_j
+$$
 
-### 8. Coordinate transformation and quote scaling [IDENTITY]
+This is the reduced symmetric form of:
 
-For `y = g(x)`: $V_y = V_x\,x'(y)$, $V_{yy} = V_{xx}\,x'(y)^2 + V_x\,x''(y)$, $V_{y_iy_j} = V_{x_ix_j}\,x_i'x_j'$. RELATIVE (`x = x_0(1+y)`): $V_y = V_xx_0$, $V_{yy} = V_{xx}x_0^2$. LOG (`x = x_0e^y`): $V_y = V_xx_0$, $V_{yy} = V_{xx}x_0^2 + V_xx_0$ — the first-derivative term is mandatory. `quote_base` is a **linear** rescale only: $V_i' = b_iV_i$, $V_{ii}' = b_i^2V_{ii}$, $V_{ij}' = b_ib_jV_{ij}$; it must never stand in for a nonlinear coordinate change.
+$$
+\frac12\sum_{i,j}V_{ij}\Delta x_i\Delta x_j
+$$
 
-### 9. Reconciliation identity [IDENTITY]
+The diagonal terms retain coefficient `1/2`. Each unordered pair `i<j` appears exactly once with coefficient `1`, because symmetry gives:
 
-$$\Delta W_{\text{FULL}} - \Delta W_T = q_s\left(\Delta V_{\text{FULL}} - \Delta V_T\right)$$
+$$
+\frac12
+\left(
+V_{ij}\Delta x_i\Delta x_j
++
+V_{ji}\Delta x_j\Delta x_i
+\right)
+=
+V_{ij}\Delta x_i\Delta x_j
+$$
 
-The translation term cancels because both routes apply the same transformation to the same `V_0` and `q`. Hence reporting conversion is certified independently (L0 oracle) and FULL-vs-Taylor comparison isolates settlement-space approximation error; it is a consistency check, not a proof of either side.
+The second-order expansion is:
 
-### 10. Dependency set and completeness [METHOD]
+$$
+V(x_0+\Delta x)
+=
+V(x_0)
++
+\sum_iV_i\Delta x_i
++
+\frac12\sum_{i,j}V_{ij}\Delta x_i\Delta x_j
++
+O(\|\Delta x\|^3)
+$$
 
-`F(p)` = the canonical scenario-axis factors on which `V_p` depends mathematically at the bound base configuration — not arrays a constructor reads, not non-zero Greeks. `V(x,y) = xy` at `y_0 = 0`: `F = {x,y}`, `V_x = 0`, `V_y = x_0`, `V_{xx} = V_{yy} = 0`, `V_{xy} = 1`. Completeness: FIRST_ORDER needs `V_i` for all `i ∈ F(p)`; SECOND_ORDER_TRUNCATED adds `V_{ii}`; SECOND_ORDER_FULL adds `V_{ij}` for all `i<j` in `F(p)`. Known zero is a value; unknown, missing, truncated-by-declaration and unsupported are distinct states, and a sparse lookup miss is a known zero **only** under a full-structure declaration.
+Each Taylor order is the stated truncation of this expansion.
 
-### 11. Methodology and universe [METHOD]
+**Implementation constitution:** the cross-term representation stores each unordered factor pair exactly once. A duplicated pair or an additional factor `1/2` on the reduced `i<j` sum is a defect.
 
-`production_method ∈ {FULL_REVAL, TAYLOR}`; `taylor_provenance ∈ {SUPPLIED, DERIVED}` meaningful only under TAYLOR; DERIVED requires a compiled valuation representation. $U_{\text{FULL}} \sqcup U_{\text{SUPPLIED}} \sqcup U_{\text{DERIVED}} = U$ with exact disjointness; undeclared, duplicated or extra positions fail; no default methodology (**P-4 resolved: undeclared fails closed**).
+---
 
-### 12. Precision [IDENTITY]
+### 6. Run-owned base state and Taylor `V₀` [IDENTITY]
 
-Displacements are computed in float64 and stored as float32; coefficients and accumulation float64; final P&L float32. With $\varepsilon = 2^{-24}$: $|\delta P| \le \varepsilon(\sum_i|V_i\Delta x_i| + \sum_i|V_{ii}\Delta x_i^2| + 2\sum_{i<j}|V_{ij}\Delta x_i\Delta x_j|) + \varepsilon|P|$. No relative bound on net P&L exists under cancellation and none is claimed.
+The production run owns the authoritative base valuation context.
 
-### 13. Regulatory position [POLICY]
+The run-computed base-value path is:
 
-Prudential market-risk frameworks require foreign-currency positions to be translated into the reporting currency and FX/translation risk to be captured; the ordinary-MTM identity above is the direct economic definition of reporting-currency value change and is adopted as RiskQuant's internal methodology in alignment with that principle. No claim is made that any regulation prescribes this formula literally.
+```text
+authoritative base levels
+    → market-data matrix at the run's authoritative as_of
+    → valuation state
+    → canonical valuation route
+    → economic-UID aggregation
+    → V₀
+```
 
-### Implications [IMPL]
+The resulting `V₀` is the single production base value used consistently for:
 
-`reporting.fx_conversion.convert_scenario_pnl_to_reporting_currency` requires `base_settlement_values` and `base_fx_levels`; `ReportingSpec` carries `base_settlement_values` in book order; `risk_run.api` passes `base_levels[fx_factor_rows]` as `q_0`. D019's golden VaR/ES must be re-pinned: every position whose settlement currency differs from the reporting currency now carries base translation. The L0 oracle lives in `tests/reporting/test_fx_conversion.py` and the D019 demo's hand loop.
+1. FULL_REVAL valuation movement;
+2. Taylor DERIVED binding validation;
+3. D081 reporting P&L translation.
 
-### Open policy [POLICY]
+Taylor DERIVED production therefore requires a valuation representation from which the run can compute the authoritative `V₀`.
 
-P-1 admissibility of `SUPPLIED/ATTESTED`; P-2 Taylor eligibility per instrument family; P-3 aggregation stays unsupported below the P&L matrix.
+A synthetic Taylor representation that contains derivatives but no corresponding valuation representation is not a complete production DERIVED input under this constitution.
+
+Caller-supplied Taylor `V₀` is not an independent production source of truth.
+
+---
+
+### 7. Run context and identity [IDENTITY]
+
+The run identity is tied to the semantic context that defines the result.
+
+At minimum, the run identity must bind the authoritative:
+
+* economic UID universe;
+* methodology partition;
+* ordered factor axis;
+* scenario identity;
+* `as_of`;
+* static configuration identity;
+* valuation contract identity;
+* applicable discounting mode.
+
+The effective `as_of` is owned by the authoritative valuation context and must agree with the relevant market-data and Taylor bindings.
+
+The static configuration identity is the canonical content identity of the authoritative `RiskStaticConfig`.
+
+The valuation contract identity is the established canonical valuation-contract fingerprint together with any separately load-bearing valuation mode such as `discounting_mode`.
+
+Equivalent semantic inputs must produce deterministic identity. A semantically material change must either change the run identity or fail closed.
+
+Derived numerical results such as `V₀` are not independently hashed merely because they are available as intermediate results. Identity represents the authoritative definition of the run and the inputs/contracts that determine derived values.
+
+---
+
+### 8. Composition constitution [IDENTITY]
+
+Production composition follows:
+
+```text
+authoritative economic UID universe
+    → explicit methodology partition
+    → one PnlGrid
+    → one D081 reporting transformation
+    → VaR / ES
+```
+
+The economic UID universe is distinct from valuation representation row order.
+
+FULL_REVAL values are aggregated by economic UID before entering the grid.
+
+Taylor DERIVED values are produced on the run's authoritative factor axis.
+
+The composition layer does not repair factor identity or coordinate ordering. Taylor representations must already satisfy the exact ordered factor-axis contract before numerical evaluation.
+
+No methodology may silently:
+
+* drop an economic UID;
+* duplicate an economic UID;
+* fill a missing economic UID with zero;
+* reinterpret a factor by position;
+* apply reporting FX twice;
+* replace `x_s` by a raw shock representation;
+* substitute a caller-owned Taylor `V₀` for the run-owned base value.
+
+---
+
+### 9. Acceptance constitution [IDENTITY / METHOD]
+
+A production implementation is compliant with D081 only when:
+
+* `x_s` is the canonical shocked-level state;
+* Taylor displacement is derived from `x_s` and `x_0` in the declared derivative coordinate;
+* FULL_REVAL uses the canonical valuation route;
+* Taylor `V₀` is run-computed from the authoritative valuation representation;
+* reporting P&L is exactly the ordinary mark-to-market identity in §2;
+* reporting FX translation is applied exactly once;
+* FULL and Taylor share the same canonical shocked-level state;
+* economic UID aggregation occurs before final P&L composition;
+* Taylor factor axes are exact, ordered, and identity-consistent;
+* second-order cross terms follow the reduced symmetric formula in §5;
+* no implicit coordinate relabelling or positional factor reinterpretation exists.
+
+Any implementation that produces a plausible number while violating one of these identity or method contracts is incorrect.
 
 ---
 

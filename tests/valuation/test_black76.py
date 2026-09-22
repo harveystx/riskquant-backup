@@ -1,8 +1,6 @@
 # tests/valuation/test_black76.py
 """
-Current Black-76 API. Replaces the deleted `tests/valuation/models/test_black_scholes.py`,
-which imported `riskquant.valuation.models.black_scholes` -- a package that no
-longer exists.
+Current Black-76 API.
 
 Expected values come from `scipy.stats.norm`, never from the production
 `numba_norm_cdf_abrom_steg`. Tolerances are the D046 measured envelope.
