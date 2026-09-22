@@ -505,7 +505,7 @@ def test_blocks_are_isolated(spy) -> None:
     inp = mf.inputs(full=(), derived=mf.DERIVED_UIDS)  # P1-B: the context IS U
     inp["valuation_context"] = ValuationContext(
         static_config=sub.rsc,
-        portfolio=sub.portfolio,
+        ingest_batch=sub.batch,
         uix_mapper=sub.mapper,
         discounting_mode=mf.FX.DiscountingMode.NONE,
     )
@@ -540,29 +540,34 @@ def _decomposed(portfolio, uid, splits, permutation=None):
 
 
 @pytest.mark.parametrize("permutation", [None, [6, 0, 3, 1, 7, 2, 5, 4]])
-def test_decomposition_changes_rows_not_economic_identity(spy, permutation) -> None:
-    """Aggregation-bridge test on the D055 row model: UID 2003 (75 WTI) valued
-    as three rows 25 + 30 + 20, contiguous or interleaved with other UIDs.
-    Still ONE economic row whose V0 is the L1 sum of its rows. (Not a proof
-    of any future cashflow product; those stay D054-blocked.)"""
+def test_decomposition_changes_rows_not_economic_identity(permutation) -> None:
+    """Aggregation-bridge test on the D055 row model, at the run's valuation
+    helpers: UID 2003 (75 WTI) valued as three rows 25 + 30 + 20, contiguous or
+    interleaved. Still ONE economic value per UID, equal to the whole row. N1:
+    the run compiles from canonical ingest, which refuses duplicate UIDs, so a
+    multi-row SPOT UID cannot reach `run_scenario_var_es`; the machinery is
+    proven here for future multi-row compilers (D055; cashflows stay D054)."""
     w = mf.world()
+    universe = np.array(mf.ALL_UIDS, np.int64)
     split = _decomposed(w.portfolio, 2_003, [25.0, 30.0, 20.0], permutation)
     assert split.total_trades == 8 and (split.trade_uids == 2_003).sum() == 3
-    whole = run_scenario_var_es(**mf.inputs(full=mf.ALL_UIDS, derived=()))
-    base_rows = _rows(whole, spy)
-    inp = mf.inputs(full=mf.ALL_UIDS, derived=())
-    inp["valuation_context"] = mf.context(split)
-    parts = run_scenario_var_es(**inp)
-    part_rows = _rows(parts, spy)
-    assert parts.position_uids.tolist() == whole.position_uids.tolist()
-    assert spy["groups"].shape[0] == len(mf.ALL_UIDS) + 1
-    wti0 = float(w.su.base_levels[mf._row(w, "WTI_CRUDE")])
-    assert part_rows[2_003][2] == pytest.approx(75.0 * wti0, abs=ATOL_V0)
-    for uid in mf.ALL_UIDS:
-        np.testing.assert_allclose(
-            part_rows[uid][0], base_rows[uid][0], rtol=0, atol=ATOL
+    levels = np.ascontiguousarray(
+        np.hstack([w.su.base_levels[:, None], mf.shocked_levels()])
+    )
+
+    def values(portfolio):
+        route = api._ValuationRoute(
+            portfolio=portfolio, uix_mapper=w.mapper, universe_map=w.universe_map
         )
-    assert parts.identity != whole.identity  # representation is identity
+        plan = api._row_aggregation(portfolio=portfolio, universe=universe)
+        return api._value_positions(route=route, aggregation=plan, flat_levels=levels)
+
+    whole, parts = values(w.portfolio), values(split)
+    np.testing.assert_allclose(parts, whole, rtol=1e-13, atol=1e-9)
+    wti0 = float(w.su.base_levels[mf._row(w, "WTI_CRUDE")])
+    assert parts[list(universe).index(2_003), 0] == pytest.approx(
+        75.0 * wti0, abs=ATOL_V0
+    )
 
 
 # ---------------------------------------------------------------------------

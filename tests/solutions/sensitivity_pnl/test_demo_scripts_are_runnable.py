@@ -29,6 +29,7 @@ between here and a working example still exist."
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -85,7 +86,7 @@ DEMO_SCRIPTS: tuple[DemoScript, ...] = (
         / "scripts/demos/sensitivity_pnl/kernels"
         / "taylor_kernel_throughput.py",
         completion_marker=None,
-        timeout_seconds=120.0,  # a throughput benchmark, not a fixed workload
+        timeout_seconds=300.0,  # a throughput benchmark, not a fixed workload
     ),
     DemoScript(
         _REPO_ROOT / "scripts/solutions/sensitivity_pnl" / "demo_e2e.py",
@@ -96,13 +97,18 @@ DEMO_SCRIPTS: tuple[DemoScript, ...] = (
 
 def _run(script: DemoScript) -> subprocess.CompletedProcess[str]:
     assert script.path.is_file(), f"demo script not found: {script.path}"
+
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+
     return subprocess.run(
         [sys.executable, str(script.path)],
         cwd=_REPO_ROOT,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         timeout=script.timeout_seconds,
         check=False,
+        env=env,
     )
 
 

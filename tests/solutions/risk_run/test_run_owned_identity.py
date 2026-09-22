@@ -36,12 +36,9 @@ ATOL_V0 = 1e-9
 
 def _ctx(w, *, rsc=None, as_of_shift=0):
     mapper = FX.build_uix_mapper([w.batch], as_of_ord32=w.as_of + as_of_shift)
-    portfolio = FX.compile_portfolio_from_ingest_batch(
-        ingest_batch=w.batch, uix_mapper=mapper
-    )
     return ValuationContext(
         static_config=w.rsc if rsc is None else rsc,
-        portfolio=portfolio,
+        ingest_batch=w.batch,
         uix_mapper=mapper,
         discounting_mode=NONE,
     )
@@ -88,7 +85,11 @@ def test_as_of_is_run_owned_and_part_of_identity() -> None:
 def test_market_state_from_another_as_of_fails_closed() -> None:
     w = mf.world()
     other = FX.build_uix_mapper([w.batch], as_of_ord32=w.as_of + 1)
-    with pytest.raises(CompositionContractError, match="different UixMapper"):
+    ctx = _ctx(w, as_of_shift=1)  # N1: compiled by the context itself
+    assert (
+        ctx.portfolio.uix_fingerprint == ctx.uix_mapper.fingerprint == other.fingerprint
+    )
+    with pytest.raises(TypeError):  # no caller-built portfolio can enter
         ValuationContext(
             static_config=w.rsc,
             portfolio=w.portfolio,
@@ -211,7 +212,7 @@ def _drop_2006():
     inp = mf.inputs(full=universe, derived=(), universe=universe)
     inp["valuation_context"] = ValuationContext(
         static_config=w.rsc,
-        portfolio=w.portfolio,
+        ingest_batch=w.batch,
         uix_mapper=w.mapper,
         discounting_mode=NONE,
     )
@@ -273,3 +274,25 @@ def test_identity_mutation_matrix(name, build, expect) -> None:
     assert (got[0] == base[0]) == (expect[0] == "same"), name
     if expect[1] is not None:
         assert (got[1] == base[1]) == (expect[1] == "same"), name
+
+
+# ---------------------------------------------------------------------------
+# discounting mode (valuation audit): never silently shares an identity
+# ---------------------------------------------------------------------------
+def test_discounting_mode_is_bound_to_identity_or_refused() -> None:
+    """A CURVE context over the NONE-mode world either fails closed or yields a
+    run whose identity differs; it can never reproduce the NONE identity."""
+    w = mf.world()
+    base = _outcome(mf.inputs(full=mf.ALL_UIDS, derived=()))
+    inp = mf.inputs(full=mf.ALL_UIDS, derived=())
+    inp["valuation_context"] = ValuationContext(
+        static_config=w.rsc,
+        ingest_batch=w.batch,
+        uix_mapper=w.mapper,
+        discounting_mode=FX.DiscountingMode.CURVE,
+    )
+    try:
+        got = _outcome(inp)
+    except Exception as exc:  # any refusal is acceptable; silence is not
+        got = ("REJECTED", type(exc).__name__)
+    assert got[0] == "REJECTED" or got[0] != base[0], got[:2]

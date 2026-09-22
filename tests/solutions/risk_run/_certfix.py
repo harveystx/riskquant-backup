@@ -49,7 +49,10 @@ NAMES = [f"EQ{i:04d}" for i in range(1, K_TOTAL)] + ["USDEUR"]
 AS_OF = int(FX.date_to_ord32(FX._SNAPSHOT_AS_OF_DATE))
 
 
-def _static_config():
+def _static_config(first_equity_shift: str = "LOG_RETURN"):
+    """The certification static configuration. `first_equity_shift` changes ONE
+    load-bearing field (the shift type of the first equity node) for mutation
+    tests; everything else is identical."""
     sheets = dict(FX._RISK_STATIC_CONFIG_DICT_OF_DFS)
     key = next(k for k, v in sheets.items() if v is FX._NODE_META_DF)
     eq, n = K_TOTAL - 1, K_TOTAL
@@ -61,7 +64,7 @@ def _static_config():
         "asset_subclass": ["EQ_SINGLE_NAME"] * eq + ["FX_G10"],
         "quote_type": ["PRICE"] * eq + ["FX_RATE"],
         "unit_scale": ["DECIMAL"] * n,
-        "shift_type": ["LOG_RETURN"] * n,
+        "shift_type": [first_equity_shift] + ["LOG_RETURN"] * (n - 1),
         "fx_base_ccy": [None] * eq + ["USD"],
     }).cast(FX._NODE_META_DF.schema)
     return FX.compile_risk_static_config_from_dict_of_dfs(sheets)
@@ -77,14 +80,20 @@ def _vals():
 VALS = _vals()
 RSC = _static_config()
 _r = np.random.default_rng(2)
+#: Hostile economic UIDs: non-contiguous, and the RAW FRAME rows are in an
+#: unsorted UID order, so the compiled valuation rows are unsorted too.
+_UID_POOL = np.sort(_r.choice(np.arange(1, 50_000), size=M, replace=False)).astype(
+    np.int64
+)
+_ORDER = _r.permutation(M)
 POSITIONS = pd.DataFrame({
-    "uid": list(range(1, M + 1)),
+    "uid": _UID_POOL[_ORDER].tolist(),
     "instrument": ["SPOT"] * M,
-    "quantity": _r.normal(0, 100, M).round(2).tolist(),
-    "underlying": [NAMES[i] for i in _r.integers(0, K_TOTAL - 1, M)],
-    "settlement_ccy": [("EUR" if i % 2 else "USD") for i in range(M)],
+    "quantity": _r.normal(0, 100, M).round(2)[_ORDER].tolist(),
+    "underlying": [NAMES[i] for i in _r.integers(0, K_TOTAL - 1, M)[_ORDER]],
+    "settlement_ccy": [("EUR" if i % 2 else "USD") for i in _ORDER],
 })
-UIDS = np.arange(1, M + 1, dtype=np.int64)
+UIDS = np.sort(_UID_POOL)  # U is ascending; the frame is not
 _BATCH = FX.compile_raw_df_into_ingest_batch(raw_df=POSITIONS.copy(), static_config=RSC)
 MAPPER = FX.build_uix_mapper([_BATCH], as_of_ord32=AS_OF)
 PORTFOLIO = FX.compile_portfolio_from_ingest_batch(
@@ -146,7 +155,31 @@ def derived(calc):
     return TaylorBlock(calculator=calc)
 
 
-def calculator(base=None, variant=0):
+def _subset(sens, uids):
+    """The sensitivities of a UID subset, by identity (diagonal and cross)."""
+    keep = np.isin(sens.position_uids, np.asarray(uids, np.int64))
+    kx = np.isin(sens.cross_position_uids, np.asarray(uids, np.int64))
+    return dataclasses.replace(
+        sens,
+        position_uids=sens.position_uids[keep],
+        factor_rf_ids=sens.factor_rf_ids[keep],
+        first_order=sens.first_order[keep],
+        second_order=sens.second_order[keep],
+        cross_position_uids=sens.cross_position_uids[kx],
+        cross_factor_rf_ids_i=sens.cross_factor_rf_ids_i[kx],
+        cross_factor_rf_ids_j=sens.cross_factor_rf_ids_j[kx],
+        cross_second_order=sens.cross_second_order[kx],
+    )
+
+
+def partition(mixed: bool):
+    """U_F / U_D over U (ascending). `mixed` splits it in two halves."""
+    if not mixed:
+        return np.zeros(0, np.int64), UIDS
+    return UIDS[::2].copy(), UIDS[1::2].copy()
+
+
+def calculator(base=None, variant=0, uids=None):
     """Producer side: certify the DERIVED book at a base (default: the run base).
     `variant=1` certifies the same positions as SECOND_ORDER_TRUNCATED (cross
     terms omitted by declaration): a different compiled book, same base."""
@@ -155,6 +188,10 @@ def calculator(base=None, variant=0):
     sens = FX.run_sensitivities(
         portfolio=PORTFOLIO, market_data=market, uix_mapper=MAPPER
     )
+    book_uids = UIDS if uids is None else np.asarray(uids, np.int64)
+    if uids is not None:
+        sens = _subset(sens, book_uids)
+        values = values[np.isin(UIDS, book_uids)]
     if variant == 1:
         sens = dataclasses.replace(
             sens,
@@ -172,7 +209,7 @@ def calculator(base=None, variant=0):
         static_config_digest=FX.static_config_content_digest(RSC),
         valuation_contract_fingerprint=FX.valuation_contract_fingerprint(),
         base_settlement_values_digest=FX.base_settlement_values_digest(
-            position_uids=UIDS, values=values
+            position_uids=book_uids, values=values
         ),
     )
     spec = FX.build_sensitivity_book_spec(sensitivities=sens, required_factor_ids=FIDS)
@@ -213,8 +250,9 @@ CFGS = {
 }
 
 
-def inputs(model="sbb", batch_size=256, seed=7, calc=None):
+def inputs(model="sbb", batch_size=256, seed=7, calc=None, mixed=False):
     cfg = dict(CFGS[model])
+    u_full, u_derived = partition(mixed)
     if "seed" in cfg:
         cfg["seed"] = seed
     settle = dict(zip(POSITIONS["uid"], POSITIONS["settlement_ccy"], strict=True))
@@ -230,17 +268,19 @@ def inputs(model="sbb", batch_size=256, seed=7, calc=None):
         base_levels=BASE,
         methodology=MethodologyDeclaration(
             production_position_uids=UIDS,
-            full_reval_uids=[],
+            full_reval_uids=u_full,
             taylor_supplied_uids=[],
-            taylor_derived_uids=UIDS,
+            taylor_derived_uids=u_derived,
         ),
         valuation_context=ValuationContext(
             static_config=RSC,
-            portfolio=PORTFOLIO,
+            ingest_batch=_BATCH,
             uix_mapper=MAPPER,
             discounting_mode=NONE,
         ),
-        taylor_derived=TaylorBlock(calculator=calculator() if calc is None else calc),
+        taylor_derived=TaylorBlock(
+            calculator=calculator(uids=u_derived) if calc is None else calc
+        ),
         reporting=ReportingSpec(
             reporting_ccy="USD",
             position_uids=UIDS,

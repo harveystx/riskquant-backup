@@ -27,6 +27,7 @@ in its own `print_df`/polars-vs-pandas call path).
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -59,18 +60,26 @@ DEMO_SCRIPTS: tuple[DemoScript, ...] = (
 
 def _run(script: DemoScript) -> subprocess.CompletedProcess[str]:
     assert script.path.is_file(), f"demo script not found: {script.path}"
+
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+
     return subprocess.run(
         [sys.executable, str(script.path)],
         cwd=_REPO_ROOT,
+        env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=script.timeout_seconds,
         check=False,
     )
 
 
 @pytest.mark.parametrize(
-    "script", DEMO_SCRIPTS, ids=lambda s: s.path.relative_to(_REPO_ROOT).as_posix()
+    "script",
+    DEMO_SCRIPTS,
+    ids=lambda s: s.path.relative_to(_REPO_ROOT).as_posix(),
 )
 def test_demo_script_runs_to_completion(script: DemoScript) -> None:
     result = _run(script)

@@ -82,29 +82,30 @@ def test_nc_full_values_in_derived_rows_are_caught(monkeypatch, spy) -> None:
     assert _worst(run, spy, taylor_uids=mf.DERIVED_UIDS) > DETECT
 
 
-def test_nc_aggregation_that_keeps_one_row_per_uid_is_caught(monkeypatch, spy) -> None:
+def test_nc_aggregation_that_keeps_one_row_per_uid_is_caught() -> None:
+    """At the valuation helpers (N1: a multi-row SPOT UID cannot reach the run)."""
     from test_methodology_composition import _decomposed
 
-    real = api._row_aggregation
-
-    def corrupt(**kw):
-        plan = real(**kw)
-        first = plan.row_order[plan.segment_starts]
-        return dataclasses.replace(
-            plan,
-            row_order=first,
-            segment_starts=np.arange(first.shape[0], dtype=np.intp),
-        )
-
-    monkeypatch.setattr(api, "_row_aggregation", corrupt)
     w = mf.world()
-    inp = mf.inputs(full=mf.ALL_UIDS, derived=())
-    inp["valuation_context"] = mf.context(
-        _decomposed(w.portfolio, 2_003, [25.0, 30.0, 20.0])
+    split = _decomposed(w.portfolio, 2_003, [25.0, 30.0, 20.0])
+    plan = api._row_aggregation(
+        portfolio=split, universe=np.array(mf.ALL_UIDS, np.int64)
     )
-    run = run_scenario_var_es(**inp)
+    first = plan.row_order[plan.segment_starts]
+    corrupt = dataclasses.replace(
+        plan, row_order=first, segment_starts=np.arange(first.shape[0], dtype=np.intp)
+    )
+    route = api._ValuationRoute(
+        portfolio=split, uix_mapper=w.mapper, universe_map=w.universe_map
+    )
+    base = np.ascontiguousarray(w.su.base_levels[:, None])
+    row = list(plan.economic_uids).index(2_003)
     wti0 = float(w.su.base_levels[mf._row(w, "WTI_CRUDE")])
-    assert abs(_rows(run, spy)[2_003][2] - 75.0 * wti0) > 1.0  # V0 != L1 sum of rows
+    good = api._value_positions(route=route, aggregation=plan, flat_levels=base)[row, 0]
+    bad = api._value_positions(route=route, aggregation=corrupt, flat_levels=base)[
+        row, 0
+    ]
+    assert good == pytest.approx(75.0 * wti0, abs=1e-9) and abs(bad - 75.0 * wti0) > 1.0
 
 
 @pytest.mark.parametrize(

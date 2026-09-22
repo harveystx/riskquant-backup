@@ -230,7 +230,7 @@ def test_demo_positions_to_portfolio_section_runs(
     step; running it directly keeps this test fast while still exercising
     the real fixture code path and its printed summary.
     """
-    portfolio, mapper = _FIXTURES._run_portfolio(rsc, verbose=True)
+    portfolio, mapper, _ = _FIXTURES._run_portfolio(rsc, verbose=True)
 
     assert portfolio.total_trades == 3
     assert portfolio.total_blocks == 1

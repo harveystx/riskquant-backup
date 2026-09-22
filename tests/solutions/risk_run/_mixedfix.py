@@ -255,14 +255,12 @@ def derived_block(
     return TaylorBlock(calculator=FX.SensitivityPnlCalculator.compile(spec))
 
 
-def context(
-    portfolio=None, *, uids: tuple[int, ...] = BASE, rf=None
-) -> ValuationContext:
-    """The run-owned base valuation context (P1-B) of a world."""
+def context(*, uids: tuple[int, ...] = BASE, rf=None) -> ValuationContext:
+    """The run-owned base valuation context (P1-B, N1) of a world."""
     w = world(uids, rf)
     return ValuationContext(
         static_config=w.rsc,
-        portfolio=w.portfolio if portfolio is None else portfolio,
+        ingest_batch=w.batch,
         uix_mapper=w.mapper,
         discounting_mode=FX.DiscountingMode.NONE,
     )

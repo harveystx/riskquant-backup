@@ -72,6 +72,7 @@ from riskquant.portfolio.engine import (
     build_uix_mapper,
     compile_portfolio_from_ingest_batch,
 )
+from riskquant.portfolio.ingest.batch import IngestBatch
 from riskquant.portfolio.ingest.pipeline import compile_raw_df_into_ingest_batch
 from riskquant.proxy_resolver.proxy import (
     resolve_required_factor_ids_to_market_data_factor_ids,
@@ -393,7 +394,7 @@ def _underlying_by_uid() -> dict[int, str]:
 
 def _run_portfolio(
     rsc: RiskStaticConfig, *, verbose: bool = True
-) -> tuple[CompiledPortfolio, UixMapper]:
+) -> tuple[CompiledPortfolio, UixMapper, IngestBatch]:
     """Ingest the minimal positions frame and compile it into SoA blocks.
 
     positions (pandas, human-readable)
@@ -430,7 +431,7 @@ def _run_portfolio(
         portfolio.summary()
         portfolio.print_block_details()
 
-    return portfolio, uix_mapper
+    return portfolio, uix_mapper, ingest_batch
 
 
 # =============================================================================
@@ -918,13 +919,14 @@ def _build_derived_block(*, calculator: SensitivityPnlCalculator) -> TaylorBlock
 
 
 def _build_valuation_context(
-    *, rsc: RiskStaticConfig, portfolio: CompiledPortfolio, uix_mapper: UixMapper
+    *, rsc: RiskStaticConfig, ingest_batch: IngestBatch, uix_mapper: UixMapper
 ) -> ValuationContext:
-    """The run-owned base valuation context (P1-B): the static configuration,
-    the compiled portfolio, the mapper (as-of) and the discounting mode."""
+    """The run-owned base valuation context (P1-B, N1): the static
+    configuration, the canonical ingest batch (the run compiles it), the
+    mapper (as-of) and the discounting mode."""
     return ValuationContext(
         static_config=rsc,
-        portfolio=portfolio,
+        ingest_batch=ingest_batch,
         uix_mapper=uix_mapper,
         discounting_mode=DiscountingMode.NONE,
     )
@@ -984,7 +986,7 @@ def build_fixture(*, verbose: bool = True) -> DemoFixture:
     """
     rsc = _run_risk_static_config(verbose=verbose)
     proxy_topology = _run_proxy_topology(rsc, verbose=verbose)
-    portfolio, uix_mapper = _run_portfolio(rsc, verbose=verbose)
+    portfolio, uix_mapper, ingest_batch = _run_portfolio(rsc, verbose=verbose)
     snapshot = _run_risk_factor_snapshot(rsc, verbose=verbose)
     market_data = _run_market_data(rsc=rsc, uix_mapper=uix_mapper, snapshot=snapshot)
     pricing = _run_pricing(
@@ -1043,7 +1045,7 @@ def build_fixture(*, verbose: bool = True) -> DemoFixture:
         methodology=_build_methodology(calculator),
         taylor_derived=_build_derived_block(calculator=calculator),
         valuation_context=_build_valuation_context(
-            rsc=rsc, portfolio=portfolio, uix_mapper=uix_mapper
+            rsc=rsc, ingest_batch=ingest_batch, uix_mapper=uix_mapper
         ),
     )
 

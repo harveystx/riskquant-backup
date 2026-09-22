@@ -2636,6 +2636,7 @@ explicit.
 
 **Verdict: LOCKED — RETAIN AS FIRST-CLASS VALUATION PRIMITIVES.**
 
+
 ## D057 — The supported valuation surface is closed; its production consumer is not
 
 **Status:** LOCKED
@@ -2670,6 +2671,20 @@ for this phase and deliberately not fixed.
 **Implication:** certification is scoped to the supported SURFACE. The valuation
 package is not release-certified, and the estate has no working end-to-end
 revaluation path until the SimLab caller is repaired.
+
+**Valuation-authority audit (2026-09-22).** After P1-B made this route the producer of every V_0 and V_s, the following properties were verified against the independent scalar oracle (`tests/valuation/oracle/economic_oracle.py`) on the hostile whole-surface fixture, and pinned:
+- *Admitted surface.* The three blocks above are the only production-admitted valuation surface: `COMPILERS` registers SPOT, VANILLA_FORWARD (NODE) and VANILLA_EUROPEAN_OPTION (NODE). Cashflow blocks remain blocked at ingest (D054).
+- *Output.* `run_valuation(out=)` overwrites every cell of `out` (shape `(total_trades, S)`, validated); no caller may rely on pre-zeroed memory. A pricer that writes nothing is visible to the poison check, and a missing pricer raises; it is never skipped.
+- *Row identity.* Row r of `out` belongs to `portfolio.trade_uids[r]`: both are laid out from the same `blocks` tuple and `block_offsets`. Rows of one UID are summed by the consumer (D055).
+- *Dispatch.* `BLOCK_PRICERS` is indexed by `BLOCK_TYPE_ID`, with an import-time guard against unregistered types. A block type outside the three typed `CompiledPortfolio` fields is unrepresentable.
+- *Linearity, sign, scenarios.* V is linear in quantity (reversal negates exactly, zero gives zero). Each scenario column is valued independently: permuting every per-scenario input permutes the output columns bitwise.
+- *As-of.* The option time to expiry follows the mapper as-of, and the moved values stay oracle-exact. Spot and forward rows do not move.
+- *FX ownership.* Instrument FX (quote → settlement) is folded into the valuation state (effective prices and discount factors). Settlement → reporting translation is applied once, downstream, by D081.
+- *Discounting.* NONE means DF = 1 (D079/D080). CURVE builds the D080 zero curve. A CURVE context over a world without curve pillars fails closed.
+
+Evidence: `tests/valuation/oracle/test_valuation_authority.py`; `tests/solutions/risk_run/test_run_owned_identity.py::test_discounting_mode_is_bound_to_identity_or_refused`.
+
+
 
 ## D058 — Dense UIX are range-checked, not type-checked; the compiler is the only guard
 
@@ -2991,18 +3006,25 @@ foreign rows (measured: PV 18 518.00 against oracle 17 521.50).
 **Status:** LOCKED (CALENDAR_PERIOD only)
 **Finding closed:** MD-06
 
-**Decision:** for NODE forwards and options, ingest resolves the underlying's
-relative name at the run as-of (`rf_resolution`). The trade's `delivery_date`
-must fall in the resolved contract period. Supported:
+**Decision:** D065 applies to **relative NODE references**, not to every `VANILLA_FORWARD_NODE`.
+
+For a `VANILLA_FORWARD_NODE` whose underlying is an exact NODE identity, ingest uses that node directly. The node's market level is supplied by the resolved NODE/risk-factor identity, so `delivery_date` is **not required for identity resolution**.
+
+For a `VANILLA_FORWARD_NODE` whose underlying is a **relative forward-point name**, ingest resolves the relative name at the run as-of (`rf_resolution`). The trade's `delivery_date` is then required and must fall in the resolved contract period.
+
+Supported relative NODE contracts:
 
 * `OFFSET_M + CALENDAR_PERIOD` (label `YYYYMM`);
 * `OFFSET_Y + CALENDAR_PERIOD` (label `YYYY`).
 
-Every other roll method fails closed, because its period definition is not owned
-here. Forward/option rows require `as_of_date` at ingest.
+Every other roll method fails closed because its period definition is not owned here.
 
-**Reason:** `BRENT_FWD[M+0]` (Feb-2027 at as-of 2027-01-04) accepted a 2029
-delivery and consumed the wrong contract's level.
+`as_of_date` is required at ingest when relative NODE resolution is required.
+
+`VANILLA_FORWARD_CURVE` is a separate contract: its underlying is a curve and `delivery_date` is required because the forward level is obtained by interpolation/extrapolation of that curve at the delivery date. D065's relative-NODE contract-period check does not define the curve-forward interpolation contract.
+
+**Reason:** `BRENT_FWD[M+0]` (Feb-2027 at as-of 2027-01-04) accepted a 2029 delivery and consumed the wrong contract's level.
+
 
 ## D066 — A discount linkage is a discount curve in the leg's currency
 

@@ -31,6 +31,8 @@ import numpy.typing as npt
 from riskquant.config.enums.discounting_modes import DiscountingMode
 from riskquant.config.static_config.static_config import RiskStaticConfig
 from riskquant.portfolio.compiled import CompiledPortfolio
+from riskquant.portfolio.engine import compile_portfolio_from_ingest_batch
+from riskquant.portfolio.ingest.batch import IngestBatch
 from riskquant.solutions.run_identity.hashing import digest_named_arrays
 from riskquant.solutions.run_identity.schemas import RunManifest
 from riskquant.solutions.sensitivity_pnl.api import SensitivityPnlCalculator
@@ -191,21 +193,21 @@ class ValuationContext:
     BUILT by the run from `static_config`, and every V_0, FULL_REVAL and
     TAYLOR/DERIVED alike, is valued by the run from `portfolio` at the base
     levels. Nothing on this object is echoed back as a claimed digest.
+
+    Provenance (N1): the caller supplies the canonical ingest output
+    (`IngestBatch`, from `compile_raw_df_into_ingest_batch`), never a compiled
+    portfolio. `portfolio` is COMPILED HERE, with this context's own mapper, by
+    the canonical compiler, so every valuation row's parent economic UID comes
+    from the ingest batch by construction.
     """
 
     static_config: RiskStaticConfig
-    portfolio: CompiledPortfolio
+    ingest_batch: IngestBatch
     uix_mapper: UixMapper
     discounting_mode: DiscountingMode
+    portfolio: CompiledPortfolio = field(init=False)
 
     def __post_init__(self) -> None:
-        if self.portfolio.uix_fingerprint != self.uix_mapper.fingerprint:
-            raise CompositionContractError(
-                "the compiled portfolio was stamped by a different UixMapper "
-                f"(portfolio {self.portfolio.uix_fingerprint[:12]}..., mapper "
-                f"{self.uix_mapper.fingerprint[:12]}...); its uixs index foreign "
-                "universes and its as-of may differ (AUD-02, D064, D067)."
-            )
         if self.uix_mapper.as_of_ord32 is None:
             raise CompositionContractError(
                 "the UixMapper carries no as-of; the run values at the mapper's "
@@ -213,6 +215,13 @@ class ValuationContext:
             )
         if not isinstance(self.discounting_mode, DiscountingMode):
             raise TypeError("discounting_mode must be a DiscountingMode.")
+        object.__setattr__(
+            self,
+            "portfolio",
+            compile_portfolio_from_ingest_batch(
+                ingest_batch=self.ingest_batch, uix_mapper=self.uix_mapper
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, eq=False)

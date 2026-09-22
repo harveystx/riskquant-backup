@@ -72,7 +72,7 @@ def base_levels():
 def context():
     return ValuationContext(
         static_config=_W.rsc,
-        portfolio=_W.portfolio,
+        ingest_batch=_W.batch,
         uix_mapper=_W.mapper,
         discounting_mode=NONE,
     )
