@@ -9,9 +9,10 @@ detached from its identity.
 
 Methodology composition (D081 §11). `MethodologyDeclaration` partitions an
 EXPLICIT production universe U of economic position UIDs into FULL_REVAL,
-TAYLOR/SUPPLIED and TAYLOR/DERIVED. `FullRevalBlock` carries the compiled
-valuation representation the FULL route prices; `TaylorBlock` carries one
-certified Taylor representation and the V_0 it is bound to. `ReportingSpec`
+TAYLOR/SUPPLIED and TAYLOR/DERIVED. `ValuationContext` is the run-owned base
+valuation context (P1-B): the run derives its as-of, static-configuration and
+valuation-contract identity from it, and computes EVERY V_0 from it.
+`TaylorBlock` carries one certified Taylor representation only. `ReportingSpec`
 carries reporting metadata only. Each fact has exactly one owner here.
 
 Solution tier only. Nothing here enters a generator, a kernel or a Numba
@@ -27,24 +28,24 @@ from typing import Literal
 import numpy as np
 import numpy.typing as npt
 
-from riskquant.market_data.assemble import UniverseMapping
+from riskquant.config.enums.discounting_modes import DiscountingMode
+from riskquant.config.static_config.static_config import RiskStaticConfig
 from riskquant.portfolio.compiled import CompiledPortfolio
 from riskquant.solutions.run_identity.hashing import digest_named_arrays
 from riskquant.solutions.run_identity.schemas import RunManifest
 from riskquant.solutions.sensitivity_pnl.api import SensitivityPnlCalculator
 from riskquant.solutions.sensitivity_pnl.schemas import SensitivityPnlProvenance
-from riskquant.solutions.sensitivity_pnl.taylor_contract import TaylorBaseBinding
 from riskquant.universe import UixMapper
 
 __all__ = [
     "CompositionContractError",
-    "FullRevalBlock",
     "MethodologyDeclaration",
     "NonReproducibleRunError",
     "ReportingSpec",
     "ReproducibilityMode",
     "RiskRun",
     "TaylorBlock",
+    "ValuationContext",
 ]
 
 #: `reproducible` (default): a stochastic model must carry an explicit seed, or
@@ -181,17 +182,21 @@ class MethodologyDeclaration:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, eq=False)
-class FullRevalBlock:
+class ValuationContext:
     """
-    The compiled valuation representation the FULL_REVAL route prices.
+    The run-owned base valuation context (P1-B). Required for every run.
 
-    The as-of is the mapper's (D067) and the discounting mode is the universe
-    map's (D080); the run reads both from here and takes no second copy.
+    The run owns its identity through this object: the as-of is the mapper's
+    (D067), the discounting mode is stated here (D080), the universe map is
+    BUILT by the run from `static_config`, and every V_0, FULL_REVAL and
+    TAYLOR/DERIVED alike, is valued by the run from `portfolio` at the base
+    levels. Nothing on this object is echoed back as a claimed digest.
     """
 
+    static_config: RiskStaticConfig
     portfolio: CompiledPortfolio
     uix_mapper: UixMapper
-    universe_map: UniverseMapping
+    discounting_mode: DiscountingMode
 
     def __post_init__(self) -> None:
         if self.portfolio.uix_fingerprint != self.uix_mapper.fingerprint:
@@ -199,46 +204,29 @@ class FullRevalBlock:
                 "the compiled portfolio was stamped by a different UixMapper "
                 f"(portfolio {self.portfolio.uix_fingerprint[:12]}..., mapper "
                 f"{self.uix_mapper.fingerprint[:12]}...); its uixs index foreign "
-                "universes (AUD-02, D064)."
+                "universes and its as-of may differ (AUD-02, D064, D067)."
             )
         if self.uix_mapper.as_of_ord32 is None:
             raise CompositionContractError(
-                "the UixMapper carries no as-of; the FULL route values at the "
-                "mapper's as-of and cannot infer one (D067)."
+                "the UixMapper carries no as-of; the run values at the mapper's "
+                "as-of and cannot infer one (D067)."
             )
+        if not isinstance(self.discounting_mode, DiscountingMode):
+            raise TypeError("discounting_mode must be a DiscountingMode.")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class TaylorBlock:
     """
-    One Taylor representation entering production P&L.
+    One certified Taylor representation entering production P&L.
 
-    `base_settlement_values` is V_0 in settlement currency, in
-    `calculator.position_uids` order (ascending). `expected_binding` is the
-    base the caller states the representation is certified at; the run
-    requires the calculator's certified binding to equal it (P1-A) and
-    re-derives the base-levels and V_0 digests from its own inputs.
+    It carries NO base value and NO expected binding (P1-B): the run values
+    V_0 from its own `ValuationContext` and requires the calculator's certified
+    binding to equal the binding it derives itself (as-of, base levels,
+    discounting mode, static configuration, valuation contract, V_0).
     """
 
     calculator: SensitivityPnlCalculator
-    base_settlement_values: npt.NDArray[np.float64]
-    expected_binding: TaylorBaseBinding
-
-    def __post_init__(self) -> None:
-        v0 = self.base_settlement_values
-        if not isinstance(v0, np.ndarray) or v0.ndim != 1 or v0.dtype != np.float64:
-            raise TypeError("base_settlement_values must be a 1-D float64 array.")
-        num_positions = int(self.calculator.num_positions)
-        if v0.shape[0] != num_positions:
-            raise ValueError(
-                f"base_settlement_values has {v0.shape[0]} value(s) but the book "
-                f"has {num_positions} position(s)."
-            )
-        if not np.isfinite(v0).all():
-            raise ValueError("base_settlement_values must be finite.")
-        owned = np.array(v0, dtype=np.float64, copy=True, order="C")
-        owned.setflags(write=False)
-        object.__setattr__(self, "base_settlement_values", owned)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -243,9 +243,14 @@ def _run_validation(fixture: fx.DemoFixture) -> bool:
     )
     # D081: ordinary-MTM reporting P&L, dW = dV*q_s + V0*(q_s - q0), with V0 the
     # book position's base settlement value from the SAME pricing pass.
-    base_values = np.ascontiguousarray(
-        fixture.taylor_derived.base_settlement_values, dtype=np.float64
+    pv_by_uid = dict(
+        zip(
+            fixture.pricing.trade_uids.tolist(),
+            fixture.pricing.values[:, 0].tolist(),
+            strict=True,
+        )
     )
+    base_values = np.array([pv_by_uid[int(u)] for u in uids], dtype=np.float64)
     reporting = convert_scenario_pnl_to_reporting_currency(
         settlement_pnl=settlement_pnl,
         fx_levels=usdeur_row[None, :],
@@ -368,6 +373,7 @@ def _run_canonical(fixture: fx.DemoFixture) -> tuple[RiskRun, bool]:
         shock_scale=su.shock_scale,
         base_levels=su.base_levels,
         methodology=fixture.methodology,
+        valuation_context=fixture.valuation_context,
         taylor_derived=fixture.taylor_derived,
         reporting=fixture.reporting,
         confidence_level=_VALIDATION_CONFIDENCE_LEVEL,
@@ -398,6 +404,7 @@ def _run_canonical(fixture: fx.DemoFixture) -> tuple[RiskRun, bool]:
         shock_scale=su.shock_scale,
         base_levels=su.base_levels,
         methodology=fixture.methodology,
+        valuation_context=fixture.valuation_context,
         taylor_derived=fixture.taylor_derived,
         reporting=fixture.reporting,
         confidence_level=_VALIDATION_CONFIDENCE_LEVEL,
@@ -418,6 +425,7 @@ def _run_canonical(fixture: fx.DemoFixture) -> tuple[RiskRun, bool]:
         shock_scale=su.shock_scale,
         base_levels=su.base_levels,
         methodology=fixture.methodology,
+        valuation_context=fixture.valuation_context,
         taylor_derived=fixture.taylor_derived,
         reporting=fixture.reporting,
         confidence_level=_VALIDATION_CONFIDENCE_LEVEL,
@@ -445,6 +453,7 @@ def _run_canonical(fixture: fx.DemoFixture) -> tuple[RiskRun, bool]:
             shock_scale=su.shock_scale,
             base_levels=su.base_levels,
             methodology=fixture.methodology,
+            valuation_context=fixture.valuation_context,
             taylor_derived=fixture.taylor_derived,
             reporting=fixture.reporting,
             confidence_level=_VALIDATION_CONFIDENCE_LEVEL,

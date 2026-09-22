@@ -31,14 +31,13 @@ __all__ = [
     "CompositionIdentity",
     "DataIdentity",
     "EngineIdentity",
-    "FullRevalIdentity",
     "MethodologyIdentity",
     "PnlIdentity",
     "ReportingIdentity",
     "RiskMeasureIdentity",
+    "RunContextIdentity",
     "RunManifest",
     "ShockIdentity",
-    "TaylorBlockIdentity",
 ]
 
 # Schema version of THIS contract. Deliberately distinct from the engine
@@ -48,7 +47,10 @@ __all__ = [
 # and added `numba_version`, because the P&L kernels are Numba-compiled.
 # v3 (D081 §11) added `pnl.composition`: the methodology partition of the
 # production universe and the result-defining inputs of each methodology block.
-MANIFEST_SCHEMA_VERSION = "3"
+# v4 (P1-B) replaced the per-block FULL/Taylor identities by ONE run-owned base
+# valuation context (as-of, static configuration, valuation contract, compiled
+# representation, market-data layout). Every V_0 is run-computed and absent.
+MANIFEST_SCHEMA_VERSION = "4"
 
 _STRICT = ConfigDict(extra="forbid", frozen=True, protected_namespaces=())
 
@@ -99,33 +101,25 @@ class MethodologyIdentity(BaseModel):
     partition_digest: str
 
 
-class FullRevalIdentity(BaseModel):
-    """Result-defining inputs of the FULL_REVAL block.
+class RunContextIdentity(BaseModel):
+    """P1-B: the run-owned base valuation context every methodology is priced in.
 
-    The run-computed V_0 is deliberately ABSENT: it is a deterministic result of
-    these inputs and the base levels, not an input.
+    Each field is DERIVED BY THE RUN from the objects it computes with: the
+    as-of from the UixMapper (D067), the static-configuration content digest,
+    the valuation-contract fingerprint (P1-A mechanism), the discounting mode
+    (D080), the compiled portfolio, the mapper and the universe map the run
+    builds. Every V_0 is a deterministic result of these and the base levels,
+    so no V_0 appears here.
     """
 
     model_config = _STRICT
+    as_of_ord32: int
+    static_config_digest: str
+    valuation_contract_fingerprint: str
+    discounting_mode: str
     portfolio_digest: str
     uix_mapper_fingerprint: str
     universe_map_digest: str
-    as_of_ord32: int
-    discounting_mode: str
-    valuation_contract_fingerprint: str
-
-
-class TaylorBlockIdentity(BaseModel):
-    """Base binding of one certified Taylor block, including the digest of the
-    supplied V_0 (a component of the Taylor representation, i.e. an input)."""
-
-    model_config = _STRICT
-    as_of_ord32: int
-    base_levels_digest: str
-    discounting_mode: str
-    static_config_digest: str
-    valuation_contract_fingerprint: str
-    base_settlement_values_digest: str
 
 
 class CompositionIdentity(BaseModel):
@@ -133,9 +127,7 @@ class CompositionIdentity(BaseModel):
 
     model_config = _STRICT
     methodology: MethodologyIdentity
-    full_reval: FullRevalIdentity | None
-    taylor_supplied: TaylorBlockIdentity | None
-    taylor_derived: TaylorBlockIdentity | None
+    context: RunContextIdentity
 
 
 class PnlIdentity(BaseModel):
@@ -180,7 +172,7 @@ class RunManifest(BaseModel):
 
     model_config = _STRICT
 
-    manifest_schema_version: Literal["3"] = MANIFEST_SCHEMA_VERSION
+    manifest_schema_version: Literal["4"] = MANIFEST_SCHEMA_VERSION
     engine: EngineIdentity
     scenario_config: dict[str, Any]
     data: DataIdentity

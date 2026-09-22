@@ -23,7 +23,10 @@ def test_book_spec_compiles_through_the_production_calculator(
 ) -> None:
     """The numerical output must compile through the real book compiler."""
     aapl_uid, brent_uid, wti_uid = position_uids
-    spec = build_sensitivity_book_spec(sensitivities=sensitivities)
+    spec = build_sensitivity_book_spec(
+        sensitivities=sensitivities,
+        required_factor_ids=sensitivities.active_factor_rf_ids,
+    )
     calculator = SensitivityPnlCalculator.compile(spec)
 
     book = calculator.book

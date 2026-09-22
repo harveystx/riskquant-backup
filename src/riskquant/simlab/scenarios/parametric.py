@@ -359,7 +359,10 @@ class ParametricGenerator(ScenarioGenerator):
 
         # Cholesky-transpose column slice is C-contig per column for
         # the trailing matmul. Vols and GMM multipliers gather likewise.
-        col_indices = plan.cols_sorted
+        # Output column k is shock-universe uix k: gather its matrix column
+        # through the plan's gather map (plan.py). Sorted order is compute
+        # layout only; it is never the order of the emitted shocks.
+        col_indices = np.ascontiguousarray(plan.cols_sorted[plan.inverse_permutation])
         l_t_sliced = np.ascontiguousarray(self._cholesky_transpose[:, col_indices])
         vols_sliced = np.ascontiguousarray(self.volatilities[col_indices])
 

@@ -17,18 +17,27 @@ output of numerical work -- so the flow is deliberately
 
 rather than having kernels emit DataFrames.
 
-Factor-axis contract
---------------------
-The axis is built from the sorted-unique global `rf_id`s actually referenced
-by the computed sensitivities, as an explicit Int32 Polars series. Dtype must
-match the `factor_id` columns exactly: the downstream validator rejects an
-Int32/Int64 mismatch between the axis and the sensitivity frames (it would
-otherwise risk silently merging or failing to resolve factors). Because the
-ids are sorted and unique, the axis takes the zero-copy DIRECT encoding, so
+Factor-axis contract (F-1, D082)
+--------------------------------
+The factor axis is DECLARED by its owner, the production run
+(`UniverseMapping.required_factor_ids`, in layout order), and passed in as
+`required_factor_ids`. This adapter never invents, sorts, trims or pads it:
+the spec carries exactly that axis, in exactly that order, as an explicit Int32
+Polars series (the dtype must match the `factor_id` columns; the validator
+rejects an Int32/Int64 mismatch).
 
-    factor_axis position -> rf_id
+Alignment of the sensitivities onto the axis is by FACTOR IDENTITY, never by
+position. `FactorAxis.from_keys` keeps the given order (sorted-unique ids take
+the zero-copy DIRECT encoding, any other order the SLOT encoding), and
+`compile_book` relabels every factor key through `FactorAxis.relabel`
+(`replace_strict`: an unmapped id raises; it is never dropped or zeroed).
 
-is the identity on the axis array, with no slot indirection.
+Every factor the sensitivities reference must be on the axis, or this adapter
+raises. An axis factor that no position references is an INACTIVE row: no
+sensitivity entry and no coefficient is created for it. The Taylor
+declaration's F(p), not this adapter, states that no position depends on it,
+and P1-A completeness still rejects a declared dependency without its
+derivative. The calculator then requires market axis == book axis, row for row.
 """
 
 from __future__ import annotations
@@ -58,6 +67,7 @@ if TYPE_CHECKING:
 def build_sensitivity_book_spec(
     *,
     sensitivities: BlockSensitivities,
+    required_factor_ids: npt.NDArray[np.int32],
     displacement_convention: DisplacementConvention = DisplacementConvention.ABSOLUTE,
     quote_base: float = 1.0,
     base_levels_by_factor: Mapping[int, float] | None = None,
@@ -70,6 +80,12 @@ def build_sensitivity_book_spec(
     ----------
     sensitivities
         Portfolio-level SoA sensitivities from `sensitivities.engine`.
+    required_factor_ids
+        The AUTHORITATIVE ordered factor axis the book is priced against: for a
+        production run, the run's `UniverseMapping.required_factor_ids`. 1-D
+        int32, unique, used exactly in the given order (never sorted). It must
+        carry every factor the sensitivities reference; see the module notes
+        for inactive factors.
     displacement_convention
         Shock convention declared for every active factor. ABSOLUTE means a
         shock is an additive displacement in the factor's own quoted units,
@@ -83,6 +99,9 @@ def build_sensitivity_book_spec(
     SensitivityBookSpec
         Ready for `SensitivityPnlCalculator.compile`.
     """
+    # ---- Factor-axis constitution (F-1, D082): identity checks come first ---
+    axis_ids = _require_declared_axis(required_factor_ids, sensitivities)
+
     # ---- Coordinate constitution (D081 §8, P1-A) ---------------------------
     # Every registered sensitizer differentiates with respect to the LEVEL
     # (ABSOLUTE is the native coordinate). Declaring another convention is a
@@ -151,20 +170,20 @@ def build_sensitivity_book_spec(
             "cross_second_order": pl.Series(cx.tolist(), dtype=pl.Float64),
         })
 
-    active_rf_ids = sensitivities.active_factor_rf_ids
+    # One metadata row per DECLARED axis factor, keyed by factor id.
     factor_meta = pl.DataFrame({
-        "factor_id": pl.Series(active_rf_ids.tolist(), dtype=pl.Int32),
+        "factor_id": pl.Series(axis_ids.tolist(), dtype=pl.Int32),
         "displacement_convention_id": pl.Series(
-            [int(displacement_convention)] * active_rf_ids.shape[0],
+            [int(displacement_convention)] * axis_ids.shape[0],
             dtype=pl.Int8,
         ),
         "quote_base": pl.Series(
-            [float(quote_base)] * active_rf_ids.shape[0], dtype=pl.Float64
+            [float(quote_base)] * axis_ids.shape[0], dtype=pl.Float64
         ),
     })
 
     axis = FactorAxis.from_keys(
-        pl.Series("factor_id", active_rf_ids.tolist(), dtype=pl.Int32)
+        pl.Series("factor_id", axis_ids.tolist(), dtype=pl.Int32)
     )
 
     return SensitivityBookSpec(
@@ -175,6 +194,45 @@ def build_sensitivity_book_spec(
         cross_sensitivities=cross,
         coordinate_transform_base_digest=transform_base_digest,
     )
+
+
+def _require_declared_axis(
+    required_factor_ids: npt.NDArray[np.int32], sensitivities: BlockSensitivities
+) -> npt.NDArray[np.int32]:
+    """
+    Validate the declared axis, and the representation against it, by factor
+    identity, before any coefficient is transformed. Returns an owned copy.
+    """
+    ids = required_factor_ids
+    if not isinstance(ids, np.ndarray) or ids.ndim != 1 or ids.dtype != np.int32:
+        detail = (
+            type(ids).__name__
+            if not isinstance(ids, np.ndarray)
+            else f"{ids.dtype} with ndim={ids.ndim}"
+        )
+        raise TypeError(
+            "required_factor_ids must be a 1-D int32 array (the run's ordered "
+            f"factor-id axis); got {detail}."
+        )
+    if ids.shape[0] == 0:
+        raise ValueError(
+            "required_factor_ids is empty: a book is priced against at least one factor."
+        )
+    unique, counts = np.unique(ids, return_counts=True)
+    repeated = unique[counts > 1]
+    if repeated.size:
+        raise ValueError(
+            f"required_factor_ids declares {repeated.size} factor id(s) more than "
+            f"once; a row would be ambiguous. First 10: {repeated[:10].tolist()}."
+        )
+    foreign = np.setdiff1d(sensitivities.active_factor_rf_ids, ids)
+    if foreign.size:
+        raise ValueError(
+            f"{foreign.size} factor(s) the sensitivities reference are not on "
+            f"required_factor_ids (first 10: {foreign[:10].tolist()}). A dependency "
+            "is never dropped: price the book on an axis that carries it."
+        )
+    return np.array(ids, dtype=np.int32, copy=True)
 
 
 def _base_levels_for(

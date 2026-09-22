@@ -966,11 +966,14 @@ note, now one module rather than three). Untouched here.
 Parametric, FilteredBootstrap}; matrix-backed models -> RiskFactorMatrix,
 Parametric -> ParametricRiskData. No further scenario models outstanding.
 
+
 ## D036 — Final scenario-model seam audit: SEAM FROZEN
 
 Adversarial whole-system audit of the config -> data -> builder -> generator
 seam after D031–D035. No production defect found; one additive cross-model
 completeness test added. The seam is declared FROZEN.
+
+**Correction (2026-09-22, SimLab P0).** "No production defect found" did not hold: shock columns were assigned to the wrong factors for every non-involutive source order (the four kernel-based generators) and for every non-identity order (`parametric`). No audited fixture used such an order. The defect is fixed at the consumers of the shock plan; the contract is recorded in the D030 amendment. The seam API is unchanged and remains FROZEN.
 
 **Architecture (final).**
 ```
@@ -1076,6 +1079,8 @@ model-specific leakage, no unexplained duplication. The only open item is the
 deferred strict-typing harmonization (finding 3), which is a separate future
 decision and does not affect the freeze. D021 (RNG ownership / co-seeded
 independence) remains OPEN and is the next increment — not started here.
+
+
 
 ## D037 — RNG ownership / co-seeded independence (methodology RESOLVED; implementation DEFERRED)
 
@@ -4081,7 +4086,6 @@ NODE forwards and options price with market-derived USD discount factors under `
 
 ---
 
-
 ## D081 — Production P&L constitution: FULL_REVAL, Taylor orders, and ordinary-MTM reporting P&L
 
 **Status:** LOCKED (mathematics and architecture); the policy items listed at the end remain open.
@@ -4177,6 +4181,36 @@ Prudential market-risk frameworks require foreign-currency positions to be trans
 ### Open policy [POLICY]
 
 P-1 admissibility of `SUPPLIED/ATTESTED`; P-2 Taylor eligibility per instrument family; P-3 aggregation stays unsupported below the P&L matrix.
+
+---
+
+## D082 — F-1: the run declares the factor axis; the Taylor book adapter aligns to it
+
+**Status:** LOCKED
+**Date:** 2026-09-22
+**Related:** D081 §5, §10, §11 (Taylor orders, base binding, methodology composition), P1-A (F(p), completeness, known-zero vs missing), D064 (mapper identity).
+
+### Context
+
+The production run's required-factor axis is `UniverseMapping.required_factor_ids`, in layout order. The run asserts it, row for row, against the FULL_REVAL universe map. The certified Taylor calculator requires its compiled axis to equal the market axis row for row (`SensitivityPnlCalculator._require_axis`). Before this decision, `build_sensitivity_book_spec` built its own axis from the sorted-unique factors that the sensitivities reference. A TAYLOR/DERIVED book whose positions depend on a strict subset of the run axis (the normal mixed-run case) was therefore refused by the run. The only work-around re-keyed `factor_axis` and `factor_meta` by hand in the caller. The identity-keyed mapping already existed: `FactorAxis.from_keys` keeps key order (DIRECT or SLOT encoding) and `compile_book` relabels every factor key through `FactorAxis.relabel` (`replace_strict`).
+
+### Decision
+
+1. **Declaration is run-owned.** The ordered factor axis is declared by the production run and by nothing else.
+2. **Alignment is adapter-owned.** `build_sensitivity_book_spec(sensitivities=..., required_factor_ids=..., ...)`. `required_factor_ids` is REQUIRED: 1-D `int32`, unique, non-empty, used exactly in the given order. The adapter never sorts, trims or pads it, and never builds an implicit axis. A caller that prices a book on its own factors declares them explicitly (`required_factor_ids=sensitivities.active_factor_rf_ids`).
+3. **Alignment is by factor identity.** The spec carries the declared axis and one metadata row per axis factor, keyed by factor id. `compile_book` maps every sensitivity to its axis row through `FactorAxis.relabel`. No positional mapping and no new permutation helper exist.
+4. **Fail fast, before any coefficient transform and before numerics.** The adapter refuses: a non-`int32`, non-1-D or empty axis; a duplicated axis id; any factor the sensitivities reference (diagonal or cross) that is absent from the axis (it is never dropped). The compile step still refuses: metadata missing for an axis factor, duplicated `(position, factor)` rows, and a declared F(p) dependency without its derivative (P1-A).
+5. **Inactive axis factors are not a zero-fill.** An axis factor that no position references gets no sensitivity entry and no coefficient, and the engine never gathers its row. The Taylor declaration's F(p) states that no position depends on it. A declared dependency without its derivative still fails closed.
+6. **The numerical boundary stays strict.** The calculator keeps exact ordered axis equality: market axis == book axis, row for row.
+7. **Composition never aligns.** `solutions.risk_run` does not reorder, gather, sort or re-key Taylor data. It refuses, before numerics, a book not built on the run axis.
+
+### Implications
+
+- Migrated callers: `scripts/demos/e2e/_fixtures.py` (the production DERIVED book now uses the run axis; the standalone sensitivity report declares its own axis), `tests/solutions/risk_run/_mixedfix.py` (manual re-keying removed), `tests/solutions/sensitivity_pnl/{test_taylor_contract,test_spot_book_adapter,test_scenario_pnl}.py` (own axis, declared explicitly).
+- Evidence: `tests/solutions/sensitivity_pnl/test_book_adapter_factor_axis.py` (hostile unsorted ids, positional-order trap against an independent dict oracle, inactive factor, malformed/missing/duplicate axis, metadata mismatch, wrong-axis market, declared-dependency-without-derivative); `tests/solutions/risk_run/test_methodology_composition.py::{test_f1_adapter_builds_the_subset_book_on_the_run_axis, test_derived_book_on_a_factor_subset_is_refused_before_numerics, test_composition_performs_no_factor_realignment}`.
+- Compile-key space (intentional, unchanged): the CORE `CompiledSensitivityBook.active_factor_ids` holds the compiler's keys, i.e. factor ids under DIRECT encoding and axis row positions under SLOT encoding (`pipeline.py` "Slot relabelling"; `factor_key_encoding` in provenance). The encoding-independent factor identity is `calculator.axis.keys[book.active_level_uix]` (the lookup `taylor_validity.py` uses). A consumer that reads `active_factor_ids` as factor ids is valid only for a DIRECT-encoded book.
+- Metadata scoping (intentional, safe): `scope_factor_meta` ignores metadata rows for factors that are NOT on the axis, under both encodings. It never removes the metadata of a factor the book references: an off-axis referenced factor fails (adapter, and at compile for a hand-built spec), and a referenced axis factor without metadata fails at compile.
+- Hardening evidence: hostile cross terms aligned by factor-pair identity (`test_cross_terms_are_aligned_by_factor_identity`); an unsorted run axis [9007, 12, 101, 4002] produced by the real `build_universe_mapping` end to end (`test_f1_unsorted_authoritative_run_axis_end_to_end`).
 
 ---
 

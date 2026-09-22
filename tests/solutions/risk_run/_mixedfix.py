@@ -39,16 +39,15 @@ import polars as pl
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
 from riskquant.solutions.risk_run.schemas import (
-    FullRevalBlock,
     MethodologyDeclaration,
     ReportingSpec,
     TaylorBlock,
+    ValuationContext,
 )
 from riskquant.solutions.scenario_models.api import (
     build_scenario_generator,
     parse_scenario_model_config,
 )
-from riskquant.solutions.sensitivity_pnl.api import FactorAxis
 
 _DEMO = pathlib.Path(__file__).resolve().parents[3] / "scripts" / "demos" / "e2e"
 _spec = importlib.util.spec_from_file_location("_mixedfix_demo", _DEMO / "_fixtures.py")
@@ -67,6 +66,15 @@ _ECONOMICS = (
 )
 BASE = (2_001, 2_002, 2_003, 2_004, 2_005, 2_006)
 HOSTILE = (9_007, 12, 4_002, 101, 73, 555)
+#: Node ids for the static config. The real `build_universe_mapping` lays FX
+#: spots first, then scalar nodes: with these ids the run axis it produces is
+#: [9007, 12, 101, 4002], genuinely unsorted and non-contiguous.
+HOSTILE_RF = (
+    ("USDEUR", 9_007),
+    ("AAPL_EQ", 12),
+    ("BRENT_CRUDE", 4_002),
+    ("WTI_CRUDE", 101),
+)
 FULL_SLOTS = (1, 2, 3)  # Brent/EUR, WTI/USD, AAPL/EUR
 DERIVED_SLOTS = (0, 4, 5)  # AAPL/USD, Brent/EUR, WTI/USD: every run-axis factor
 
@@ -91,8 +99,20 @@ def positions(uids: tuple[int, ...]) -> pd.DataFrame:
 
 
 @functools.cache
-def _shared() -> SimpleNamespace:
-    rsc = FX._run_risk_static_config(verbose=False)
+def _shared(rf=None) -> SimpleNamespace:
+    if rf is None:
+        rsc = FX._run_risk_static_config(verbose=False)
+    else:
+        sheets = dict(FX._RISK_STATIC_CONFIG_DICT_OF_DFS)
+        key = next(k for k, v in sheets.items() if v is FX._NODE_META_DF)
+        ids = dict(rf)
+        node = FX._NODE_META_DF
+        sheets[key] = node.with_columns(
+            pl.Series("node_id", [ids[n] for n in node["node_name"]]).cast(
+                node.schema["node_id"]
+            )
+        )
+        rsc = FX.compile_risk_static_config_from_dict_of_dfs(sheets)
     return SimpleNamespace(
         rsc=rsc,
         topo=FX._run_proxy_topology(rsc, verbose=False),
@@ -103,10 +123,16 @@ def _shared() -> SimpleNamespace:
 
 
 @functools.cache
-def world(uids: tuple[int, ...] = BASE) -> SimpleNamespace:
-    sh = _shared()
+def world(uids: tuple[int, ...] = BASE, rf=None) -> SimpleNamespace:
+    return build_world(positions(uids), rf=rf, uids=uids)
+
+
+def build_world(frame: pd.DataFrame, *, rf=None, uids=None) -> SimpleNamespace:
+    """The production objects of one positions frame (ingest -> compile -> price)."""
+    sh = _shared(rf)
+    uids = tuple(int(u) for u in frame["uid"]) if uids is None else uids
     batch = FX.compile_raw_df_into_ingest_batch(
-        raw_df=positions(uids), static_config=sh.rsc
+        raw_df=frame.copy(), static_config=sh.rsc
     )
     mapper = FX.build_uix_mapper([batch], as_of_ord32=sh.as_of)
     portfolio = FX.compile_portfolio_from_ingest_batch(
@@ -136,6 +162,7 @@ def world(uids: tuple[int, ...] = BASE) -> SimpleNamespace:
     rf = {name: int(rid) for name, rid in sh.rsc.rel_name_to_rf_id.items()}
     return SimpleNamespace(
         uids=uids,
+        batch=batch,
         rsc=sh.rsc,
         mapper=mapper,
         portfolio=portfolio,
@@ -146,7 +173,7 @@ def world(uids: tuple[int, ...] = BASE) -> SimpleNamespace:
         rf=rf,
         as_of=sh.as_of,
         historical=sh.historical,
-        frame=positions(uids).set_index("uid"),
+        frame=frame.set_index("uid"),
     )
 
 
@@ -159,16 +186,17 @@ def derived_block(
     book: tuple[int, ...],
     *,
     uids: tuple[int, ...] = BASE,
+    rf=None,
     order: str = "truncated",
     as_of_shift: int = 0,
-    on_run_axis: bool = False,
+    axis: str = "run",
+    tamper: tuple = (),
 ) -> TaylorBlock:
     """Certify the production sensitivities of `book` as TAYLOR/DERIVED.
 
-    `on_run_axis=True` recompiles the same certified spec on the full run
-    axis (inactive factors included): the documented F-1 construction path.
+    The book is built by the adapter on the declared axis (F-1, D082).
     """
-    w = world(uids)
+    w = world(uids, rf)
     s = w.sens
     keep = np.isin(s.position_uids, book)
     keep_x = np.isin(s.cross_position_uids, book) & (order == "full")
@@ -201,7 +229,17 @@ def derived_block(
             position_uids=book_uids, values=v0
         ),
     )
-    spec = FX.build_sensitivity_book_spec(sensitivities=sub)
+    # F-1 (D082): the adapter builds the book on the declared axis. `axis="run"`
+    # is the production path; `axis="own"` declares the book's own referenced
+    # factors explicitly (used only to prove the run refuses such a book).
+    axis_ids = {
+        "run": w.su.required_factor_ids,
+        "run_sorted": np.sort(w.su.required_factor_ids),
+        "own": sub.active_factor_rf_ids,
+    }[axis]
+    spec = FX.build_sensitivity_book_spec(
+        sensitivities=sub, required_factor_ids=axis_ids
+    )
     declared = (
         FX.TaylorOrder.SECOND_ORDER_FULL
         if order == "full"
@@ -210,37 +248,28 @@ def derived_block(
     declaration = FX.derive_taylor_declaration(
         sensitivities=sub, order=declared, base_binding=binding
     )
+    if tamper:  # certify at a deliberately different base
+        binding = dataclasses.replace(binding, **dict(tamper))
+        declaration = dataclasses.replace(declaration, base_binding=binding)
     spec = dataclasses.replace(spec, taylor_declaration=declaration)
-    if on_run_axis:
-        ids = w.su.required_factor_ids.tolist()
-        spec = dataclasses.replace(
-            spec,
-            factor_axis=FactorAxis.from_keys(
-                pl.Series("factor_id", ids, dtype=pl.Int32)
-            ),
-            factor_meta=pl.DataFrame({
-                "factor_id": pl.Series(ids, dtype=pl.Int32),
-                "displacement_convention_id": pl.Series([1] * len(ids), dtype=pl.Int8),
-                "quote_base": pl.Series([1.0] * len(ids), dtype=pl.Float64),
-            }),
-        )
-    calc = FX.SensitivityPnlCalculator.compile(spec)
-    return TaylorBlock(
-        calculator=calc, base_settlement_values=v0, expected_binding=binding
-    )
+    return TaylorBlock(calculator=FX.SensitivityPnlCalculator.compile(spec))
 
 
-def full_block(portfolio=None, *, uids: tuple[int, ...] = BASE) -> FullRevalBlock:
-    w = world(uids)
-    return FullRevalBlock(
+def context(
+    portfolio=None, *, uids: tuple[int, ...] = BASE, rf=None
+) -> ValuationContext:
+    """The run-owned base valuation context (P1-B) of a world."""
+    w = world(uids, rf)
+    return ValuationContext(
+        static_config=w.rsc,
         portfolio=w.portfolio if portfolio is None else portfolio,
         uix_mapper=w.mapper,
-        universe_map=w.universe_map,
+        discounting_mode=FX.DiscountingMode.NONE,
     )
 
 
-def reporting(universe, *, uids: tuple[int, ...] = BASE) -> ReportingSpec:
-    w = world(uids)
+def reporting(universe, *, uids: tuple[int, ...] = BASE, rf=None) -> ReportingSpec:
+    w = world(uids, rf)
     ordered = np.array(sorted(universe), dtype=np.int64)
     ccy = {int(u): w.frame.loc[u, "settlement_ccy"] for u in w.uids}
     return ReportingSpec(
@@ -255,6 +284,7 @@ def reporting(universe, *, uids: tuple[int, ...] = BASE) -> ReportingSpec:
 def inputs(
     *,
     uids=BASE,
+    rf=None,
     full=None,
     derived=None,
     universe=None,
@@ -263,7 +293,7 @@ def inputs(
     order="truncated",
 ):
     """Run inputs for a partition of the six positions (U defaults to F ∪ D)."""
-    w = world(uids)
+    w = world(uids, rf)
     full = slots(uids, FULL_SLOTS) if full is None else full
     derived = slots(uids, DERIVED_SLOTS) if derived is None else derived
     universe = tuple(set(full) | set(derived)) if universe is None else universe
@@ -281,11 +311,13 @@ def inputs(
             taylor_supplied_uids=[],
             taylor_derived_uids=list(derived),
         ),
-        reporting=reporting(universe, uids=uids),
+        reporting=reporting(universe, uids=uids, rf=rf),
         confidence_level=2.0 / 3.0,
         batch_size=batch_size,
-        full_reval=full_block(uids=uids) if full else None,
-        taylor_derived=derived_block(tuple(sorted(derived)), uids=uids, order=order)
+        valuation_context=context(uids=uids, rf=rf),
+        taylor_derived=derived_block(
+            tuple(sorted(derived)), uids=uids, rf=rf, order=order
+        )
         if derived
         else None,
     )
@@ -305,9 +337,9 @@ def history(*, move: set[str]) -> RiskFactorMatrix:
     )
 
 
-def shocked_levels(data=None) -> np.ndarray:
+def shocked_levels(data=None, *, uids=BASE, rf=None) -> np.ndarray:
     """Canonical (K, S) scenario levels, rebuilt from the scenario seam in one batch."""
-    w = world()
+    w = world(uids, rf)
     gen = build_scenario_generator(
         HISTORICAL, data=w.historical if data is None else data
     )
@@ -325,8 +357,8 @@ def shocked_levels(data=None) -> np.ndarray:
     return out
 
 
-def _terms(uid: int, levels: np.ndarray, uids=BASE):
-    w = world(uids)
+def _terms(uid: int, levels: np.ndarray, uids=BASE, rf=None):
+    w = world(uids, rf)
     r = w.frame.loc[uid]
     price = levels[_row(w, r["underlying"])]
     fx = (
@@ -337,24 +369,24 @@ def _terms(uid: int, levels: np.ndarray, uids=BASE):
     return float(r["quantity"]), price, fx, r["settlement_ccy"]
 
 
-def l1_value(uid: int, levels: np.ndarray, uids=BASE) -> np.ndarray:
-    qty, price, fx, _ = _terms(uid, levels, uids)
+def l1_value(uid: int, levels: np.ndarray, uids=BASE, rf=None) -> np.ndarray:
+    qty, price, fx, _ = _terms(uid, levels, uids, rf)
     return qty * price * fx
 
 
 def l4_taylor(
-    uid: int, base: np.ndarray, shocked: np.ndarray, *, cross: bool, uids=BASE
+    uid: int, base: np.ndarray, shocked: np.ndarray, *, cross: bool, uids=BASE, rf=None
 ) -> np.ndarray:
     """First order, zero diagonals, and the P-X cross term only if declared."""
-    qty, p0, x0, _ = _terms(uid, base[:, None], uids)
-    _, ps, xs, _ = _terms(uid, shocked, uids)
+    qty, p0, x0, _ = _terms(uid, base[:, None], uids, rf)
+    _, ps, xs, _ = _terms(uid, shocked, uids, rf)
     dp, dx = ps - p0, xs - x0
     return qty * (x0 * dp + p0 * dx) + (qty * dp * dx if cross else 0.0)
 
 
-def reporting_rate(uid: int, levels: np.ndarray, uids=BASE) -> np.ndarray:
-    _, _, _, ccy = _terms(uid, levels, uids)
-    usdeur = levels[_row(world(uids), "USDEUR")]
+def reporting_rate(uid: int, levels: np.ndarray, uids=BASE, rf=None) -> np.ndarray:
+    _, _, _, ccy = _terms(uid, levels, uids, rf)
+    usdeur = levels[_row(world(uids, rf), "USDEUR")]
     return np.ones_like(usdeur) if ccy == "USD" else 1.0 / usdeur
 
 

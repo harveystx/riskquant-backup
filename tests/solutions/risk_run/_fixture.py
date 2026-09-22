@@ -1,93 +1,137 @@
 # tests/solutions/risk_run/_fixture.py
-"""Shared production-run fixture: a real compiled book with an EUR-settled
-position converted through a USDEUR factor, on the official entry point."""
+"""Shared production-run fixture on the REAL production path (P1-B).
+
+Two SPOT positions are ingested, compiled and certified through the demo static
+configuration with node ids AAPL_EQ=10, BRENT_CRUDE=20, USDEUR=30: uid 1 holds
+AAPL settled in EUR (it depends on the price and on USDEUR), uid 2 holds Brent
+settled in USD. The run axis is the universe map the run itself builds (FX
+first). The history is a synthetic T=80 random walk keyed by factor id. The
+TAYLOR/DERIVED book is certified on the producer side from the same context the
+run values: its sensitivities and V_0 come from that base state, so the run's
+own base valuation reproduces its binding exactly."""
+
+import dataclasses
+import sys
+from pathlib import Path
 
 import numpy as np
-import polars as pl
-from _binding import synthetic_binding, synthetic_declaration
-from numpy.typing import NDArray
+import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).parent))
+import _mixedfix as mf
+
+from riskquant.market_data.assemble import build_market_data_matrix_from_flat_levels
+from riskquant.market_data.compile import assemble_valuation_state
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
-from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID
-from riskquant.sensitivity_pnl.conventions import DisplacementConvention
 from riskquant.solutions.risk_run.schemas import (
     MethodologyDeclaration,
     ReportingSpec,
     TaylorBlock,
+    ValuationContext,
 )
 from riskquant.solutions.scenario_models.api import parse_scenario_model_config
-from riskquant.solutions.scenario_models.schemas import ScenarioModelConfig
-from riskquant.solutions.sensitivity_pnl.api import (
-    FactorAxis,
-    SensitivityBookSpec,
-    SensitivityPnlCalculator,
-)
-from riskquant.solutions.sensitivity_pnl.taylor_contract import TaylorOrder
+from riskquant.utils.business_days import ord_to_date
+from riskquant.valuation.engine import run_valuation
 
-K, T, S = 3, 80, 64
-FACTOR_IDS = np.array([10, 20, 30], dtype=np.int32)  # 30 = USDEUR fx factor
+RF = (("AAPL_EQ", 10), ("BRENT_CRUDE", 20), ("USDEUR", 30), ("WTI_CRUDE", 40))
+POSITIONS = pd.DataFrame({
+    "uid": [1, 2],
+    "instrument": ["SPOT", "SPOT"],
+    "quantity": [1000.0, -500.0],
+    "underlying": ["AAPL_EQ", "BRENT_CRUDE"],
+    "settlement_ccy": ["EUR", "USD"],
+})
 POSITION_UIDS = np.array([1, 2], dtype=np.int64)
+_W = mf.build_world(POSITIONS, rf=RF)
+NONE = mf.FX.DiscountingMode.NONE
+FACTOR_IDS = np.ascontiguousarray(_W.universe_map.required_factor_ids, dtype=np.int32)
+SHIFT_TYPES = np.ascontiguousarray(
+    _W.universe_map.required_shift_type_ids, dtype=np.int8
+)
+K, T, S = int(FACTOR_IDS.shape[0]), 80, 64
+_HIST_IDS = np.array([10, 20, 30], dtype=np.int32)
 
 
 def matrix():
     rng = np.random.default_rng(0)
-    vals = np.asfortranarray(
-        100.0 * np.exp(np.cumsum(rng.normal(0, 0.01, (T, K)), axis=0))
-    )
-    vals[:, 2] = 0.9 * np.exp(np.cumsum(rng.normal(0, 0.005, T)))  # fx level ~0.9
+    vals = 100.0 * np.exp(np.cumsum(rng.normal(0, 0.01, (T, 3)), axis=0))
+    vals[:, 2] = 0.9 * np.exp(np.cumsum(rng.normal(0, 0.005, T)))  # USDEUR ~0.9
     return RiskFactorMatrix(
         dates=np.arange(T, dtype=np.int32),
-        factor_ids=FACTOR_IDS,
+        factor_ids=_HIST_IDS,
         values=np.asfortranarray(vals),
     )
 
 
-def calculator(base_levels=None):
-    abs_id = int(DisplacementConvention.ABSOLUTE)
-    sens = pl.DataFrame({
-        "position_id": [1, 1, 2],
-        "factor_id": [10, 30, 20],
-        "first_order": [1000.0, -4115.0, -500.0],
-        "second_order": [0.0, 0.0, 0.0],
-    })
-    meta = pl.DataFrame({
-        "factor_id": FACTOR_IDS.tolist(),
-        "displacement_convention_id": [abs_id] * K,
-        "quote_base": [1.0] * K,
-    })
-    binding = synthetic_binding(
-        factor_ids=FACTOR_IDS,
-        base_levels=np.asarray(matrix().values)[-1]
-        if base_levels is None
-        else base_levels,
-        position_uids=[1, 2],
-        v0=np.zeros(2),
-    )
-    return SensitivityPnlCalculator.compile(
-        SensitivityBookSpec(
-            sensitivities=sens,
-            factor_meta=meta,
-            factor_axis=FactorAxis.from_keys(FACTOR_IDS.tolist()),
-            position_uids=[1, 2],
-            taylor_declaration=synthetic_declaration(
-                sensitivities=sens, order=TaylorOrder.FIRST_ORDER, binding=binding
-            ),
-        )
+def base_levels():
+    """The run base on the run axis, looked up by factor id."""
+    last = dict(zip(_HIST_IDS.tolist(), np.asarray(matrix().values)[-1].tolist()))
+    return np.array([last[int(f)] for f in FACTOR_IDS], dtype=np.float64)
+
+
+def context():
+    return ValuationContext(
+        static_config=_W.rsc,
+        portfolio=_W.portfolio,
+        uix_mapper=_W.mapper,
+        discounting_mode=NONE,
     )
 
 
-def derived(calc=None, v0=None):
-    """The TAYLOR/DERIVED block. D081: the synthetic book DECLARES a zero base
-    value, i.e. the V0 = 0 special case in which dW = dV*q_s exactly. An
-    uncertified calculator keeps the certified fixture binding as the
-    expectation, so the production gate (not this helper) refuses it."""
-    calc = calculator() if calc is None else calc
-    stated = calc.taylor_declaration or calculator().taylor_declaration
-    return TaylorBlock(
-        calculator=calc,
-        base_settlement_values=np.zeros(2, dtype=np.float64) if v0 is None else v0,
-        expected_binding=stated.base_binding,
+def calculator(base_levels_=None):
+    """Producer side: certify the DERIVED book at a base (default: the run base)."""
+    base = (
+        base_levels()
+        if base_levels_ is None
+        else np.asarray(base_levels_, dtype=np.float64)
     )
+    market = build_market_data_matrix_from_flat_levels(
+        as_of_date=ord_to_date(_W.as_of),
+        uix_mapper=_W.mapper,
+        universe_map=_W.universe_map,
+        flat_levels=np.ascontiguousarray(base[:, None]),
+        num_scenarios=1,
+        discounting_mode=NONE,
+    )
+    sens = mf.FX.run_sensitivities(
+        portfolio=_W.portfolio, market_data=market, uix_mapper=_W.mapper
+    )
+    rows = np.empty((_W.portfolio.total_trades, 1), dtype=np.float64)
+    run_valuation(
+        portfolio=_W.portfolio,
+        out=rows,
+        valuation_state=assemble_valuation_state(matrix=market, uix_mapper=_W.mapper),
+    )
+    pv = dict(zip(_W.portfolio.trade_uids.tolist(), rows[:, 0].tolist(), strict=True))
+    v0 = np.array([pv[int(u)] for u in POSITION_UIDS], dtype=np.float64)
+    binding = mf.FX.TaylorBaseBinding(
+        as_of_ord32=_W.as_of,
+        base_levels_digest=mf.FX.base_levels_digest(
+            factor_ids=FACTOR_IDS, base_levels=base
+        ),
+        discounting_mode=NONE.value,
+        static_config_digest=mf.FX.static_config_content_digest(_W.rsc),
+        valuation_contract_fingerprint=mf.FX.valuation_contract_fingerprint(),
+        base_settlement_values_digest=mf.FX.base_settlement_values_digest(
+            position_uids=POSITION_UIDS, values=v0
+        ),
+    )
+    spec = mf.FX.build_sensitivity_book_spec(
+        sensitivities=sens, required_factor_ids=FACTOR_IDS
+    )
+    declaration = mf.FX.derive_taylor_declaration(
+        sensitivities=sens,
+        order=mf.FX.TaylorOrder.SECOND_ORDER_FULL,
+        base_binding=binding,
+    )
+    return mf.FX.SensitivityPnlCalculator.compile(
+        dataclasses.replace(spec, taylor_declaration=declaration)
+    )
+
+
+def derived(calc=None):
+    """The TAYLOR/DERIVED block: the certified calculator only (P1-B)."""
+    return TaylorBlock(calculator=calculator() if calc is None else calc)
 
 
 def methodology():
@@ -106,25 +150,11 @@ def reporting_spec(reporting_ccy="USD"):
         position_uids=POSITION_UIDS,
         settlement_ccys=("EUR", "USD"),
         fx_factor_names=("USDEUR",),
-        fx_factor_rows=np.array([2], np.int32),
+        fx_factor_rows=np.array([list(FACTOR_IDS).index(30)], np.int32),
     )
 
 
-def inputs(
-    seed=7, model="sbb"
-) -> dict[
-    str,
-    ScenarioModelConfig
-    | RiskFactorMatrix
-    | NDArray[np.signedinteger]
-    | NDArray[np.signedinteger]
-    | NDArray[np.floating]
-    | MethodologyDeclaration
-    | TaylorBlock
-    | ReportingSpec
-    | float,
-]:
-    m = matrix()
+def inputs(seed=7, model="sbb"):
     cfg = {
         "sbb": {
             "model": "sbb",
@@ -143,13 +173,14 @@ def inputs(
     }[model]
     return dict(
         scenario_config=parse_scenario_model_config(cfg),
-        data=m,
+        data=matrix(),
         required_factor_ids=FACTOR_IDS,
-        required_shift_type_id=np.array([SHIFT_LOG_RETURN_ID] * K, np.int8),
+        required_shift_type_id=SHIFT_TYPES,
         source_factor_ids=FACTOR_IDS.copy(),
         shock_scale=np.ones(K, np.float32),
-        base_levels=np.ascontiguousarray(np.asarray(m.values)[-1].astype(np.float64)),
+        base_levels=base_levels(),
         methodology=methodology(),
+        valuation_context=context(),
         taylor_derived=derived(),
         reporting=reporting_spec(),
         confidence_level=0.99,

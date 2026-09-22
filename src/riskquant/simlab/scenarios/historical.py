@@ -110,9 +110,12 @@ def _kernel_fused_h_day_shock(
     """
     k_cols = cols.shape[0]
     for k in nb.prange(k_cols):
-        col = cols[k]
-        st = shift_types[k]
-        out_col = inv_perm[k]
+        # Contract (plan.py): inv_perm[k] is the SORTED compute position of
+        # shock-universe column k, a gather map. Output column k reads it.
+        pos = inv_perm[k]
+        col = cols[pos]
+        st = shift_types[pos]
+        out_col = k
 
         col_vals = values[:, col]
         out_col_vals = out[:, out_col]

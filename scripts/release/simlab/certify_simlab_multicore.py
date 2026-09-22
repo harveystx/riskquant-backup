@@ -167,104 +167,20 @@ _FIXTURE = textwrap.dedent(
     from riskquant.solutions.sensitivity_pnl.api import (
         FactorAxis, SensitivityBookSpec, SensitivityPnlCalculator)
 
-    K, T, S, M = {K}, {T}, {S}, {M}
-    FIDS = np.arange(1, K + 1, dtype=np.int32)
-    UIDS = np.arange(1, M + 1, dtype=np.int64)
-
-    def _vals():
-        r = np.random.default_rng(0)
-        v = 100.0 * np.exp(np.cumsum(r.normal(0, 0.01, (T, K)), axis=0))
-        v[:, K - 1] = 0.9 * np.exp(np.cumsum(r.normal(0, 0.005, T)))
-        return np.asfortranarray(v)
-
-    VALS = _vals()
-
-    def matrix():
-        return RiskFactorMatrix(dates=np.arange(T, dtype=np.int32),
-                                factor_ids=FIDS, values=VALS)
-
-    def parametric_data():
-        r = np.random.default_rng(1)
-        a = r.normal(0, 1, (K, K))
-        return ParametricRiskData(
-            factor_ids=FIDS,
-            cholesky_matrix=np.ascontiguousarray(
-                np.linalg.cholesky(a @ a.T / K + np.eye(K) * 0.05)),
-            volatilities=np.ascontiguousarray(np.full(K, 0.02)))
-
-    def calculator(variant=0, base=None):
-        r = np.random.default_rng(2 + variant)
-        pos = np.repeat(np.arange(1, M + 1), 6)
-        fac = r.choice(FIDS, size=M * 6)
-        df = pl.DataFrame({{
-            "position_id": pos.tolist(), "factor_id": fac.tolist(),
-            "first_order": r.normal(0, 100, M * 6).tolist(),
-            "second_order": r.normal(0, 5, M * 6).tolist(),
-        }}).unique(subset=["position_id", "factor_id"]).sort(["position_id", "factor_id"])
-        meta = pl.DataFrame({{
-            "factor_id": FIDS.tolist(),
-            "displacement_convention_id": [int(DisplacementConvention.ABSOLUTE)] * K,
-            "quote_base": [1.0] * K}})
-        # P1-A: a certified SECOND_ORDER_TRUNCATED book bound to the run's base
-        from riskquant.solutions.sensitivity_pnl import taylor_contract as tc
-        binding = tc.TaylorBaseBinding(
-            as_of_ord32=20000,
-            base_levels_digest=tc.base_levels_digest(
-                factor_ids=FIDS,
-                base_levels=(VALS[-1] if base is None else base).astype(np.float64)),
-            discounting_mode="NONE",
-            static_config_digest=tc.static_config_content_digest({{}}),
-            valuation_contract_fingerprint=tc.valuation_contract_fingerprint(),
-            base_settlement_values_digest=tc.base_settlement_values_digest(
-                position_uids=list(range(1, M + 1)), values=np.zeros(M)))
-        decl = tc.TaylorDeclaration(
-            order=tc.TaylorOrder.SECOND_ORDER_TRUNCATED,
-            dependencies=df.select(pl.col("position_id").cast(pl.Int64),
-                                   pl.col("factor_id").cast(pl.Int32)),
-            zero_exposure_position_uids=(), base_binding=binding)
-        return SensitivityPnlCalculator.compile(SensitivityBookSpec(
-            sensitivities=df, factor_meta=meta,
-            factor_axis=FactorAxis.from_keys(FIDS.tolist()),
-            position_uids=list(range(1, M + 1)), taylor_declaration=decl))
-
-    def derived(calc):
-        # D081: the synthetic book DECLARES V0 = 0; P1-A: bound to its own binding
-        return TaylorBlock(calculator=calc, base_settlement_values=np.zeros(M, dtype=np.float64),
-                           expected_binding=calc.taylor_declaration.base_binding)
-
-    CFGS = {{
-        "historical": {{"model": "historical", "horizon": 1}},
-        "filtered_historical": {{"model": "filtered_historical", "horizon": 1}},
-        "sbb": {{"model": "sbb", "horizon": 1, "total_scenarios": S,
-                 "expected_block_size": 20.0, "seed": 7}},
-        "filtered_bootstrap": {{"model": "filtered_bootstrap", "horizon": 1,
-                                "total_scenarios": S, "seed": 7}},
-        "parametric": {{"model": "parametric", "total_scenarios": S,
-                        "distribution": {{"kind": "student_t", "df": 5.0}}, "seed": 7}},
-    }}
+    # P1-B: the gate certifies the SAME real valuation world as the release tests
+    # (tests/solutions/risk_run/_certfix.py), resized to this gate's dimensions.
+    import os, pathlib, sys
+    import riskquant
+    os.environ.update(RQ_CERT_FACTORS="{K}", RQ_CERT_OBSERVATIONS="{T}",
+                      RQ_CERT_SCENARIOS="{S}", RQ_CERT_POSITIONS="{M}")
+    sys.path.insert(0, str(pathlib.Path(riskquant.__file__).resolve().parents[2]
+                           / "tests" / "solutions" / "risk_run"))
+    from _certfix import (CFGS, FIDS, K, K_TOTAL, M, S, T, VALS, calculator, derived,
+                          matrix, parametric_data, v0)
+    from _certfix import inputs as _certfix_inputs
 
     def inputs(model, batch_size, seed=7):
-        cfg = dict(CFGS[model])
-        if "seed" in cfg:
-            cfg["seed"] = seed
-        settle = tuple(("EUR" if i % 2 else "USD") for i in range(M))
-        return dict(
-            scenario_config=parse_scenario_model_config(cfg),
-            data=parametric_data() if model == "parametric" else matrix(),
-            required_factor_ids=FIDS,
-            required_shift_type_id=np.array([SHIFT_LOG_RETURN_ID] * K, np.int8),
-            source_factor_ids=FIDS.copy(),
-            shock_scale=np.ones(K, np.float32),
-            base_levels=np.ascontiguousarray(VALS[-1].astype(np.float64)),
-            methodology=MethodologyDeclaration(
-                production_position_uids=UIDS, full_reval_uids=[],
-                taylor_supplied_uids=[], taylor_derived_uids=UIDS),
-            taylor_derived=derived(calculator()),
-            reporting=ReportingSpec(
-                reporting_ccy="USD", position_uids=UIDS, settlement_ccys=settle,
-                fx_factor_names=("USDEUR",),
-                fx_factor_rows=np.array([K - 1], np.int32)),
-            confidence_level=0.99, batch_size=batch_size)
+        return _certfix_inputs(model=model, batch_size=batch_size, seed=seed)
 
     def h(a):
         a = np.ascontiguousarray(a)
@@ -298,7 +214,7 @@ _FIXTURE = textwrap.dedent(
             fx_levels=np.ascontiguousarray(
                 levels[inp["reporting"].fx_factor_rows], dtype=np.float64),
             plan=plan,
-            base_settlement_values=np.zeros(M, dtype=np.float64),
+            base_settlement_values=v0(),   # P1-B: the real base values of U
             base_fx_levels=np.ascontiguousarray(
                 inp["base_levels"][inp["reporting"].fx_factor_rows], dtype=np.float64))
         return {{
@@ -512,7 +428,8 @@ _CONTRACTS = textwrap.dedent(
         EnvironmentMismatchError, InputMismatchError)
     from riskquant.solutions.run_identity.schemas import RunManifest
     from riskquant.solutions.risk_run.api import run_scenario_var_es
-    from riskquant.solutions.risk_run.schemas import NonReproducibleRunError, RiskRun
+    from riskquant.solutions.risk_run.schemas import (
+        CompositionContractError, NonReproducibleRunError, RiskRun)
     from riskquant.solutions.scenario_models.api import parse_scenario_model_config
     from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 
@@ -565,7 +482,7 @@ _CONTRACTS = textwrap.dedent(
         "historical_value": {"data": _remat(base["data"],
                                 values=np.asfortranarray(revised))},
         "factor_order": {"data": _remat(base["data"], values=np.asfortranarray(
-            np.array(base["data"].values)[:, list(range(1, K)) + [0]]))},
+            np.array(base["data"].values)[:, list(range(1, K_TOTAL)) + [0]]))},
         "source_factor_ids": {"source_factor_ids": base["source_factor_ids"][::-1].copy()},
         "shift_types": {"required_shift_type_id":
             np.full(K, 2, dtype=np.int8)},
@@ -581,6 +498,8 @@ _CONTRACTS = textwrap.dedent(
             stale[name] = "ACCEPTED (defect)"
         except InputMismatchError:
             stale[name] = "InputMismatchError"
+        except CompositionContractError:
+            stale[name] = "CompositionContractError"   # P1-B: refused by the run context
         except Exception as exc:
             stale[name] = f"other:{type(exc).__name__}"
     results["stale_input"] = stale
@@ -594,7 +513,13 @@ _CONTRACTS = textwrap.dedent(
         if name == "base_levels":
             # P1-A: a new base is a new Taylor representation; re-certify it there
             inp["taylor_derived"] = derived(calculator(base=inp["base_levels"]))
-        got = run_scenario_var_es(**inp)
+        try:
+            got = run_scenario_var_es(**inp)
+        except CompositionContractError:
+            # P1-B: shift types are owned by the static configuration; the
+            # substitution is refused outright, which is stronger than a move.
+            mut[name] = {"refused": "CompositionContractError"}
+            continue
         changed_result = [float(v).hex() for v in got.var] != [float(v).hex() for v in ref.var]
         mut[name] = {"result_changed": changed_result,
                       "identity_changed": got.identity != ref.identity}
@@ -661,14 +586,17 @@ def certify_contracts(cert: Certificate, dims: dict[str, int]) -> None:
     )
     cert.record("seed policy", seed_ok, json.dumps(seed))
 
-    stale_ok = all(v == "InputMismatchError" for v in res["stale_input"].values())
+    stale_ok = all(
+        v in ("InputMismatchError", "CompositionContractError")
+        for v in res["stale_input"].values()
+    )
     cert.record(
         "stale input refused before numerics", stale_ok, json.dumps(res["stale_input"])
     )
 
     mut = res["identity_mutation"]
-    mut_ok = all(v["identity_changed"] for v in mut.values())
-    weak = [k for k, v in mut.items() if not v["result_changed"]]
+    mut_ok = all(v.get("refused") or v["identity_changed"] for v in mut.values())
+    weak = [k for k, v in mut.items() if not (v.get("refused") or v["result_changed"])]
     cert.record(
         "every result-defining mutation changes identity",
         mut_ok,

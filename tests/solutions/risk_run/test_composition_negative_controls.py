@@ -61,18 +61,16 @@ def test_nc_full_values_in_derived_rows_are_caught(monkeypatch, spy) -> None:
     def corrupt(self, market, **kw):
         prov = current(self, market, **kw)
         uids = kw["grid"].block_uids(kw["block_index"])
-        plan = api._full_reval_row_aggregation(
-            portfolio=w.portfolio,
-            universe=np.array(mf.ALL_UIDS, np.int64),
-            full_uids=uids,
+        plan = api._row_aggregation(
+            portfolio=w.portfolio, universe=np.array(mf.ALL_UIDS, np.int64)
         )
-        blk = mf.full_block()
+        route = api._ValuationRoute(
+            portfolio=w.portfolio, uix_mapper=w.mapper, universe_map=w.universe_map
+        )
+        pos = api._positions(plan.economic_uids, uids)
         value = lambda lv: api._value_positions(
-            full_reval=blk,
-            aggregation=plan,
-            flat_levels=np.ascontiguousarray(lv),
-            uix_mapper=w.mapper,
-        )
+            route=route, aggregation=plan, flat_levels=np.ascontiguousarray(lv)
+        )[pos]
         v0 = value(market.base_levels[:, None])[:, 0]
         kw["grid"].block_view(kw["block_index"])[:] = (
             value(market.shocked_levels) - v0[:, None]
@@ -87,7 +85,7 @@ def test_nc_full_values_in_derived_rows_are_caught(monkeypatch, spy) -> None:
 def test_nc_aggregation_that_keeps_one_row_per_uid_is_caught(monkeypatch, spy) -> None:
     from test_methodology_composition import _decomposed
 
-    real = api._full_reval_row_aggregation
+    real = api._row_aggregation
 
     def corrupt(**kw):
         plan = real(**kw)
@@ -98,10 +96,10 @@ def test_nc_aggregation_that_keeps_one_row_per_uid_is_caught(monkeypatch, spy) -
             segment_starts=np.arange(first.shape[0], dtype=np.intp),
         )
 
-    monkeypatch.setattr(api, "_full_reval_row_aggregation", corrupt)
+    monkeypatch.setattr(api, "_row_aggregation", corrupt)
     w = mf.world()
     inp = mf.inputs(full=mf.ALL_UIDS, derived=())
-    inp["full_reval"] = mf.full_block(
+    inp["valuation_context"] = mf.context(
         _decomposed(w.portfolio, 2_003, [25.0, 30.0, 20.0])
     )
     run = run_scenario_var_es(**inp)
@@ -180,14 +178,12 @@ def test_nc_valuation_route_defects_are_caught(monkeypatch, spy, defect) -> None
 def test_nc_without_gate_a_an_undeclared_valued_uid_vanishes_silently(
     monkeypatch,
 ) -> None:
-    real = api._full_reval_row_aggregation
+    real = api._row_aggregation
     monkeypatch.setattr(
         api,
-        "_full_reval_row_aggregation",
-        lambda *, portfolio, universe, full_uids: real(
-            portfolio=portfolio,
-            universe=np.unique(portfolio.trade_uids),
-            full_uids=full_uids,
+        "_row_aggregation",
+        lambda *, portfolio, universe: real(
+            portfolio=portfolio, universe=np.unique(portfolio.trade_uids)
         ),
     )
     universe = tuple(u for u in mf.ALL_UIDS if u != 2_006)
@@ -198,15 +194,21 @@ def test_nc_without_gate_a_an_undeclared_valued_uid_vanishes_silently(
 def test_nc_without_gate_b_a_missing_uid_borrows_another_uids_value(
     monkeypatch, spy
 ) -> None:
-    real = api._full_reval_row_aggregation
-
-    def corrupt(*, portfolio, universe, full_uids):
-        econ = np.unique(portfolio.trade_uids)
-        plan = real(portfolio=portfolio, universe=econ, full_uids=econ)
-        clipped = np.minimum(np.searchsorted(econ, full_uids), econ.shape[0] - 1)
-        return dataclasses.replace(plan, full_positions=clipped.astype(np.intp))
-
-    monkeypatch.setattr(api, "_full_reval_row_aggregation", corrupt)
+    real = api._row_aggregation
+    monkeypatch.setattr(
+        api,
+        "_row_aggregation",
+        lambda *, portfolio, universe: real(
+            portfolio=portfolio, universe=np.unique(portfolio.trade_uids)
+        ),
+    )
+    monkeypatch.setattr(
+        api,
+        "_positions",
+        lambda econ, uids: np.minimum(
+            np.searchsorted(econ, uids), econ.shape[0] - 1
+        ).astype(np.intp),
+    )
     universe = mf.ALL_UIDS + (9_999,)
     run = run_scenario_var_es(**mf.inputs(full=universe, derived=(), universe=universe))
     rows = _rows(run, spy)

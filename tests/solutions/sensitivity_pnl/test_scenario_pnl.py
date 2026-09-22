@@ -35,7 +35,10 @@ from riskquant.solutions.sensitivity_pnl.errors import SensitivityPnlInputError
 @pytest.fixture(scope="module")
 def pnl(sensitivities, resolved):
     calculator = SensitivityPnlCalculator.compile(
-        build_sensitivity_book_spec(sensitivities=sensitivities)
+        build_sensitivity_book_spec(
+        sensitivities=sensitivities,
+        required_factor_ids=sensitivities.active_factor_rf_ids,
+    )
     )
     axis = FactorAxis.from_keys(
         pl.Series("factor_id", resolved["required"].tolist(), dtype=pl.Int32)

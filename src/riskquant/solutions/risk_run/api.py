@@ -18,6 +18,13 @@ FULL_REVAL enters with dV = V_s - V_0, both from the same valuation route
 (V_0 at S = 1), so dW = V_s * q_s - V_0 * q_0 exactly; there is no second
 reporting equation. TAYLOR/SUPPLIED is refused while owner policy P-1 is open.
 
+P1-B: the run owns its identity. One `ValuationContext` supplies the static
+configuration, the compiled representation, the mapper (as-of, D067) and the
+discounting mode (D080). The run builds the universe map, values x_0 ONCE for
+every position of U (so every V_0, FULL and TAYLOR/DERIVED, is run-computed),
+derives the full Taylor base binding itself and requires each certified book to
+carry exactly that binding. No caller-supplied V_0 or binding exists.
+
 Composes ONLY existing production functions (the D036 scenario seam,
 `apply_shocks_to_base_levels`, market-data assembly, `run_valuation`, the
 certified `SensitivityPnlCalculator`, `PnlGrid`, the FX conversion and
@@ -38,6 +45,7 @@ import polars as pl
 from riskquant.market_data.assemble import (
     UniverseMapping,
     build_market_data_matrix_from_flat_levels,
+    build_universe_mapping,
 )
 from riskquant.market_data.compile import assemble_valuation_state
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
@@ -52,13 +60,13 @@ from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
 from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
 from riskquant.solutions.risk_run.schemas import (
     CompositionContractError,
-    FullRevalBlock,
     MethodologyDeclaration,
     NonReproducibleRunError,
     ReportingSpec,
     ReproducibilityMode,
     RiskRun,
     TaylorBlock,
+    ValuationContext,
 )
 from riskquant.solutions.run_identity.api import (
     InputMismatchError,
@@ -75,10 +83,9 @@ from riskquant.solutions.run_identity.hashing import (
 )
 from riskquant.solutions.run_identity.schemas import (
     CompositionIdentity,
-    FullRevalIdentity,
     MethodologyIdentity,
+    RunContextIdentity,
     RunManifest,
-    TaylorBlockIdentity,
 )
 from riskquant.solutions.scenario_models.api import build_scenario_generator
 from riskquant.solutions.scenario_models.schemas import ScenarioModelConfig
@@ -88,6 +95,7 @@ from riskquant.solutions.sensitivity_pnl.taylor_contract import (
     TaylorContractError,
     base_levels_digest,
     base_settlement_values_digest,
+    static_config_content_digest,
     valuation_contract_fingerprint,
     verify_base_binding,
 )
@@ -121,32 +129,27 @@ def _is_reproducible(config: ScenarioModelConfig) -> bool:
 def _require_block_wiring(
     *,
     methodology: MethodologyDeclaration,
-    full_reval: FullRevalBlock | None,
     taylor_supplied: TaylorBlock | None,
     taylor_derived: TaylorBlock | None,
 ) -> None:
-    """Each methodology block is supplied iff its partition is non-empty."""
-    u_full, u_supplied, u_derived = methodology.blocks()
+    """A Taylor block is supplied iff its partition is non-empty."""
+    _, u_supplied, u_derived = methodology.blocks()
     if taylor_supplied is not None or u_supplied.size:
         raise CompositionContractError(
             f"TAYLOR/SUPPLIED is not admissible: owner policy P-1 is unresolved "
             f"({u_supplied.size} position(s) declared SUPPLIED). A supplied "
             "representation is never priced as DERIVED or FULL_REVAL instead."
         )
-    for label, uids, block in (
-        ("FULL_REVAL", u_full, full_reval),
-        ("TAYLOR/DERIVED", u_derived, taylor_derived),
-    ):
-        if uids.size and block is None:
-            raise CompositionContractError(
-                f"{uids.size} position(s) are declared {label} but no {label} "
-                "block was supplied."
-            )
-        if block is not None and not uids.size:
-            raise CompositionContractError(
-                f"a {label} block was supplied but no position is declared "
-                f"{label}; an unused methodology input is a wiring defect."
-            )
+    if u_derived.size and taylor_derived is None:
+        raise CompositionContractError(
+            f"{u_derived.size} position(s) are declared TAYLOR/DERIVED but no "
+            "TAYLOR/DERIVED block was supplied."
+        )
+    if taylor_derived is not None and not u_derived.size:
+        raise CompositionContractError(
+            "a TAYLOR/DERIVED block was supplied but no position is declared "
+            "TAYLOR/DERIVED; an unused methodology input is a wiring defect."
+        )
 
 
 def _require_reporting_alignment(
@@ -197,7 +200,7 @@ def _require_factor_axis(
                 f"{layout_arr[row].item()!r} in the universe map"
             )
         raise CompositionContractError(
-            f"the run's {label} is not the FULL_REVAL universe map's ({detail}); "
+            f"the run's {label} is not the run's universe map's ({detail}); "
             "the flat level rows would feed the wrong market-data slots."
         )
 
@@ -231,35 +234,42 @@ def _require_taylor_block(
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class _ValuationRoute:
+    """The run's one valuation route: its compiled representation, its mapper
+    and the universe map the run BUILT from its static configuration."""
+
+    portfolio: CompiledPortfolio
+    uix_mapper: UixMapper
+    universe_map: UniverseMapping
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _RowAggregation:
     """
     Scenario-independent map from valuation rows to economic positions.
 
-    Built once per run (compile-once / price-many). `row_order` groups rows by
-    parent UID (stable, so each UID's rows keep their compiled order and the
-    sum is deterministic); `segment_starts[e]` is the first grouped row of
-    economic UID `e`; `full_positions` indexes U_F on the economic axis.
+    Built once per run (compile-once / price-many). `economic_uids` is the
+    ascending unique parent UID of the rows; `row_order` groups rows by parent
+    UID (stable, so each UID's rows keep their compiled order and the sum is
+    deterministic); `segment_starts[e]` is the first grouped row of UID `e`.
     """
 
+    economic_uids: npt.NDArray[np.int64]
     row_order: npt.NDArray[np.intp]
     segment_starts: npt.NDArray[np.intp]
-    full_positions: npt.NDArray[np.intp]
 
 
-def _full_reval_row_aggregation(
-    *,
-    portfolio: CompiledPortfolio,
-    universe: npt.NDArray[np.int64],
-    full_uids: npt.NDArray[np.int64],
+def _row_aggregation(
+    *, portfolio: CompiledPortfolio, universe: npt.NDArray[np.int64]
 ) -> _RowAggregation:
     """
     Reconcile the compiled representation with U and plan V_p = sum_{uid_r = p} V_r.
 
     `portfolio.trade_uids` is the PARENT economic UID of each valuation row;
     it is neither unique nor sorted (D045/VAL-05, D055), so it is never used as
-    an axis or searched. Its unique set must be U exactly: a valuation row of
-    an undeclared UID and a declared UID without a row both fail here, before
-    any value exists that could be dropped or zero-filled.
+    an axis or searched. Its unique set must be U exactly (Gate A): a valuation
+    row of an undeclared UID and a declared UID without a row both fail here,
+    before any value exists that could be dropped or zero-filled.
     """
     row_uids = np.asarray(portfolio.trade_uids, dtype=np.int64)
     economic_uids, inverse = np.unique(row_uids, return_inverse=True)
@@ -273,37 +283,39 @@ def _full_reval_row_aggregation(
             f"valuation row (first 10: {missing[:10].tolist()}). Rows are never "
             "dropped and absent positions are never zero-filled."
         )
-    positions = np.searchsorted(economic_uids, full_uids)
-    covered = bool((positions < economic_uids.shape[0]).all()) and bool(
-        np.array_equal(
-            economic_uids[np.minimum(positions, economic_uids.shape[0] - 1)], full_uids
-        )
-    )
-    if not covered:
-        raise CompositionContractError(
-            "a FULL_REVAL UID has no valuation row in the compiled portfolio."
-        )
     counts = np.bincount(inverse.ravel(), minlength=economic_uids.shape[0])
     segment_starts = np.zeros(economic_uids.shape[0], dtype=np.intp)
     np.cumsum(counts[:-1], out=segment_starts[1:])
     return _RowAggregation(
+        economic_uids=economic_uids,
         row_order=np.argsort(inverse.ravel(), kind="stable"),
         segment_starts=segment_starts,
-        full_positions=positions.astype(np.intp, copy=False),
     )
 
 
-def _certify_taylor_block(
-    *,
-    block: TaylorBlock,
-    required_factor_ids: npt.NDArray[np.int32],
-    base_levels: npt.NDArray[np.float64],
-) -> TaylorBaseBinding:
+def _positions(
+    economic_uids: npt.NDArray[np.int64], uids: npt.NDArray[np.int64]
+) -> npt.NDArray[np.intp]:
+    """Index of each UID on the (ascending, unique) economic axis; membership
+    is proven, never assumed (Gate B)."""
+    positions = np.searchsorted(economic_uids, uids)
+    n = economic_uids.shape[0]
+    if uids.size and not (
+        bool((positions < n).all())
+        and bool(np.array_equal(economic_uids[np.minimum(positions, n - 1)], uids))
+    ):
+        raise CompositionContractError("a declared UID has no valuation row.")
+    return positions.astype(np.intp, copy=False)
+
+
+def _certify_taylor_block(*, block: TaylorBlock, expected: TaylorBaseBinding) -> None:
     """
-    P1-A: only a CERTIFIED Taylor representation reaches production P&L, and
-    only at the exact base it was certified at. The levels and V_0 digests are
-    re-derived from the run's own inputs, so q_0 (read from the same base
-    levels) is bound too. Returns the certified binding.
+    P1-A gate with a RUN-DERIVED expectation (P1-B).
+
+    Only a CERTIFIED Taylor representation reaches production P&L, and only if
+    its binding is exactly the base this run derives from its own context: as-of,
+    base levels, discounting mode, static configuration, valuation contract and
+    the run-computed V_0 of the block's positions.
     """
     declaration = block.calculator.taylor_declaration
     if declaration is None:
@@ -312,184 +324,96 @@ def _certify_taylor_block(
             "order, F(p), completeness and base binding are unproven, so it "
             "cannot produce production P&L."
         )
-    verify_base_binding(
-        representation=declaration.base_binding, expected=block.expected_binding
-    )
-    if (
-        base_levels_digest(
-            factor_ids=np.asarray(required_factor_ids, dtype=np.int32),
-            base_levels=np.asarray(base_levels, dtype=np.float64),
-        )
-        != declaration.base_binding.base_levels_digest
-    ):
-        raise TaylorContractError(
-            "the run's base levels are not the base the Taylor representation "
-            "was produced at (base_levels_digest mismatch)."
-        )
-    if (
-        base_settlement_values_digest(
-            position_uids=block.calculator.book.position_uids,
-            values=block.base_settlement_values,
-        )
-        != declaration.base_binding.base_settlement_values_digest
-    ):
-        raise TaylorContractError(
-            "V_0 is not the base value the Taylor representation was bound to "
-            "(base_settlement_values_digest mismatch)."
-        )
-    return declaration.base_binding
-
-
-def _safe_as_of_ord32(as_of_ord32: int | None) -> int | None:
-    """Safely extract the as_of_ord32 value, casting to int only if it exists."""
-    return int(as_of_ord32) if as_of_ord32 is not None else None
-
-
-def _require_coherent_base(
-    *, full_reval: FullRevalBlock, binding: TaylorBaseBinding, fingerprint: str
-) -> None:
-    """In a mixed run, FULL_REVAL and TAYLOR/DERIVED value ONE base state."""
-
-    # Safely extract the value, casting to int only if it exists
-    full_as_of = full_reval.uix_mapper.as_of_ord32
-    safe_full_as_of = _safe_as_of_ord32(full_as_of)
-
-    mismatched = [
-        name
-        for name, full_value, taylor_value in (
-            (
-                "as_of_ord32",
-                safe_full_as_of,
-                binding.as_of_ord32,
-            ),
-            (
-                "discounting_mode",
-                full_reval.universe_map.discounting_mode.value,
-                binding.discounting_mode,
-            ),
-            (
-                "valuation_contract_fingerprint",
-                fingerprint,
-                binding.valuation_contract_fingerprint,
-            ),
-        )
-        if full_value != taylor_value
-    ]
-    if mismatched:
-        raise CompositionContractError(
-            f"FULL_REVAL and TAYLOR/DERIVED would value different bases: "
-            f"mismatched {mismatched}. One run has one base state (D081 §10)."
-        )
+    verify_base_binding(representation=declaration.base_binding, expected=expected)
 
 
 # =============================================================================
 # Identity
 # =============================================================================
-def _taylor_block_identity(block: TaylorBlock) -> TaylorBlockIdentity:
-    """Stated binding plus the digest of the V_0 values actually supplied."""
-    b = block.expected_binding
-    return TaylorBlockIdentity(
-        as_of_ord32=int(b.as_of_ord32),
-        base_levels_digest=b.base_levels_digest,
-        discounting_mode=b.discounting_mode,
-        static_config_digest=b.static_config_digest,
-        valuation_contract_fingerprint=b.valuation_contract_fingerprint,
-        base_settlement_values_digest=base_settlement_values_digest(
-            position_uids=block.calculator.book.position_uids,
-            values=block.base_settlement_values,
-        ),
-    )
-
-
-def _full_reval_identity(
-    full_reval: FullRevalBlock, *, fingerprint: str
-) -> FullRevalIdentity:
-    return FullRevalIdentity(
-        portfolio_digest=hash_compiled_portfolio(full_reval.portfolio),
-        uix_mapper_fingerprint=full_reval.uix_mapper.fingerprint,
-        universe_map_digest=hash_universe_mapping(full_reval.universe_map),
-        as_of_ord32=int(full_reval.uix_mapper.as_of_ord32),
-        discounting_mode=full_reval.universe_map.discounting_mode.value,
+def _context_identity(
+    *,
+    context: ValuationContext,
+    universe_map: UniverseMapping,
+    static_config_digest: str,
+    fingerprint: str,
+) -> RunContextIdentity:
+    return RunContextIdentity(
+        as_of_ord32=int(context.uix_mapper.as_of_ord32),
+        static_config_digest=static_config_digest,
         valuation_contract_fingerprint=fingerprint,
+        discounting_mode=context.discounting_mode.value,
+        portfolio_digest=hash_compiled_portfolio(context.portfolio),
+        uix_mapper_fingerprint=context.uix_mapper.fingerprint,
+        universe_map_digest=hash_universe_mapping(universe_map),
     )
 
 
 # =============================================================================
-# FULL_REVAL block
+# Valuation route: base state and FULL_REVAL block
 # =============================================================================
 def _value_positions(
     *,
-    full_reval: FullRevalBlock,
+    route: _ValuationRoute,
     aggregation: _RowAggregation,
     flat_levels: npt.NDArray[np.float64],
-    uix_mapper: UixMapper,
 ) -> npt.NDArray[np.float64]:
     """
-    `(|U_F|, S)` float64 FULL_REVAL position values from a `(K, S)` level slice.
+    `(E, S)` float64 values of every economic position (ascending UID) from a
+    `(K, S)` level slice.
 
-    The ONE valuation route for base and scenarios: flat levels -> market-data
-    matrix -> valuation state -> `run_valuation(out=)` -> sum rows by parent UID
-    -> select U_F.
+    The ONE valuation route for the base state and for scenarios: flat levels ->
+    market-data matrix -> valuation state -> `run_valuation(out=)` -> sum rows
+    by parent UID.
     """
     num_scenarios = flat_levels.shape[1]
+    mapper = route.uix_mapper
     matrix = build_market_data_matrix_from_flat_levels(
-        as_of_date=ord_to_date(int(uix_mapper.as_of_ord32)),
-        uix_mapper=uix_mapper,
-        universe_map=full_reval.universe_map,
+        as_of_date=ord_to_date(int(mapper.as_of_ord32)),
+        uix_mapper=mapper,
+        universe_map=route.universe_map,
         flat_levels=flat_levels,
         num_scenarios=num_scenarios,
-        discounting_mode=full_reval.universe_map.discounting_mode,
+        discounting_mode=route.universe_map.discounting_mode,
     )
-    state = assemble_valuation_state(matrix=matrix, uix_mapper=uix_mapper)
-    rows = np.empty(
-        (full_reval.portfolio.total_trades, num_scenarios), dtype=np.float64
-    )
-    run_valuation(portfolio=full_reval.portfolio, valuation_state=state, out=rows)
-    economic = np.add.reduceat(
+    state = assemble_valuation_state(matrix=matrix, uix_mapper=mapper)
+    rows = np.empty((route.portfolio.total_trades, num_scenarios), dtype=np.float64)
+    run_valuation(portfolio=route.portfolio, valuation_state=state, out=rows)
+    return np.add.reduceat(
         rows[aggregation.row_order], aggregation.segment_starts, axis=0
     )
-    return economic[aggregation.full_positions]
 
 
 def _write_full_reval_block(
     *,
-    full_reval: FullRevalBlock,
+    route: _ValuationRoute,
     aggregation: _RowAggregation,
-    base_levels: npt.NDArray[np.float64],
+    full_positions: npt.NDArray[np.intp],
+    v0_full: npt.NDArray[np.float64],
     shocked_levels: npt.NDArray[np.float64],
     batch_size: int,
     out: npt.NDArray[np.float32],
-) -> npt.NDArray[np.float64]:
+) -> None:
     """
-    Write dV = V(x_s) - V(x_0) into the FULL block; return V_0 = V(x_0).
+    Write dV = V(x_s) - V(x_0) into the FULL block.
 
-    V_0 is valued ONCE at S = 1 on the same route as the scenarios. Scenario
-    columns are valued in chunks of `batch_size` (operational only: each
-    column is priced independently). The float64 difference is quantised into
-    the float32 grid exactly like the Taylor blocks.
+    `v0_full` is the run's own base valuation (same route, S = 1). Scenario
+    columns are valued in chunks of `batch_size` (operational only: each column
+    is priced independently). The float64 difference is quantised into the
+    float32 grid exactly like the Taylor blocks.
     """
-    mapper = full_reval.uix_mapper
-    v0 = _value_positions(
-        full_reval=full_reval,
-        aggregation=aggregation,
-        flat_levels=np.ascontiguousarray(base_levels[:, None], dtype=np.float64),
-        uix_mapper=mapper,
-    )[:, 0]
     total = shocked_levels.shape[1]
     written = 0
     for start in range(0, total, batch_size):
         stop = min(start + batch_size, total)
         vs = _value_positions(
-            full_reval=full_reval,
+            route=route,
             aggregation=aggregation,
             flat_levels=np.ascontiguousarray(shocked_levels[:, start:stop]),
-            uix_mapper=mapper,
-        )
-        out[:, start:stop] = vs - v0[:, None]
+        )[full_positions]
+        out[:, start:stop] = vs - v0_full[:, None]
         written += stop - start
     if written != total:
         raise RuntimeError(f"FULL_REVAL wrote {written} of {total} scenario columns.")
-    return v0
 
 
 def _grid_to_production_rows(
@@ -524,10 +448,10 @@ def run_scenario_var_es(
     shock_scale: npt.NDArray[np.float32],
     base_levels: npt.NDArray[np.float64],
     methodology: MethodologyDeclaration,
+    valuation_context: ValuationContext,
     reporting: ReportingSpec,
     confidence_level: float,
     batch_size: int,
-    full_reval: FullRevalBlock | None = None,
     taylor_derived: TaylorBlock | None = None,
     taylor_supplied: TaylorBlock | None = None,
     mode: ReproducibilityMode = "reproducible",
@@ -541,18 +465,21 @@ def run_scenario_var_es(
     required_factor_ids, required_shift_type_id, source_factor_ids, shock_scale
         The shock universe on the required-factor axis, in axis order. These are
         result-defining and are part of the identity (D040) — they are NOT part
-        of the scenario config.
+        of the scenario config. The axis must equal, row for row, the universe
+        map the run builds from `valuation_context`.
     base_levels
         Base levels x_0 on the same axis, `(K,)` float64.
     methodology
         The explicit production universe U and its partition U_F ⊔ U_S ⊔ U_D.
+    valuation_context
+        The run-owned base valuation context (P1-B). The run derives its as-of,
+        static-configuration and valuation-contract identity from it and
+        computes every V_0 from it.
     reporting
         Reporting metadata keyed to U (ascending).
-    full_reval
-        Required iff U_F is non-empty. Its universe map must carry exactly the
-        run's factor axis, in order.
     taylor_derived
-        Required iff U_D is non-empty. Its book must price exactly U_D.
+        Required iff U_D is non-empty. Its certified binding must equal the one
+        the run derives; its book must price exactly U_D on the run axis.
     taylor_supplied
         Refused, as is a non-empty U_S, while owner policy P-1 is open.
     batch_size
@@ -581,23 +508,24 @@ def run_scenario_var_es(
     u_full, u_supplied, u_derived = methodology.blocks()
     _require_block_wiring(
         methodology=methodology,
-        full_reval=full_reval,
         taylor_supplied=taylor_supplied,
         taylor_derived=taylor_derived,
     )
     _require_reporting_alignment(reporting=reporting, universe=universe)
-    aggregation: _RowAggregation | None = None
-    fingerprint = ""
-    if full_reval is not None:
-        _require_factor_axis(
-            universe_map=full_reval.universe_map,
-            required_factor_ids=required_factor_ids,
-            required_shift_type_id=required_shift_type_id,
-        )
-        aggregation = _full_reval_row_aggregation(
-            portfolio=full_reval.portfolio, universe=universe, full_uids=u_full
-        )
-        fingerprint = valuation_contract_fingerprint()
+    context = valuation_context
+    universe_map = build_universe_mapping(
+        static_config=context.static_config,
+        uix_mapper=context.uix_mapper,
+        discounting_mode=context.discounting_mode,
+    )
+    _require_factor_axis(
+        universe_map=universe_map,
+        required_factor_ids=required_factor_ids,
+        required_shift_type_id=required_shift_type_id,
+    )
+    aggregation = _row_aggregation(portfolio=context.portfolio, universe=universe)
+    universe_positions = _positions(aggregation.economic_uids, universe)
+    full_positions = _positions(aggregation.economic_uids, u_full)
     run_axis: FactorAxis | None = None
     if taylor_derived is not None:
         run_axis = FactorAxis.from_keys(
@@ -607,16 +535,17 @@ def run_scenario_var_es(
             block=taylor_derived, uids=u_derived, axis=run_axis, label="TAYLOR/DERIVED"
         )
 
-    # ---- identity, from the exact objects the computation will consume -------
+    # ---- identity: every context field derived by the run itself (P1-B) ------
+    static_digest = static_config_content_digest(context.static_config)
+    fingerprint = valuation_contract_fingerprint()
     composition = CompositionIdentity(
         methodology=MethodologyIdentity(partition_digest=methodology.digest()),
-        full_reval=None
-        if full_reval is None
-        else _full_reval_identity(full_reval, fingerprint=fingerprint),
-        taylor_supplied=None,
-        taylor_derived=None
-        if taylor_derived is None
-        else _taylor_block_identity(taylor_derived),
+        context=_context_identity(
+            context=context,
+            universe_map=universe_map,
+            static_config_digest=static_digest,
+            fingerprint=fingerprint,
+        ),
     )
     manifest = build_run_manifest(
         scenario_config=scenario_config,
@@ -661,8 +590,9 @@ def run_scenario_var_es(
         )
         if manifest.pnl.composition != reproduce.pnl.composition:
             raise InputMismatchError(
-                "methodology composition mismatch: the partition, the FULL_REVAL "
-                "inputs or a Taylor binding differ from the manifest."
+                "run context or methodology mismatch: the partition, the as-of, "
+                "the static configuration, the valuation contract or the compiled "
+                "representation differ from the manifest."
             )
         if identity != reproduce.identity():
             # every verifiable input matched, so the residue is the reporting
@@ -672,17 +602,38 @@ def run_scenario_var_es(
                 "all verifiable inputs match; check the reporting plan."
             )
 
-    # ---- P1-A gate and cross-methodology base coherence, before numerics -----
+    # ---- base state: V_0 = V(x_0) for EVERY position, once, on the one route --
+    route = _ValuationRoute(
+        portfolio=context.portfolio,
+        uix_mapper=context.uix_mapper,
+        universe_map=universe_map,
+    )
+    v0_economic = _value_positions(
+        route=route,
+        aggregation=aggregation,
+        flat_levels=np.ascontiguousarray(base_levels[:, None], dtype=np.float64),
+    )[:, 0]
+    base_settlement_values = np.ascontiguousarray(v0_economic[universe_positions])
+
+    # ---- P1-A gate against the RUN-DERIVED binding, before scenario numerics --
     if taylor_derived is not None:
-        binding = _certify_taylor_block(
+        v0_derived = v0_economic[_positions(aggregation.economic_uids, u_derived)]
+        _certify_taylor_block(
             block=taylor_derived,
-            required_factor_ids=required_factor_ids,
-            base_levels=base_levels,
+            expected=TaylorBaseBinding(
+                as_of_ord32=int(context.uix_mapper.as_of_ord32),
+                base_levels_digest=base_levels_digest(
+                    factor_ids=np.asarray(required_factor_ids, dtype=np.int32),
+                    base_levels=np.asarray(base_levels, dtype=np.float64),
+                ),
+                discounting_mode=context.discounting_mode.value,
+                static_config_digest=static_digest,
+                valuation_contract_fingerprint=fingerprint,
+                base_settlement_values_digest=base_settlement_values_digest(
+                    position_uids=u_derived, values=v0_derived
+                ),
+            ),
         )
-        if full_reval is not None:
-            _require_coherent_base(
-                full_reval=full_reval, binding=binding, fingerprint=fingerprint
-            )
 
     # ---- execute: scenarios -> ONE canonical shocked-level buffer ------------
     generator = build_scenario_generator(scenario_config, data=data)
@@ -704,37 +655,29 @@ def run_scenario_var_es(
     grid = allocate_pnl_grid(
         block_position_uids=[u_full, u_supplied, u_derived], num_scenarios=num_scenarios
     )
-    v0_full = np.empty(0, dtype=np.float64)
-    if full_reval is not None and aggregation is not None:
-        v0_full = _write_full_reval_block(
-            full_reval=full_reval,
+    if u_full.size:
+        _write_full_reval_block(
+            route=route,
             aggregation=aggregation,
-            base_levels=base_levels,
+            full_positions=full_positions,
+            v0_full=v0_economic[full_positions],
             shocked_levels=shocked_levels,
             batch_size=batch_size,
             out=grid.block_view(_FULL_BLOCK),
         )
     provenance = None
-    v0_derived = np.empty(0, dtype=np.float64)
     if taylor_derived is not None and run_axis is not None:
         provenance = taylor_derived.calculator.run_into_grid(
             run_axis.levels(base_levels=base_levels, shocked_levels=shocked_levels),
             grid=grid,
             block_index=_DERIVED_BLOCK,
         )
-        v0_derived = taylor_derived.base_settlement_values
 
     # ---- canonical economic axis sorted(U): one scatter, f32 -> f64 ----------
     production_rows = _grid_to_production_rows(grid=grid, universe=universe)
     m = universe.shape[0]
     settlement_pnl = np.empty((m, num_scenarios), dtype=np.float64, order="C")
     settlement_pnl[production_rows] = grid.pnl
-    base_settlement_values = np.empty(m, dtype=np.float64)
-    base_settlement_values[production_rows] = np.concatenate([
-        v0_full,
-        np.empty(0, dtype=np.float64),
-        v0_derived,
-    ])
 
     # ---- reporting currency: the ONE D081 conversion for every methodology ---
     plan = build_fx_conversion_plan(

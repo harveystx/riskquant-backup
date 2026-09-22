@@ -11,10 +11,31 @@ a kernel-friendly layout:
                               cache-friendly.
   - `shift_types_sorted`    : (K_req,) int8  — shift-type id per shock,
                               aligned with cols_sorted.
-  - `inverse_permutation`   : (K_req,) int32 — for each shock-universe
-                              uix `k`, the position of its column in the
-                              kernel output (i.e. the inverse of the
-                              sort order).
+  - `inverse_permutation`   : (K_req,) int32 — GATHER map from shock-
+                              universe space into sorted compute space:
+                              `inverse_permutation[k]` is the position `j`
+                              in `cols_sorted` / `shift_types_sorted` of
+                              shock-universe uix `k` (the inverse of the
+                              sort order `argsort(cols)`).
+
+Permutation contract (SimLab P0, D030 amendment). Two orders exist:
+  - shock-universe order (uix `k`): first-seen unique `(source, shift)` pairs;
+    the ORDER OF EVERY EMITTED SHOCK COLUMN (`ScenarioSetBatch.shocks[:, k]`,
+    resolved by `required_to_shock_uix`);
+  - sorted compute order (position `j`): ascending matrix column; memory
+    layout for the kernels only, never an output order.
+Every consumer produces output column `k` by gathering sorted position
+`inverse_permutation[k]`:
+
+    out[:, k] = shock(cols_sorted[inverse_permutation[k]],
+                      shift_types_sorted[inverse_permutation[k]])
+
+Example: matrix ids [12, 4002, 9007]; universe [9007, 12, 4002] -> matrix
+columns [2, 0, 1]; cols_sorted [0, 1, 2]; argsort [1, 2, 0] (sorted -> universe);
+inverse_permutation [2, 0, 1] (universe -> sorted). Output column 0 (factor
+9007) gathers sorted position 2 (column 2 = 9007). Using inverse_permutation
+as a scatter (`out[:, inverse_permutation[j]] = shock(sorted j)`) is wrong for
+every non-involutive permutation.
 
 `build_shock_compute_plan` takes `factor_ids: np.ndarray` (the matrix's
 sorted-ascending int32 column-id index) instead of a `dict[int, int]`,

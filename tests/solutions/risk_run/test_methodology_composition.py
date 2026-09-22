@@ -33,6 +33,7 @@ from riskquant.solutions.risk_run.schemas import (
     CompositionContractError,
     MethodologyDeclaration,
     ReportingSpec,
+    ValuationContext,
 )
 from riskquant.solutions.sensitivity_pnl.api import SensitivityPnlCalculator
 from riskquant.solutions.sensitivity_pnl.taylor_contract import TaylorContractError
@@ -116,6 +117,12 @@ def spy(monkeypatch):
 
 def _no_numerics(seen) -> None:
     assert seen["generators"] == 0 and seen["grids"] == 0 and not seen["matrices"]
+
+
+def _no_scenario_numerics(seen) -> None:
+    """Only the base state (S = 1) was valued: no scenario, no grid (P1-B gate)."""
+    assert seen["generators"] == 0 and seen["grids"] == 0
+    assert [m["num_scenarios"] for m in seen["matrices"]] == [1]
 
 
 def _rows(run, seen):
@@ -228,13 +235,7 @@ def test_supplied_is_refused_under_open_policy(spy) -> None:
     _no_numerics(spy)
 
 
-@pytest.mark.parametrize(
-    "drop,match",
-    [
-        ("full_reval", "no FULL_REVAL block"),
-        ("taylor_derived", "no TAYLOR/DERIVED block"),
-    ],
-)
+@pytest.mark.parametrize("drop,match", [("taylor_derived", "no TAYLOR/DERIVED block")])
 def test_declared_partition_without_block_fails(spy, drop, match) -> None:
     inp = mf.inputs()
     inp[drop] = None
@@ -279,9 +280,9 @@ def test_reporting_metadata_must_be_keyed_to_u(spy) -> None:
 def test_mixed_run_refuses_two_bases(spy) -> None:
     inp = mf.inputs()
     inp["taylor_derived"] = mf.derived_block(mf.DERIVED_UIDS, as_of_shift=1)
-    with pytest.raises(CompositionContractError, match="as_of_ord32"):
+    with pytest.raises(TaylorContractError, match="as_of_ord32"):
         run_scenario_var_es(**inp)
-    _no_numerics(spy)
+    _no_scenario_numerics(spy)
 
 
 def test_uncertified_derived_is_refused_before_any_grid_write(spy) -> None:
@@ -292,17 +293,18 @@ def test_uncertified_derived_is_refused_before_any_grid_write(spy) -> None:
     )
     with pytest.raises(TaylorContractError, match="UNCERTIFIED"):
         run_scenario_var_es(**inp)
-    _no_numerics(spy)
+    _no_scenario_numerics(spy)
 
 
-def test_taylor_v0_tamper_is_refused_before_any_grid_write(spy) -> None:
+def test_book_certified_at_another_v0_is_refused_before_any_grid_write(spy) -> None:
+    """P1-B: V_0 is run-computed; a book bound to any other V_0 fails closed."""
     inp = mf.inputs()
-    block = inp["taylor_derived"]
-    v0 = np.array(block.base_settlement_values) + np.array([0.0, 1.0, 0.0])
-    inp["taylor_derived"] = dataclasses.replace(block, base_settlement_values=v0)
+    inp["taylor_derived"] = mf.derived_block(
+        mf.DERIVED_UIDS, tamper=(("base_settlement_values_digest", "0" * 64),)
+    )
     with pytest.raises(TaylorContractError, match="base_settlement_values_digest"):
         run_scenario_var_es(**inp)
-    _no_numerics(spy)
+    _no_scenario_numerics(spy)
 
 
 # ---------------------------------------------------------------------------
@@ -341,19 +343,23 @@ def test_factor_axis_mismatch_fails_before_numerics(spy, case) -> None:
 
 
 def test_derived_book_on_a_factor_subset_is_refused_before_numerics(spy) -> None:
-    """F-1: the adapter compiles a book on its ACTIVE factors (here 2 of 4). The
-    calculator gathers by position, so the run refuses it; nothing is re-mapped."""
+    """F-1: a book DECLARED on its own 2 referenced factors (not the 4-factor
+    run axis) is refused before numerics; the composition never re-maps it."""
     inp = mf.inputs(full=(2_002, 2_003, 2_004, 2_005), derived=(2_001, 2_006))
+    inp["taylor_derived"] = mf.derived_block((2_001, 2_006), axis="own")
     with pytest.raises(CompositionContractError, match="factor axis"):
         run_scenario_var_es(**inp)
     _no_numerics(spy)
 
 
-def test_f1_documented_remedy_compiles_the_subset_book_on_the_run_axis(spy) -> None:
-    """The remedy the error names works with the current public API: the same
-    certified 2-factor book compiled on the 4-factor run axis prices correctly."""
+def test_f1_adapter_builds_the_subset_book_on_the_run_axis(spy) -> None:
+    """F-1 resolved at the adapter (D082): a book whose positions depend on 2 of
+    the 4 run-axis factors is built by `build_sensitivity_book_spec(
+    required_factor_ids=<run axis>)` and prices correctly in a mixed run."""
     inp = mf.inputs(full=(2_002, 2_003, 2_004, 2_005), derived=(2_001, 2_006))
-    inp["taylor_derived"] = mf.derived_block((2_001, 2_006), on_run_axis=True)
+    calc = inp["taylor_derived"].calculator
+    assert calc.axis.keys.to_list() == inp["required_factor_ids"].tolist()
+    assert calc.book.num_active_factors == 2
     run = run_scenario_var_es(**inp)
     rows = _rows(run, spy)
     for uid in mf.ALL_UIDS:
@@ -397,7 +403,6 @@ def test_full_route_never_touches_taylor(monkeypatch) -> None:
         (api.FactorAxis, "from_keys"),
         (api, "hash_compiled_book"),
         (api, "_certify_taylor_block"),
-        (api, "_taylor_block_identity"),
         (SensitivityPnlCalculator, "run"),
         (SensitivityPnlCalculator, "run_into_grid"),
     ):
@@ -481,14 +486,10 @@ def test_whole_portfolio_is_valued_but_only_u_f_enters_block_0(spy, uids) -> Non
     np.testing.assert_allclose(
         spy["groups"][-1], spy["groups"][:-1].sum(axis=0), rtol=0, atol=1e-9
     )
-    v0_d = dict(
-        zip(
-            sorted(derived),
-            mf.derived_block(tuple(sorted(derived)), uids=uids).base_settlement_values,
+    for uid in derived:  # run-computed V0 = L1
+        assert rows[uid][2] == pytest.approx(
+            _oracle(uid, taylor=True, uids=uids)[0], abs=ATOL_V0
         )
-    )
-    for uid in derived:
-        assert rows[uid][2] == v0_d[uid]
     assert run.pnl_provenance is not None
 
 
@@ -498,7 +499,17 @@ def test_blocks_are_isolated(spy) -> None:
     m_rows = _rows(mixed, spy)
     alone_full = run_scenario_var_es(**mf.inputs(full=mf.ALL_UIDS, derived=()))
     f_rows = _rows(alone_full, spy)
-    alone_derived = run_scenario_var_es(**mf.inputs(full=(), derived=mf.DERIVED_UIDS))
+    sub = mf.build_world(
+        mf.positions(mf.BASE).iloc[list(mf.DERIVED_SLOTS)].reset_index(drop=True)
+    )
+    inp = mf.inputs(full=(), derived=mf.DERIVED_UIDS)  # P1-B: the context IS U
+    inp["valuation_context"] = ValuationContext(
+        static_config=sub.rsc,
+        portfolio=sub.portfolio,
+        uix_mapper=sub.mapper,
+        discounting_mode=mf.FX.DiscountingMode.NONE,
+    )
+    alone_derived = run_scenario_var_es(**inp)
     d_rows = _rows(alone_derived, spy)
     for uid in mf.FULL_UIDS:
         assert np.array_equal(m_rows[uid][1], f_rows[uid][1])
@@ -540,7 +551,7 @@ def test_decomposition_changes_rows_not_economic_identity(spy, permutation) -> N
     whole = run_scenario_var_es(**mf.inputs(full=mf.ALL_UIDS, derived=()))
     base_rows = _rows(whole, spy)
     inp = mf.inputs(full=mf.ALL_UIDS, derived=())
-    inp["full_reval"] = mf.full_block(split)
+    inp["valuation_context"] = mf.context(split)
     parts = run_scenario_var_es(**inp)
     part_rows = _rows(parts, spy)
     assert parts.position_uids.tolist() == whole.position_uids.tolist()
@@ -595,18 +606,26 @@ def test_batch_size_is_operational(partition) -> None:
 def test_scenario_order_permutes_full_columns_only() -> None:
     w = mf.world()
     universe = np.array(mf.ALL_UIDS, dtype=np.int64)
-    agg = api._full_reval_row_aggregation(
-        portfolio=w.portfolio, universe=universe, full_uids=universe
+    agg = api._row_aggregation(portfolio=w.portfolio, universe=universe)
+    route = api._ValuationRoute(
+        portfolio=w.portfolio, uix_mapper=w.mapper, universe_map=w.universe_map
     )
+    pos = api._positions(agg.economic_uids, universe)
+    v0 = api._value_positions(
+        route=route,
+        aggregation=agg,
+        flat_levels=np.ascontiguousarray(w.su.base_levels[:, None]),
+    )[pos, 0]
     levels = mf.shocked_levels()
     perm = np.random.default_rng(3).permutation(levels.shape[1])
     outs = []
     for lv in (levels, np.ascontiguousarray(levels[:, perm])):
         buf = np.empty((universe.shape[0], lv.shape[1]), dtype=np.float32)
         api._write_full_reval_block(
-            full_reval=mf.full_block(),
+            route=route,
             aggregation=agg,
-            base_levels=w.su.base_levels,
+            full_positions=pos,
+            v0_full=v0,
             shocked_levels=lv,
             batch_size=3,
             out=buf,
@@ -644,11 +663,9 @@ def test_run_does_not_mutate_caller_arrays() -> None:
         "base_levels",
     )
     before = {k: np.array(inp[k], copy=True) for k in keys}
-    v0 = np.array(inp["taylor_derived"].base_settlement_values, copy=True)
     run = run_scenario_var_es(**inp)
     for k in keys:
         assert np.array_equal(inp[k], before[k]), k
-    assert np.array_equal(inp["taylor_derived"].base_settlement_values, v0)
     with pytest.raises(ValueError):
         run.position_uids[0] = 0
 
@@ -717,15 +734,15 @@ def test_full_vs_derived_reporting_reconciliation_identity(spy) -> None:
 def test_composition_is_in_the_identity_and_reproducible() -> None:
     base = run_scenario_var_es(**mf.inputs())
     comp = base.manifest.pnl.composition
-    assert comp.full_reval is not None and comp.taylor_derived is not None
-    assert comp.taylor_supplied is None
-    assert set(comp.full_reval.model_dump()) == {
+    assert set(comp.model_dump()) == {"methodology", "context"}
+    assert set(comp.context.model_dump()) == {
+        "as_of_ord32",
+        "static_config_digest",
+        "valuation_contract_fingerprint",
+        "discounting_mode",
         "portfolio_digest",
         "uix_mapper_fingerprint",
         "universe_map_digest",
-        "as_of_ord32",
-        "discounting_mode",
-        "valuation_contract_fingerprint",
     }  # no V0: a result
     again = run_scenario_var_es(**mf.inputs(), reproduce=base.manifest)
     assert again.identity == base.identity
@@ -736,3 +753,121 @@ def test_composition_is_in_the_identity_and_reproducible() -> None:
 
     with pytest.raises(InputMismatchError):
         run_scenario_var_es(**moved, reproduce=base.manifest)
+
+
+def test_composition_performs_no_factor_realignment(spy, monkeypatch) -> None:
+    """Alignment happens at the adapter/compile boundary, never in the run: during
+    a mixed run no factor key is relabelled, and the DERIVED calculator receives
+    a market on the run axis exactly."""
+    inp = mf.inputs(full=(2_002, 2_003, 2_004, 2_005), derived=(2_001, 2_006))
+
+    def boom(*a, **k):
+        raise AssertionError("the production run re-keyed factor data")
+
+    monkeypatch.setattr(api.FactorAxis, "relabel", boom)
+    run_scenario_var_es(**inp)
+    market = spy["taylor_market"]
+    assert market.axis.keys.to_list() == inp["required_factor_ids"].tolist()
+    assert inp["taylor_derived"].calculator.axis.matches(market.axis)
+
+
+def test_f1_unsorted_authoritative_run_axis_end_to_end(spy, monkeypatch) -> None:
+    """The run axis comes from the REAL `build_universe_mapping` on a static
+    config with hostile node ids: [9007, 12, 101, 4002], unsorted and
+    non-contiguous. Nothing sorts it. The adapter receives it, the certified
+    DERIVED book carries it (SLOT encoding), the run consumes it without any
+    re-keying, every mixed row reconciles with the independent oracle on the
+    run's canonical levels, and the DERIVED rows equal the SAME certified book
+    compiled on the sorted axis and priced on the SAME canonical levels
+    (reordered by factor identity in this test)."""
+    uids, rf = mf.HOSTILE, mf.HOSTILE_RF
+    w = mf.world(uids, rf)
+    axis = w.su.required_factor_ids.tolist()
+    assert axis == [9007, 12, 101, 4002] and axis != sorted(axis)
+    assert w.universe_map.required_factor_ids.tolist() == axis
+    inp = mf.inputs(uids=uids, rf=rf)
+    assert inp["required_factor_ids"].tolist() == axis  # run keeps the order
+    calc = inp["taylor_derived"].calculator
+    assert calc.axis.keys.to_list() == axis and calc.axis.slot_map is not None
+
+    def boom(*a, **k):
+        raise AssertionError("the production run re-keyed factor data")
+
+    with monkeypatch.context() as trap:  # undone on exit; spy stays
+        trap.setattr(api.FactorAxis, "relabel", boom)
+        run = run_scenario_var_es(**inp)
+    rows = _rows(run, spy)
+    market = spy["taylor_market"]
+    assert market.axis.keys.to_list() == axis and calc.axis.matches(market.axis)
+    shocked, base = mf.shocked_levels(uids=uids, rf=rf), w.su.base_levels
+    derived = mf.slots(uids, mf.DERIVED_SLOTS)
+    for uid in uids:  # independent oracle, by name
+        v0 = float(mf.l1_value(uid, base[:, None], uids, rf)[0])
+        dv = (
+            mf.l4_taylor(uid, base, shocked, cross=False, uids=uids, rf=rf)
+            if uid in derived
+            else mf.l1_value(uid, shocked, uids, rf) - v0
+        )
+        q0 = float(mf.reporting_rate(uid, base[:, None], uids, rf)[0])
+        ref = mf.l0_reporting(v0, dv, q0, mf.reporting_rate(uid, shocked, uids, rf))
+        assert rows[uid][2] == pytest.approx(v0, abs=ATOL_V0)
+        np.testing.assert_allclose(rows[uid][1], dv, rtol=0, atol=ATOL)
+        np.testing.assert_allclose(rows[uid][0], ref, rtol=0, atol=ATOL)
+    canonical = spy["full_shocked"]  # the run's one buffer
+    order = [axis.index(f) for f in sorted(axis)]  # identity reorder, test-side
+    twin = mf.derived_block(
+        tuple(sorted(derived)), uids=uids, rf=rf, axis="run_sorted"
+    ).calculator
+    assert twin.axis.keys.to_list() == sorted(axis) and twin.axis.slot_map is None
+    res = twin.run(
+        twin.axis.levels(
+            base_levels=np.ascontiguousarray(base[order]),
+            shocked_levels=np.ascontiguousarray(canonical[order]),
+        )
+    )
+    for i, uid in enumerate(res.position_uids.tolist()):  # representation-invariant
+        np.testing.assert_allclose(
+            rows[uid][1], np.asarray(res.pnl[i], np.float64), rtol=0, atol=ATOL
+        )
+    assert run.position_uids.tolist() == sorted(uids)
+
+
+def test_p0_unsorted_run_axis_scenarios_follow_factor_identity(spy) -> None:
+    """SimLab P0 reconciliation, on the hostile world that exposed it.
+
+    (a) The run's canonical shocked levels equal an independent log-return
+        oracle BY FACTOR NAME in the hostile-id world and in the sorted-id world
+        (absolute 1e-5: float32 shocks with |shock| < 0.05 err by <= 4e-9, times
+        levels <= 250, so the level error is <= 1e-6).
+    (b) Hence the same economics give the same per-position reporting P&L in
+        both worlds (float32 ATOL)."""
+    uids = mf.HOSTILE
+    src_of = {
+        "USDEUR": ("USDEUR", 1.0),
+        "AAPL_EQ": ("AAPL_EQ", 1.0),
+        "BRENT_CRUDE": ("BRENT_CRUDE", 1.0),
+        "WTI_CRUDE": ("BRENT_CRUDE", 0.95),
+    }
+    rows = {}
+    for tag, rf in (("hostile", mf.HOSTILE_RF), ("sorted", None)):
+        w = mf.world(uids, rf)
+        vals, ids = np.asarray(w.historical.values), w.historical.factor_ids.tolist()
+        run = run_scenario_var_es(**mf.inputs(uids=uids, rf=rf))
+        canonical = spy["full_shocked"]
+        for name, (src, scale) in src_of.items():
+            col = vals[:, ids.index(w.rf[src])]  # by identity
+            want = w.su.base_levels[mf._row(w, name)] * np.exp(
+                scale * np.log(col[1:] / col[:-1])
+            )
+            np.testing.assert_allclose(
+                canonical[mf._row(w, name)],
+                want,
+                rtol=0,
+                atol=1e-5,
+                err_msg=f"{tag}:{name}",
+            )
+        rows[tag] = _rows(run, spy)
+    for uid in uids:
+        np.testing.assert_allclose(
+            rows["hostile"][uid][0], rows["sorted"][uid][0], rtol=0, atol=ATOL
+        )

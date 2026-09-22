@@ -82,6 +82,7 @@ from riskquant.solutions.risk_run.schemas import (
     MethodologyDeclaration,
     ReportingSpec,
     TaylorBlock,
+    ValuationContext,
 )
 from riskquant.solutions.sensitivity_pnl.api import (
     SensitivityPnlCalculator,
@@ -582,7 +583,11 @@ def _run_sensitivities(
             title="Trade sensitivities (first/second order)",
         )
 
-    book_spec = build_sensitivity_book_spec(sensitivities=sensitivities)
+    # standalone sensitivity report: the book's own factors, declared explicitly
+    book_spec = build_sensitivity_book_spec(
+        sensitivities=sensitivities,
+        required_factor_ids=sensitivities.active_factor_rf_ids,
+    )
     calculator = SensitivityPnlCalculator.compile(book_spec)
 
     if verbose:
@@ -854,7 +859,10 @@ def _certify_sensitivities(
             position_uids=book_uids, values=v0
         ),
     )
-    spec = build_sensitivity_book_spec(sensitivities=sensitivities)
+    # the production DERIVED book: built on the RUN's axis (F-1, D082)
+    spec = build_sensitivity_book_spec(
+        sensitivities=sensitivities, required_factor_ids=required_factor_ids
+    )
     declaration = derive_taylor_declaration(
         sensitivities=sensitivities,
         order=TaylorOrder.SECOND_ORDER_FULL,
@@ -902,22 +910,23 @@ def _build_reporting_spec(
     )
 
 
-def _build_derived_block(
-    *, calculator: SensitivityPnlCalculator, pricing: ValuationResult
-) -> TaylorBlock:
-    """TAYLOR/DERIVED block: the certified book and the V_0 of the same pricing
-    pass, in `book.position_uids` order (D081 §3, P1-A)."""
-    pv_by_uid = dict(
-        zip(pricing.trade_uids.tolist(), pricing.values[:, 0].tolist(), strict=True)
-    )
-    base_values = np.array(
-        [pv_by_uid[int(uid)] for uid in calculator.book.position_uids.tolist()],
-        dtype=np.float64,
-    )
-    return TaylorBlock(
-        calculator=calculator,
-        base_settlement_values=base_values,
-        expected_binding=calculator.taylor_declaration.base_binding,
+def _build_derived_block(*, calculator: SensitivityPnlCalculator) -> TaylorBlock:
+    """TAYLOR/DERIVED block: the certified book only. The run values V_0 from
+    its own `ValuationContext` and verifies the book's binding against it
+    (P1-B)."""
+    return TaylorBlock(calculator=calculator)
+
+
+def _build_valuation_context(
+    *, rsc: RiskStaticConfig, portfolio: CompiledPortfolio, uix_mapper: UixMapper
+) -> ValuationContext:
+    """The run-owned base valuation context (P1-B): the static configuration,
+    the compiled portfolio, the mapper (as-of) and the discounting mode."""
+    return ValuationContext(
+        static_config=rsc,
+        portfolio=portfolio,
+        uix_mapper=uix_mapper,
+        discounting_mode=DiscountingMode.NONE,
     )
 
 
@@ -956,6 +965,7 @@ class DemoFixture:
     reporting: ReportingSpec
     methodology: MethodologyDeclaration
     taylor_derived: TaylorBlock
+    valuation_context: ValuationContext
 
 
 def build_fixture(*, verbose: bool = True) -> DemoFixture:
@@ -1031,7 +1041,10 @@ def build_fixture(*, verbose: bool = True) -> DemoFixture:
         parametric_data=parametric_data,
         reporting=reporting,
         methodology=_build_methodology(calculator),
-        taylor_derived=_build_derived_block(calculator=calculator, pricing=pricing),
+        taylor_derived=_build_derived_block(calculator=calculator),
+        valuation_context=_build_valuation_context(
+            rsc=rsc, portfolio=portfolio, uix_mapper=uix_mapper
+        ),
     )
 
 

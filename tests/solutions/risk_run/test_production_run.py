@@ -208,10 +208,7 @@ def test_foreign_environment_is_refused_before_execution() -> None:
 def _rebased(base, levels):
     return {
         "base_levels": levels,
-        "taylor_derived": derived(
-            calculator(base_levels=levels),
-            v0=np.array(base["taylor_derived"].base_settlement_values),
-        ),
+        "taylor_derived": derived(calculator(levels)),  # re-certified at the new base
     }
 
 
@@ -232,7 +229,7 @@ def test_reporting_fx_base_from_another_base_fails_closed() -> None:
 
     inp = inputs()
     levels = inp["base_levels"].copy()
-    levels[2] *= 1.05  # FACTOR_IDS[2] = 30 = USDEUR, the reporting FX row
+    levels[list(FACTOR_IDS).index(30)] *= 1.05  # 30 = USDEUR, the reporting FX row
     inp["base_levels"] = levels
     with pytest.raises(TaylorContractError, match="base_levels_digest"):
         run_scenario_var_es(**inp)
@@ -263,7 +260,6 @@ def _mutations():
         },
         "factor_order": {"data": _remat(base["data"], values=permuted)},
         "source_factor_ids": {"source_factor_ids": np.array([20, 10, 30], np.int32)},
-        "shift_type": {"required_shift_type_id": np.array([2] * K, np.int8)},
         "shock_scale": {"shock_scale": np.array([0.9, 1.0, 1.0], np.float32)},
         # P1-A: a new base is a new Taylor representation. Moving the levels
         # under a book certified at the OLD base now fails closed (see
@@ -341,3 +337,14 @@ def test_fresh_process_matches_in_process_and_reproduces_against_manifest(
     persisted = RiskRun.from_json(child["run"])
     again = run_scenario_var_es(**inputs(), reproduce=persisted.manifest)
     assert _numbers(again) == _numbers(persisted)
+
+
+def test_shift_types_are_owned_by_the_static_configuration() -> None:
+    """P1-B: shift types are part of the universe map the run builds from its
+    static configuration; a caller-substituted shift type is refused."""
+    from riskquant.solutions.risk_run.schemas import CompositionContractError
+
+    inp = inputs()
+    inp["required_shift_type_id"] = np.array([2] * K, np.int8)
+    with pytest.raises(CompositionContractError, match="required_shift_type_ids"):
+        run_scenario_var_es(**inp)

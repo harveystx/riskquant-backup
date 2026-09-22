@@ -43,6 +43,18 @@ _EPS32 = 2.0**-24  # D081 §12: float32 displacement, gross-exposure error bound
 
 
 # ----------------------------------------------------------------- helpers
+
+
+def _own_axis_spec(*, sensitivities, **kwargs):
+    """The book on its OWN referenced factors, declared explicitly (F-1): these
+    P1-A tests price no production run axis."""
+    return build_sensitivity_book_spec(
+        sensitivities=sensitivities,
+        required_factor_ids=sensitivities.active_factor_rf_ids,
+        **kwargs,
+    )
+
+
 def _binding(**overrides) -> TaylorBaseBinding:
     fields = dict(
         as_of_ord32=20_000,
@@ -137,14 +149,14 @@ X0, VX, VXX = 2.0, 27.0, 16.0
 # ================================================================ coordinates
 def test_a_relabelling_absolute_as_log_is_refused():
     with pytest.raises(ValueError, match="relabelling"):
-        build_sensitivity_book_spec(
+        _own_axis_spec(
             sensitivities=_block(VX, VXX),
             displacement_convention=DisplacementConvention.LOG,
         )
 
 
 def test_b_relative_transformation_is_exact():
-    spec = build_sensitivity_book_spec(
+    spec = _own_axis_spec(
         sensitivities=_block(VX, VXX),
         displacement_convention=DisplacementConvention.RELATIVE,
         base_levels_by_factor=BOUND,
@@ -156,7 +168,7 @@ def test_b_relative_transformation_is_exact():
 
 
 def test_c_log_transformation_carries_the_first_derivative_term():
-    spec = build_sensitivity_book_spec(
+    spec = _own_axis_spec(
         sensitivities=_block(VX, VXX),
         displacement_convention=DisplacementConvention.LOG,
         base_levels_by_factor=BOUND,
@@ -170,7 +182,7 @@ def test_c_log_transformation_carries_the_first_derivative_term():
 
 def test_c_log_taylor_matches_the_exact_second_order_expansion_in_log_space():
     """ln-space second-order Taylor of V(x0*e^y) at a small y, via the real engine."""
-    spec = build_sensitivity_book_spec(
+    spec = _own_axis_spec(
         sensitivities=_block(VX, VXX),
         displacement_convention=DisplacementConvention.LOG,
         base_levels_by_factor=BOUND,
@@ -194,7 +206,7 @@ def test_c_log_taylor_matches_the_exact_second_order_expansion_in_log_space():
 
 def test_d_relative_zero_base_fails_closed():
     with pytest.raises(ValueError, match="non-zero base"):
-        build_sensitivity_book_spec(
+        _own_axis_spec(
             sensitivities=_block(VX, VXX),
             displacement_convention=DisplacementConvention.RELATIVE,
             base_levels_by_factor={X: 0.0, Y: 0.0},
@@ -205,7 +217,7 @@ def test_d_relative_zero_base_fails_closed():
 @pytest.mark.parametrize("x0", [0.0, -1.5])
 def test_e_log_non_positive_base_fails_closed(x0):
     with pytest.raises(ValueError, match="strictly positive"):
-        build_sensitivity_book_spec(
+        _own_axis_spec(
             sensitivities=_block(VX, VXX),
             displacement_convention=DisplacementConvention.LOG,
             base_levels_by_factor={X: x0, Y: 0.0},
@@ -214,7 +226,7 @@ def test_e_log_non_positive_base_fails_closed(x0):
 
 
 def test_f_log_non_positive_scenario_level_fails_closed():
-    spec = build_sensitivity_book_spec(
+    spec = _own_axis_spec(
         sensitivities=_block(VX, VXX),
         displacement_convention=DisplacementConvention.LOG,
         base_levels_by_factor=BOUND,
@@ -237,9 +249,7 @@ def test_f_log_non_positive_scenario_level_fails_closed():
 def test_g_quote_base_is_a_linear_rescale_verified_against_an_oracle():
     """Greeks per QUOTED unit (1/b natural units) with quote_base = b."""
     b, a, c, dx = 10_000.0, 3.0, 400.0, 0.002
-    spec = build_sensitivity_book_spec(
-        sensitivities=_block(a / b, c / b**2), quote_base=b
-    )
+    spec = _own_axis_spec(sensitivities=_block(a / b, c / b**2), quote_base=b)
     calc = SensitivityPnlCalculator.compile(spec)
     produced = _pnl(calc, [1.0], [[1.0 + dx]])[0, 0]
     exact = a * dx + 0.5 * c * dx * dx
@@ -478,7 +488,7 @@ def test_derived_declaration_keeps_zero_greek_dependencies():
     )
     assert set(decl.dependencies.iter_rows()) == {(1, X), (1, Y)}
     spec = dataclasses.replace(
-        build_sensitivity_book_spec(sensitivities=blk), taylor_declaration=decl
+        _own_axis_spec(sensitivities=blk), taylor_declaration=decl
     )
     SensitivityPnlCalculator.compile(spec)
 
@@ -495,7 +505,7 @@ def test_coordinate_transform_rejects_base_mismatch(convention):
     """
     produced = None
     with pytest.raises(TaylorContractError, match="transformation base differs"):
-        produced = build_sensitivity_book_spec(
+        produced = _own_axis_spec(
             sensitivities=_block(VX, VXX),
             displacement_convention=convention,
             base_levels_by_factor={X: 3.0, Y: 0.0},
@@ -505,7 +515,7 @@ def test_coordinate_transform_rejects_base_mismatch(convention):
 
 
 def test_coordinate_transform_accepts_the_bound_base_with_oracle_values():
-    spec = build_sensitivity_book_spec(
+    spec = _own_axis_spec(
         sensitivities=_block(VX, VXX),
         displacement_convention=DisplacementConvention.LOG,
         base_levels_by_factor=BOUND,
@@ -519,7 +529,7 @@ def test_coordinate_transform_accepts_the_bound_base_with_oracle_values():
 
 def test_coordinate_transform_base_is_identity_keyed_not_positional():
     reordered = {Y: 0.0, X: 2.0}  # same factor -> level associations
-    build_sensitivity_book_spec(
+    _own_axis_spec(
         sensitivities=_block(VX, VXX),
         displacement_convention=DisplacementConvention.LOG,
         base_levels_by_factor=reordered,
@@ -527,7 +537,7 @@ def test_coordinate_transform_base_is_identity_keyed_not_positional():
     )
     swapped = {X: 0.0, Y: 2.0}  # levels exchanged between identities
     with pytest.raises(TaylorContractError, match="transformation base differs"):
-        build_sensitivity_book_spec(
+        _own_axis_spec(
             sensitivities=_block(VX, VXX),
             displacement_convention=DisplacementConvention.RELATIVE,
             base_levels_by_factor=swapped,
@@ -537,7 +547,7 @@ def test_coordinate_transform_base_is_identity_keyed_not_positional():
 
 def test_transformed_book_cannot_be_rebound_to_another_base():
     """Transform at A, then attach a declaration bound at B: compile refuses."""
-    spec = build_sensitivity_book_spec(
+    spec = _own_axis_spec(
         sensitivities=_block(VX, VXX),
         displacement_convention=DisplacementConvention.LOG,
         base_levels_by_factor=BOUND,
@@ -564,7 +574,7 @@ def test_transformed_book_cannot_be_rebound_to_another_base():
 
 def test_transform_without_a_binding_is_refused():
     with pytest.raises(TaylorContractError, match="must be bound"):
-        build_sensitivity_book_spec(
+        _own_axis_spec(
             sensitivities=_block(VX, VXX),
             displacement_convention=DisplacementConvention.LOG,
             base_levels_by_factor=BOUND,
@@ -574,7 +584,7 @@ def test_transform_without_a_binding_is_refused():
 def test_native_absolute_needs_no_transformation_base():
     """Rule D: ABSOLUTE is the sensitizer's native coordinate, so no
     base-dependent operation happens and no transformation base is recorded."""
-    spec = build_sensitivity_book_spec(sensitivities=_block(VX, VXX))
+    spec = _own_axis_spec(sensitivities=_block(VX, VXX))
     assert spec.coordinate_transform_base_digest is None
     row = spec.sensitivities.row(0, named=True)
     assert (row["first_order"], row["second_order"]) == (VX, VXX)

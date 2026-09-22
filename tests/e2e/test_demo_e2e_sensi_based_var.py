@@ -453,6 +453,7 @@ def canonical_risk_run():
         shock_scale=su.shock_scale,
         base_levels=su.base_levels,
         methodology=fixture.methodology,
+        valuation_context=fixture.valuation_context,
         taylor_derived=fixture.taylor_derived,
         reporting=fixture.reporting,
         confidence_level=2.0 / 3.0,
@@ -519,12 +520,19 @@ def _independent_reporting_pnl(fixture) -> np.ndarray:
     usdeur_s = shocked[rep.fx_factor_rows][0]
     usdeur_0 = float(su.base_levels[rep.fx_factor_rows][0])
     out = np.empty_like(dv)
+    pv = dict(
+        zip(
+            fixture.pricing.trade_uids.tolist(),
+            fixture.pricing.values[:, 0].tolist(),
+            strict=True,
+        )
+    )
     for i, ccy in enumerate(rep.settlement_ccys):
         if ccy == rep.reporting_ccy:
             rate_s, rate_0 = np.ones(s_total), 1.0
         else:
             rate_s, rate_0 = 1.0 / usdeur_s, 1.0 / usdeur_0
-        out[i] = dv[i] * rate_s + float(fixture.taylor_derived.base_settlement_values[i]) * (
+        out[i] = dv[i] * rate_s + float(pv[int(rep.position_uids[i])]) * (
             rate_s - rate_0
         )
     return out

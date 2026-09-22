@@ -124,8 +124,11 @@ def _kernel_fused_filtered_h_day_shock(
     """
     k_cols = cols.shape[0]
     for k in nb.prange(k_cols):
-        st = shift_types[k]
-        out_col = inv_perm[k]
+        # Contract (plan.py): inv_perm[k] is the SORTED compute position of
+        # shock-universe column k, a gather map. Output column k reads it.
+        pos = inv_perm[k]
+        st = shift_types[pos]
+        out_col = k
         out_col_vals = out[:, out_col]
 
         if st == SHIFT_NO_SHIFT_ID:
@@ -135,8 +138,8 @@ def _kernel_fused_filtered_h_day_shock(
                 out_col_vals[b] = np.float32(0.0)
             continue
 
-        col_res = residuals[:, k]
-        col_vols = vol_ratios[:, k]
+        col_res = residuals[:, pos]
+        col_vols = vol_ratios[:, pos]
 
         base_t = t_start - h + 1
 
