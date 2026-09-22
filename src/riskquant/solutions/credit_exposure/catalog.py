@@ -41,6 +41,10 @@ class ExposureModelEntry:
     #: Needs the SA-CCR hedging-set config (subclass->hedging-set map + per-
     #: hedging-set correlation), analogous to credit-VaR's `requires_loadings`.
     requires_saccr_config: bool = False
+    #: Human-readable statement of what the method computes and its supported
+    #: domain — the public model contract a caller reads without opening source.
+    #: Empty for methods whose display_name is self-explanatory.
+    description: str = ""
 
 
 EXPOSURE_MODEL_CATALOG: dict[str, ExposureModelEntry] = {
@@ -62,6 +66,28 @@ EXPOSURE_MODEL_CATALOG: dict[str, ExposureModelEntry] = {
         exposure_model_id=SACCR_ID,
         requires_add_on=True,
         requires_saccr_config=True,
+        description=(
+            "Standardised Approach for Counterparty Credit Risk (SA-CCR, CRE52). "
+            "Supported population: UNMARGINED netting sets, LINEAR (non-option, "
+            "non-CDO) trades, EQUITY and COMMODITY asset classes only. "
+            "Trade-level effective notional is the full CRE52 structural product "
+            "D = d * MF * delta: adjusted notional d = volume * current price "
+            "(CRE52.36); supervisory delta = +1 long / -1 short (CRE52.39), "
+            "required per trade via 'direction'; unmargined maturity factor "
+            "MF = sqrt(clamp(M, 10/250, 1)) (CRE52.48-49), required per trade via "
+            "'remaining_maturity_years' (10-business-day floor, one-year cap). "
+            "delta and MF are STRUCTURAL CRE52 terms, not house parameters. "
+            "'House-calibrated' means only the RiskQuant-owned CONFIGURATION: the "
+            "asset-subclass definitions, the subclass->hedging-set mapping, the "
+            "supervisory factors SF, the per-hedging-set correlation rho, alpha, "
+            "and the multiplier floor. Hedging-set aggregation is the CRE52 "
+            "single-factor form; signed effective notionals net fully within a "
+            "subclass and partially (rho-weighted) across subclasses of one "
+            "hedging set, with no offset across hedging sets. "
+            "NOT supported: options, CDO tranches, interest-rate / FX / credit "
+            "asset classes, and margined transactions. Not Basel-exact beyond "
+            "this supported population and house-owned configuration."
+        ),
     ),
 }
 

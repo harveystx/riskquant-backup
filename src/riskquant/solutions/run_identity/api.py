@@ -26,6 +26,7 @@ from riskquant.solutions.run_identity.hashing import (
     hash_risk_factor_matrix,
 )
 from riskquant.solutions.run_identity.schemas import (
+    CompositionIdentity,
     DataIdentity,
     EngineIdentity,
     PnlIdentity,
@@ -117,6 +118,7 @@ def build_run_manifest(
     reporting_currency: str,
     fx_digest: str,
     confidence_level: float,
+    composition: CompositionIdentity | None = None,
 ) -> RunManifest:
     """
     Assemble the immutable identity of one risk run.
@@ -143,6 +145,7 @@ def build_run_manifest(
         pnl=PnlIdentity(
             base_levels_digest=digest_array(base_levels),
             sensitivities_digest=sensitivities_digest,
+            composition=composition,
         ),
         reporting=ReportingIdentity(
             reporting_currency=reporting_currency, fx_digest=fx_digest

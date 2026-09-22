@@ -405,3 +405,22 @@ def validate_taylor_completeness(
         raise TaylorContractError(
             f"cross terms {outside_x[:10]} are outside the declared F(p)."
         )
+
+
+def verify_coordinate_transform_base(
+    *, transform_base_digest: str | None, declaration: TaylorDeclaration
+) -> None:
+    """
+    A RiskQuant coordinate transformation must have been evaluated at the base
+    the representation is bound to. Native-coordinate books (no transformation,
+    hence no base-dependent operation) carry None and are unaffected.
+    """
+    if (
+        transform_base_digest is not None
+        and transform_base_digest != declaration.base_binding.base_levels_digest
+    ):
+        raise TaylorContractError(
+            "coordinate transformation base differs from the bound Taylor base "
+            "(base_levels_digest mismatch): the derivatives were transformed at "
+            "another base than the one the representation claims."
+        )

@@ -114,6 +114,11 @@ class SensitivityBookSpec:
     #: None = UNCERTIFIED: compiles for engine-level use, but the production
     #: entry point refuses it. Present = validated for completeness at compile.
     taylor_declaration: TaylorDeclaration | None = None
+    #: P1-A: identity-keyed digest of the base a RiskQuant coordinate
+    #: transformation was evaluated at (set only by the adapter when it
+    #: transforms; None for native-coordinate books). Must equal the
+    #: declaration's base_levels_digest at compile.
+    coordinate_transform_base_digest: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

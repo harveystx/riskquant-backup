@@ -452,7 +452,8 @@ def canonical_risk_run():
         source_factor_ids=su.source_factor_ids,
         shock_scale=su.shock_scale,
         base_levels=su.base_levels,
-        calculator=fixture.calculator,
+        methodology=fixture.methodology,
+        taylor_derived=fixture.taylor_derived,
         reporting=fixture.reporting,
         confidence_level=2.0 / 3.0,
         batch_size=4,
@@ -523,7 +524,7 @@ def _independent_reporting_pnl(fixture) -> np.ndarray:
             rate_s, rate_0 = np.ones(s_total), 1.0
         else:
             rate_s, rate_0 = 1.0 / usdeur_s, 1.0 / usdeur_0
-        out[i] = dv[i] * rate_s + float(rep.base_settlement_values[i]) * (
+        out[i] = dv[i] * rate_s + float(fixture.taylor_derived.base_settlement_values[i]) * (
             rate_s - rate_0
         )
     return out

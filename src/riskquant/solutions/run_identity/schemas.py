@@ -28,13 +28,17 @@ from pydantic import BaseModel, ConfigDict
 
 __all__ = [
     "MANIFEST_SCHEMA_VERSION",
+    "CompositionIdentity",
     "DataIdentity",
     "EngineIdentity",
+    "FullRevalIdentity",
+    "MethodologyIdentity",
     "PnlIdentity",
     "ReportingIdentity",
     "RiskMeasureIdentity",
     "RunManifest",
     "ShockIdentity",
+    "TaylorBlockIdentity",
 ]
 
 # Schema version of THIS contract. Deliberately distinct from the engine
@@ -42,7 +46,9 @@ __all__ = [
 # v2 (D041) removed `execution.batch_size` from the mathematical identity after
 # the official risk path was measured bitwise-invariant to batch partitioning,
 # and added `numba_version`, because the P&L kernels are Numba-compiled.
-MANIFEST_SCHEMA_VERSION = "2"
+# v3 (D081 §11) added `pnl.composition`: the methodology partition of the
+# production universe and the result-defining inputs of each methodology block.
+MANIFEST_SCHEMA_VERSION = "3"
 
 _STRICT = ConfigDict(extra="forbid", frozen=True, protected_namespaces=())
 
@@ -82,12 +88,67 @@ class ShockIdentity(BaseModel):
     shock_scale_digest: str
 
 
+class MethodologyIdentity(BaseModel):
+    """D081 §11: the partition of the production universe U into U_F, U_S, U_D.
+
+    One digest over the four canonical (ascending, read-only) UID arrays, so a
+    UID moved between methodologies, added to U or removed from U changes it.
+    """
+
+    model_config = _STRICT
+    partition_digest: str
+
+
+class FullRevalIdentity(BaseModel):
+    """Result-defining inputs of the FULL_REVAL block.
+
+    The run-computed V_0 is deliberately ABSENT: it is a deterministic result of
+    these inputs and the base levels, not an input.
+    """
+
+    model_config = _STRICT
+    portfolio_digest: str
+    uix_mapper_fingerprint: str
+    universe_map_digest: str
+    as_of_ord32: int
+    discounting_mode: str
+    valuation_contract_fingerprint: str
+
+
+class TaylorBlockIdentity(BaseModel):
+    """Base binding of one certified Taylor block, including the digest of the
+    supplied V_0 (a component of the Taylor representation, i.e. an input)."""
+
+    model_config = _STRICT
+    as_of_ord32: int
+    base_levels_digest: str
+    discounting_mode: str
+    static_config_digest: str
+    valuation_contract_fingerprint: str
+    base_settlement_values_digest: str
+
+
+class CompositionIdentity(BaseModel):
+    """Methodology composition of a production run (D081 §11)."""
+
+    model_config = _STRICT
+    methodology: MethodologyIdentity
+    full_reval: FullRevalIdentity | None
+    taylor_supplied: TaylorBlockIdentity | None
+    taylor_derived: TaylorBlockIdentity | None
+
+
 class PnlIdentity(BaseModel):
-    """Inputs to the P&L step downstream of the shocks."""
+    """Inputs to the P&L step downstream of the shocks.
+
+    `composition` is None only for a manifest built outside the production
+    entry point (e.g. a plain sensitivity vector); `RiskRun` requires it.
+    """
 
     model_config = _STRICT
     base_levels_digest: str
     sensitivities_digest: str
+    composition: CompositionIdentity | None = None
 
 
 class ReportingIdentity(BaseModel):
@@ -119,7 +180,7 @@ class RunManifest(BaseModel):
 
     model_config = _STRICT
 
-    manifest_schema_version: Literal["2"] = MANIFEST_SCHEMA_VERSION
+    manifest_schema_version: Literal["3"] = MANIFEST_SCHEMA_VERSION
     engine: EngineIdentity
     scenario_config: dict[str, Any]
     data: DataIdentity

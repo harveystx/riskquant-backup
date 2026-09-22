@@ -10,7 +10,11 @@ from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID
 from riskquant.sensitivity_pnl.conventions import DisplacementConvention
 from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
-from riskquant.solutions.risk_run.schemas import ReportingSpec
+from riskquant.solutions.risk_run.schemas import (
+    MethodologyDeclaration,
+    ReportingSpec,
+    TaylorBlock,
+)
 from riskquant.solutions.scenario_models.api import parse_scenario_model_config
 from riskquant.solutions.sensitivity_pnl.api import (
     FactorAxis,
@@ -123,6 +127,8 @@ def inputs(model="sbb", batch_size=256, seed=7, calc=None):
         cfg["seed"] = seed
     m = matrix()
     settle = tuple(("EUR" if i % 2 else "USD") for i in range(M))
+    book = calculator() if calc is None else calc
+    uids = np.arange(1, M + 1, dtype=np.int64)
     return dict(
         scenario_config=parse_scenario_model_config(cfg),
         data=parametric_data() if model == "parametric" else m,
@@ -131,14 +137,23 @@ def inputs(model="sbb", batch_size=256, seed=7, calc=None):
         source_factor_ids=FIDS.copy(),
         shock_scale=np.ones(K, np.float32),
         base_levels=np.ascontiguousarray(VALS[-1].astype(np.float64)),
-        calculator=calculator() if calc is None else calc,
+        methodology=MethodologyDeclaration(
+            production_position_uids=uids,
+            full_reval_uids=[],
+            taylor_supplied_uids=[],
+            taylor_derived_uids=uids,
+        ),
+        # D081: synthetic Taylor book with an explicitly DECLARED zero base
+        # value, i.e. the V0 = 0 special case in which dW = dV*q_s exactly.
+        taylor_derived=TaylorBlock(
+            calculator=book,
+            base_settlement_values=np.zeros(M, dtype=np.float64),
+            expected_binding=book.taylor_declaration.base_binding,
+        ),
         reporting=ReportingSpec(
             reporting_ccy="USD",
+            position_uids=uids,
             settlement_ccys=settle,
-            # D081: synthetic Taylor book with an explicitly DECLARED zero base
-            # value, i.e. the V0 = 0 special case in which dW = dV*q_s exactly.
-            base_settlement_values=np.zeros(M, dtype=np.float64),
-            base_binding=(calculator() if calc is None else calc).taylor_declaration.base_binding,
             fx_factor_names=("USDEUR",),
             fx_factor_rows=np.array([K - 1], np.int32),
         ),

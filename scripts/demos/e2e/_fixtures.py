@@ -78,7 +78,11 @@ from riskquant.proxy_resolver.proxy import (
 )
 from riskquant.sensitivities.engine import run_sensitivities
 from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
-from riskquant.solutions.risk_run.schemas import ReportingSpec
+from riskquant.solutions.risk_run.schemas import (
+    MethodologyDeclaration,
+    ReportingSpec,
+    TaylorBlock,
+)
 from riskquant.solutions.sensitivity_pnl.api import (
     SensitivityPnlCalculator,
     build_sensitivity_book_spec,
@@ -889,6 +893,20 @@ def _build_reporting_spec(
     # D081: base settlement values V_0 per book position, taken from the SAME
     # valuation the sensitivities were derived from (ordinary-MTM reporting
     # P&L needs V_0 for the base-value translation term).
+    return ReportingSpec(
+        reporting_ccy=_REPORTING_CCY,
+        position_uids=np.asarray(calculator.book.position_uids, dtype=np.int64),
+        settlement_ccys=settlement_ccys,
+        fx_factor_names=("USDEUR",) if fx_rows else (),
+        fx_factor_rows=np.array(fx_rows, dtype=np.int32),
+    )
+
+
+def _build_derived_block(
+    *, calculator: SensitivityPnlCalculator, pricing: ValuationResult
+) -> TaylorBlock:
+    """TAYLOR/DERIVED block: the certified book and the V_0 of the same pricing
+    pass, in `book.position_uids` order (D081 §3, P1-A)."""
     pv_by_uid = dict(
         zip(pricing.trade_uids.tolist(), pricing.values[:, 0].tolist(), strict=True)
     )
@@ -896,13 +914,21 @@ def _build_reporting_spec(
         [pv_by_uid[int(uid)] for uid in calculator.book.position_uids.tolist()],
         dtype=np.float64,
     )
-    return ReportingSpec(
-        reporting_ccy=_REPORTING_CCY,
-        settlement_ccys=settlement_ccys,
+    return TaylorBlock(
+        calculator=calculator,
         base_settlement_values=base_values,
-        base_binding=calculator.taylor_declaration.base_binding,
-        fx_factor_names=("USDEUR",) if fx_rows else (),
-        fx_factor_rows=np.array(fx_rows, dtype=np.int32),
+        expected_binding=calculator.taylor_declaration.base_binding,
+    )
+
+
+def _build_methodology(calculator: SensitivityPnlCalculator) -> MethodologyDeclaration:
+    """D019 book: every position TAYLOR/DERIVED; U stated explicitly (D081 §11)."""
+    uids = np.asarray(calculator.book.position_uids, dtype=np.int64)
+    return MethodologyDeclaration(
+        production_position_uids=uids,
+        full_reval_uids=np.empty(0, dtype=np.int64),
+        taylor_supplied_uids=np.empty(0, dtype=np.int64),
+        taylor_derived_uids=uids,
     )
 
 
@@ -928,6 +954,8 @@ class DemoFixture:
     historical_matrix: RiskFactorMatrix
     parametric_data: ParametricRiskData
     reporting: ReportingSpec
+    methodology: MethodologyDeclaration
+    taylor_derived: TaylorBlock
 
 
 def build_fixture(*, verbose: bool = True) -> DemoFixture:
@@ -1002,6 +1030,8 @@ def build_fixture(*, verbose: bool = True) -> DemoFixture:
         historical_matrix=historical_matrix,
         parametric_data=parametric_data,
         reporting=reporting,
+        methodology=_build_methodology(calculator),
+        taylor_derived=_build_derived_block(calculator=calculator, pricing=pricing),
     )
 
 

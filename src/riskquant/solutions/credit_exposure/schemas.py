@@ -16,6 +16,8 @@ the add-on table + priced-notional inputs) are enforced against the catalog.
 
 from __future__ import annotations
 
+from typing import Any, Literal, cast
+
 __all__ = [
     "AddOnFactorRow",
     "CreditExposureRequest",
@@ -30,7 +32,6 @@ __all__ = [
 ]
 
 from collections.abc import Hashable, Mapping
-from typing import Any
 
 import pandas as pd
 import polars as pl
@@ -44,7 +45,6 @@ from riskquant.solutions.credit_exposure.catalog import (
 _STRICT = ConfigDict(extra="forbid", protected_namespaces=())
 
 
-# --------------------------------------------------------------------------- input
 class TradeRow(BaseModel):
     """One trade. ``mtm`` is a valuation output injected here (not priced)."""
 
@@ -57,6 +57,21 @@ class TradeRow(BaseModel):
     volume: float | None = Field(default=None, ge=0.0)
     current_price: float | None = Field(default=None, ge=0.0)
     asset_subclass_uix: int | None = Field(default=None)
+    # SA-CCR structural trade-level inputs (P2-11A/B). Optional on the shared
+    # schema so CEM / replacement cost are unaffected; the SA-CCR boundary
+    # requires them per-trade and fails fast when absent (see _validate_method).
+    direction: Literal["long", "short"] | None = Field(
+        default=None,
+        description="SA-CCR trade direction; supervisory delta = +1 long / -1 short.",
+    )
+    remaining_maturity_years: float | None = Field(
+        default=None,
+        gt=0.0,
+        description=(
+            "SA-CCR remaining maturity M in years (> 0). The unmargined CRE52 "
+            "maturity factor is sqrt(clamp(M, 10/250, 1))."
+        ),
+    )
 
 
 class NettingSetRow(BaseModel):
@@ -166,13 +181,22 @@ class CreditExposureRequest(BaseModel):
                             f"trade {i} (trade_uid={t.trade_uid}) missing '{field}', required by "
                             f"model '{self.model}'."
                         )
-        if entry.requires_saccr_config and (
-            not self.subclass_hedging_sets or not self.hedging_set_correlations
-        ):
-            raise ValueError(
-                f"model '{self.model}' requires 'subclass_hedging_sets' and "
-                "'hedging_set_correlations' (the SA-CCR hedging-set config)."
-            )
+        if entry.requires_saccr_config:
+            if not self.subclass_hedging_sets or not self.hedging_set_correlations:
+                raise ValueError(
+                    f"model '{self.model}' requires 'subclass_hedging_sets' and "
+                    "'hedging_set_correlations' (the SA-CCR hedging-set config)."
+                )
+            # P2-11A/B: direction and remaining maturity are structural SA-CCR
+            # inputs, required per trade. No silent default to long / MF=1.
+            for i, t in enumerate(self.trades):
+                for field in ("direction", "remaining_maturity_years"):
+                    if getattr(t, field) is None:
+                        raise ValueError(
+                            f"trade {i} (trade_uid={t.trade_uid}) missing "
+                            f"'{field}', required by model '{self.model}' "
+                            "(SA-CCR supervisory delta / maturity factor)."
+                        )
         return self
 
     @classmethod
@@ -193,9 +217,11 @@ class CreditExposureRequest(BaseModel):
         """Build a request from flat DataFrames (notebook / desk ergonomics).
 
         ``trades`` needs ``trade_uid, netting_set_uid, mtm`` (plus ``volume,
-        current_price, asset_subclass_uix`` for CEM); ``netting_sets`` needs
-        ``netting_set_uid, obligor_uid, net_collateral``; ``add_on_factors`` needs
-        ``subclass_uix, factor``. Extra columns are ignored.
+        current_price, asset_subclass_uix`` for CEM, and additionally
+        ``direction`` in {"long","short"} and ``remaining_maturity_years`` > 0
+        for SA-CCR); ``netting_sets`` needs ``netting_set_uid, obligor_uid,
+        net_collateral``; ``add_on_factors`` needs ``subclass_uix, factor``.
+        Extra columns are ignored.
         """
         _require(trades, ("trade_uid", "netting_set_uid", "mtm"), "trades")
         _require(
@@ -211,6 +237,8 @@ class CreditExposureRequest(BaseModel):
                 volume=_opt_float(r, "volume"),
                 current_price=_opt_float(r, "current_price"),
                 asset_subclass_uix=_opt_int(r, "asset_subclass_uix"),
+                direction=_opt_direction(r, "direction"),
+                remaining_maturity_years=_opt_float(r, "remaining_maturity_years"),
             )
             for r in trades.to_dict("records")
         ]
@@ -324,12 +352,10 @@ class CreditExposureResult(BaseModel):
 
     def obligor_ead_dataframe(self) -> pl.DataFrame:
         """Return the obligor-EAD list as a DataFrame (for notebook / desk ergonomics)."""
-        return pl.DataFrame(
-            {
-                "obligor_uid": [o.obligor_uid for o in self.obligor_ead],
-                "ead": [o.ead for o in self.obligor_ead],
-            }
-        )
+        return pl.DataFrame({
+            "obligor_uid": [o.obligor_uid for o in self.obligor_ead],
+            "ead": [o.ead for o in self.obligor_ead],
+        })
 
     # --- NETTING-SET EAD DATAFRAME
     @property
@@ -338,13 +364,11 @@ class CreditExposureResult(BaseModel):
 
     def netting_set_ead_dataframe(self) -> pl.DataFrame:
         """Return the netting-set-EAD list as a DataFrame (for notebook / desk ergonomics)."""
-        return pl.DataFrame(
-            {
-                "netting_set_uid": [n.netting_set_uid for n in self.netting_set_ead],
-                "obligor_uid": [n.obligor_uid for n in self.netting_set_ead],
-                "ead": [n.ead for n in self.netting_set_ead],
-            }
-        )
+        return pl.DataFrame({
+            "netting_set_uid": [n.netting_set_uid for n in self.netting_set_ead],
+            "obligor_uid": [n.obligor_uid for n in self.netting_set_ead],
+            "ead": [n.ead for n in self.netting_set_ead],
+        })
 
 
 def _require(df: pd.DataFrame, cols: tuple[str, ...], name: str) -> None:
@@ -363,3 +387,16 @@ def _opt_int(rec: Mapping[Hashable, Any], key: str) -> int | None:
     if key not in rec or pd.isna(rec[key]):
         return None
     return int(rec[key])
+
+
+def _opt_direction(
+    rec: Mapping[Hashable, Any], key: str
+) -> Literal["long", "short"] | None:
+    """Optional SA-CCR direction column. Absent / NA -> None (TradeRow requires
+    it for saccr via _validate_method); a present value passes through untouched
+    so TradeRow's Literal["long", "short"] validates it and rejects anything
+    else. The cast expresses "TradeRow will validate this at construction"; an
+    invalid string still fails there, never silently."""
+    if key not in rec or pd.isna(rec[key]):
+        return None
+    return cast("Literal['long', 'short']", str(rec[key]))

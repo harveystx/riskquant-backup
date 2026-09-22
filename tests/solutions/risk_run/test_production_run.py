@@ -24,7 +24,6 @@ from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.solutions.risk_run.api import run_scenario_var_es
 from riskquant.solutions.risk_run.schemas import (
     NonReproducibleRunError,
-    ReportingSpec,
     RiskRun,
 )
 from riskquant.solutions.run_identity.api import (
@@ -35,7 +34,7 @@ from riskquant.solutions.run_identity.schemas import RunManifest
 from riskquant.solutions.scenario_models.api import parse_scenario_model_config
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _fixture import FACTOR_IDS, K, S, calculator, inputs
+from _fixture import FACTOR_IDS, K, S, calculator, derived, inputs, reporting_spec
 
 
 def _remat(m: RiskFactorMatrix, **over) -> RiskFactorMatrix:
@@ -163,12 +162,14 @@ def test_stale_book_is_refused_before_execution() -> None:
         "displacement_convention_id": [abs_id] * K,
         "quote_base": [1.0] * K,
     })
-    inp["calculator"] = SensitivityPnlCalculator.compile(
-        SensitivityBookSpec(
-            sensitivities=sens,
-            factor_meta=meta,
-            factor_axis=FactorAxis.from_keys(FACTOR_IDS.tolist()),
-            position_uids=[1, 2],
+    inp["taylor_derived"] = derived(
+        SensitivityPnlCalculator.compile(
+            SensitivityBookSpec(
+                sensitivities=sens,
+                factor_meta=meta,
+                factor_axis=FactorAxis.from_keys(FACTOR_IDS.tolist()),
+                position_uids=[1, 2],
+            )
         )
     )
     with pytest.raises(InputMismatchError):
@@ -205,18 +206,11 @@ def test_foreign_environment_is_refused_before_execution() -> None:
 
 
 def _rebased(base, levels):
-    calc = calculator(base_levels=levels)
-    rep = base["reporting"]
     return {
         "base_levels": levels,
-        "calculator": calc,
-        "reporting": ReportingSpec(
-            reporting_ccy=rep.reporting_ccy,
-            settlement_ccys=rep.settlement_ccys,
-            base_settlement_values=rep.base_settlement_values,
-            base_binding=calc.taylor_declaration.base_binding,
-            fx_factor_names=rep.fx_factor_names,
-            fx_factor_rows=rep.fx_factor_rows,
+        "taylor_derived": derived(
+            calculator(base_levels=levels),
+            v0=np.array(base["taylor_derived"].base_settlement_values),
         ),
     }
 
@@ -250,7 +244,9 @@ def test_uncertified_book_is_refused_by_the_production_entry_point() -> None:
     from riskquant.solutions.sensitivity_pnl.taylor_contract import TaylorContractError
 
     inp = inputs()
-    inp["calculator"] = dataclasses.replace(inp["calculator"], taylor_declaration=None)
+    inp["taylor_derived"] = derived(
+        dataclasses.replace(inp["taylor_derived"].calculator, taylor_declaration=None)
+    )
     with pytest.raises(TaylorContractError, match="UNCERTIFIED"):
         run_scenario_var_es(**inp)
 
@@ -275,16 +271,7 @@ def _mutations():
         # mutation re-certifies the book and the V_0 binding at the new base.
         "base_levels": _rebased(base, base["base_levels"] * 1.001),
         "confidence_level": {"confidence_level": 0.95},
-        "reporting_currency": {
-            "reporting": ReportingSpec(
-                reporting_ccy="EUR",
-                settlement_ccys=("EUR", "USD"),
-                base_settlement_values=np.zeros(2, dtype=np.float64),
-                base_binding=calculator().taylor_declaration.base_binding,
-                fx_factor_names=("USDEUR",),
-                fx_factor_rows=np.array([2], np.int32),
-            )
-        },
+        "reporting_currency": {"reporting": reporting_spec(reporting_ccy="EUR")},
         "model": {
             "scenario_config": inputs(model="filtered_bootstrap")["scenario_config"]
         },
@@ -306,7 +293,7 @@ def test_equivalent_objects_do_not_change_identity() -> None:
         inp["data"], values=np.asfortranarray(np.array(inp["data"].values, copy=True))
     )
     inp["base_levels"] = inp["base_levels"].copy()
-    inp["calculator"] = calculator()  # freshly compiled, same content
+    inp["taylor_derived"] = derived(calculator())  # freshly compiled, same content
     other = run_scenario_var_es(**inp)
     assert other.identity == base.identity and _numbers(other) == _numbers(base)
 

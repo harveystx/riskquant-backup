@@ -37,6 +37,7 @@ from riskquant.credit.exposure.add_on.compiled import CompiledAddOnFactors
 from riskquant.credit.exposure.add_on.ingest import compile_add_on_factors
 from riskquant.credit.exposure.add_on.resolve import (
     resolve_quantity_price_effective_notional,
+    resolve_saccr_effective_notional,
     resolve_supervisory_factors,
 )
 from riskquant.credit.exposure.compile import (
@@ -95,6 +96,39 @@ def _effective_notional(trades: pd.DataFrame) -> np.ndarray:
     return resolve_quantity_price_effective_notional(
         volume=trades["volume"].to_numpy(dtype=np.float64),
         current_price=trades["current_price"].to_numpy(dtype=np.float64),
+    )
+
+
+def _saccr_effective_notional(trades: pd.DataFrame) -> np.ndarray:
+    """SA-CCR signed effective notional D_i = d_i * MF_i * delta_i (P2-11A/B).
+
+    Direction string dies here: it is mapped to the canonical +-1 sign before the
+    numeric resolver. Remaining maturity crosses as a plain float year. The
+    request validator has already guaranteed both columns are present and typed
+    for SA-CCR (fail-fast at the boundary); this reads them as canonical arrays.
+    """
+    direction = trades["direction"].to_numpy()
+    # Explicit long/short mapping. `np.where(=="long", +1, -1)` would silently
+    # turn any non-"long" value (typo, None-as-object, "SHORT") into a short;
+    # map only the two legal literals and reject everything else. TradeRow's
+    # Literal already enforces this upstream — this is defence in depth against a
+    # frame that reached the recipe by another path.
+    is_long = direction == "long"
+    is_short = direction == "short"
+    if not np.all(is_long | is_short):
+        bad = sorted({str(d) for d in direction[~(is_long | is_short)]})
+        raise ValueError(
+            f"_saccr_effective_notional: direction must be 'long' or 'short' for "
+            f"every trade; got unexpected value(s) {bad}."
+        )
+    direction_sign = np.where(is_long, 1.0, -1.0).astype(np.float64)
+    return resolve_saccr_effective_notional(
+        volume=trades["volume"].to_numpy(dtype=np.float64),
+        current_price=trades["current_price"].to_numpy(dtype=np.float64),
+        direction_sign=np.ascontiguousarray(direction_sign),
+        remaining_maturity_years=trades["remaining_maturity_years"].to_numpy(
+            dtype=np.float64
+        ),
     )
 
 
@@ -186,7 +220,7 @@ def _assemble_saccr(
     compiled = compile_exposure_saccr(
         trade_uids=_trade_uids(trades),
         trade_netting_set_id=_trade_netting_set(trades),
-        trade_effective_notional=_effective_notional(trades),
+        trade_effective_notional=_saccr_effective_notional(trades),
         trade_subclass_uix=_subclass_uix(trades),
         netting_set_master=master,
         add_on_factors=add_on,

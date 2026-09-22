@@ -1,10 +1,10 @@
-# scripts/release/certify_simlab_multicore.py
+# scripts/release/simlab/certify_simlab_multicore.py
 """
 SimLab multi-core release certification gate.
 
 Run on a genuinely multi-core machine:
 
-    python scripts/release/certify_simlab_multicore.py
+    python scripts/release/simlab/certify_simlab_multicore.py
 
 It exercises the OFFICIAL production path only —
 `riskquant.solutions.risk_run.api.run_scenario_var_es` — and emits a
@@ -160,7 +160,8 @@ _FIXTURE = textwrap.dedent(
     from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
     from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
     from riskquant.solutions.risk_run.api import run_scenario_var_es
-    from riskquant.solutions.risk_run.schemas import ReportingSpec
+    from riskquant.solutions.risk_run.schemas import (
+        MethodologyDeclaration, ReportingSpec, TaylorBlock)
     from riskquant.solutions.scenario_models.api import (
         build_scenario_generator, parse_scenario_model_config)
     from riskquant.solutions.sensitivity_pnl.api import (
@@ -168,6 +169,7 @@ _FIXTURE = textwrap.dedent(
 
     K, T, S, M = {K}, {T}, {S}, {M}
     FIDS = np.arange(1, K + 1, dtype=np.int32)
+    UIDS = np.arange(1, M + 1, dtype=np.int64)
 
     def _vals():
         r = np.random.default_rng(0)
@@ -190,7 +192,7 @@ _FIXTURE = textwrap.dedent(
                 np.linalg.cholesky(a @ a.T / K + np.eye(K) * 0.05)),
             volatilities=np.ascontiguousarray(np.full(K, 0.02)))
 
-    def calculator(variant=0):
+    def calculator(variant=0, base=None):
         r = np.random.default_rng(2 + variant)
         pos = np.repeat(np.arange(1, M + 1), 6)
         fac = r.choice(FIDS, size=M * 6)
@@ -208,7 +210,8 @@ _FIXTURE = textwrap.dedent(
         binding = tc.TaylorBaseBinding(
             as_of_ord32=20000,
             base_levels_digest=tc.base_levels_digest(
-                factor_ids=FIDS, base_levels=VALS[-1].astype(np.float64)),
+                factor_ids=FIDS,
+                base_levels=(VALS[-1] if base is None else base).astype(np.float64)),
             discounting_mode="NONE",
             static_config_digest=tc.static_config_content_digest({{}}),
             valuation_contract_fingerprint=tc.valuation_contract_fingerprint(),
@@ -223,6 +226,11 @@ _FIXTURE = textwrap.dedent(
             sensitivities=df, factor_meta=meta,
             factor_axis=FactorAxis.from_keys(FIDS.tolist()),
             position_uids=list(range(1, M + 1)), taylor_declaration=decl))
+
+    def derived(calc):
+        # D081: the synthetic book DECLARES V0 = 0; P1-A: bound to its own binding
+        return TaylorBlock(calculator=calc, base_settlement_values=np.zeros(M, dtype=np.float64),
+                           expected_binding=calc.taylor_declaration.base_binding)
 
     CFGS = {{
         "historical": {{"model": "historical", "horizon": 1}},
@@ -248,11 +256,12 @@ _FIXTURE = textwrap.dedent(
             source_factor_ids=FIDS.copy(),
             shock_scale=np.ones(K, np.float32),
             base_levels=np.ascontiguousarray(VALS[-1].astype(np.float64)),
-            calculator=calculator(),
+            methodology=MethodologyDeclaration(
+                production_position_uids=UIDS, full_reval_uids=[],
+                taylor_supplied_uids=[], taylor_derived_uids=UIDS),
+            taylor_derived=derived(calculator()),
             reporting=ReportingSpec(
-                reporting_ccy="USD", settlement_ccys=settle,
-                base_settlement_values=np.zeros(len(settle), dtype=np.float64),  # D081: declared V0 = 0
-                base_binding=calculator().taylor_declaration.base_binding,  # P1-A
+                reporting_ccy="USD", position_uids=UIDS, settlement_ccys=settle,
                 fx_factor_names=("USDEUR",),
                 fx_factor_rows=np.array([K - 1], np.int32)),
             confidence_level=0.99, batch_size=batch_size)
@@ -278,7 +287,7 @@ _FIXTURE = textwrap.dedent(
         stream = np.vstack(shocks)
         levels = np.ascontiguousarray(np.hstack(chunks))
         axis = FactorAxis.from_keys(pl.Series("factor_id", FIDS.tolist(), dtype=pl.Int32))
-        settlement = inp["calculator"].run(
+        settlement = inp["taylor_derived"].calculator.run(
             axis.levels(base_levels=inp["base_levels"], shocked_levels=levels))
         plan = build_fx_conversion_plan(
             settlement_ccys=list(inp["reporting"].settlement_ccys),
@@ -288,7 +297,10 @@ _FIXTURE = textwrap.dedent(
             settlement_pnl=np.ascontiguousarray(settlement.pnl, dtype=np.float64),
             fx_levels=np.ascontiguousarray(
                 levels[inp["reporting"].fx_factor_rows], dtype=np.float64),
-            plan=plan)
+            plan=plan,
+            base_settlement_values=np.zeros(M, dtype=np.float64),
+            base_fx_levels=np.ascontiguousarray(
+                inp["base_levels"][inp["reporting"].fx_factor_rows], dtype=np.float64))
         return {{
             "requested_workers": int(numba.config.NUMBA_NUM_THREADS),
             "actual_workers": int(numba.get_num_threads()),
@@ -560,7 +572,7 @@ _CONTRACTS = textwrap.dedent(
         "shock_scale": {"shock_scale": (base["shock_scale"] * 0.9).astype(np.float32)},
         "base_levels": {"base_levels": base["base_levels"] * 1.001},
         "confidence": {"confidence_level": 0.95},
-        "compiled_book": {"calculator": calculator(variant=1)},
+        "compiled_book": {"taylor_derived": derived(calculator(variant=1))},
     }
     for name, over in subs.items():
         inp = dict(inputs("sbb", 64)); inp.update(over)
@@ -579,6 +591,9 @@ _CONTRACTS = textwrap.dedent(
         if name == "compiled_book":
             continue
         inp = dict(inputs("sbb", 64)); inp.update(over)
+        if name == "base_levels":
+            # P1-A: a new base is a new Taylor representation; re-certify it there
+            inp["taylor_derived"] = derived(calculator(base=inp["base_levels"]))
         got = run_scenario_var_es(**inp)
         changed_result = [float(v).hex() for v in got.var] != [float(v).hex() for v in ref.var]
         mut[name] = {"result_changed": changed_result,

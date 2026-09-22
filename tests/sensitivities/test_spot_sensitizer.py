@@ -4,8 +4,9 @@ Production tests for the SpotBlock sensitivity layer.
 
 Exercises `sensitivities.engine.run_sensitivities` ->
 `sensitivities.sensitizers.spot` -> `sensitizer_kernels.spot`, plus the
-`sensitizer_registry` dispatch contract and the `book_adapter` edge
-conversion.
+`sensitizer_registry` dispatch contract. The solution-tier consumer of this
+output (`book_adapter` -> calculator) is tested in
+`tests/solutions/sensitivity_pnl/test_spot_book_adapter.py`.
 
 Fixtures are built directly from the production compilers (no demo import),
 so these are tests of the production layer itself.
@@ -21,10 +22,6 @@ from riskquant.sensitivities.sensitizer_registry import (
     BLOCK_SENSITIZERS,
     UNREGISTERED_BLOCK_TYPE_NAMES,
     resolve_sensitizer,
-)
-from riskquant.solutions.sensitivity_pnl.api import (
-    SensitivityPnlCalculator,
-    build_sensitivity_book_spec,
 )
 from riskquant.valuation.blocks.block_type import SPOT_BLOCK_TYPE_ID, BlockType
 
@@ -188,27 +185,8 @@ def test_unauthored_block_types_fail_fast_and_are_named(
 
 
 # =============================================================================
-# Edge adapter -> canonical book
+# Numerical-core purity
 # =============================================================================
-
-
-def test_book_spec_compiles_through_the_production_calculator(
-    rsc, sensitivities, position_uids
-) -> None:
-    """The numerical output must compile through the real book compiler."""
-    aapl_uid, brent_uid, wti_uid = position_uids
-    spec = build_sensitivity_book_spec(sensitivities=sensitivities)
-    calculator = SensitivityPnlCalculator.compile(spec)
-
-    book = calculator.book
-    assert book.position_uids.tolist() == [aapl_uid, brent_uid, wti_uid]
-    assert book.active_factor_ids.dtype == np.int32
-    assert set(book.active_factor_ids.tolist()) == {
-        int(rsc.rel_name_to_rf_id[n])
-        for n in ("USDEUR", "AAPL_EQ", "BRENT_CRUDE", "WTI_CRUDE")
-    }
-    assert book.first_order.shape[0] == 4
-    assert book.cross_second_order.shape[0] == 1
 
 
 def test_numerical_core_is_free_of_polars(sensitivities) -> None:

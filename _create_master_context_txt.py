@@ -183,7 +183,7 @@ def main(profile: str | None = None):
             # TESTS
             rq_project_directory / "tests",
             # OTHER
-            # rq_project_directory / "pyproject.toml",
+            rq_project_directory / "pyproject.toml",
         ],
         #######
         # NEW #

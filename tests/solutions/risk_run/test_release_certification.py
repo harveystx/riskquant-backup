@@ -110,7 +110,7 @@ _CERT = textwrap.dedent(
         shocks.append(np.array(b.shocks, copy=True)); chunks.append(out)
     stream = np.vstack(shocks); levels = np.ascontiguousarray(np.hstack(chunks))
     axis = FactorAxis.from_keys(pl.Series("factor_id", FIDS.tolist(), dtype=pl.Int32))
-    trade = inp["calculator"].run(
+    trade = inp["taylor_derived"].calculator.run(
         axis.levels(base_levels=inp["base_levels"], shocked_levels=levels)).pnl
 
     print(json.dumps({{

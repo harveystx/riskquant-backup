@@ -85,6 +85,7 @@ from riskquant.solutions.sensitivity_pnl.schemas import (
 from riskquant.solutions.sensitivity_pnl.taylor_contract import (
     TaylorDeclaration,
     validate_taylor_completeness,
+    verify_coordinate_transform_base,
 )
 from riskquant.solutions.sensitivity_pnl.validate import (
     validate_book_spec,
@@ -121,6 +122,10 @@ class SensitivityPnlCalculator:
         factor_meta = scope_factor_meta(spec)
         validate_book_spec(spec, factor_meta=factor_meta)
         if spec.taylor_declaration is not None:
+            verify_coordinate_transform_base(
+                transform_base_digest=spec.coordinate_transform_base_digest,
+                declaration=spec.taylor_declaration,
+            )
             validate_taylor_completeness(
                 declaration=spec.taylor_declaration,
                 sensitivities=spec.sensitivities,

@@ -19,7 +19,10 @@ because they can produce different results.
 
 from __future__ import annotations
 
+import dataclasses
+import enum
 import hashlib
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -29,8 +32,10 @@ __all__ = [
     "digest_named_arrays",
     "digest_reporting_plan",
     "hash_compiled_book",
+    "hash_compiled_portfolio",
     "hash_parametric_risk_data",
     "hash_risk_factor_matrix",
+    "hash_universe_mapping",
 ]
 
 # Cryptographic digest from the standard library; no new dependency. Collision
@@ -150,3 +155,85 @@ def digest_reporting_plan(
     h.update(b"|")
     h.update(digest_array(np.asarray(fx_factor_rows, dtype=np.int32)).encode(_ENC))
     return h.hexdigest()
+
+
+# Sentinel for an absent slice bound. Distinct from every real bound, so
+# slice(None, 4) and slice(0, 4) never digest alike.
+_NO_SLICE_BOUND = np.iinfo(np.int64).min
+
+
+def _field_as_array(name: str, value: object) -> npt.NDArray:
+    """
+    Canonical array form of one dataclass field for content hashing.
+
+    Arrays pass through `digest_array` unchanged (dtype and shape folded in).
+    Slices, integer tuples, enums, strings and scalars get one fixed array
+    encoding each. Any other type raises: an identity that silently skipped a
+    field could not distinguish two objects that differ only in that field.
+    """
+    if isinstance(value, np.ndarray):
+        return value
+    if isinstance(value, slice):
+        return np.asarray(
+            [
+                _NO_SLICE_BOUND if b is None else int(b)
+                for b in (value.start, value.stop, value.step)
+            ],
+            dtype=np.int64,
+        )
+    if isinstance(value, enum.Enum):
+        value = value.value
+    if isinstance(value, str):
+        return np.frombuffer(value.encode(_ENC), dtype=np.uint8)
+    if isinstance(value, (bool, np.bool_)):
+        return np.asarray([bool(value)], dtype=np.bool_)
+    if isinstance(value, (int, np.integer)):
+        return np.asarray([int(value)], dtype=np.int64)
+    if isinstance(value, (float, np.floating)):
+        return np.asarray([float(value)], dtype=np.float64)
+    if isinstance(value, tuple) and all(
+        isinstance(v, (int, np.integer)) for v in value
+    ):
+        return np.asarray([int(v) for v in value], dtype=np.int64)
+    raise TypeError(
+        f"field {name!r} of type {type(value).__name__} has no canonical identity "
+        "encoding; refusing to hash an object while ignoring one of its fields."
+    )
+
+
+def _dataclass_arrays(obj: Any, *, prefix: str) -> dict[str, npt.NDArray]:
+    """Every dataclass field of `obj`, in declaration order, as named arrays."""
+    return {
+        f"{prefix}{f.name}": _field_as_array(f.name, getattr(obj, f.name))
+        for f in dataclasses.fields(obj)
+    }
+
+
+def hash_compiled_portfolio(portfolio) -> str:
+    """
+    Content digest of a `CompiledPortfolio`: the compiled valuation
+    representation the FULL_REVAL route prices.
+
+    Every block contributes every field (parent `trade_uids` and all SoA
+    arrays) in block order, tagged by block type, so a changed quantity, a
+    changed row order, a moved row or a re-stamped mapper all change it.
+    """
+    arrays: dict[str, npt.NDArray] = {
+        "unique_dates_ord32": portfolio.unique_dates_ord32,
+        "uix_fingerprint": _field_as_array(
+            "uix_fingerprint", portfolio.uix_fingerprint
+        ),
+    }
+    for index, block in enumerate(portfolio.blocks):
+        prefix = f"block{index}:{type(block).__name__}:{int(block.BLOCK_TYPE_ID)}:"
+        arrays.update(_dataclass_arrays(block, prefix=prefix))
+    return digest_named_arrays(**arrays)
+
+
+def hash_universe_mapping(universe_map) -> str:
+    """
+    Content digest of a `UniverseMapping`: the ordered required-factor axis,
+    its shift types, the discounting mode and the full layout plan that maps
+    flat level rows onto market-data slots.
+    """
+    return digest_named_arrays(**_dataclass_arrays(universe_map, prefix=""))

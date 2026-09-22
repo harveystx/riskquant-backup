@@ -4210,7 +4210,7 @@ A JTD-modelled obligor with no corresponding netting-set exposure is an **input/
 
 * A netting set whose obligor is absent from the modelled target remains a legitimate soft case and is dropped.
 * A genuinely modelled subset of the obligor universe remains supported.
-* No JTD modelled obligor may acquire an implicit zero EAD merely because its exposure mapping is missing.
+* No JTD-modelled obligor may acquire an implicit zero EAD merely because its exposure mapping is missing.
 
 ---
 
@@ -4286,3 +4286,162 @@ SciPy version
 and the package/release version must distinguish the pre-D-C15 and post-D-C15 implementations.
 
 **Required release condition.** The provenance change is part of the release contract for D-C15. The stochastic construction must not be treated as reproducible solely from `(seed, input_hash, engine_version)` when those fields do not identify the generator construction and numerical environment.
+
+---
+
+## D-C16 — SA-CCR public trade representation: direction, maturity, and the house-calibration boundary
+
+**Status:** LOCKED
+**Findings closed:** P2-11A, P2-11B, P2-11C
+
+The public SA-CCR exposure model (`solutions.credit_exposure`, `model="saccr"`) implements the CRE52 Standardised Approach for its declared supported population: **unmargined netting sets, linear (non-option, non-CDO) trades, and equity and commodity asset classes**.
+
+For the supported equity/commodity population, `TradeRow.volume` represents the **number of units referenced by the trade**, and adjusted notional is:
+
+$$
+d_i = current\_price_i \times volume_i.
+$$
+
+The trade-level effective notional is the CRE52 structural product:
+
+$$
+\boxed{
+D_i=d_i\times MF_i\times\delta_i
+}
+$$
+
+and the resulting signed `D_i` flows into the P2-03 signed subclass aggregation unchanged.
+
+### P2-11A — supervisory delta / direction (structural)
+
+Each SA-CCR trade carries an explicit `direction` in `{"long", "short"}`.
+
+For the supported linear population:
+
+$$
+\delta_i =
+\begin{cases}
++1 & \text{long},\\
+-1 & \text{short}.
+\end{cases}
+$$
+
+Direction is a **STRUCTURAL CRE52 term**, not a house-calibrated parameter.
+
+Direction is required per SA-CCR trade and validated fail-fast. An absent direction is rejected at the request boundary, and an unexpected value is never silently mapped to short. The public schema constrains the value to `Literal["long", "short"]`, and the recipe-side mapping independently rejects any other value.
+
+Options and CDO-tranche supervisory-delta treatment are outside the supported population.
+
+### P2-11B — maturity factor (structural)
+
+Each SA-CCR trade carries an explicit `remaining_maturity_years`, representing the CRE52 remaining maturity \(M_i\), in **years**, before the floor/cap transformation, supplied by the caller.
+
+It is not:
+
+```text
+an already-floored maturity
+a tenor measured from trade inception
+a raw day count
+the maturity factor itself
+```
+
+The unmargined CRE52 maturity factor is:
+
+$$
+\boxed{
+MF_i=
+\sqrt{
+\operatorname{clamp}
+\left(
+M_i,\frac{10}{250},1
+\right)
+}
+}
+$$
+
+The 10-business-day floor (`10/250` years, using 250 business days per year) and the one-year cap are **STRUCTURAL CRE52 rules**, not house parameters.
+
+A valid positive \(M_i\) below `10/250` years is clamped to the regulatory floor. A non-positive \(M_i\) is a boundary error and is rejected; it is never silently clamped.
+
+The credit-exposure engine does not derive maturity from dates, does not own an as-of/calendar calculation for this purpose, and does not depend on `market_data` calendar infrastructure. The caller supplies the remaining maturity \(M_i\) directly.
+
+Margined maturity-factor treatment is outside the supported population.
+
+### P2-11C — meaning of "house-calibrated"
+
+"House-calibrated" refers only to RiskQuant-owned **CONFIGURATION**:
+
+```text
+asset-subclass definitions
+subclass → hedging-set mapping
+supervisory factors SF
+per-hedging-set correlation rho
+alpha
+multiplier floor
+```
+
+It does **not** mean:
+
+```text
+direction
+supervisory delta
+remaining maturity
+maturity factor
+maturity formula
+or any other SA-CCR structural equation
+```
+
+The SA-CCR hedging-set aggregation uses the existing CRE52 single-factor structure, including full signed offset within a subclass and partial correlation-based offset across subclasses within one hedging set, with no offset across hedging sets.
+
+### Supported population and explicit scope boundary
+
+The current public model supports only:
+
+```text
+unmargined netting sets
+linear non-option / non-CDO trades
+equity and commodity asset classes
+explicit long / short direction
+unmargined remaining maturity down to the CRE52 10-business-day floor
+```
+
+The following populations are **outside the supported public model contract and are not representable by its current public trade model**:
+
+```text
+options
+CDO tranches
+interest-rate asset classes
+FX asset classes
+credit asset classes
+margined transactions
+```
+
+No conclusion is made here about whether any of those populations should be supported by a future model extension.
+
+### Structural / house boundary
+
+The distinction between CRE52 structure and RiskQuant-owned configuration is normative:
+
+$$
+\boxed{
+\text{house calibration/configuration}
+\neq
+\text{replacement of SA-CCR structural mathematics}
+}
+$$
+
+In particular, \(\delta\) and \(MF\) are never to be described as house-calibrated parameters.
+
+### P2-03 relationship
+
+The P2-03 signed subclass aggregation remains unchanged:
+
+$$
+D_{jk}=\sum_iD_i
+$$
+
+$$
+A_{jk}=SF_kD_{jk}.
+$$
+
+P2-11 supplies the public trade-level signed effective notionals that make this existing signed aggregation reachable from the public SA-CCR path. No change to the P2-03 aggregation or downstream SA-CCR kernel is implied by this decision.

@@ -44,12 +44,10 @@ def _saccr_config_for(add_on):
     derived from it so the invariant rides whatever subclasses the fixture has:
     subclasses split across two hedging sets with distinct correlations."""
     subs = sorted(int(x) for x in add_on["subclass_uix"])
-    hedging_sets = pd.DataFrame(
-        {
-            "subclass_uix": subs,
-            "hedging_set_uix": [10 if i % 2 == 0 else 20 for i in range(len(subs))],
-        }
-    )
+    hedging_sets = pd.DataFrame({
+        "subclass_uix": subs,
+        "hedging_set_uix": [10 if i % 2 == 0 else 20 for i in range(len(subs))],
+    })
     correlations = pd.DataFrame({"hedging_set_uix": [10, 20], "rho": [0.40, 0.30]})
     return hedging_sets, correlations
 
@@ -192,23 +190,26 @@ def _frozen_book():
       ns3 (obligor 3)  -40                 fully OTM, GRC=0 -> PFE floor
       ns4 (obligor 3)  +20                 NGR=1 (no compression) + aggregation
     """
-    trades = pd.DataFrame(
-        {
-            "trade_uid": [1, 2, 3, 4, 5],
-            "netting_set_uid": [1, 1, 2, 3, 4],
-            "mtm": [100.0, -60.0, 80.0, -40.0, 20.0],
-            "volume": [1000.0, 500.0, 200.0, 300.0, 100.0],
-            "current_price": [1.0, 1.0, 1.0, 1.0, 1.0],
-            "asset_subclass_uix": [1, 1, 1, 1, 1],
-        }
-    )
-    netting_sets = pd.DataFrame(
-        {
-            "netting_set_uid": [1, 2, 3, 4],
-            "obligor_uid": [1, 2, 3, 3],
-            "net_collateral": [0.0, 30.0, 0.0, 0.0],
-        }
-    )
+    trades = pd.DataFrame({
+        "trade_uid": [1, 2, 3, 4, 5],
+        "netting_set_uid": [1, 1, 2, 3, 4],
+        "mtm": [100.0, -60.0, 80.0, -40.0, 20.0],
+        "volume": [1000.0, 500.0, 200.0, 300.0, 100.0],
+        "current_price": [1.0, 1.0, 1.0, 1.0, 1.0],
+        "asset_subclass_uix": [1, 1, 1, 1, 1],
+        # SA-CCR structural inputs (P2-11A/B). This is a legacy long book at
+        # unit price; direction=long (delta=+1) and remaining maturity >= 1y
+        # (MF=1) leave the SA-CCR effective notional at volume*price, so every
+        # add-on invariant below is preserved and the CEM branch is unaffected
+        # (CEM ignores these fields).
+        "direction": ["long", "long", "long", "long", "long"],
+        "remaining_maturity_years": [1.0, 1.0, 1.0, 1.0, 1.0],
+    })
+    netting_sets = pd.DataFrame({
+        "netting_set_uid": [1, 2, 3, 4],
+        "obligor_uid": [1, 2, 3, 3],
+        "net_collateral": [0.0, 30.0, 0.0, 0.0],
+    })
     add_on = pd.DataFrame({"subclass_uix": [1], "factor": [0.10]})
     return trades, netting_sets, add_on
 
@@ -248,26 +249,31 @@ def test_invariants_on_canonical_book():
     )
 
     book = generate_canonical_exposure_book()
-    trades = pd.DataFrame(
-        {
-            "trade_uid": book.trade_uid,
-            "netting_set_uid": book.trade_netting_set_id,
-            "mtm": book.mtm,
-            "volume": book.volume,
-            "current_price": book.current_price,
-            "asset_subclass_uix": book.asset_subclass_uix,
-        }
-    )
-    netting_sets = pd.DataFrame(
-        {
-            "netting_set_uid": book.netting_set_uid,
-            "obligor_uid": book.netting_set_obligor_uid,
-            "net_collateral": book.netting_set_collateral,
-        }
-    )
-    add_on = pd.DataFrame(
-        {"subclass_uix": book.subclass_uix, "factor": book.subclass_factor}
-    )
+    n_trades = len(book.trade_uid)
+    trades = pd.DataFrame({
+        "trade_uid": book.trade_uid,
+        "netting_set_uid": book.trade_netting_set_id,
+        "mtm": book.mtm,
+        "volume": book.volume,
+        "current_price": book.current_price,
+        "asset_subclass_uix": book.asset_subclass_uix,
+        # SA-CCR structural inputs (P2-11A/B), attached at the golden-master
+        # boundary — the canonical fixture is a long book, so direction=long
+        # and remaining maturity >= 1y (delta=+1, MF=1) preserve its SA-CCR
+        # effective notional as volume*price. The out-of-package fixture is
+        # not modified.
+        "direction": ["long"] * n_trades,
+        "remaining_maturity_years": [1.0] * n_trades,
+    })
+    netting_sets = pd.DataFrame({
+        "netting_set_uid": book.netting_set_uid,
+        "obligor_uid": book.netting_set_obligor_uid,
+        "net_collateral": book.netting_set_collateral,
+    })
+    add_on = pd.DataFrame({
+        "subclass_uix": book.subclass_uix,
+        "factor": book.subclass_factor,
+    })
     assert_contract_invariants(trades, netting_sets, add_on)
 
 
