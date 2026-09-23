@@ -274,8 +274,12 @@ def pricing_and_sensitivities(
     return pricing, calculator
 
 
+# def _pv(pricing, uid: int) -> float:
+#     return float(pricing.get_trade_values(uid)[0])
 def _pv(pricing, uid: int) -> float:
-    return float(pricing.get_trade_values(uid)[0])
+    values = pricing.get_trade_values(uid)
+    assert values.shape == (1, 1)
+    return float(values[0, 0])
 
 
 def _first_order(calculator, position_id: int, factor_id: int) -> float:
