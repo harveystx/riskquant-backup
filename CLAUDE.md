@@ -2,14 +2,34 @@
 
 This file is the permanent operating contract for Claude working on RiskQuant.
 
-`context_riskquant_all.txt`, provided in the Claude Project files, is the
-**current RiskQuant repository snapshot for the task**. Treat the files and
-contents represented in it as the current codebase state and source of truth
-for repository inspection.
+The **RiskQuant repository contexts provided in the Claude Project files are the
+authoritative snapshot of the current RiskQuant codebase for the task**. They
+contain the latest generated representation of the repository and must be used
+as the source of truth for repository inspection, implementation analysis, and
+code-level claims.
+
+`context_riskquant_index.txt` is the **repository context map and snapshot
+index**. It identifies the available profiles, repository snapshot identity,
+domain structure, and relevant dependency relationships. Use it to determine
+which context profiles are relevant to the task.
+
+`context_riskquant_core.txt` contains the shared core source represented in the
+generated context set.
+
+`context_riskquant_<domain>.txt` contains the source and resolved context for an
+individual domain. Use the relevant domain profile(s) for the user's task;
+do not assume that every profile is required or that an `all` context artifact
+exists.
+
+The supplied context files are generated from the repository as a coherent
+snapshot. Treat the source represented in those files as the **current
+repository state**. Do not substitute assumptions, prior chat context, old
+handoffs, or historical repository knowledge for the supplied snapshot.
 
 `DECISIONS.md` is **always attached separately to the task prompt**. It is the
-authoritative record of locked architectural and mathematical intent. Do not
-assume it is present in `context_riskquant_all.txt`.
+authoritative record of locked architectural and mathematical intent and must
+be consulted whenever the task touches a locked contract or decision.
+Do not assume it is included in the generated repository contexts.
 
 The user's current prompt defines the task.
 
@@ -40,7 +60,8 @@ explicitly authorises changes.**
 
 In audit mode:
 
-* inspect the relevant project files and `DECISIONS.md`;
+* inspect the relevant generated context profiles and `DECISIONS.md`;
+* use the index to identify relevant domains and dependencies;
 * identify concrete findings;
 * distinguish observed facts from inference;
 * do not modify anything;
@@ -61,12 +82,25 @@ user's behalf.** Present evidence, alternatives, and consequences.
 
 Use each source for its proper purpose:
 
-**Current codebase state:** `context_riskquant_all.txt`.
-**Locked architectural/mathematical intent:** `DECISIONS.md`, attached to the prompt.
+**Current codebase state:** the supplied generated RiskQuant context files,
+with `context_riskquant_index.txt` as the repository map and snapshot index.
+
+**Locked architectural/mathematical intent:** `DECISIONS.md`, attached to the
+prompt.
+
 **Requested change:** the user's current prompt.
 
 Do not assume files, APIs, dependencies, tests, configuration, behaviour, or
-history that are not represented in the supplied project snapshot.
+history that are not represented in the supplied repository context.
+
+Use `context_riskquant_index.txt` to determine the available profiles and the
+relevant domain boundaries. Use the relevant
+`context_riskquant_<domain>.txt` files for domain-specific implementation
+inspection.
+
+Do not assume that every generated profile is attached to every task. When the
+supplied context does not contain the source required to establish a claim,
+say so rather than inventing or inferring repository content.
 
 `DECISIONS.md` is separate from the codebase snapshot and must be consulted
 whenever the task touches a locked contract or decision.
@@ -120,6 +154,8 @@ Architecture:
 * **CSR:** existing sparse relationships retain their established
   Compressed Sparse Row semantics. Do not silently densify or change topology.
 * Memory layout is a correctness and performance contract, not cosmetic detail.
+* Core computational arrays should be intentionally contiguous where the
+  established kernel contract permits it. Preserve and exploit memory locality.
 
 ---
 
@@ -139,11 +175,23 @@ legacy allowance.
 
 Never use pandas in kernels.
 
-Strings and external identifiers are resolved before core computation.
+Strings and external identifiers must die at the edge; resolve them before
+core computation.
 
 ### Solution
 
 `riskquant.solutions.*` is the public contract/API boundary.
+
+### Compilers
+
+Compilers are responsible for orchestration, business-policy application, and
+construction of kernel-ready computational state.
+
+Compilers must validate inputs and contracts before invoking kernels and must
+fail fast on invalid or incompatible inputs.
+
+Kernels must not absorb compiler responsibilities or implement orchestration or
+business-policy decisions.
 
 ### Kernel
 
@@ -158,12 +206,24 @@ Kernels do not:
 * allocate hot-path outputs;
 * perform orchestration or business dispatch.
 
+Avoid unnecessary branching in hot computational paths. Resolve policy,
+validation, and exceptional cases before entering kernels where the contract
+permits.
+
 `riskquant.jit` is the canonical source of Numba decorators and type/layout
 aliases.
 
 Do not redefine Numba aliases locally or bypass established JIT configuration.
 
+If a required Numba decorator, scalar type, array alias, or compiler
+configuration is genuinely missing, extend `riskquant.jit` rather than
+introducing a local equivalent.
+
 Preserve established dtype, shape, indexing, and C/F-contiguity contracts.
+
+Existing code is not authority for Numba policy. Do not copy or propagate
+legacy violations of the canonical `riskquant.jit` decorator, scalar-type, or
+array-type contracts.
 
 ---
 
@@ -227,17 +287,18 @@ current implementation from locked design intent.
 
 ## 7. Verification and evidence
 
-Inspect the supplied project snapshot and the attached `DECISIONS.md` before
+Inspect the supplied repository context and the attached `DECISIONS.md` before
 making claims or changes.
 
 For non-trivial work:
 
 1. identify the exact contract;
-2. inspect the relevant implementation, tests, and decisions;
-3. make the smallest required change;
-4. perform the smallest relevant verification;
-5. run broader verification where appropriate;
-6. report exactly what was verified.
+2. use the index to identify the relevant domain profile(s);
+3. inspect the relevant implementation, tests, and decisions;
+4. make the smallest required change;
+5. perform the smallest relevant verification;
+6. run broader verification where appropriate;
+7. report exactly what was verified.
 
 **Never claim execution unless execution actually occurred.**
 

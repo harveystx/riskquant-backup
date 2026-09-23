@@ -45,7 +45,7 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _SRC = _REPO_ROOT / "src"
 
 #: Objects compared, in the order a divergence must be reported (the earliest

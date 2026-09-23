@@ -310,7 +310,7 @@
     {
       "check": "stale input refused before numerics",
       "passed": true,
-      "detail": "{\"historical_value\": \"InputMismatchError\", \"factor_order\": \"InputMismatchError\", \"source_factor_ids\": \"InputMismatchError\", \"shift_types\": \"InputMismatchError\", \"shock_scale\": \"InputMismatchError\", \"base_levels\": \"InputMismatchError\", \"confidence\": \"InputMismatchError\", \"compiled_book\": \"InputMismatchError\"}"
+      "detail": "{\"historical_value\": \"InputMismatchError\", \"factor_order\": \"InputMismatchError\", \"source_factor_ids\": \"InputMismatchError\", \"shift_types\": \"CompositionContractError\", \"shock_scale\": \"InputMismatchError\", \"base_levels\": \"InputMismatchError\", \"confidence\": \"InputMismatchError\", \"compiled_book\": \"InputMismatchError\"}"
     },
     {
       "check": "every result-defining mutation changes identity",
@@ -329,8 +329,8 @@
     },
     {
       "check": "bypass audit: one public scenario-VaR entry point",
-      "passed": false,
-      "detail": "producers=[]"
+      "passed": true,
+      "detail": "producers=['credit/aggregate/loss_metrics.py', 'solutions/risk_run/api.py']"
     }
   ],
   "evidence": {
@@ -442,7 +442,10 @@
       "threads": 8
     },
     "contracts": {
-      "var_es_producers": [],
+      "var_es_producers": [
+        "credit\\aggregate\\loss_metrics.py",
+        "solutions\\risk_run\\api.py"
+      ],
       "environment_gate": {
         "riskquant_version": "rejected",
         "python_version": "rejected",
@@ -465,7 +468,7 @@
         "historical_value": "InputMismatchError",
         "factor_order": "InputMismatchError",
         "source_factor_ids": "InputMismatchError",
-        "shift_types": "InputMismatchError",
+        "shift_types": "CompositionContractError",
         "shock_scale": "InputMismatchError",
         "base_levels": "InputMismatchError",
         "confidence": "InputMismatchError",
@@ -485,8 +488,7 @@
           "identity_changed": true
         },
         "shift_types": {
-          "result_changed": true,
-          "identity_changed": true
+          "refused": "CompositionContractError"
         },
         "shock_scale": {
           "result_changed": true,
@@ -513,39 +515,39 @@
   "performance": [
     {
       "threads": 1,
-      "runtime_s": 0.032072900037746876,
-      "verify_s": 0.03427559998817742,
-      "serialize_s": 0.0003978000022470951,
-      "peak_mb": 27.472662,
-      "artifact_kb": 12.5,
-      "scen_per_s": 62357.94074268876
+      "runtime_s": 0.06017419998534024,
+      "verify_s": 0.0540494000306353,
+      "serialize_s": 0.00040339998668059707,
+      "peak_mb": 23.906129,
+      "artifact_kb": 12.938,
+      "scen_per_s": 33236.83572838931
     },
     {
       "threads": 2,
-      "runtime_s": 0.023800699971616268,
-      "verify_s": 0.02624070004094392,
-      "serialize_s": 0.0003656999906525016,
-      "peak_mb": 27.472662,
-      "artifact_kb": 12.5,
-      "scen_per_s": 84031.14204141549
+      "runtime_s": 0.05059539998183027,
+      "verify_s": 0.051758999994490296,
+      "serialize_s": 0.0003826000029221177,
+      "peak_mb": 23.906129,
+      "artifact_kb": 12.938,
+      "scen_per_s": 39529.2852851887
     },
     {
       "threads": 4,
-      "runtime_s": 0.028287700028158724,
-      "verify_s": 0.04122150002513081,
-      "serialize_s": 0.0009730000165291131,
-      "peak_mb": 27.472603,
-      "artifact_kb": 12.5,
-      "scen_per_s": 70702.10720592762
+      "runtime_s": 0.06654960004379973,
+      "verify_s": 0.0675387000082992,
+      "serialize_s": 0.0004759000148624182,
+      "peak_mb": 23.906129,
+      "artifact_kb": 12.938,
+      "scen_per_s": 30052.77264902714
     },
     {
       "threads": 8,
-      "runtime_s": 0.0484147000242956,
-      "verify_s": 0.05422359996009618,
-      "serialize_s": 0.000980400014668703,
-      "peak_mb": 27.472662,
-      "artifact_kb": 12.5,
-      "scen_per_s": 41309.76746724351
+      "runtime_s": 0.10832450003363192,
+      "verify_s": 0.0943146999925375,
+      "serialize_s": 0.0007064000237733126,
+      "peak_mb": 23.906129,
+      "artifact_kb": 12.938,
+      "scen_per_s": 18463.043904001886
     }
   ],
   "threads_executed": [
