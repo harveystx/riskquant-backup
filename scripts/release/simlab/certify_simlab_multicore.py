@@ -36,11 +36,13 @@ Comparisons are exact: sha256 over `dtype|shape|bytes` for arrays and
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
 import subprocess
 import sys
+import tempfile
 import textwrap
 from pathlib import Path
 from typing import Any
@@ -162,6 +164,8 @@ _FIXTURE = textwrap.dedent(
     from riskquant.solutions.risk_run.api import run_scenario_var_es
     from riskquant.solutions.risk_run.schemas import (
         MethodologyDeclaration, ReportingSpec, TaylorBlock)
+    from riskquant.solutions.run_identity.hashing import (
+        hash_parametric_risk_data, hash_risk_factor_matrix)
     from riskquant.solutions.scenario_models.api import (
         build_scenario_generator, parse_scenario_model_config)
     from riskquant.solutions.sensitivity_pnl.api import (
@@ -186,6 +190,21 @@ _FIXTURE = textwrap.dedent(
         a = np.ascontiguousarray(a)
         return hashlib.sha256(
             f"{{a.dtype.str}}|{{a.shape}}|".encode() + a.tobytes()).hexdigest()
+
+    def fixture_digest(data):
+        # Content digest of the construction data this child actually priced.
+        if isinstance(data, ParametricRiskData):
+            return hash_parametric_risk_data(data)
+        return hash_risk_factor_matrix(data)
+
+    def blas_threads():
+        # Evidence only (never a pass criterion): the BLAS pools as loaded.
+        try:
+            import threadpoolctl
+        except ImportError:
+            return "threadpoolctl unavailable"
+        return [f"{{p['internal_api']}}:{{p['num_threads']}}"
+                for p in threadpoolctl.threadpool_info() if p["user_api"] == "blas"]
 
     def capture(model, batch_size):
         inp = inputs(model, batch_size)
@@ -221,6 +240,8 @@ _FIXTURE = textwrap.dedent(
             "requested_workers": int(numba.config.NUMBA_NUM_THREADS),
             "actual_workers": int(numba.get_num_threads()),
             "layer": str(numba.threading_layer()),
+            "fixture_digest": fixture_digest(inp["data"]),
+            "blas_threads": blas_threads(),
             "scenario_stream": h(stream),
             "shocked_levels": h(levels),
             "trade_pnl": h(np.asarray(settlement.pnl)),
@@ -268,10 +289,39 @@ class Certificate:
         self.checks: list[dict[str, Any]] = []
         self.evidence: dict[str, Any] = {}
 
-    def record(self, name: str, passed: bool, detail: str = "") -> bool:
-        self.checks.append({"check": name, "passed": bool(passed), "detail": detail})
+    def record(
+        self,
+        name: str,
+        passed: bool,
+        detail: str = "",
+        display_detail: str | None = None,
+    ) -> bool:
+        """Record full evidence while allowing concise console formatting."""
+        self.checks.append({
+            "check": name,
+            "passed": bool(passed),
+            "detail": detail,
+        })
+
         mark = "PASS" if passed else "FAIL"
-        print(f"  [{mark}] {name}" + (f" — {detail}" if detail else ""))
+
+        if display_detail is None:
+            print(f"  [{mark}] {name}" + (f" — {detail}" if detail else ""))
+        else:
+            print(f"  [{mark}] {name}")
+            for raw_line in display_detail.splitlines():
+                wrapped = textwrap.wrap(
+                    raw_line,
+                    width=72,
+                    break_long_words=False,
+                    break_on_hyphens=False,
+                )
+                if not wrapped:
+                    print("      ")
+                else:
+                    for line in wrapped:
+                        print(f"      {line}")
+
         return passed
 
     @property
@@ -356,35 +406,103 @@ def certify_matrix(
     return detail
 
 
+#: Must equal `_certfix.PARAMETRIC_DATA_PATH_ENV`.
+_PARAMETRIC_DATA_PATH_ENV = "RQ_CERT_PARAMETRIC_DATA"
+
+
+def _freeze_parametric_fixture(dims: dict[str, int], path: str, top: int) -> dict:
+    """Build the parametric construction data ONCE, OUTSIDE every attacked
+    configuration, and persist its exact bytes at `path`."""
+    script = _FIXTURE.format(**dims) + textwrap.dedent(
+        f"""
+        from _certfix import freeze_parametric_data
+        print(json.dumps({{"digest": freeze_parametric_data({path!r})}}))
+        """
+    )
+    return _child(script, {"NUMBA_NUM_THREADS": str(top)})
+
+
+def _blas_record(r: dict) -> dict[str, Any]:
+    """Per-configuration evidence: every certified object, identities included."""
+    return {
+        **{k: r[k] for k in ("fixture_digest", *DIVERGENCE_ORDER[:4])},
+        "var_digest": hashlib.sha256(json.dumps(r["var"]).encode()).hexdigest(),
+        "es_digest": hashlib.sha256(json.dumps(r["es"]).encode()).hexdigest(),
+        "portfolio_var": r["var"][-1],
+        "portfolio_es": r["es"][-1],
+        "manifest_identity": r["manifest_identity"],
+        "riskrun_identity": r["riskrun_identity"],
+        "blas_threads": r["blas_threads"],
+    }
+
+
 def certify_parametric_blas(
     cert: Certificate, threads: list[int], dims: dict[str, int]
 ) -> None:
+    """
+    Same economic input, different BLAS execution configuration.
+
+    The parametric construction data is itself BLAS-sensitive to build, so it is
+    frozen once before the attack and every child (baseline included) LOADS
+    those exact bytes. A child whose data digest differs from the frozen one is
+    a certification construction failure, reported before any result
+    comparison; only then is the unchanged divergence order applied.
+    """
     print("\n[4] Parametric BLAS attack (np.matmul in simlab/scenarios/parametric.py)")
     top = threads[-1]
-    base = _child(
-        _capture_script("parametric", 64, dims), {"NUMBA_NUM_THREADS": str(top)}
-    )
-    if "__error__" in base:
-        cert.record("parametric BLAS baseline", False, base["__error__"][:140])
-        return
-    results = {}
-    for env in BLAS_ENVS:
-        got = _child(
-            _capture_script("parametric", 64, dims),
-            {"NUMBA_NUM_THREADS": str(top), **env},
-        )
-        label = ",".join(f"{k}={v}" for k, v in env.items())
-        if "__error__" in got:
-            cert.record(f"parametric under {label}", False, got["__error__"][:140])
-            continue
-        div = _first_divergence(base, got)
-        cert.record(
-            f"parametric identical under {label}",
-            div is None,
-            "" if div is None else f"FIRST DIVERGENCE at {div}",
-        )
-        results[label] = div or "identical"
+    with tempfile.TemporaryDirectory(prefix="rq_blas_fixture_") as tmp:
+        path = str(Path(tmp) / "parametric_data.npz")
+        frozen = _freeze_parametric_fixture(dims, path, top)
+        if "__error__" in frozen:
+            cert.record(
+                "parametric BLAS fixture freeze", False, frozen["__error__"][:140]
+            )
+            return
+        pinned = {"NUMBA_NUM_THREADS": str(top), _PARAMETRIC_DATA_PATH_ENV: path}
+        cert.evidence["parametric_blas_fixture"] = {
+            "digest": frozen["digest"],
+            "frozen_under": {"NUMBA_NUM_THREADS": str(top)},
+        }
+        base = _child(_capture_script("parametric", 64, dims), pinned)
+        if "__error__" in base:
+            cert.record("parametric BLAS baseline", False, base["__error__"][:140])
+            return
+        if base["fixture_digest"] != frozen["digest"]:
+            cert.record(
+                "parametric BLAS baseline fixture isolation",
+                False,
+                f"CERTIFICATION CONSTRUCTION FAILURE: baseline priced data "
+                f"{base['fixture_digest'][:16]}..., frozen {frozen['digest'][:16]}...",
+            )
+            return
+        results: dict[str, str] = {}
+        records: dict[str, Any] = {"baseline": _blas_record(base)}
+        for env in BLAS_ENVS:
+            got = _child(_capture_script("parametric", 64, dims), {**pinned, **env})
+            label = ",".join(f"{k}={v}" for k, v in env.items())
+            if "__error__" in got:
+                cert.record(f"parametric under {label}", False, got["__error__"][:140])
+                continue
+            records[label] = _blas_record(got)
+            if got["fixture_digest"] != frozen["digest"]:
+                cert.record(
+                    f"parametric identical under {label}",
+                    False,
+                    f"CERTIFICATION CONSTRUCTION FAILURE: child priced data "
+                    f"{got['fixture_digest'][:16]}..., "
+                    f"frozen {frozen['digest'][:16]}...",
+                )
+                results[label] = "fixture_digest"
+                continue
+            div = _first_divergence(base, got)
+            cert.record(
+                f"parametric identical under {label}",
+                div is None,
+                "" if div is None else f"FIRST DIVERGENCE at {div}",
+            )
+            results[label] = div or "identical"
     cert.evidence["parametric_blas"] = results
+    cert.evidence["parametric_blas_records"] = records
 
 
 def certify_fresh_process(
@@ -555,23 +673,48 @@ _CONTRACTS = textwrap.dedent(
 
 
 def certify_contracts(cert: Certificate, dims: dict[str, int]) -> None:
-    print(
-        "\n[6] Contract gates (environment, seed, stale input, identity, tamper, bypass)"
-    )
+    print("\n[6] Contract gates")
+
     script = _FIXTURE.format(**dims) + _CONTRACTS.replace("__SRC__", repr(str(_SRC)))
     res = _child(script, {"NUMBA_NUM_THREADS": "2"})
+
     if "__error__" in res:
-        cert.record("contract gates", False, res["__error__"][:400])
+        cert.record(
+            "contract gates",
+            False,
+            res["__error__"][:400],
+        )
         return
 
-    env_ok = all(v == "rejected" for v in res["environment_gate"].values())
+    # ------------------------------------------------------------------
+    # environment gate
+    # ------------------------------------------------------------------
+    env = res["environment_gate"]
+    env_ok = all(v == "rejected" for v in env.values())
+
+    env_rejected = [k for k, v in env.items() if v == "rejected"]
+    env_unexpected = {k: v for k, v in env.items() if v != "rejected"}
+
+    env_display = [
+        f"{len(env_rejected)}/{len(env)} changed fields rejected",
+    ]
+    if env_rejected:
+        env_display.append("fields: " + ", ".join(env_rejected))
+    if env_unexpected:
+        env_display.append("unexpected: " + json.dumps(env_unexpected, sort_keys=True))
+
     cert.record(
-        "environment gate rejects every changed field",
+        "Environment gate",
         env_ok,
-        json.dumps(res["environment_gate"]),
+        json.dumps(env),
+        "\n".join(env_display),
     )
 
+    # ------------------------------------------------------------------
+    # seed policy
+    # ------------------------------------------------------------------
     seed = res["seed_policy"]
+
     seed_ok = (
         seed["0"] == "accepted"
         and seed["1"] == "accepted"
@@ -584,21 +727,81 @@ def certify_contracts(cert: Certificate, dims: dict[str, int]) -> None:
         and seed["None+reproducible"] == "NonReproducibleRunError"
         and seed["None+exploratory"] == "reproducible=False"
     )
-    cert.record("seed policy", seed_ok, json.dumps(seed))
+
+    accepted = [k for k, v in seed.items() if v == "accepted"]
+    rejected = [k for k, v in seed.items() if v.startswith("rejected")]
+
+    seed_display = [
+        "accepted: " + ", ".join(accepted),
+        "rejected: " + ", ".join(rejected),
+        (f"None + reproducible -> {seed['None+reproducible']}"),
+        (f"None + exploratory -> {seed['None+exploratory']}"),
+    ]
+
+    cert.record(
+        "Seed policy",
+        seed_ok,
+        json.dumps(seed),
+        "\n".join(seed_display),
+    )
+
+    # ------------------------------------------------------------------
+    # stale input
+    # ------------------------------------------------------------------
+    stale = res["stale_input"]
 
     stale_ok = all(
-        v in ("InputMismatchError", "CompositionContractError")
-        for v in res["stale_input"].values()
-    )
-    cert.record(
-        "stale input refused before numerics", stale_ok, json.dumps(res["stale_input"])
+        v in ("InputMismatchError", "CompositionContractError") for v in stale.values()
     )
 
-    mut = res["identity_mutation"]
-    mut_ok = all(v.get("refused") or v["identity_changed"] for v in mut.values())
-    weak = [k for k, v in mut.items() if not (v.get("refused") or v["result_changed"])]
+    by_error: dict[str, list[str]] = {}
+    for name, outcome in stale.items():
+        by_error.setdefault(outcome, []).append(name)
+
+    stale_display = [
+        f"{len(stale)}/{len(stale)} substitutions rejected before numerics"
+    ]
+
+    for error_type, names in by_error.items():
+        stale_display.append(f"{error_type}: {', '.join(names)}")
+
     cert.record(
-        "every result-defining mutation changes identity",
+        "Stale input gate",
+        stale_ok,
+        json.dumps(stale),
+        "\n".join(stale_display),
+    )
+
+    # ------------------------------------------------------------------
+    # identity mutation
+    # ------------------------------------------------------------------
+    mut = res["identity_mutation"]
+
+    mut_ok = all(v.get("refused") or v["identity_changed"] for v in mut.values())
+
+    checked = [(name, value) for name, value in mut.items() if not value.get("refused")]
+    identity_moved = [name for name, value in checked if value["identity_changed"]]
+    refused = [
+        (name, value["refused"]) for name, value in mut.items() if value.get("refused")
+    ]
+    weak = [name for name, value in checked if not value["result_changed"]]
+
+    identity_display = [
+        f"{len(identity_moved)}/{len(checked)} non-refused mutations changed identity"
+    ]
+
+    if refused:
+        for name, reason in refused:
+            identity_display.append(f"{name}: refused by {reason}")
+
+    if weak:
+        identity_display.append(
+            "conservative over-separation: "
+            + ", ".join(f"{name} (identity moved; result unchanged)" for name in weak)
+        )
+
+    cert.record(
+        "Identity mutation",
         mut_ok,
         (
             "conservative over-separation (identity moved, result did not): "
@@ -606,23 +809,78 @@ def certify_contracts(cert: Certificate, dims: dict[str, int]) -> None:
         )
         if weak
         else "",
+        "\n".join(identity_display),
     )
+
+    # ------------------------------------------------------------------
+    # operational neutrality
+    # ------------------------------------------------------------------
+    batch_identity_ok = bool(res["identity_operational_neutral"])
 
     cert.record(
-        "identity invariant to batch size", bool(res["identity_operational_neutral"])
+        "Batch-size identity",
+        batch_identity_ok,
+        "",
+        "identity invariant to batch size",
     )
 
-    tamper_ok = all("rejected" in v for v in res["tamper"].values())
-    cert.record("RiskRun tamper protection", tamper_ok, json.dumps(res["tamper"]))
+    # ------------------------------------------------------------------
+    # tamper protection
+    # ------------------------------------------------------------------
+    tamper = res["tamper"]
+    tamper_ok = all("rejected" in v for v in tamper.values())
 
+    rejected_tamper = [
+        (name, outcome) for name, outcome in tamper.items() if "rejected" in outcome
+    ]
+    unexpected_tamper = {
+        name: outcome for name, outcome in tamper.items() if "rejected" not in outcome
+    }
+
+    tamper_display = [f"{len(rejected_tamper)}/{len(tamper)} forged objects rejected"]
+
+    if unexpected_tamper:
+        tamper_display.append(
+            "unexpected: "
+            + json.dumps(
+                unexpected_tamper,
+                sort_keys=True,
+            )
+        )
+
+    cert.record(
+        "RiskRun tamper protection",
+        tamper_ok,
+        json.dumps(tamper),
+        "\n".join(tamper_display),
+    )
+
+    # ------------------------------------------------------------------
+    # bypass audit
+    # ------------------------------------------------------------------
     producers = res["var_es_producers"]
-    expected = {"solutions/risk_run/api.py", "credit/aggregate/loss_metrics.py"}
+    expected = {
+        "solutions/risk_run/api.py",
+        "credit/aggregate/loss_metrics.py",
+    }
     found = {p.replace(os.sep, "/") for p in producers}
+    bypass_ok = found == expected
+
+    if bypass_ok:
+        bypass_display = (
+            "public market entry point: solutions/risk_run/api.py\n"
+            "separate credit consumer: credit/aggregate/loss_metrics.py"
+        )
+    else:
+        bypass_display = "unexpected producers: " + ", ".join(sorted(found))
+
     cert.record(
-        "bypass audit: one public scenario-VaR entry point",
-        found == expected,
+        "Bypass audit",
+        bypass_ok,
         f"producers={sorted(found)}",
+        bypass_display,
     )
+
     cert.evidence["contracts"] = res
 
 

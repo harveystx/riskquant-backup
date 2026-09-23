@@ -89,6 +89,9 @@ _CERT = textwrap.dedent(
     from riskquant.solutions.scenario_models.api import build_scenario_generator
     from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
     from riskquant.solutions.sensitivity_pnl.api import FactorAxis
+    from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
+    from riskquant.solutions.run_identity.hashing import (
+        hash_parametric_risk_data, hash_risk_factor_matrix)
     import hashlib
 
     def h(a):
@@ -113,8 +116,11 @@ _CERT = textwrap.dedent(
     trade = inp["taylor_derived"].calculator.run(
         axis.levels(base_levels=inp["base_levels"], shocked_levels=levels)).pnl
 
+    data = inp["data"]
     print(json.dumps({{
         "threads": int(numba.get_num_threads()),
+        "fixture_digest": hash_parametric_risk_data(data)
+        if isinstance(data, ParametricRiskData) else hash_risk_factor_matrix(data),
         "scenario_stream": h(stream),
         "shocked_levels": h(levels),
         "trade_pnl": h(np.asarray(trade)),
@@ -166,10 +172,29 @@ def test_batch_size_does_not_change_any_result_under_threads(
     _assert_same(ref, got, f"{model} bs 64 vs {batch_size} at 8 threads")
 
 
-def test_parametric_blas_is_deterministic_under_thread_environments() -> None:
+_FREEZE = textwrap.dedent(
+    """
+    import json
+    from _certfix import freeze_parametric_data
+    print(json.dumps({{"digest": freeze_parametric_data({path!r})}}))
+    """
+)
+
+
+def test_parametric_blas_is_deterministic_under_thread_environments(tmp_path) -> None:
     """The one BLAS site (`np.matmul` in parametric.py) gets its own gate: the
-    Taylor kernel's structural argument does not cover it."""
-    ref = _cert("parametric", 64, 8)
+    Taylor kernel's structural argument does not cover it.
+
+    Building the parametric data is itself BLAS-sensitive, so it is frozen ONCE
+    outside every attacked configuration and every child LOADS those exact
+    bytes. Equal input is asserted first; only then is the result compared.
+    """
+    path = str(tmp_path / "parametric_data.npz")
+    frozen = _run_child(_FREEZE.format(path=path), {"NUMBA_NUM_THREADS": "8"})["digest"]
+    pinned = {"NUMBA_NUM_THREADS": "8", "RQ_CERT_PARAMETRIC_DATA": path}
+    ref = _run_child(_CERT.format(model="parametric", bs=64), pinned)
+    assert ref["threads"] == 8, "thread ceiling was clamped"
+    assert ref["fixture_digest"] == frozen, "baseline did not price the frozen data"
     for env in (
         {"OMP_NUM_THREADS": "1"},
         {"OMP_NUM_THREADS": "8"},
@@ -177,9 +202,10 @@ def test_parametric_blas_is_deterministic_under_thread_environments() -> None:
         {"OPENBLAS_NUM_THREADS": "8"},
         {"MKL_NUM_THREADS": "1"},
     ):
-        got = _run_child(
-            _CERT.format(model="parametric", bs=64),
-            {"NUMBA_NUM_THREADS": "8", **env},
+        got = _run_child(_CERT.format(model="parametric", bs=64), {**pinned, **env})
+        assert got["fixture_digest"] == frozen, (
+            f"certification construction failure under {env}: the child priced "
+            "different parametric data than the frozen input"
         )
         _assert_same(ref, got, f"parametric under {env}")
 
