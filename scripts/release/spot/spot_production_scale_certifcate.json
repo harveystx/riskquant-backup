@@ -1,0 +1,156 @@
+{
+  "determinism": {
+    "batch_es_bitwise_equal": true,
+    "batch_identity_equal": true,
+    "batch_var_bitwise_equal": true,
+    "no_cross_run_leakage": true,
+    "repeat_bitwise_equal": true
+  },
+  "dimensions": {
+    "K_axis": 140,
+    "K_nodes": 250,
+    "M": 200,
+    "S_target": 2000,
+    "T": 600,
+    "batch_size": 256,
+    "confidence_level": 0.99,
+    "cores": 12,
+    "discounting": "NONE"
+  },
+  "identity": {
+    "as_of": "refused:TaylorContractError",
+    "discounting_mode": "refused:ValueError",
+    "economic_universe": "refused:CompositionContractError",
+    "factor_axis_order": "refused:CompositionContractError",
+    "methodology_partition": "refused:CompositionContractError",
+    "scenario_seed": "identity_changed",
+    "static_config": "refused:CompositionContractError",
+    "static_config_same_content_new_object": "same_identity_as_expected",
+    "valuation_contract": "identity_changed"
+  },
+  "models": {
+    "filtered_bootstrap": {
+      "es_error": 2.1218973415670916e-05,
+      "es_oracle": -4422.804273226475,
+      "es_production": -4422.804294445448,
+      "max_abs_dv_error": 5.9903846704401076e-05,
+      "max_abs_dw_error": 5.9903846704401076e-05,
+      "max_abs_portfolio_error": 0.0001527143949715537,
+      "max_abs_v0_error": 3.637978807091713e-12,
+      "ok": true,
+      "scenarios": 2000,
+      "stages_s": {
+        "d081": 0.066,
+        "scenario_and_overhead": 0.35,
+        "taylor": 0.01,
+        "valuation": 0.077,
+        "var_es": 0.012
+      },
+      "var_error": 2.154365120077273e-06,
+      "var_oracle": -3981.076118936633,
+      "var_production": -3981.076121090998,
+      "wall_s": 0.515
+    },
+    "filtered_historical": {
+      "es_error": 1.100736790249357e-05,
+      "es_oracle": -4326.956533423059,
+      "es_production": -4326.956544430427,
+      "max_abs_dv_error": 5.9903846704401076e-05,
+      "max_abs_dw_error": 5.9903846704401076e-05,
+      "max_abs_portfolio_error": 0.0001527143949715537,
+      "max_abs_v0_error": 3.637978807091713e-12,
+      "ok": true,
+      "scenarios": 599,
+      "stages_s": {
+        "d081": 0.016,
+        "scenario_and_overhead": 0.31,
+        "taylor": 0.024,
+        "valuation": 0.045,
+        "var_es": 0.005
+      },
+      "var_error": 3.325098987261299e-06,
+      "var_oracle": -3863.5773298906297,
+      "var_production": -3863.5773332157287,
+      "wall_s": 0.4
+    },
+    "historical": {
+      "es_error": 8.009656085050665e-06,
+      "es_oracle": -4142.218836772108,
+      "es_production": -4142.218844781764,
+      "max_abs_dv_error": 5.938275717198849e-05,
+      "max_abs_dw_error": 5.938275717198849e-05,
+      "max_abs_level_error": 3.0119520033622393e-07,
+      "max_abs_portfolio_error": 0.00015445712642758735,
+      "max_abs_v0_error": 3.637978807091713e-12,
+      "ok": true,
+      "scenarios": 599,
+      "stages_s": {
+        "d081": 0.009,
+        "scenario_and_overhead": 1.003,
+        "taylor": 0.038,
+        "valuation": 0.06,
+        "var_es": 0.014
+      },
+      "var_error": 2.5049055693671107e-05,
+      "var_oracle": -3524.426379527222,
+      "var_production": -3524.4264045762775,
+      "wall_s": 1.124
+    },
+    "parametric": {
+      "es_error": 2.0530387701001018e-07,
+      "es_oracle": -12606.53852842982,
+      "es_production": -12606.538528224517,
+      "max_abs_dv_error": 0.00032645811461406993,
+      "max_abs_dw_error": 0.00031348648599305307,
+      "max_abs_portfolio_error": 0.0007585524683690892,
+      "max_abs_v0_error": 3.637978807091713e-12,
+      "ok": true,
+      "scenarios": 2000,
+      "stages_s": {
+        "d081": 0.041,
+        "scenario_and_overhead": 0.29,
+        "taylor": 0.013,
+        "valuation": 0.048,
+        "var_es": 0.008
+      },
+      "var_error": 0.00015168647769314703,
+      "var_oracle": -8930.475388079773,
+      "var_production": -8930.47553976625,
+      "wall_s": 0.401
+    },
+    "sbb": {
+      "es_error": 9.002178558148444e-06,
+      "es_oracle": -4096.721459622387,
+      "es_production": -4096.721468624565,
+      "max_abs_dv_error": 5.938275717198849e-05,
+      "max_abs_dw_error": 5.938275717198849e-05,
+      "max_abs_portfolio_error": 0.00015445712642758735,
+      "max_abs_v0_error": 3.637978807091713e-12,
+      "ok": true,
+      "scenarios": 2000,
+      "stages_s": {
+        "d081": 0.06,
+        "scenario_and_overhead": 0.638,
+        "taylor": 0.02,
+        "valuation": 0.131,
+        "var_es": 0.011
+      },
+      "var_error": 1.6111713648570003e-05,
+      "var_oracle": -3443.3939387868945,
+      "var_production": -3443.393954898608,
+      "wall_s": 0.859
+    }
+  },
+  "performance": {
+    "cores": 12,
+    "peak_rss_mib_after": 282.6,
+    "peak_rss_mib_before": 210.5,
+    "threads": 12
+  },
+  "verdict": {
+    "functional_correctness": "CERTIFIED",
+    "multi_core_determinism": "see release gate",
+    "production_data_readiness": "NOT TESTED",
+    "production_scale_execution": "CERTIFIED"
+  }
+}
