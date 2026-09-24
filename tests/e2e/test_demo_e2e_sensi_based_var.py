@@ -188,29 +188,48 @@ def test_brent_position_carries_an_fx_leg_others_do_not(
     assert fx_eff_uix_by_uid[_BRENT_UID] != INVALID_UIX
 
 
-def test_unregistered_instrument_fails_loud_not_silent(
-    rsc: RiskStaticConfig,
-) -> None:
+def test_unregistered_instrument_fails_loud_not_silent() -> None:
     """
-    A FORWARD-family row must never be silently dropped from the compiled
-    portfolio. `VANILLA_FORWARD_NODE` is a structurally valid instrument
-    token -- ingest accepts it -- but no block compiler is registered for
-    it yet, so `compile_portfolio_from_ingest_batch` must raise rather than
-    quietly compile a portfolio missing that trade.
+    A row that ingest admits but no block compiler handles must never be
+    silently dropped from the compiled portfolio:
+    `compile_portfolio_from_ingest_batch` must raise instead.
+
+    `VANILLA_FORWARD_CURVE` is that case today: a valid FORWARD-family token
+    that ingest accepts, with no registered compiler (see
+    `portfolio.compilers.registry`, PENDING). The first assertion pins that
+    premise, so this test fails with a clear message once a compiler is
+    registered, rather than going stale. The row uses the canonical static
+    configuration, so every name it carries resolves at ingest and the only
+    failure left is the one under test.
     """
+    from riskquant.config.static_config.compile import (
+        compile_risk_static_config_from_dict_of_dfs,
+    )
+    from riskquant.ingest_fixtures.config.risk_static_config.canonical_risk_static_config import (
+        CANONICAL_RISK_STATIC_CONFIG_DICT_OF_DFS,
+    )
+    from riskquant.portfolio.compilers.registry import COMPILERS
+    from riskquant.portfolio.instruments import VANILLA_FORWARD_CURVE_ID
+
+    assert COMPILERS[VANILLA_FORWARD_CURVE_ID] is None, (
+        "VANILLA_FORWARD_CURVE now has a compiler: choose another "
+        "ingest-admitted, unregistered instrument for this test."
+    )
+    rsc = compile_risk_static_config_from_dict_of_dfs(
+        dict(CANONICAL_RISK_STATIC_CONFIG_DICT_OF_DFS)
+    )
     raw = pd.DataFrame({
         "uid": [2001],
-        "instrument": ["VANILLA_FORWARD_NODE"],
+        "instrument": ["VANILLA_FORWARD_CURVE"],
         "quantity": [10.0],
-        "underlying": ["AAPL_EQ"],
+        "underlying": ["BRENT_CRUDE_FWD"],
         "settlement_ccy": ["USD"],
         "strike_price": [100.0],
         "strike_ccy": ["USD"],
-        # Added as test was failing because of missing columns
         "delivery_date": ["2024-12-31"],
         "settlement_date": ["2025-01-02"],
-        "under_discount_curve": ["USD"],
-        "strike_discount_curve": ["USD"],
+        "under_discount_curve": ["USD_SOFR_OIS"],
+        "strike_discount_curve": ["USD_SOFR_OIS"],
     })
 
     ingest_batch = compile_raw_df_into_ingest_batch(raw_df=raw, static_config=rsc)
@@ -274,8 +293,6 @@ def pricing_and_sensitivities(
     return pricing, calculator
 
 
-# def _pv(pricing, uid: int) -> float:
-#     return float(pricing.get_trade_values(uid)[0])
 def _pv(pricing, uid: int) -> float:
     values = pricing.get_trade_values(uid)
     assert values.shape == (1, 1)
@@ -520,9 +537,20 @@ def _independent_reporting_pnl(fixture) -> np.ndarray:
         ).pnl,
         dtype=np.float64,
     )
-    rep = fixture.reporting
-    usdeur_s = shocked[rep.fx_factor_rows][0]
-    usdeur_0 = float(su.base_levels[rep.fx_factor_rows][0])
+    # Oracle inputs come from the trade record and the static configuration,
+    # never from the run's derived reporting route (D085).
+    reporting_ccy = fixture.reporting.reporting_ccy
+    usdeur_rf = fixture.valuation_context.static_config.rel_name_to_rf_id["USDEUR"]
+    usdeur_row = int(np.flatnonzero(su.required_factor_ids == usdeur_rf)[0])
+    usdeur_s = shocked[usdeur_row]
+    usdeur_0 = float(su.base_levels[usdeur_row])
+    settle = dict(
+        zip(
+            _FIXTURES._POSITIONS_DF["uid"].tolist(),
+            _FIXTURES._POSITIONS_DF["settlement_ccy"].tolist(),
+            strict=True,
+        )
+    )
     out = np.empty_like(dv)
     pv = dict(
         zip(
@@ -531,14 +559,13 @@ def _independent_reporting_pnl(fixture) -> np.ndarray:
             strict=True,
         )
     )
-    for i, ccy in enumerate(rep.settlement_ccys):
-        if ccy == rep.reporting_ccy:
+    uids = np.asarray(fixture.methodology.production_position_uids, dtype=np.int64)
+    for i, uid in enumerate(uids.tolist()):
+        if settle[uid] == reporting_ccy:
             rate_s, rate_0 = np.ones(s_total), 1.0
         else:
             rate_s, rate_0 = 1.0 / usdeur_s, 1.0 / usdeur_0
-        out[i] = dv[i] * rate_s + float(pv[int(rep.position_uids[i])]) * (
-            rate_s - rate_0
-        )
+        out[i] = dv[i] * rate_s + float(pv[uid]) * (rate_s - rate_0)
     return out
 
 

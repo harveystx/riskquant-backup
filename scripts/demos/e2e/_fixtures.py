@@ -12,13 +12,16 @@ requires, once:
         -> risk-factor level snapshot (name -> rf_id resolved once, at the edge)
         -> market-data assembly -> pricing (MTM) -> trade sensitivities
         -> canonical `solutions.sensitivity_pnl` book (SensitivityPnlCalculator)
-        -> shock-universe axis (required_factor_ids, required_shift_type_id,
-           source_factor_ids, shock_scale, base_levels) via the ONE proxy
-           resolution call every scenario model downstream shares
+        -> the canonical run axis (`derive_run_factor_axis`: valuation
+           universe, then any reporting-only FX factor) and its shock universe
+           (required_factor_ids, required_shift_type_id, source_factor_ids,
+           shock_scale, base_levels) via the ONE proxy resolution call every
+           scenario model downstream shares
         -> construction data for each scenario-model family
            (RiskFactorMatrix for Historical/SBB/FilteredHistorical/
            FilteredBootstrap; ParametricRiskData for Parametric)
-        -> ReportingSpec (settlement -> reporting currency routing)
+        -> ReportingSpec (the reporting currency only; the run derives every
+           settlement currency and reporting FX route itself, D085)
 
 This module owns NO scenario-model choice, NO shock application, NO
 reporting-currency conversion, and NO VaR/ES computation: those are
@@ -79,9 +82,11 @@ from riskquant.proxy_resolver.proxy import (
 )
 from riskquant.sensitivities.engine import run_sensitivities
 from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
+from riskquant.solutions.risk_run.api import derive_run_factor_axis
 from riskquant.solutions.risk_run.schemas import (
     MethodologyDeclaration,
     ReportingSpec,
+    RunFactorAxis,
     TaylorBlock,
     ValuationContext,
 )
@@ -618,8 +623,13 @@ _SCENARIO_SOURCE_NAMES: tuple[str, ...] = ("USDEUR", "AAPL_EQ", "BRENT_CRUDE")
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ShockUniverseAxis:
-    """The required-factor axis, on the same order for every array below."""
+    """The canonical run axis, on the same order for every array below.
 
+    The first `num_valuation_factors` rows are the valuation universe (also
+    the Taylor axis); any further rows are reporting-only FX factors (D085).
+    """
+
+    num_valuation_factors: int
     required_factor_ids: npt.NDArray[np.int32]
     required_shift_type_id: npt.NDArray[np.int8]
     source_factor_ids: npt.NDArray[np.int32]
@@ -632,17 +642,19 @@ def _run_shock_universe(
     *,
     rsc: RiskStaticConfig,
     proxy_topology: ProxyTopology,
-    uix_mapper: UixMapper,
+    run_axis: RunFactorAxis,
     snapshot: RiskFactorLevelSnapshot,
     verbose: bool = True,
 ) -> ShockUniverseAxis:
-    """Resolve the required-factor axis and its proxy-resolved shock source.
+    """Bind the run's scenario data to the canonical run axis.
 
     Composes the existing public production path -- this module adds no
     scenario machinery of its own:
 
-        build_universe_mapping        : the required factor axis + each
-                                         factor's declared shift_type
+        derive_run_factor_axis        : the run-owned axis (valuation
+                                         universe, then reporting-only FX)
+                                         + each factor's declared shift_type;
+                                         computed by the caller and passed in
         extract_levels_from_snapshot  : t0 BASE levels for those factors
         resolve_required_factor_ids_.. : required -> (source, shock_scale),
                                          i.e. the compiled ProxyTopology
@@ -658,10 +670,10 @@ def _run_shock_universe(
     in the sensitivity book; only the shock driving it is sourced from
     BRENT_CRUDE and scaled by 0.95.
     """
-    universe_map = build_universe_mapping(
-        discounting_mode=DiscountingMode.NONE, static_config=rsc, uix_mapper=uix_mapper
-    )
-    required_factor_ids = universe_map.required_factor_ids
+    # The run axis is a read-only descriptor; the scenario data bound to it is
+    # this fixture's own execution arrays (the scenario building blocks below
+    # and in the demos take writable arrays).
+    required_factor_ids = np.array(run_axis.factor_ids, copy=True)
 
     base_levels = extract_levels_from_snapshot(
         required_ids=required_factor_ids, snapshot=snapshot
@@ -705,8 +717,9 @@ def _run_shock_universe(
         print("---")
 
     return ShockUniverseAxis(
+        num_valuation_factors=run_axis.num_valuation_factors,
         required_factor_ids=required_factor_ids,
-        required_shift_type_id=universe_map.required_shift_type_ids,
+        required_shift_type_id=np.array(run_axis.shift_type_ids, copy=True),
         source_factor_ids=proxy_resolution.source_factor_ids,
         shock_scale=proxy_resolution.shock_scale,
         base_levels=base_levels,
@@ -836,9 +849,9 @@ def _certify_sensitivities(
 
     Same sensitizer output as `_run_sensitivities`, declared SECOND_ORDER_FULL
     over the sensitizer's structural F(p), and bound to the exact base it was
-    produced at: as-of, the run's axis base levels, discounting mode, the
-    static-config content digest, the valuation-contract fingerprint and the
-    V_0 of the same pricing pass.
+    produced at: as-of, the base levels of the run axis's valuation prefix
+    (the Taylor axis), discounting mode, the static-config content digest,
+    the valuation-contract fingerprint and the V_0 of the same pricing pass.
     """
     sensitivities = run_sensitivities(
         portfolio=portfolio, market_data=market_data, uix_mapper=uix_mapper
@@ -860,7 +873,8 @@ def _certify_sensitivities(
             position_uids=book_uids, values=v0
         ),
     )
-    # the production DERIVED book: built on the RUN's axis (F-1, D082)
+    # the production DERIVED book: built on the run axis's valuation prefix
+    # (F-1, D082 as amended); reporting FX is never a Taylor factor
     spec = build_sensitivity_book_spec(
         sensitivities=sensitivities, required_factor_ids=required_factor_ids
     )
@@ -871,43 +885,6 @@ def _certify_sensitivities(
     )
     return SensitivityPnlCalculator.compile(
         dataclasses.replace(spec, taylor_declaration=declaration)
-    )
-
-
-def _build_reporting_spec(
-    *,
-    rsc: RiskStaticConfig,
-    calculator: SensitivityPnlCalculator,
-    required_factor_ids: npt.NDArray[np.int32],
-    pricing: ValuationResult,
-) -> ReportingSpec:
-    """Settlement -> reporting currency routing, in `book.position_uids` order.
-
-    `settlement_ccys[i]` must correspond to `calculator.book.position_uids[i]`
-    (the ReportingSpec contract), not the raw positions-frame row order --
-    they happen to coincide here because the frame is already uid-sorted, but
-    this reads from the compiled book to stay correct if that ever changes.
-    """
-    settle_by_uid = _settlement_ccy_by_uid()
-    settlement_ccys = tuple(
-        settle_by_uid[int(uid)] for uid in calculator.book.position_uids.tolist()
-    )
-
-    rf_id_to_name = {v: k for k, v in rsc.rel_name_to_rf_id.items()}
-    fx_rows = [
-        row
-        for row, rf in enumerate(required_factor_ids)
-        if rf_id_to_name[int(rf)] == "USDEUR"
-    ]
-    # D081: base settlement values V_0 per book position, taken from the SAME
-    # valuation the sensitivities were derived from (ordinary-MTM reporting
-    # P&L needs V_0 for the base-value translation term).
-    return ReportingSpec(
-        reporting_ccy=_REPORTING_CCY,
-        position_uids=np.asarray(calculator.book.position_uids, dtype=np.int64),
-        settlement_ccys=settlement_ccys,
-        fx_factor_names=("USDEUR",) if fx_rows else (),
-        fx_factor_rows=np.array(fx_rows, dtype=np.int32),
     )
 
 
@@ -1002,13 +979,19 @@ def build_fixture(*, verbose: bool = True) -> DemoFixture:
         market_data=market_data,
         verbose=verbose,
     )
+    valuation_context = _build_valuation_context(
+        rsc=rsc, ingest_batch=ingest_batch, uix_mapper=uix_mapper
+    )
     shock_universe = _run_shock_universe(
         rsc=rsc,
         proxy_topology=proxy_topology,
-        uix_mapper=uix_mapper,
+        run_axis=derive_run_factor_axis(
+            valuation_context=valuation_context, reporting_ccy=_REPORTING_CCY
+        ),
         snapshot=snapshot,
         verbose=verbose,
     )
+    k_val = shock_universe.num_valuation_factors
     # P1-A: the risk run consumes a CERTIFIED TAYLOR/DERIVED book bound to the
     # shock universe's base levels and the pricing pass's V_0.
     calculator = _certify_sensitivities(
@@ -1017,17 +1000,13 @@ def build_fixture(*, verbose: bool = True) -> DemoFixture:
         uix_mapper=uix_mapper,
         market_data=market_data,
         pricing=pricing,
-        required_factor_ids=shock_universe.required_factor_ids,
-        base_levels=shock_universe.base_levels,
+        required_factor_ids=shock_universe.required_factor_ids[:k_val],
+        base_levels=shock_universe.base_levels[:k_val],
     )
     historical_matrix = _build_historical_matrix(rsc)
     parametric_data = _build_parametric_data(rsc)
-    reporting = _build_reporting_spec(
-        rsc=rsc,
-        calculator=calculator,
-        required_factor_ids=shock_universe.required_factor_ids,
-        pricing=pricing,
-    )
+    # D085: the caller chooses only the reporting currency.
+    reporting = ReportingSpec(reporting_ccy=_REPORTING_CCY)
 
     return DemoFixture(
         rsc=rsc,
@@ -1044,9 +1023,7 @@ def build_fixture(*, verbose: bool = True) -> DemoFixture:
         reporting=reporting,
         methodology=_build_methodology(calculator),
         taylor_derived=_build_derived_block(calculator=calculator),
-        valuation_context=_build_valuation_context(
-            rsc=rsc, ingest_batch=ingest_batch, uix_mapper=uix_mapper
-        ),
+        valuation_context=valuation_context,
     )
 
 

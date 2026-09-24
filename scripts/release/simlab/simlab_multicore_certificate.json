@@ -43,6 +43,11 @@
       "detail": ">= 2 distinct worker ids inside a real prange"
     },
     {
+      "check": "historical: inspection reproduces the RiskRun on the canonical run axis",
+      "passed": true,
+      "detail": "K_val=140 K_rep=0 K_run=140; reporting route rebuilt from the trade record (D085)"
+    },
+    {
       "check": "historical: threads 1 vs 2 identical",
       "passed": true,
       "detail": ""
@@ -56,6 +61,11 @@
       "check": "historical: threads 1 vs 8 identical",
       "passed": true,
       "detail": ""
+    },
+    {
+      "check": "filtered_historical: inspection reproduces the RiskRun on the canonical run axis",
+      "passed": true,
+      "detail": "K_val=140 K_rep=0 K_run=140; reporting route rebuilt from the trade record (D085)"
     },
     {
       "check": "filtered_historical: threads 1 vs 2 identical",
@@ -73,6 +83,11 @@
       "detail": ""
     },
     {
+      "check": "sbb: inspection reproduces the RiskRun on the canonical run axis",
+      "passed": true,
+      "detail": "K_val=140 K_rep=0 K_run=140; reporting route rebuilt from the trade record (D085)"
+    },
+    {
       "check": "sbb: threads 1 vs 2 identical",
       "passed": true,
       "detail": ""
@@ -88,6 +103,11 @@
       "detail": ""
     },
     {
+      "check": "filtered_bootstrap: inspection reproduces the RiskRun on the canonical run axis",
+      "passed": true,
+      "detail": "K_val=140 K_rep=0 K_run=140; reporting route rebuilt from the trade record (D085)"
+    },
+    {
       "check": "filtered_bootstrap: threads 1 vs 2 identical",
       "passed": true,
       "detail": ""
@@ -101,6 +121,11 @@
       "check": "filtered_bootstrap: threads 1 vs 8 identical",
       "passed": true,
       "detail": ""
+    },
+    {
+      "check": "parametric: inspection reproduces the RiskRun on the canonical run axis",
+      "passed": true,
+      "detail": "K_val=140 K_rep=0 K_run=140; reporting route rebuilt from the trade record (D085)"
     },
     {
       "check": "parametric: threads 1 vs 2 identical",
@@ -383,6 +408,12 @@
         "numba": "0.66.0"
       }
     },
+    "run_axis": {
+      "K_val": 140,
+      "K_rep": 0,
+      "K_run": 140,
+      "bound": true
+    },
     "matrix": {
       "historical:threads2": "identical",
       "historical:threads4": "identical",
@@ -625,39 +656,39 @@
   "performance": [
     {
       "threads": 1,
-      "runtime_s": 0.0493080000160262,
-      "verify_s": 0.052925200026948005,
-      "serialize_s": 0.0004349999944679439,
-      "peak_mb": 23.90607,
-      "artifact_kb": 12.938,
-      "scen_per_s": 40561.36933864597
+      "runtime_s": 0.21275010000681505,
+      "verify_s": 0.10411849996307865,
+      "serialize_s": 0.0010320000001229346,
+      "peak_mb": 23.919974,
+      "artifact_kb": 13.021,
+      "scen_per_s": 9400.700633917135
     },
     {
       "threads": 2,
-      "runtime_s": 0.04770480003207922,
-      "verify_s": 0.05373909999616444,
-      "serialize_s": 0.0004810999962501228,
-      "peak_mb": 23.906062,
-      "artifact_kb": 12.938,
-      "scen_per_s": 41924.50232796479
+      "runtime_s": 0.10416829999303445,
+      "verify_s": 0.30178999999770895,
+      "serialize_s": 0.0011335000162944198,
+      "peak_mb": 23.919966,
+      "artifact_kb": 13.021,
+      "scen_per_s": 19199.698950004335
     },
     {
       "threads": 4,
-      "runtime_s": 0.08747450000373647,
-      "verify_s": 0.09330230002524331,
-      "serialize_s": 0.0010777999996207654,
-      "peak_mb": 23.90607,
-      "artifact_kb": 12.938,
-      "scen_per_s": 22863.80602249307
+      "runtime_s": 0.16106229997240007,
+      "verify_s": 0.283958200016059,
+      "serialize_s": 0.001556500035803765,
+      "peak_mb": 23.919966,
+      "artifact_kb": 13.021,
+      "scen_per_s": 12417.55519660854
     },
     {
       "threads": 8,
-      "runtime_s": 0.09908200002973899,
-      "verify_s": 0.12456970004132017,
-      "serialize_s": 0.002019000006839633,
-      "peak_mb": 23.906062,
-      "artifact_kb": 12.938,
-      "scen_per_s": 20185.301057706845
+      "runtime_s": 0.1740713000181131,
+      "verify_s": 0.17000370001187548,
+      "serialize_s": 0.0013841000036336482,
+      "peak_mb": 23.920033,
+      "artifact_kb": 13.021,
+      "scen_per_s": 11489.54480027373
     }
   ],
   "threads_executed": [

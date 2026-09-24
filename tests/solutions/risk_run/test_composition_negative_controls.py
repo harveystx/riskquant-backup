@@ -137,7 +137,9 @@ def test_nc_reporting_defects_are_caught_by_the_l0_rows(
 
 def test_nc_factor_axis_gate_is_load_bearing(monkeypatch, spy) -> None:
     """Without the ordered-axis gate a permuted axis completes with finite,
-    plausible, WRONG numbers: the gate is the only barrier."""
+    plausible, WRONG numbers: the gate is the only barrier. The reporting FX
+    rows are run-derived (D085), so the caller's permuted arrays are the only
+    contradiction."""
     from test_methodology_composition import _axis_case
 
     monkeypatch.setattr(api, "_require_factor_axis", lambda **kw: None)

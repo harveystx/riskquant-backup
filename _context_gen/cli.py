@@ -47,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     snap = generate.take_snapshot(repo_root)
-    special = {"all", "index", "core", "tests"}
+    special = {"all", "index", "core", "tests", "scripts"}
     targets = domains if args.profile == "all" else [args.profile] if args.profile not in special else []
 
     rendered: list[generate.RenderedProfile] = []
@@ -60,6 +60,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.profile in {"all", "tests"}:
         rendered.append(generate.render_tests_artifact(snap, repo_root))
+
+    if args.profile in {"all", "scripts"}:
+        rendered.append(generate.render_scripts_artifact(snap, repo_root))
 
     index_needed = args.profile in {"all", "index"}
     if index_needed:

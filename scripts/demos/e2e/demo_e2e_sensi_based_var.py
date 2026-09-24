@@ -176,10 +176,12 @@ def _run_validation(fixture: fx.DemoFixture) -> bool:
         base_levels=su.base_levels, batch=batch, out=shocked_levels
     )
 
+    # The Taylor book lives on the run axis's valuation prefix (D082, D085).
+    k = su.num_valuation_factors
     axis = FactorAxis.from_keys(
-        pl.Series("factor_id", su.required_factor_ids.tolist(), dtype=pl.Int32)
+        pl.Series("factor_id", su.required_factor_ids[:k].tolist(), dtype=pl.Int32)
     )
-    market = axis.levels(base_levels=su.base_levels, shocked_levels=shocked_levels)
+    market = axis.levels(base_levels=su.base_levels[:k], shocked_levels=shocked_levels[:k])
     pnl = fixture.calculator.run(market)
 
     checks: list[tuple[str, bool, str]] = []
@@ -357,7 +359,8 @@ def _run_canonical(fixture: fx.DemoFixture) -> tuple[RiskRun, bool]:
         f"scenarios         : {len(fx._HISTORY_DATES) - scenario_config.horizon} "
         f"(= T - horizon)\n"
         f"reporting currency: {fixture.reporting.reporting_ccy}\n"
-        f"settlement ccys   : {sorted(set(fixture.reporting.settlement_ccys))}"
+        f"settlement ccys   : {sorted(set(fx._settlement_ccy_by_uid().values()))} "
+        f"(run-derived, D085)"
     )
     print("---")
 
@@ -503,7 +506,9 @@ def main() -> None:
     if fixture_checks_passed and validation_passed and repro_passed:
         print("ALL CHECKS PASSED")
     else:
-        print("VALIDATION FAILED")
+        # A failed check must fail the process, not only the printed banner:
+        # the demo is a registered regression gate (tests/e2e, PR-07).
+        raise SystemExit("VALIDATION FAILED")
     print()
 
     print_header("E2E Summary")
@@ -530,3 +535,4 @@ if __name__ == "__main__":
 
     configure_polars_display()
     main()
+

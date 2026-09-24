@@ -1,1062 +1,3 @@
-# # scripts/release/spot/certify_spot_production_scale.py
-# """
-# SPOT production-scale certification gate.
-
-# WINDOWS REFACTOR:
-#     This release certification script was explicitly refactored to run on
-#     native Windows Python.
-
-#     The Unix-only `resource` module is imported lazily and is only used on
-#     Unix-like platforms. On Windows, peak process resident memory is measured
-#     through the native Win32 `GetProcessMemoryInfo` API using
-#     `PeakWorkingSetSize`.
-
-#     The script also bootstraps the RiskQuant repository root when executed
-#     directly so that the canonical certification fixture under
-#     `tests.solutions.risk_run._certfix` is importable regardless of the
-#     caller's current working directory.
-
-# Executes the ADMITTED SPOT production path at the release dimensions through
-# the real entry point (`run_scenario_var_es`) on the canonical-ingest
-# certification world (`tests/solutions/risk_run/_certfix.py`:
-# raw frame -> IngestBatch -> run-owned compile), and reconciles it against an
-# INDEPENDENT NumPy oracle that calls no production scenario generator,
-# valuation, Taylor, PnlGrid, D081 or VaR/ES code.
-
-# Levels reported:
-#     - functional correctness
-#     - production-scale execution
-#     - multi-core determinism
-#     - production-data readiness
-
-# The machine-readable certificate is written automatically to:
-
-#     scripts/release/spot/spot_production_scale_certifcate.json
-
-# The output path can be overridden with:
-
-#     --json-out <path>
-
-# Usage:
-#     python scripts/release/spot/certify_spot_production_scale.py
-# """
-
-# from __future__ import annotations
-
-# import argparse
-# import ctypes
-# import json
-# import math
-# import os
-# import pathlib
-# import sys
-# import time
-# from ctypes import wintypes
-
-# import numpy as np
-
-# # ---------------------------------------------------------------------------
-# # Repository-root bootstrap
-# # ---------------------------------------------------------------------------
-# # This release script imports the canonical certification fixture from
-# # `tests.solutions.risk_run._certfix`. When the script is executed directly,
-# # Python places only this script's directory on sys.path. Explicitly add the
-# # repository root so the certification world is importable regardless of the
-# # caller's current working directory.
-# _REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
-
-# if not (_REPO_ROOT / "pyproject.toml").is_file():
-#     raise RuntimeError(
-#         f"Could not locate RiskQuant repository root from {__file__!s}: "
-#         f"expected {_REPO_ROOT / 'pyproject.toml'}"
-#     )
-
-# if str(_REPO_ROOT) not in sys.path:
-#     sys.path.insert(0, str(_REPO_ROOT))
-
-
-# import riskquant.solutions.risk_run.api as api
-# import tests.solutions.risk_run._certfix as cf
-# from riskquant import constants
-# from riskquant.solutions.risk_run.api import run_scenario_var_es
-# from riskquant.solutions.risk_run.schemas import (
-#     MethodologyDeclaration,
-#     ValuationContext,
-# )
-# from riskquant.solutions.sensitivity_pnl.api import (
-#     SensitivityPnlCalculator,
-# )
-
-# FX_ID = cf.K_TOTAL  # USDEUR node id (EUR per USD)
-# ROW = {int(f): i for i, f in enumerate(cf.FIDS.tolist())}
-
-# ATOL_PNL = 1e-3  # float32 PnlGrid
-# ATOL_V0 = 1e-8
-# ATOL_LEVEL = 1e-4  # float32 shocks on levels of order 100
-
-# # Additional production-path stress sizes.
-# #
-# # Stress is specifically intended to increase the number of scenarios (S).
-# # Batch size is increased with S, but remains materially smaller than S so
-# # that the batching path is exercised rather than collapsing to one batch.
-# #
-# # The canonical certification world remains unchanged:
-# #     S = 2,000
-# #     batch = 256
-# #
-# # Stress worlds:
-# #     S = 20,000   batch = 2,048
-# #     S = 100,000  batch = 4,096
-# STRESS_CASES = (
-#     (20_000, 2_048),
-#     (100_000, 4_096),
-# )
-
-
-# # ---------------------------------------------------------------------------
-# # Windows peak-working-set support
-# # ---------------------------------------------------------------------------
-# # Explicit Windows refactor:
-# #   Windows -> Win32 GetProcessMemoryInfo().PeakWorkingSetSize
-# #   Unix    -> resource.getrusage().ru_maxrss
-# #
-# # This preserves the intent of the original metric: peak process resident
-# # memory rather than current RSS at a single point in time.
-# if sys.platform == "win32":
-
-#     class _PROCESS_MEMORY_COUNTERS(ctypes.Structure):
-#         """
-#         Win32 PROCESS_MEMORY_COUNTERS structure.
-
-#         `PeakWorkingSetSize` is the Windows measurement used for this
-#         certification script's peak resident-memory metric.
-#         """
-
-#         _fields_ = [
-#             ("cb", wintypes.DWORD),
-#             ("PageFaultCount", wintypes.DWORD),
-#             ("PeakWorkingSetSize", ctypes.c_size_t),
-#             ("WorkingSetSize", ctypes.c_size_t),
-#             ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-#             ("QuotaPagedPoolUsage", ctypes.c_size_t),
-#             ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-#             ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-#             ("PagefileUsage", ctypes.c_size_t),
-#             ("PeakPagefileUsage", ctypes.c_size_t),
-#         ]
-
-#     _KERNEL32 = ctypes.WinDLL(
-#         "kernel32",
-#         use_last_error=True,
-#     )
-#     _PSAPI = ctypes.WinDLL(
-#         "psapi",
-#         use_last_error=True,
-#     )
-
-#     _GET_CURRENT_PROCESS = _KERNEL32.GetCurrentProcess
-#     _GET_CURRENT_PROCESS.argtypes = []
-#     _GET_CURRENT_PROCESS.restype = wintypes.HANDLE
-
-#     _GET_PROCESS_MEMORY_INFO = _PSAPI.GetProcessMemoryInfo
-#     _GET_PROCESS_MEMORY_INFO.argtypes = [
-#         wintypes.HANDLE,
-#         ctypes.POINTER(_PROCESS_MEMORY_COUNTERS),
-#         wintypes.DWORD,
-#     ]
-#     _GET_PROCESS_MEMORY_INFO.restype = wintypes.BOOL
-
-
-# def _peak_rss_mib_windows() -> float:
-#     """Return peak process working-set size in MiB on native Windows."""
-#     counters = _PROCESS_MEMORY_COUNTERS()
-#     counters.cb = ctypes.sizeof(counters)
-
-#     process = _GET_CURRENT_PROCESS()
-
-#     ok = _GET_PROCESS_MEMORY_INFO(
-#         process,
-#         ctypes.byref(counters),
-#         counters.cb,
-#     )
-
-#     if not ok:
-#         raise ctypes.WinError(ctypes.get_last_error())
-
-#     return counters.PeakWorkingSetSize / (1024.0 * 1024.0)
-
-
-# def _peak_rss_mib_unix() -> float:
-#     """
-#     Return peak resident set size in MiB on Unix-like systems.
-
-#     Linux reports `ru_maxrss` in KiB.
-#     macOS reports `ru_maxrss` in bytes.
-#     """
-#     import resource
-
-#     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-
-#     if sys.platform == "darwin":
-#         return float(rss) / (1024.0 * 1024.0)
-
-#     return float(rss) / 1024.0
-
-
-# def peak_rss_mib() -> float:
-#     """
-#     Return peak process resident memory in MiB.
-
-#     The implementation is deliberately platform-specific because the Python
-#     standard-library `resource` module is unavailable on native Windows.
-#     """
-#     if sys.platform == "win32":
-#         return _peak_rss_mib_windows()
-
-#     return _peak_rss_mib_unix()
-
-
-# # ---------------------------------------------------------------------------
-# # Independent oracle (plain NumPy; raw sources only)
-# # ---------------------------------------------------------------------------
-# def book():
-#     """Per-position economics read from the RAW positions frame, ordered by U."""
-#     f = cf.POSITIONS
-
-#     by_uid = {
-#         int(u): (float(q), str(n), str(c))
-#         for u, q, n, c in zip(
-#             f["uid"],
-#             f["quantity"],
-#             f["underlying"],
-#             f["settlement_ccy"],
-#             strict=True,
-#         )
-#     }
-
-#     uids = cf.UIDS.tolist()
-
-#     qty = np.array([by_uid[u][0] for u in uids])
-
-#     u_row = np.array([ROW[cf.NAMES.index(by_uid[u][1]) + 1] for u in uids])
-
-#     eur = np.array([by_uid[u][2] == "EUR" for u in uids])
-
-#     return uids, qty, u_row, eur
-
-
-# def oracle_rows(x0, xs, derived_mask):
-#     """
-#     V_0, dV (FULL exact / DERIVED SECOND_ORDER_FULL Taylor) and dW per UID.
-#     """
-#     _, qty, u_row, eur = book()
-
-#     fx = ROW[FX_ID]
-
-#     p0 = x0[u_row]
-#     ps = xs[u_row]
-
-#     x0fx = float(x0[fx])
-#     xsfx = xs[fx]
-
-#     fx0 = np.where(
-#         eur,
-#         x0fx,
-#         1.0,
-#     )
-
-#     fxs = np.where(
-#         eur[:, None],
-#         xsfx[None, :],
-#         1.0,
-#     )
-
-#     v0 = qty * p0 * fx0
-
-#     dv_full = qty[:, None] * ps * fxs - v0[:, None]
-
-#     dp = ps - p0[:, None]
-
-#     dx = (xsfx - x0fx)[None, :] * eur[:, None]
-
-#     dv_taylor = qty[:, None] * (fx0[:, None] * dp + p0[:, None] * dx + dp * dx)
-
-#     dv = np.where(
-#         derived_mask[:, None],
-#         dv_taylor,
-#         dv_full,
-#     )
-
-#     q0 = np.where(
-#         eur,
-#         1.0 / x0fx,
-#         1.0,
-#     )
-
-#     qs = np.where(
-#         eur[:, None],
-#         1.0 / xsfx[None, :],
-#         1.0,
-#     )
-
-#     dw = dv * qs + v0[:, None] * (qs - q0[:, None])
-
-#     check = (v0[:, None] + dv) * qs - v0[:, None] * q0[:, None]
-
-#     assert np.abs(dw - check).max() < 1e-7, "D081 forms disagree in the oracle"
-
-#     return v0, dv, dw
-
-
-# def oracle_historical_levels(x0):
-#     """
-#     Historical, horizon 1, LOG_RETURN, no proxy:
-
-#         x_s = x_0 exp(ln(H_t / H_t-1)).
-#     """
-#     vals = np.asarray(
-#         cf.VALS,
-#         dtype=np.float64,
-#     )[:, cf.FIDS - 1]
-
-#     r = np.log(vals[1:] / vals[:-1]).T
-
-#     return x0[:, None] * np.exp(r)
-
-
-# def oracle_var_es(p, c):
-#     """
-#     Re-implement the production convention:
-
-#         alpha = 1 - c
-#         m = alpha * S
-#         m is snapped to the nearest integer within 16 eps
-#         VaR = ceil(m)-th lower order statistic
-#         ES = (
-#             sum of the floor(m) worst observations
-#             + frac * the next observation
-#         ) / m
-#     """
-#     s = np.sort(
-#         np.asarray(
-#             p,
-#             dtype=np.float64,
-#         )
-#     )
-
-#     m = (1.0 - c) * s.shape[0]
-
-#     near = np.rint(m)
-
-#     if abs(m - near) <= (16.0 * np.finfo(np.float64).eps * max(1.0, abs(m))):
-#         m = float(near)
-
-#     f = int(math.floor(m))
-#     w = m - f
-
-#     var = s[max(0, f - 1)] if w == 0.0 else s[f]
-
-#     es = (s[:f].sum() + (w * s[f] if w > 0.0 else 0.0)) / m
-
-#     return float(var), float(es)
-
-
-# # ---------------------------------------------------------------------------
-# # Production execution with capture and coarse stage timing
-# # ---------------------------------------------------------------------------
-# class Capture:
-#     def __init__(self):
-#         self.t = {
-#             "valuation": 0.0,
-#             "taylor": 0.0,
-#             "d081": 0.0,
-#             "var_es": 0.0,
-#         }
-
-#         self.seen = {}
-#         self._real = {}
-
-#     def __enter__(self):
-#         self._real = {
-#             "value": api._value_positions,
-#             "convert": api.convert_scenario_pnl_to_reporting_currency,
-#             "var": api.compute_var_es,
-#             "taylor": SensitivityPnlCalculator.run_into_grid,
-#             "write": api._write_full_reval_block,
-#         }
-
-#         def timed(key, fn):
-#             def wrapper(*a, **kw):
-#                 t0 = time.perf_counter()
-
-#                 out = fn(*a, **kw)
-
-#                 self.t[key] += time.perf_counter() - t0
-
-#                 return out
-
-#             return wrapper
-
-#         api._value_positions = timed(
-#             "valuation",
-#             self._real["value"],
-#         )
-
-#         SensitivityPnlCalculator.run_into_grid = timed(
-#             "taylor",
-#             self._real["taylor"],
-#         )
-
-#         def convert(**kw):
-#             self.seen["v0"] = np.array(
-#                 kw["base_settlement_values"],
-#                 copy=True,
-#             )
-
-#             self.seen["settlement"] = np.array(
-#                 kw["settlement_pnl"],
-#                 copy=True,
-#             )
-
-#             t0 = time.perf_counter()
-
-#             out = self._real["convert"](**kw)
-
-#             self.t["d081"] += time.perf_counter() - t0
-
-#             self.seen["reported"] = np.array(
-#                 out.converted_pnl,
-#                 dtype=np.float64,
-#                 copy=True,
-#             )
-
-#             self.seen["portfolio"] = np.array(
-#                 out.portfolio_pnl,
-#                 dtype=np.float64,
-#                 copy=True,
-#             )
-
-#             return out
-
-#         def write(**kw):
-#             self.seen["shocked"] = np.array(
-#                 kw["shocked_levels"],
-#                 copy=True,
-#             )
-
-#             return self._real["write"](**kw)
-
-#         api.convert_scenario_pnl_to_reporting_currency = convert
-#         api.compute_var_es = timed(
-#             "var_es",
-#             self._real["var"],
-#         )
-#         api._write_full_reval_block = write
-
-#         return self
-
-#     def __exit__(self, *exc):
-#         api._value_positions = self._real["value"]
-#         api.convert_scenario_pnl_to_reporting_currency = self._real["convert"]
-#         api.compute_var_es = self._real["var"]
-#         SensitivityPnlCalculator.run_into_grid = self._real["taylor"]
-#         api._write_full_reval_block = self._real["write"]
-
-
-# def run(
-#     model,
-#     *,
-#     batch_size=256,
-#     seed=7,
-#     mixed=True,
-#     scenario_count=None,
-# ):
-#     inp = cf.inputs(
-#         model,
-#         batch_size=batch_size,
-#         seed=seed,
-#         mixed=mixed,
-#         scenario_count=scenario_count,
-#     )
-
-#     with Capture() as cap:
-#         t0 = time.perf_counter()
-
-#         result = run_scenario_var_es(**inp)
-
-#         wall = time.perf_counter() - t0
-
-#     return inp, result, cap, wall
-
-
-# def reconcile(model, inp, result, cap):
-#     """Per-UID and tail reconciliation against the independent oracle."""
-#     x0 = np.asarray(
-#         inp["base_levels"],
-#         dtype=np.float64,
-#     )
-
-#     xs = np.asarray(
-#         cap.seen["shocked"],
-#         dtype=np.float64,
-#     )
-
-#     derived = np.isin(
-#         cf.UIDS,
-#         inp["methodology"].taylor_derived_uids,
-#     )
-
-#     v0, dv, dw = oracle_rows(
-#         x0,
-#         xs,
-#         derived,
-#     )
-
-#     out = {
-#         "scenarios": int(xs.shape[1]),
-#         "max_abs_v0_error": float(np.abs(cap.seen["v0"] - v0).max()),
-#         "max_abs_dv_error": float(
-#             np.abs(np.asarray(cap.seen["settlement"]) - dv).max()
-#         ),
-#         "max_abs_dw_error": float(np.abs(cap.seen["reported"] - dw).max()),
-#         "max_abs_portfolio_error": float(
-#             np.abs(cap.seen["portfolio"] - dw.sum(axis=0)).max()
-#         ),
-#     }
-
-#     var, es = oracle_var_es(
-#         dw.sum(axis=0),
-#         inp["confidence_level"],
-#     )
-
-#     out["var_production"] = float(result.var[-1])
-#     out["var_oracle"] = var
-
-#     out["es_production"] = float(result.es[-1])
-#     out["es_oracle"] = es
-
-#     out["var_error"] = abs(float(result.var[-1]) - var)
-
-#     out["es_error"] = abs(float(result.es[-1]) - es)
-
-#     if model == "historical":
-#         # Exact independent scenario engine.
-#         out["max_abs_level_error"] = float(
-#             np.abs(xs - oracle_historical_levels(x0)).max()
-#         )
-
-#     out["ok"] = (
-#         out["max_abs_v0_error"] < ATOL_V0
-#         and out["max_abs_dv_error"] < ATOL_PNL
-#         and out["max_abs_dw_error"] < ATOL_PNL
-#         and out["var_error"] < 10 * ATOL_PNL
-#         and out["es_error"] < 10 * ATOL_PNL
-#         and out.get(
-#             "max_abs_level_error",
-#             0.0,
-#         )
-#         < ATOL_LEVEL
-#     )
-
-#     return out
-
-
-# # ---------------------------------------------------------------------------
-# # Adversarial sections
-# # ---------------------------------------------------------------------------
-# def identity_mutations():
-#     base_inp, base_run, _, _ = run("sbb")
-#     results = {}
-
-#     def outcome(name, inp):
-#         try:
-#             r = run_scenario_var_es(**inp)
-#         except Exception as exc:
-#             # Any refusal is a pass.
-#             results[name] = f"refused:{type(exc).__name__}"
-#             return
-
-#         results[name] = (
-#             "identity_changed" if r.identity != base_run.identity else "SAME IDENTITY"
-#         )
-
-#     mapper2 = cf.FX.build_uix_mapper(
-#         [cf._BATCH],
-#         as_of_ord32=cf.AS_OF + 1,
-#     )
-
-#     inp = cf.inputs(
-#         "sbb",
-#         mixed=True,
-#     )
-
-#     inp["valuation_context"] = ValuationContext(
-#         static_config=cf.RSC,
-#         ingest_batch=cf._BATCH,
-#         uix_mapper=mapper2,
-#         discounting_mode=cf.NONE,
-#     )
-
-#     outcome(
-#         "as_of",
-#         inp,
-#     )
-
-#     inp = cf.inputs(
-#         "sbb",
-#         mixed=True,
-#     )
-
-#     inp["valuation_context"] = ValuationContext(
-#         static_config=cf._static_config(first_equity_shift="SIMPLE_RETURN"),
-#         ingest_batch=cf._BATCH,
-#         uix_mapper=cf.MAPPER,
-#         discounting_mode=cf.NONE,
-#     )
-
-#     outcome(
-#         "static_config",
-#         inp,
-#     )
-
-#     inp = cf.inputs(
-#         "sbb",
-#         mixed=True,
-#     )
-
-#     inp["valuation_context"] = ValuationContext(
-#         static_config=cf._static_config(),
-#         ingest_batch=cf._BATCH,
-#         uix_mapper=cf.MAPPER,
-#         discounting_mode=cf.NONE,
-#     )
-
-#     results["static_config_same_content_new_object"] = (
-#         "same_identity_as_expected"
-#         if run_scenario_var_es(**inp).identity == base_run.identity
-#         else "IDENTITY DRIFT"
-#     )
-
-#     inp = cf.inputs(
-#         "sbb",
-#         mixed=True,
-#     )
-
-#     inp["valuation_context"] = ValuationContext(
-#         static_config=cf.RSC,
-#         ingest_batch=cf._BATCH,
-#         uix_mapper=cf.MAPPER,
-#         discounting_mode=cf.FX.DiscountingMode.CURVE,
-#     )
-
-#     outcome(
-#         "discounting_mode",
-#         inp,
-#     )
-
-#     inp = cf.inputs(
-#         "sbb",
-#         mixed=True,
-#     )
-
-#     order = np.r_[
-#         1,
-#         0,
-#         np.arange(2, cf.K),
-#     ]
-
-#     for k in (
-#         "required_factor_ids",
-#         "required_shift_type_id",
-#         "source_factor_ids",
-#         "shock_scale",
-#         "base_levels",
-#     ):
-#         inp[k] = np.ascontiguousarray(np.asarray(inp[k])[order])
-
-#     outcome(
-#         "factor_axis_order",
-#         inp,
-#     )
-
-#     inp = cf.inputs(
-#         "sbb",
-#         mixed=True,
-#     )
-
-#     keep = cf.UIDS[:-1]
-
-#     inp["methodology"] = MethodologyDeclaration(
-#         production_position_uids=keep,
-#         full_reval_uids=np.intersect1d(
-#             keep,
-#             cf.partition(True)[0],
-#         ),
-#         taylor_supplied_uids=[],
-#         taylor_derived_uids=np.intersect1d(
-#             keep,
-#             cf.partition(True)[1],
-#         ),
-#     )
-
-#     outcome(
-#         "economic_universe",
-#         inp,
-#     )
-
-#     u_full, u_derived = cf.partition(True)
-
-#     inp = cf.inputs(
-#         "sbb",
-#         mixed=True,
-#     )
-
-#     moved_f = np.sort(
-#         np.append(
-#             u_full,
-#             u_derived[0],
-#         )
-#     )
-
-#     inp["methodology"] = MethodologyDeclaration(
-#         production_position_uids=cf.UIDS,
-#         full_reval_uids=moved_f,
-#         taylor_supplied_uids=[],
-#         taylor_derived_uids=u_derived[1:],
-#     )
-
-#     outcome(
-#         "methodology_partition",
-#         inp,
-#     )
-
-#     outcome(
-#         "scenario_seed",
-#         cf.inputs(
-#             "sbb",
-#             seed=11,
-#             mixed=True,
-#         ),
-#     )
-
-#     fp = constants.TTE_FLOOR
-
-#     try:
-#         constants.TTE_FLOOR = fp * 2.0
-
-#         outcome(
-#             "valuation_contract",
-#             cf.inputs(
-#                 "sbb",
-#                 mixed=True,
-#             ),
-#         )
-#     finally:
-#         constants.TTE_FLOOR = fp
-
-#     return results
-
-
-# def determinism_and_batching():
-#     out = {}
-
-#     runs = {
-#         b: run(
-#             "sbb",
-#             batch_size=b,
-#         )
-#         for b in (
-#             64,
-#             256,
-#             2000,
-#         )
-#     }
-
-#     ref = runs[256][1]
-
-#     out["batch_identity_equal"] = all(
-#         r[1].identity == ref.identity for r in runs.values()
-#     )
-
-#     out["batch_var_bitwise_equal"] = all(
-#         [v.hex() for v in r[1].var.tolist()] == [v.hex() for v in ref.var.tolist()]
-#         for r in runs.values()
-#     )
-
-#     out["batch_es_bitwise_equal"] = all(
-#         [v.hex() for v in r[1].es.tolist()] == [v.hex() for v in ref.es.tolist()]
-#         for r in runs.values()
-#     )
-
-#     again = run(
-#         "sbb",
-#         batch_size=256,
-#     )[1]
-
-#     out["repeat_bitwise_equal"] = [v.hex() for v in again.var.tolist()] == [
-#         v.hex() for v in ref.var.tolist()
-#     ] and again.identity == ref.identity
-
-#     other = run(
-#         "filtered_bootstrap",
-#         batch_size=256,
-#     )[1]  # different scenarios in between
-
-#     third = run(
-#         "sbb",
-#         batch_size=256,
-#     )[1]
-
-#     out["no_cross_run_leakage"] = [v.hex() for v in third.var.tolist()] == [
-#         v.hex() for v in ref.var.tolist()
-#     ] and other.identity != ref.identity
-
-#     return out
-
-
-# def stress_execution():
-#     """
-#     Stress the official production path at materially larger batch sizes.
-
-#     This does not alter the canonical certification world. Each stress run
-#     uses the same fixture, same seed, same model and same independent oracle;
-#     only the production batch size is increased.
-
-#     The stress gate checks:
-#         - independent oracle reconciliation
-#         - stable identity
-#         - bitwise-identical VaR/ES versus the baseline batch
-#         - wall-clock execution
-#     """
-#     out = {}
-
-#     _, baseline, _, _ = run(
-#         "sbb",
-#         batch_size=256,
-#         seed=7,
-#         mixed=True,
-#     )
-
-#     for scenario_count, batch_size in STRESS_CASES:
-#         rss_before = peak_rss_mib()
-
-#         inp = cf.inputs(
-#             "sbb",
-#             batch_size=batch_size,
-#             seed=7,
-#             mixed=True,
-#             scenario_count=scenario_count,
-#         )
-
-#         with Capture() as cap:
-#             t0 = time.perf_counter()
-
-#             result = run_scenario_var_es(**inp)
-
-#             wall = time.perf_counter() - t0
-
-#         rss_after = peak_rss_mib()
-
-#         rec = reconcile(
-#             "sbb",
-#             inp,
-#             result,
-#             cap,
-#         )
-
-#         rec["S_target"] = int(scenario_count)
-#         rec["batch_size"] = int(batch_size)
-#         rec["wall_s"] = round(wall, 3)
-
-#         rec["stages_s"] = {k: round(v, 3) for k, v in cap.t.items()}
-
-#         rec["stages_s"]["scenario_and_overhead"] = round(
-#             wall - sum(cap.t.values()),
-#             3,
-#         )
-
-#         rec["peak_rss_mib_before"] = round(
-#             rss_before,
-#             1,
-#         )
-
-#         rec["peak_rss_mib_after"] = round(
-#             rss_after,
-#             1,
-#         )
-
-#         rec["identity_equal_baseline"] = result.identity == baseline.identity
-
-#         rec["var_bitwise_equal_baseline"] = [v.hex() for v in result.var.tolist()] == [
-#             v.hex() for v in baseline.var.tolist()
-#         ]
-
-#         rec["es_bitwise_equal_baseline"] = [v.hex() for v in result.es.tolist()] == [
-#             v.hex() for v in baseline.es.tolist()
-#         ]
-
-#         rec["ok"] = (
-#             rec["ok"]
-#             and rec["identity_equal_baseline"]
-#             and rec["var_bitwise_equal_baseline"]
-#             and rec["es_bitwise_equal_baseline"]
-#         )
-
-#         out[f"S{scenario_count}_B{batch_size}"] = rec
-
-#     return out
-
-
-# # ---------------------------------------------------------------------------
-# # Release gate
-# # ---------------------------------------------------------------------------
-# def main() -> int:
-#     parser = argparse.ArgumentParser(
-#         description=__doc__,
-#     )
-
-#     parser.add_argument(
-#         "--json-out",
-#         default=str(
-#             pathlib
-#             .Path(__file__)
-#             .resolve()
-#             .with_name("spot_production_scale_certifcate.json")
-#         ),
-#         help=(
-#             "Path for the machine-readable certification JSON. "
-#             "Defaults to spot_production_scale_certifcate.json "
-#             "beside this script."
-#         ),
-#     )
-
-#     args = parser.parse_args()
-
-#     cores = os.cpu_count() or 1
-
-#     report = {
-#         "dimensions": {
-#             "M": int(cf.M),
-#             "K_axis": int(cf.K),
-#             "K_nodes": int(cf.K_TOTAL),
-#             "T": int(cf.T),
-#             "S_target": int(cf.S),
-#             "batch_size": 256,
-#             "confidence_level": 0.99,
-#             "discounting": "NONE",
-#             "cores": cores,
-#         },
-#         "models": {},
-#         "identity": {},
-#         "determinism": {},
-#         "stress": {},
-#         "performance": {},
-#     }
-
-#     rss0 = peak_rss_mib()
-
-#     for model in cf.CFGS:
-#         inp, result, cap, wall = run(model)
-
-#         rec = reconcile(
-#             model,
-#             inp,
-#             result,
-#             cap,
-#         )
-
-#         rec["wall_s"] = round(
-#             wall,
-#             3,
-#         )
-
-#         rec["stages_s"] = {k: round(v, 3) for k, v in cap.t.items()}
-
-#         rec["stages_s"]["scenario_and_overhead"] = round(
-#             wall - sum(cap.t.values()),
-#             3,
-#         )
-
-#         report["models"][model] = rec
-
-#     report["identity"] = identity_mutations()
-
-#     report["determinism"] = determinism_and_batching()
-
-#     report["stress"] = stress_execution()
-
-#     report["performance"] = {
-#         "peak_rss_mib_before": round(
-#             rss0,
-#             1,
-#         ),
-#         "peak_rss_mib_after": round(
-#             peak_rss_mib(),
-#             1,
-#         ),
-#         "threads": int(
-#             os.environ.get(
-#                 "NUMBA_NUM_THREADS",
-#                 cores,
-#             )
-#         ),
-#         "cores": cores,
-#     }
-
-#     ok_models = all(m["ok"] for m in report["models"].values())
-
-#     ok_identity = all(
-#         v.startswith("refused")
-#         or v
-#         in (
-#             "identity_changed",
-#             "same_identity_as_expected",
-#         )
-#         for v in report["identity"].values()
-#     )
-
-#     ok_det = all(report["determinism"].values())
-
-#     ok_stress = all(rec["ok"] for rec in report["stress"].values())
-
-#     report["verdict"] = {
-#         "functional_correctness": (
-#             "CERTIFIED"
-#             if (ok_models and ok_identity and ok_det and ok_stress)
-#             else "NOT CERTIFIED"
-#         ),
-#         "production_scale_execution": (
-#             "CERTIFIED" if (ok_models and ok_stress) else "NOT CERTIFIED"
-#         ),
-#         "multi_core_determinism": ("NOT TESTED" if cores < 2 else "see release gate"),
-#         "production_data_readiness": ("NOT TESTED"),
-#     }
-
-#     output = json.dumps(
-#         report,
-#         indent=2,
-#         sort_keys=True,
-#     )
-
-#     print(output)
-
-#     # Always emit the machine-readable release certificate.
-#     json_path = pathlib.Path(args.json_out).resolve()
-
-#     json_path.write_text(
-#         output,
-#         encoding="utf-8",
-#     )
-
-#     print(f"\n  JSON certificate written to {json_path}")
-
-#     return 0 if (ok_models and ok_identity and ok_det and ok_stress) else 1
-
-
-# if __name__ == "__main__":
-#     raise SystemExit(main())
-
-
 # scripts/release/spot/certify_spot_production_scale.py
 """
 SPOT production-scale certification gate.
@@ -1081,6 +22,13 @@ certification world (`tests/solutions/risk_run/_certfix.py`:
 raw frame -> IngestBatch -> run-owned compile), and reconciles it against an
 INDEPENDENT NumPy oracle that calls no production scenario generator,
 valuation, Taylor, PnlGrid, D081 or VaR/ES code.
+
+Reporting currency (PR-04, D085): the caller supplies only the reporting
+currency. The run derives every settlement currency and reporting FX route
+from the compiled book and binds all scenario data to ONE canonical run axis
+(valuation universe, then any reporting-only FX factor; D082 as amended). The
+gate certifies that derivation against the RAW positions frame, reconciles a
+second reporting currency (EUR) end to end, and records the axis dimensions.
 
 Levels reported:
     - functional correctness
@@ -1141,9 +89,14 @@ if str(_REPO_ROOT) not in sys.path:
 import riskquant.solutions.risk_run.api as api  # noqa: E402
 import tests.solutions.risk_run._certfix as cf  # noqa: E402
 from riskquant import constants  # noqa: E402
-from riskquant.solutions.risk_run.api import run_scenario_var_es  # noqa: E402
+from riskquant.solutions.risk_run.api import (  # noqa: E402
+    derive_run_factor_axis,
+    run_scenario_var_es,
+)
 from riskquant.solutions.risk_run.schemas import (  # noqa: E402
+    CompositionContractError,
     MethodologyDeclaration,
+    ReportingSpec,
     ValuationContext,
 )
 from riskquant.solutions.sensitivity_pnl.api import (  # noqa: E402
@@ -1151,6 +104,7 @@ from riskquant.solutions.sensitivity_pnl.api import (  # noqa: E402
 )
 
 FX_ID = cf.K_TOTAL  # USDEUR node id (EUR per USD)
+REPORTING_CCY = "USD"  # the certification world's reporting currency (cf.inputs)
 ROW = {int(f): i for i, f in enumerate(cf.FIDS.tolist())}
 
 ATOL_PNL = 1e-3  # float32 PnlGrid
@@ -1313,7 +267,24 @@ def book():
     return uids, qty, u_row, eur
 
 
-def oracle_rows(x0, xs, derived_mask):
+def reporting_rates(eur, usdeur, reporting_ccy):
+    """
+    Settlement -> reporting rate q, by hand from the quotation alone.
+
+    USDEUR quotes EUR per USD. USD reporting: EUR-settled q = 1 / USDEUR,
+    USD-settled q = 1. EUR reporting: EUR-settled q = 1, USD-settled
+    q = USDEUR. `eur` and `usdeur` broadcast (scalar base or (1, S) scenario).
+    """
+    if reporting_ccy == "USD":
+        return np.where(eur, 1.0 / usdeur, 1.0)
+
+    if reporting_ccy == "EUR":
+        return np.where(eur, 1.0, usdeur)
+
+    raise ValueError(f"no hand oracle for reporting currency {reporting_ccy!r}")
+
+
+def oracle_rows(x0, xs, derived_mask, reporting_ccy=REPORTING_CCY):
     """
     V_0, dV (FULL exact / DERIVED SECOND_ORDER_FULL Taylor) and dW per UID.
     """
@@ -1355,17 +326,9 @@ def oracle_rows(x0, xs, derived_mask):
         dv_full,
     )
 
-    q0 = np.where(
-        eur,
-        1.0 / x0fx,
-        1.0,
-    )
+    q0 = reporting_rates(eur, x0fx, reporting_ccy)
 
-    qs = np.where(
-        eur[:, None],
-        1.0 / xsfx[None, :],
-        1.0,
-    )
+    qs = reporting_rates(eur[:, None], xsfx[None, :], reporting_ccy)
 
     dw = dv * qs + v0[:, None] * (qs - q0[:, None])
 
@@ -1463,11 +426,7 @@ def oracle_portfolio_pnl(
 
     v0 = qty * p0 * fx0
 
-    q0 = np.where(
-        eur,
-        1.0 / x0fx,
-        1.0,
-    )
+    q0 = reporting_rates(eur, x0fx, REPORTING_CCY)
 
     scenarios = int(xs.shape[1])
 
@@ -1516,11 +475,7 @@ def oracle_portfolio_pnl(
             dv_full,
         )
 
-        qs = np.where(
-            eur[:, None],
-            1.0 / xsfx[None, :],
-            1.0,
-        )
+        qs = reporting_rates(eur[:, None], xsfx[None, :], REPORTING_CCY)
 
         dw = dv * qs + v0[:, None] * (qs - q0[:, None])
 
@@ -1584,6 +539,9 @@ class Capture:
         )
 
         def convert(**kw):
+            # The run-derived D085 route (small: one row per position).
+            self.seen["plan"] = kw["plan"]
+
             self.seen["v0"] = np.array(
                 kw["base_settlement_values"],
                 copy=True,
@@ -1617,6 +575,9 @@ class Capture:
             return out
 
         def write(**kw):
+            # The FULL_REVAL block receives the VALUATION PREFIX of the run
+            # axis (D082 as amended). `reporting_contract` certifies that the
+            # reporting-only suffix is empty here, so this is the whole axis.
             if self.capture_shocked:
                 self.seen["shocked"] = np.array(
                     kw["shocked_levels"],
@@ -1652,6 +613,7 @@ def run(
     total_scenarios=None,
     capture_detail=True,
     capture_shocked=True,
+    reporting_ccy=REPORTING_CCY,
 ):
     inp = cf.inputs(
         model,
@@ -1660,6 +622,9 @@ def run(
         mixed=mixed,
         total_scenarios=total_scenarios,
     )
+
+    # D085: the reporting currency is the caller's only reporting input.
+    inp["reporting"] = ReportingSpec(reporting_ccy=reporting_ccy)
 
     with Capture(
         capture_detail=capture_detail,
@@ -1674,7 +639,40 @@ def run(
     return inp, result, cap, wall
 
 
-def reconcile(model, inp, result, cap):
+def route_matches_trade_record(plan, reporting_ccy):
+    """
+    The run-derived D085 route against the RAW positions frame.
+
+    Settlement currencies must equal the frame's, in U order; an identity
+    conversion carries no FX row; USD reporting reads USDEUR reciprocally
+    for EUR-settled rows (invert = 1); EUR reporting reads it directly for
+    USD-settled rows (invert = 0).
+    """
+    uids = cf.UIDS.tolist()
+    by_uid = dict(
+        zip(
+            (int(u) for u in cf.POSITIONS["uid"]),
+            (str(c) for c in cf.POSITIONS["settlement_ccy"]),
+            strict=True,
+        )
+    )
+    settle = np.array([by_uid[u] for u in uids])
+    identity = settle == reporting_ccy
+    expected_invert = np.where(
+        identity,
+        0,
+        1 if reporting_ccy == "USD" else 0,
+    )
+
+    return (
+        plan.reporting_ccy == reporting_ccy
+        and tuple(plan.settlement_ccys) == tuple(settle.tolist())
+        and bool(np.array_equal(plan.fx_row_index == constants.INVALID_UIX, identity))
+        and bool(np.array_equal(plan.invert, expected_invert))
+    )
+
+
+def reconcile(model, inp, result, cap, reporting_ccy=REPORTING_CCY):
     """Full per-UID and tail reconciliation against the independent oracle."""
     x0 = np.asarray(
         inp["base_levels"],
@@ -1695,9 +693,15 @@ def reconcile(model, inp, result, cap):
         x0,
         xs,
         derived,
+        reporting_ccy,
     )
 
     out = {
+        "reporting_ccy": reporting_ccy,
+        "route_matches_trade_record": route_matches_trade_record(
+            cap.seen["plan"],
+            reporting_ccy,
+        ),
         "scenarios": int(xs.shape[1]),
         "max_abs_v0_error": float(np.abs(cap.seen["v0"] - v0).max()),
         "max_abs_dv_error": float(
@@ -1730,7 +734,8 @@ def reconcile(model, inp, result, cap):
         )
 
     out["ok"] = (
-        out["max_abs_v0_error"] < ATOL_V0
+        out["route_matches_trade_record"]
+        and out["max_abs_v0_error"] < ATOL_V0
         and out["max_abs_dv_error"] < ATOL_PNL
         and out["max_abs_dw_error"] < ATOL_PNL
         and out["var_error"] < 10 * ATOL_PNL
@@ -2023,6 +1028,18 @@ def identity_mutations():
         ),
     )
 
+    inp = cf.inputs(
+        "sbb",
+        mixed=True,
+    )
+
+    inp["reporting"] = ReportingSpec(reporting_ccy="EUR")
+
+    outcome(
+        "reporting_currency",
+        inp,
+    )
+
     fp = constants.TTE_FLOOR
 
     try:
@@ -2039,6 +1056,102 @@ def identity_mutations():
         constants.TTE_FLOOR = fp
 
     return results
+
+
+def reporting_contract():
+    """
+    PR-04 / D085 at the release dimensions.
+
+    - the certification world's axis IS the run-derived canonical axis;
+    - K_rep = 0 here, so the valuation-prefix capture is the whole axis and
+      the oracle's USDEUR row is on it (oracle precondition);
+    - EUR reporting on the same world reconciles end to end against the hand
+      oracle (route, V_0, dV, dW, portfolio, VaR, ES);
+    - an unconfigured reporting currency is refused during composition,
+      before the run identity is built.
+    """
+    inp = cf.inputs(
+        "sbb",
+        mixed=True,
+    )
+
+    out = {}
+
+    for ccy in (REPORTING_CCY, "EUR"):
+        axis = derive_run_factor_axis(
+            valuation_context=inp["valuation_context"],
+            reporting_ccy=ccy,
+        )
+
+        out[f"axis_{ccy}"] = {
+            "K_val": int(axis.num_valuation_factors),
+            "K_rep": int(axis.reporting_factor_ids.shape[0]),
+            "K_run": int(axis.factor_ids.shape[0]),
+            "bound_to_certification_axis": bool(
+                np.array_equal(axis.factor_ids, inp["required_factor_ids"])
+                and np.array_equal(axis.shift_type_ids, inp["required_shift_type_id"])
+            ),
+        }
+
+    eur_inp, eur_result, eur_cap, eur_wall = run(
+        "sbb",
+        reporting_ccy="EUR",
+    )
+
+    eur = reconcile(
+        "sbb",
+        eur_inp,
+        eur_result,
+        eur_cap,
+        reporting_ccy="EUR",
+    )
+
+    eur["wall_s"] = round(
+        eur_wall,
+        3,
+    )
+
+    out["eur_reporting"] = eur
+
+    reached_identity = []
+    real_manifest = api.build_run_manifest
+
+    def spy(*args, **kwargs):
+        reached_identity.append(True)
+        return real_manifest(*args, **kwargs)
+
+    bad = cf.inputs(
+        "sbb",
+        mixed=True,
+    )
+
+    bad["reporting"] = ReportingSpec(reporting_ccy="ZZZ")
+
+    api.build_run_manifest = spy
+
+    try:
+        run_scenario_var_es(**bad)
+        out["unconfigured_currency"] = "ACCEPTED (defect)"
+    except CompositionContractError:
+        out["unconfigured_currency"] = (
+            "refused:CompositionContractError"
+            if not reached_identity
+            else "refused AFTER identity (defect)"
+        )
+    finally:
+        api.build_run_manifest = real_manifest
+
+    out["ok"] = (
+        all(
+            out[f"axis_{c}"]["bound_to_certification_axis"]
+            for c in (REPORTING_CCY, "EUR")
+        )
+        and all(out[f"axis_{c}"]["K_rep"] == 0 for c in (REPORTING_CCY, "EUR"))
+        and eur["ok"]
+        and out["unconfigured_currency"] == "refused:CompositionContractError"
+    )
+
+    return out
 
 
 def determinism_and_batching():
@@ -2253,9 +1366,11 @@ def main() -> int:
             "batch_size": 256,
             "confidence_level": 0.99,
             "discounting": "NONE",
+            "reporting_ccy": REPORTING_CCY,
             "cores": cores,
         },
         "models": {},
+        "reporting": {},
         "identity": {},
         "determinism": {},
         "stress": {},
@@ -2288,6 +1403,8 @@ def main() -> int:
 
         report["models"][model] = rec
 
+    report["reporting"] = reporting_contract()
+
     report["identity"] = identity_mutations()
 
     report["determinism"] = determinism_and_batching()
@@ -2314,6 +1431,8 @@ def main() -> int:
 
     ok_models = all(model["ok"] for model in report["models"].values())
 
+    ok_reporting = bool(report["reporting"]["ok"])
+
     ok_identity = all(
         value.startswith("refused")
         or value
@@ -2333,7 +1452,7 @@ def main() -> int:
     report["verdict"] = {
         "functional_correctness": (
             "CERTIFIED"
-            if (ok_models and ok_identity and ok_det and ok_stress)
+            if (ok_models and ok_reporting and ok_identity and ok_det and ok_stress)
             else "NOT CERTIFIED"
         ),
         "production_scale_execution": (
@@ -2361,7 +1480,11 @@ def main() -> int:
 
     print(f"\n  JSON certificate written to {json_path}")
 
-    return 0 if (ok_models and ok_identity and ok_det and ok_stress) else 1
+    return (
+        0
+        if (ok_models and ok_reporting and ok_identity and ok_det and ok_stress)
+        else 1
+    )
 
 
 if __name__ == "__main__":

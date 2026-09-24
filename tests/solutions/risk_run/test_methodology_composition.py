@@ -32,7 +32,6 @@ from riskquant.solutions.risk_run.api import run_scenario_var_es
 from riskquant.solutions.risk_run.schemas import (
     CompositionContractError,
     MethodologyDeclaration,
-    ReportingSpec,
     ValuationContext,
 )
 from riskquant.solutions.sensitivity_pnl.api import SensitivityPnlCalculator
@@ -258,21 +257,6 @@ def test_derived_book_must_price_exactly_u_d(spy) -> None:
     with pytest.raises(
         CompositionContractError, match=r"does not price exactly.*\[2001\]"
     ):
-        run_scenario_var_es(**inp)
-    _no_numerics(spy)
-
-
-def test_reporting_metadata_must_be_keyed_to_u(spy) -> None:
-    inp = mf.inputs()
-    rep = inp["reporting"]
-    inp["reporting"] = ReportingSpec(
-        reporting_ccy=rep.reporting_ccy,
-        position_uids=rep.position_uids[::-1].copy(),
-        settlement_ccys=rep.settlement_ccys[::-1],
-        fx_factor_names=rep.fx_factor_names,
-        fx_factor_rows=rep.fx_factor_rows,
-    )
-    with pytest.raises(CompositionContractError, match="ascending"):
         run_scenario_var_es(**inp)
     _no_numerics(spy)
 

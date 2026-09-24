@@ -148,20 +148,28 @@ _WORKER_PROBE = textwrap.dedent(
 
 #: The fixture and the official call, executed in the child. Intermediates are
 #: INSPECTED with the same production functions; the numerical path is not
-#: recreated.
+#: recreated. Since PR-04 (D085) the run derives every settlement currency and
+#: reporting FX route itself and binds scenario data to ONE canonical run axis
+#: (valuation prefix, then any reporting-only FX suffix). The inspection reads
+#: the axis from `derive_run_factor_axis`, prices Taylor on the valuation
+#: prefix, and rebuilds the reporting plan from the TRADE RECORD (raw positions
+#: frame) and the public FX authority, never from run internals.
 _FIXTURE = textwrap.dedent(
     """
     import hashlib, json
     import numpy as np, polars as pl, numba
 
+    from riskquant.constants import NO_FX_RF_REQUIRED
     from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
     from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID
     from riskquant.reporting.fx_conversion import (
         build_fx_conversion_plan, convert_scenario_pnl_to_reporting_currency)
+    from riskquant.scenario_metrics.api.var_es import compute_var_es
     from riskquant.sensitivity_pnl.conventions import DisplacementConvention
     from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
     from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
-    from riskquant.solutions.risk_run.api import run_scenario_var_es
+    from riskquant.solutions.risk_run.api import (
+        derive_run_factor_axis, run_scenario_var_es)
     from riskquant.solutions.risk_run.schemas import (
         MethodologyDeclaration, ReportingSpec, TaylorBlock)
     from riskquant.solutions.run_identity.hashing import (
@@ -179,8 +187,8 @@ _FIXTURE = textwrap.dedent(
                       RQ_CERT_SCENARIOS="{S}", RQ_CERT_POSITIONS="{M}")
     sys.path.insert(0, str(pathlib.Path(riskquant.__file__).resolve().parents[2]
                            / "tests" / "solutions" / "risk_run"))
-    from _certfix import (CFGS, FIDS, K, K_TOTAL, M, S, T, VALS, calculator, derived,
-                          matrix, parametric_data, v0)
+    from _certfix import (CFGS, FIDS, K, K_TOTAL, M, POSITIONS, RSC, S, T, UIDS, VALS,
+                          calculator, derived, matrix, parametric_data, v0)
     from _certfix import inputs as _certfix_inputs
 
     def inputs(model, batch_size, seed=7):
@@ -206,36 +214,58 @@ _FIXTURE = textwrap.dedent(
         return [f"{{p['internal_api']}}:{{p['num_threads']}}"
                 for p in threadpoolctl.threadpool_info() if p["user_api"] == "blas"]
 
+    def reporting_route(inp):
+        # D085: settlement currencies from the RAW positions frame (U order);
+        # FX routes by name from every configured FX pair on the run axis.
+        settle = dict(zip(POSITIONS["uid"].tolist(), POSITIONS["settlement_ccy"].tolist()))
+        pairs = np.asarray(RSC.fx_spot_matrix)
+        fx_ids = np.unique(pairs[pairs != int(NO_FX_RF_REQUIRED)])
+        axis_ids = np.asarray(inp["required_factor_ids"])
+        rows = np.flatnonzero(np.isin(axis_ids, fx_ids))
+        names = {{int(v): k for k, v in RSC.rel_name_to_rf_id.items()}}
+        plan = build_fx_conversion_plan(
+            settlement_ccys=[str(settle[int(u)]) for u in UIDS.tolist()],
+            reporting_ccy=inp["reporting"].reporting_ccy,
+            fx_factor_names=[names[int(axis_ids[r])] for r in rows])
+        return plan, rows
+
     def capture(model, batch_size):
         inp = inputs(model, batch_size)
         rr = run_scenario_var_es(**inp)                      # OFFICIAL API
+        run_axis = derive_run_factor_axis(
+            valuation_context=inp["valuation_context"],
+            reporting_ccy=inp["reporting"].reporting_ccy)
+        k_run, k_val = int(run_axis.factor_ids.shape[0]), int(run_axis.num_valuation_factors)
         gen = build_scenario_generator(inp["scenario_config"], data=inp["data"])
         shocks, chunks = [], []
         for b in gen.iter_batches(
                 required_shift_type_id=inp["required_shift_type_id"],
                 source_factor_ids=inp["source_factor_ids"],
                 shock_scale=inp["shock_scale"], batch_size=batch_size):
-            out = np.empty((K, b.shocks.shape[0]), dtype=np.float64, order="C")
+            out = np.empty((k_run, b.shocks.shape[0]), dtype=np.float64, order="C")
             apply_shocks_to_base_levels(base_levels=inp["base_levels"], batch=b, out=out)
             shocks.append(np.array(b.shocks, copy=True))
             chunks.append(out)
         stream = np.vstack(shocks)
         levels = np.ascontiguousarray(np.hstack(chunks))
-        axis = FactorAxis.from_keys(pl.Series("factor_id", FIDS.tolist(), dtype=pl.Int32))
+        # Taylor lives on the valuation prefix of the run axis (D082 as amended).
+        axis = FactorAxis.from_keys(
+            pl.Series("factor_id", run_axis.factor_ids[:k_val].tolist(), dtype=pl.Int32))
         settlement = inp["taylor_derived"].calculator.run(
-            axis.levels(base_levels=inp["base_levels"], shocked_levels=levels))
-        plan = build_fx_conversion_plan(
-            settlement_ccys=list(inp["reporting"].settlement_ccys),
-            reporting_ccy=inp["reporting"].reporting_ccy,
-            fx_factor_names=list(inp["reporting"].fx_factor_names))
+            axis.levels(base_levels=inp["base_levels"][:k_val], shocked_levels=levels[:k_val]))
+        plan, fx_rows = reporting_route(inp)
         conv = convert_scenario_pnl_to_reporting_currency(
             settlement_pnl=np.ascontiguousarray(settlement.pnl, dtype=np.float64),
-            fx_levels=np.ascontiguousarray(
-                levels[inp["reporting"].fx_factor_rows], dtype=np.float64),
+            fx_levels=np.ascontiguousarray(levels[fx_rows], dtype=np.float64),
             plan=plan,
             base_settlement_values=v0(),   # P1-B: the real base values of U
             base_fx_levels=np.ascontiguousarray(
-                inp["base_levels"][inp["reporting"].fx_factor_rows], dtype=np.float64))
+                inp["base_levels"][fx_rows], dtype=np.float64))
+        # The inspection is independent of the run's derived route; it must
+        # reproduce the RiskRun bitwise, or one of the two routes is wrong.
+        metrics = compute_var_es(np.ascontiguousarray(
+            np.vstack([conv.converted_pnl, conv.portfolio_pnl[None, :]])),
+            inp["confidence_level"])
         return {{
             "requested_workers": int(numba.config.NUMBA_NUM_THREADS),
             "actual_workers": int(numba.get_num_threads()),
@@ -243,9 +273,15 @@ _FIXTURE = textwrap.dedent(
             "fixture_digest": fixture_digest(inp["data"]),
             "blas_threads": blas_threads(),
             "scenario_stream": h(stream),
+            "run_axis": {{"K_val": k_val, "K_rep": k_run - k_val, "K_run": k_run,
+                         "bound": bool(np.array_equal(run_axis.factor_ids,
+                                                      inp["required_factor_ids"]))}},
             "shocked_levels": h(levels),
             "trade_pnl": h(np.asarray(settlement.pnl)),
             "portfolio_pnl": h(np.asarray(conv.portfolio_pnl)),
+            "inspection_matches_run": (
+                [float(v).hex() for v in metrics.var] == [float(v).hex() for v in rr.var]
+                and [float(v).hex() for v in metrics.es] == [float(v).hex() for v in rr.es]),
             "var": [float(v).hex() for v in rr.var],
             "es": [float(v).hex() for v in rr.es],
             "manifest_identity": rr.manifest.identity(),
@@ -363,6 +399,14 @@ def certify_matrix(
             cert.record(f"{model} baseline", False, base["__error__"][:140])
             continue
         ref_by_model[model] = base
+        axis = base["run_axis"]
+        cert.record(
+            f"{model}: inspection reproduces the RiskRun on the canonical run axis",
+            bool(base["inspection_matches_run"]) and bool(axis["bound"]),
+            f"K_val={axis['K_val']} K_rep={axis['K_rep']} K_run={axis['K_run']}; "
+            "reporting route rebuilt from the trade record (D085)",
+        )
+        cert.evidence.setdefault("run_axis", axis)
         for t in threads[1:]:
             got = _child(
                 _capture_script(model, 64, dims), {"NUMBA_NUM_THREADS": str(t)}

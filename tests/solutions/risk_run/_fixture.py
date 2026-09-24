@@ -145,13 +145,7 @@ def methodology():
 
 
 def reporting_spec(reporting_ccy="USD"):
-    return ReportingSpec(
-        reporting_ccy=reporting_ccy,
-        position_uids=POSITION_UIDS,
-        settlement_ccys=("EUR", "USD"),
-        fx_factor_names=("USDEUR",),
-        fx_factor_rows=np.array([list(FACTOR_IDS).index(30)], np.int32),
-    )
+    return ReportingSpec(reporting_ccy=reporting_ccy)
 
 
 def inputs(seed=7, model="sbb"):

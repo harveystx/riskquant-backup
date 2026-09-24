@@ -86,6 +86,7 @@ from riskquant.solutions.sensitivity_pnl.taylor_contract import (
     TaylorDeclaration,
     validate_taylor_completeness,
     verify_coordinate_transform_base,
+    verify_declared_order_against_book,
 )
 from riskquant.solutions.sensitivity_pnl.validate import (
     validate_book_spec,
@@ -104,6 +105,15 @@ class SensitivityPnlCalculator:
     taylor_declaration: TaylorDeclaration | None = None
     """P1-A contract certified at compile; None = UNCERTIFIED (the production
     entry point refuses it)."""
+
+    def __post_init__(self) -> None:
+        # The declaration and the book are one certified pair: however the
+        # calculator is built (compile, direct construction, dataclasses.replace),
+        # the declared order must describe the terms this book stores (PR-05).
+        if self.taylor_declaration is not None:
+            verify_declared_order_against_book(
+                order=self.taylor_declaration.order, book=self.book
+            )
 
     @classmethod
     def compile(cls, spec: SensitivityBookSpec) -> SensitivityPnlCalculator:

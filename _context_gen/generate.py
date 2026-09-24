@@ -17,7 +17,17 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from _context_gen import ast_model, completeness, core, depgraph, fs, index_writer, profiles, snapshot, source_writer
+from _context_gen import (
+    ast_model,
+    completeness,
+    core,
+    depgraph,
+    fs,
+    index_writer,
+    profiles,
+    snapshot,
+    source_writer,
+)
 from _context_gen.ast_model import ModuleInfo
 from _context_gen.closure import compute_closure
 from _context_gen.depgraph import RepoGraph, domain_of
@@ -33,9 +43,15 @@ SRC_ROOTS = ("src/riskquant", "src/riskquant_lab")
 class RepoSnapshot:
     module_infos: list[ModuleInfo]
     texts: dict[str, str]  # dotted -> exact source text
-    read_failures: list[tuple[str, str]]  # (repo_relative, ReadOutcome.value) for UNREADABLE/PARSE_FAILED
-    other_files: list[fs.DiscoveredFile]  # non-.py text files (pyproject.toml, *.md, ...)
-    aux_texts: dict[str, str]  # repo_relative -> exact text, for every file with no dotted identity
+    read_failures: list[
+        tuple[str, str]
+    ]  # (repo_relative, ReadOutcome.value) for UNREADABLE/PARSE_FAILED
+    other_files: list[
+        fs.DiscoveredFile
+    ]  # non-.py text files (pyproject.toml, *.md, ...)
+    aux_texts: dict[
+        str, str
+    ]  # repo_relative -> exact text, for every file with no dotted identity
     #                            (tests/, scripts/, non-.py text). Read in the same single pass as
     #                            package source, so test/demo artifacts never re-read the disk.
     graph: RepoGraph
@@ -46,15 +62,21 @@ def take_snapshot(repo_root: Path) -> RepoSnapshot:
     """One filesystem walk + one read/parse pass over every source file."""
     py_files: list[fs.DiscoveredFile] = []
     for root in SRC_ROOTS:
-        py_files.extend(fs.sweep(repo_root / root, repo_root, suffixes=frozenset({".py"})))
+        py_files.extend(
+            fs.sweep(repo_root / root, repo_root, suffixes=frozenset({".py"}))
+        )
     for root in ("scripts", "tests"):
-        py_files.extend(fs.sweep(repo_root / root, repo_root, suffixes=frozenset({".py"})))
+        py_files.extend(
+            fs.sweep(repo_root / root, repo_root, suffixes=frozenset({".py"}))
+        )
     py_files.sort(key=lambda f: f.repo_relative)
 
     other_files: list[fs.DiscoveredFile] = []
     for root in SRC_ROOTS + ("scripts", "tests"):
         other_files.extend(
-            fs.sweep(repo_root / root, repo_root, suffixes=frozenset(TEXT_SUFFIXES) - {".py"})
+            fs.sweep(
+                repo_root / root, repo_root, suffixes=frozenset(TEXT_SUFFIXES) - {".py"}
+            )
         )
     pyproject = fs.single_file(repo_root / "pyproject.toml", repo_root)
     if pyproject is not None:
@@ -81,7 +103,9 @@ def take_snapshot(repo_root: Path) -> RepoSnapshot:
             continue
         # OK -- a .py file always yields OK or PARSE_FAILED, never NOT_PYTHON here
         assert result.tree is not None and result.text is not None
-        dotted = ast_model.dotted_name_for(f.repo_relative, "src/riskquant/", "riskquant") or ast_model.dotted_name_for(
+        dotted = ast_model.dotted_name_for(
+            f.repo_relative, "src/riskquant/", "riskquant"
+        ) or ast_model.dotted_name_for(
             f.repo_relative, "src/riskquant_lab/", "riskquant_lab"
         )
         if dotted is None:
@@ -219,7 +243,9 @@ def render_domain_profile(
     resolved = profiles.with_flags(profile, tests=tests, demos=demos)
     prod_files = profiles.resolve_production_files(resolved, repo_root)
     own_dotted = frozenset(
-        m.dotted for m in snap.module_infos if any(m.repo_relative == f.repo_relative for f in prod_files)
+        m.dotted
+        for m in snap.module_infos
+        if any(m.repo_relative == f.repo_relative for f in prod_files)
     )
 
     closure = compute_closure(
@@ -232,7 +258,9 @@ def render_domain_profile(
     configured_dirs = list(profile.production_package_dirs)
     existing_dirs = {d for d in configured_dirs if (repo_root / d).exists()}
     read_failures_here = [
-        (p, reason) for p, reason in snap.read_failures if any(p.startswith(d + "/") for d in configured_dirs)
+        (p, reason)
+        for p, reason in snap.read_failures
+        if any(p.startswith(d + "/") for d in configured_dirs)
     ]
     report = completeness.build_report(
         profile_name=profile.name,
@@ -266,17 +294,26 @@ def render_domain_profile(
             profile_name=report.profile_name,
             missing_configured_paths=report.missing_configured_paths,
             unreadable_files=report.unreadable_files
-            + tuple(p for p, r in optional_failures if r == ReadOutcome.UNREADABLE.value),
+            + tuple(
+                p for p, r in optional_failures if r == ReadOutcome.UNREADABLE.value
+            ),
             parse_failures=report.parse_failures
-            + tuple(p for p, r in optional_failures if r == ReadOutcome.PARSE_FAILED.value),
+            + tuple(
+                p for p, r in optional_failures if r == ReadOutcome.PARSE_FAILED.value
+            ),
             missing_required_dependencies=report.missing_required_dependencies,
         )
     files.sort(key=lambda pc: pc[0])
 
     tier3_note = None
     if closure.tier3_cross_reference:
-        foreign = sorted({domain_of(t, ROOT_PACKAGE) for t in closure.tier3_cross_reference})
-        tier3_note = "CROSS-REFERENCE (not embedded -- load the owning profile too): " + ", ".join(foreign)
+        foreign = sorted({
+            domain_of(t, ROOT_PACKAGE) for t in closure.tier3_cross_reference
+        })
+        tier3_note = (
+            "CROSS-REFERENCE (not embedded -- load the owning profile too): "
+            + ", ".join(foreign)
+        )
 
     content = source_writer.render_source_artifact(
         profile_name=profile.name,
@@ -299,6 +336,11 @@ TESTS_ARTIFACT_NOTE = (
     "TESTS ONLY -- production source is not embedded here. Resolve imported "
     "riskquant.* symbols via context_riskquant_index.txt and the owning domain profile."
 )
+SCRIPTS_ROOT = "scripts"
+SCRIPTS_ARTIFACT_NOTE = (
+    "SCRIPTS ONLY -- production source is not embedded here. Resolve imported "
+    "riskquant.* symbols via context_riskquant_index.txt and the owning domain profile."
+)
 
 
 def render_tests_artifact(snap: RepoSnapshot, repo_root: Path) -> RenderedProfile:
@@ -310,20 +352,35 @@ def render_tests_artifact(snap: RepoSnapshot, repo_root: Path) -> RenderedProfil
     imports would re-create the whole repository). Completeness here means:
     tests/ exists, and every file under it was read and, for .py, parsed.
     """
-    swept = fs.sweep(repo_root / TESTS_ROOT, repo_root, suffixes=frozenset(TEXT_SUFFIXES))
-    files = [(f.repo_relative, snap.aux_texts[f.repo_relative]) for f in swept if f.repo_relative in snap.aux_texts]
+    swept = fs.sweep(
+        repo_root / TESTS_ROOT, repo_root, suffixes=frozenset(TEXT_SUFFIXES)
+    )
+    files = [
+        (f.repo_relative, snap.aux_texts[f.repo_relative])
+        for f in swept
+        if f.repo_relative in snap.aux_texts
+    ]
     files.sort(key=lambda pc: pc[0])
 
     prefix = TESTS_ROOT + "/"
     failures = [(p, r) for p, r in snap.read_failures if p.startswith(prefix)]
     report = completeness.CompletenessReport(
         profile_name="tests",
-        missing_configured_paths=() if (repo_root / TESTS_ROOT).is_dir() else (TESTS_ROOT,),
-        unreadable_files=tuple(p for p, r in failures if r == ReadOutcome.UNREADABLE.value),
-        parse_failures=tuple(p for p, r in failures if r == ReadOutcome.PARSE_FAILED.value),
+        missing_configured_paths=()
+        if (repo_root / TESTS_ROOT).is_dir()
+        else (TESTS_ROOT,),
+        unreadable_files=tuple(
+            p for p, r in failures if r == ReadOutcome.UNREADABLE.value
+        ),
+        parse_failures=tuple(
+            p for p, r in failures if r == ReadOutcome.PARSE_FAILED.value
+        ),
     )
     content = source_writer.render_source_artifact(
-        profile_name="tests", completeness=report, header_note=TESTS_ARTIFACT_NOTE, files=files
+        profile_name="tests",
+        completeness=report,
+        header_note=TESTS_ARTIFACT_NOTE,
+        files=files,
     )
     return RenderedProfile(
         name="tests",
@@ -334,9 +391,61 @@ def render_tests_artifact(snap: RepoSnapshot, repo_root: Path) -> RenderedProfil
     )
 
 
+def render_scripts_artifact(snap: RepoSnapshot, repo_root: Path) -> RenderedProfile:
+    """
+    One artifact containing every script file under scripts/, verbatim.
+
+    Scripts are evidence, not production dependencies, so no closure is
+    computed and no production source is embedded (embedding each script's
+    imports would re-create the whole repository). Completeness here means:
+    scripts/ exists, and every file under it was read and, for .py, parsed.
+    """
+    swept = fs.sweep(
+        repo_root / SCRIPTS_ROOT, repo_root, suffixes=frozenset(TEXT_SUFFIXES)
+    )
+    files = [
+        (f.repo_relative, snap.aux_texts[f.repo_relative])
+        for f in swept
+        if f.repo_relative in snap.aux_texts
+    ]
+    files.sort(key=lambda pc: pc[0])
+
+    prefix = SCRIPTS_ROOT + "/"
+    failures = [(p, r) for p, r in snap.read_failures if p.startswith(prefix)]
+    report = completeness.CompletenessReport(
+        profile_name="scripts",
+        missing_configured_paths=()
+        if (repo_root / SCRIPTS_ROOT).is_dir()
+        else (SCRIPTS_ROOT,),
+        unreadable_files=tuple(
+            p for p, r in failures if r == ReadOutcome.UNREADABLE.value
+        ),
+        parse_failures=tuple(
+            p for p, r in failures if r == ReadOutcome.PARSE_FAILED.value
+        ),
+    )
+    content = source_writer.render_source_artifact(
+        profile_name="scripts",
+        completeness=report,
+        header_note=SCRIPTS_ARTIFACT_NOTE,
+        files=files,
+    )
+    return RenderedProfile(
+        name="scripts",
+        filename="context_riskquant_scripts.txt",
+        content=content,
+        completeness_report=report,
+        token_estimate=depgraph.estimate_tokens(content),
+    )
+
+
 def render_core_artifact(snap: RepoSnapshot) -> RenderedProfile:
     core_names = core.core_module_names()
-    files = [(m.repo_relative, snap.texts[m.dotted]) for m in snap.module_infos if m.dotted in core_names]
+    files = [
+        (m.repo_relative, snap.texts[m.dotted])
+        for m in snap.module_infos
+        if m.dotted in core_names
+    ]
     files.sort(key=lambda pc: pc[0])
     report = completeness.CompletenessReport(profile_name="core")
     content = source_writer.render_source_artifact(
@@ -351,13 +460,21 @@ def render_core_artifact(snap: RepoSnapshot) -> RenderedProfile:
     )
 
 
-def render_index_artifact(snap: RepoSnapshot, repo_root: Path, rendered_profiles: list[RenderedProfile]) -> RenderedProfile:
+def render_index_artifact(
+    snap: RepoSnapshot, repo_root: Path, rendered_profiles: list[RenderedProfile]
+) -> RenderedProfile:
     importer_domains = snap.graph.importer_domains
-    evaluations = core.evaluate_candidates(importer_domains=importer_domains, token_costs=snap.graph.token_costs)
+    evaluations = core.evaluate_candidates(
+        importer_domains=importer_domains, token_costs=snap.graph.token_costs
+    )
     all_files = [(rp.filename, rp.content) for rp in rendered_profiles]
     content_hash = snapshot.artifact_content_hash(all_files)
     profile_summaries = [
-        (rp.name, "COMPLETE" if rp.completeness_report.is_complete else "INCOMPLETE", rp.token_estimate)
+        (
+            rp.name,
+            "COMPLETE" if rp.completeness_report.is_complete else "INCOMPLETE",
+            rp.token_estimate,
+        )
         for rp in rendered_profiles
     ]
     content = index_writer.render_index(
@@ -378,7 +495,9 @@ def render_index_artifact(snap: RepoSnapshot, repo_root: Path, rendered_profiles
     )
 
 
-def publish(rendered: list[RenderedProfile], output_dir: Path, *, allow_incomplete: bool = False) -> list[str]:
+def publish(
+    rendered: list[RenderedProfile], output_dir: Path, *, allow_incomplete: bool = False
+) -> list[str]:
     """
     Atomic publication (implementation contract §29): render everything into
     a staging directory first; only if every artifact is COMPLETE (or the

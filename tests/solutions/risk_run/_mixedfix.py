@@ -38,6 +38,7 @@ import polars as pl
 
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
+from riskquant.solutions.risk_run.api import derive_run_factor_axis
 from riskquant.solutions.risk_run.schemas import (
     MethodologyDeclaration,
     ReportingSpec,
@@ -146,7 +147,15 @@ def build_world(frame: pd.DataFrame, *, rf=None, uids=None) -> SimpleNamespace:
     su = FX._run_shock_universe(
         rsc=sh.rsc,
         proxy_topology=sh.topo,
-        uix_mapper=mapper,
+        run_axis=derive_run_factor_axis(
+            valuation_context=ValuationContext(
+                static_config=sh.rsc,
+                ingest_batch=batch,
+                uix_mapper=mapper,
+                discounting_mode=FX.DiscountingMode.NONE,
+            ),
+            reporting_ccy="USD",
+        ),
         snapshot=sh.snapshot,
         verbose=False,
     )
@@ -267,16 +276,8 @@ def context(*, uids: tuple[int, ...] = BASE, rf=None) -> ValuationContext:
 
 
 def reporting(universe, *, uids: tuple[int, ...] = BASE, rf=None) -> ReportingSpec:
-    w = world(uids, rf)
-    ordered = np.array(sorted(universe), dtype=np.int64)
-    ccy = {int(u): w.frame.loc[u, "settlement_ccy"] for u in w.uids}
-    return ReportingSpec(
-        reporting_ccy="USD",
-        position_uids=ordered,
-        settlement_ccys=tuple(ccy.get(int(u), "USD") for u in ordered),
-        fx_factor_names=("USDEUR",),
-        fx_factor_rows=np.array([_row(w, "USDEUR")], dtype=np.int32),
-    )
+    """USD reporting; settlement currencies and FX rows are run-derived (D085)."""
+    return ReportingSpec(reporting_ccy="USD")
 
 
 def inputs(
@@ -390,3 +391,4 @@ def reporting_rate(uid: int, levels: np.ndarray, uids=BASE, rf=None) -> np.ndarr
 
 def l0_reporting(v0: float, dv: np.ndarray, q0: float, qs: np.ndarray) -> np.ndarray:
     return (v0 + dv) * qs - v0 * q0
+

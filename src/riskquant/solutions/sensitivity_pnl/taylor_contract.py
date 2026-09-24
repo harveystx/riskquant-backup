@@ -407,6 +407,62 @@ def validate_taylor_completeness(
         )
 
 
+def verify_declared_order_against_book(*, order: object, book: Any) -> None:
+    """
+    Bind a declared Taylor order to the COMPILED arrays the kernel evaluates.
+
+    `validate_taylor_completeness` proves the order against the spec frames at
+    compile. A declaration can afterwards be re-attached to another book
+    (`dataclasses.replace`, direct construction); this check makes the pair
+    coherent wherever a calculator is built. The kernel evaluates exactly
+    `sum d1 dx + 1/2 sum d2 dx^2 + sum_{i<j} c dx_i dx_j` over the stored
+    terms, so the order is coherent with a book iff the book stores exactly
+    the terms the order admits (D081 §5):
+
+    * FIRST_ORDER: no non-zero diagonal second order, no cross entry;
+    * SECOND_ORDER_TRUNCATED: no cross entry;
+    * SECOND_ORDER_FULL: every position carries each unordered pair of its
+      factor rows exactly once, C(n_p, 2) entries (a compiled position's rows
+      are its F(p), and a known-zero pair is stored explicitly).
+
+    O(rows + cross entries); no numerics.
+    """
+    if not isinstance(order, TaylorOrder):
+        raise TaylorContractError(f"undeclared Taylor order: {order!r}.")
+    num_cross = int(book.cross_second_order.shape[0])
+    if order is TaylorOrder.FIRST_ORDER:
+        if bool(np.any(book.second_order != 0.0)):
+            raise TaylorContractError(
+                "a FIRST_ORDER declaration is attached to a book with non-zero "
+                "second-order terms; the kernel would evaluate them."
+            )
+        if num_cross:
+            raise TaylorContractError(
+                f"a FIRST_ORDER declaration is attached to a book with {num_cross} "
+                "cross term(s); the kernel would evaluate them."
+            )
+        return
+    if order is TaylorOrder.SECOND_ORDER_TRUNCATED:
+        if num_cross:
+            raise TaylorContractError(
+                "a SECOND_ORDER_TRUNCATED declaration omits cross terms, but the "
+                f"attached book carries {num_cross}; declare SECOND_ORDER_FULL."
+            )
+        return
+    rows = np.diff(np.asarray(book.position_offsets, dtype=np.int64))
+    cross = np.diff(np.asarray(book.cross_offsets, dtype=np.int64))
+    need = rows * (rows - 1) // 2
+    if not np.array_equal(cross, need):
+        bad = np.flatnonzero(cross != need)
+        raise TaylorContractError(
+            "a SECOND_ORDER_FULL declaration is attached to a book whose cross "
+            "terms are not every unordered pair exactly once: positions "
+            f"{np.asarray(book.position_uids)[bad][:10].tolist()} carry "
+            f"{cross[bad][:10].tolist()} pair(s) where {need[bad][:10].tolist()} "
+            "are required."
+        )
+
+
 def verify_coordinate_transform_base(
     *, transform_base_digest: str | None, declaration: TaylorDeclaration
 ) -> None:

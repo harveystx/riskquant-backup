@@ -23,6 +23,7 @@ import pytest
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.solutions.risk_run.api import run_scenario_var_es
 from riskquant.solutions.risk_run.schemas import (
+    CompositionContractError,
     NonReproducibleRunError,
     RiskRun,
 )
@@ -180,7 +181,6 @@ def test_stale_book_is_refused_before_execution() -> None:
     "field,value",
     [
         ("shock_scale", np.array([0.9, 1.0, 1.0], np.float32)),
-        ("source_factor_ids", np.array([20, 10, 30], np.int32)),
         ("confidence_level", 0.95),
         ("base_levels", None),
     ],
@@ -191,6 +191,20 @@ def test_substituted_input_is_refused_before_execution(field, value) -> None:
     inp[field] = inp["base_levels"] * 1.001 if value is None else value
     with pytest.raises(InputMismatchError):
         run_scenario_var_es(**inp, reproduce=r.manifest)
+
+
+def test_swapped_shock_source_of_a_factor_with_data_is_refused() -> None:
+    """Every factor of this world has its own history, so its shock source is
+    itself (proxy tier 1, D013). Swapping two sources is not a proxy: it is
+    refused at composition, before identity (also under reproduce=). A valid
+    proxy re-routing still changes result and identity: see
+    tests/solutions/risk_run/test_axis_input_contract.py."""
+    r = run_scenario_var_es(**inputs())
+    inp = inputs()
+    inp["source_factor_ids"] = np.array([20, 10, 30], np.int32)
+    for extra in ({}, {"reproduce": r.manifest}):
+        with pytest.raises(CompositionContractError, match="own shock source"):
+            run_scenario_var_es(**inp, **extra)
 
 
 def test_foreign_environment_is_refused_before_execution() -> None:
@@ -259,7 +273,6 @@ def _mutations():
             "data": _remat(base["data"], values=np.asfortranarray(revised))
         },
         "factor_order": {"data": _remat(base["data"], values=permuted)},
-        "source_factor_ids": {"source_factor_ids": np.array([20, 10, 30], np.int32)},
         "shock_scale": {"shock_scale": np.array([0.9, 1.0, 1.0], np.float32)},
         # P1-A: a new base is a new Taylor representation. Moving the levels
         # under a book certified at the OLD base now fails closed (see
@@ -348,3 +361,4 @@ def test_shift_types_are_owned_by_the_static_configuration() -> None:
     inp["required_shift_type_id"] = np.array([2] * K, np.int8)
     with pytest.raises(CompositionContractError, match="required_shift_type_ids"):
         run_scenario_var_es(**inp)
+

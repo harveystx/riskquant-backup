@@ -4451,6 +4451,165 @@ The production run's required-factor axis is `UniverseMapping.required_factor_id
 - Metadata scoping (intentional, safe): `scope_factor_meta` ignores metadata rows for factors that are NOT on the axis, under both encodings. It never removes the metadata of a factor the book references: an off-axis referenced factor fails (adapter, and at compile for a hand-built spec), and a referenced axis factor without metadata fails at compile.
 - Hardening evidence: hostile cross terms aligned by factor-pair identity (`test_cross_terms_are_aligned_by_factor_identity`); an unsorted run axis [9007, 12, 101, 4002] produced by the real `build_universe_mapping` end to end (`test_f1_unsorted_authoritative_run_axis_end_to_end`).
 
+### Amendment (2026-09-24, D085): the expanded canonical run axis
+
+8. **One canonical ordered run axis.** A RiskRun has exactly one run axis: the valuation universe prefix (`UniverseMapping.required_factor_ids`, row for row, in its existing layout order) followed by the reporting-only FX suffix that the reporting contract requires (D085). The prefix ordering is unchanged. The suffix is ascending by rf_id. No factor id appears twice: a reporting FX factor already on the prefix is used there.
+9. **Suffix factors are scenario state, not valuation factors.** They are shocked by the same scenario stream as the prefix and read only by the D081 reporting conversion. Valuation reads the prefix only.
+10. **The Taylor axis is the valuation prefix.** The certified calculator, the book (decision 2) and the Taylor base binding are declared on the prefix, so a reporting FX factor cannot become a Taylor factor. Decision 6 applies to the prefix.
+11. **Every axis-aligned run input is bound to the whole run axis.** `required_factor_ids` and `required_shift_type_id` must equal the run-derived axis row for row, and `source_factor_ids`, `shock_scale` and `base_levels` must have one entry per axis row; otherwise the run refuses before identity and numerics. The five inputs must already be 1-D, C-contiguous arrays of exact dtype (int32, int8, int32, float32, float64); nothing is cast, because the identity digests the dtype. Callers obtain the axis from `solutions.risk_run.api.derive_run_factor_axis`.
+12. **Identity.** The suffix enters identity through the shock and base-level digests and the reporting FX digest (factor names and axis rows). An empty suffix leaves every existing identity unchanged.
+
+---
+
+## D083 — Persisted-result integrity: `RiskRun.result_digest`, separate from run identity
+
+**Status:** LOCKED
+**Date:** 2026-09-23 (authority, reproduction and provenance clauses made explicit at PR-01 closure)
+**Related:** D040, D041, D042 (clarified, not rewritten), D044, D059, D081 §7. Evidence: `PR-01_RiskRun_Result_Integrity_Audit.md`.
+
+### Context
+
+`RiskRun.from_json` checked identity against manifest and `reporting_ccy` against manifest (D044). Nothing bound the stored `var`, `es`, `position_uids` or `reproducible` flag. A payload with a one-ULP VaR change, permuted UIDs, a flipped flag or NaN/inf loaded under the authentic identity. D042's "rejects a tampered payload" held for identity/manifest tampering only.
+
+### Decision
+
+1. **`RunManifest.identity()` stays the identity of the CALCULATION DEFINITION.** Unchanged: manifest, schema version `"4"`, `EngineIdentity`, hashing, identity values. No output enters it (D081 §7).
+2. **`RiskRun.result_digest` is the integrity of the persisted RESULT ARTIFACT.** Derived in `__post_init__` (`field(init=False)`), never supplied by a caller. `digest_named_arrays` over `identity` (ASCII bytes), `position_uids` (int64), `var`, `es` (float64), `reproducible` (bool): dtype, shape and exact bytes, so one ULP moves it. Every member is load-bearing (mutation-proven).
+3. **`to_json` writes `result_digest`; `from_json` recomputes and compares.** Absent or mismatched → `ResultIntegrityError(ValueError)`, message `RESULT INTEGRITY: …`.
+4. **Integrity, NOT authentication.** Unkeyed SHA-256. It detects corruption, inconsistent edits, cross-run transplants and a relabelled manifest with a recomputed identity. It does not detect a forger who rebuilds manifest, identity, numbers and digest consistently; a test pins that non-claim. No keys, signing or provenance framework (D040/D042 rejected list).
+5. **Persisted `var` and `es` are authoritative.** The `var` and `es` of a persisted `RiskRun` that `from_json` loads successfully, with a verified `result_digest`, are the authoritative numerical results that the artifact represents. Ordinary deserialization needs no re-execution.
+6. **`reproduce=` is a separate mechanism.** It is unchanged: it verifies environment and inputs before numerics and returns fresh numbers. It serves reproducibility and verification where its existing contract applies (D041/D042); it is not a condition of integrity-valid deserialization. Detection of a self-consistent forgery (§4) needs reproduction and a bitwise comparison of the fresh numbers with the stored ones.
+7. **`pnl_provenance` is outside `result_digest`.** It is operational provenance metadata (the D042 record), not a result and not identity. It is persisted and validated by its own schema, but not integrity-bound.
+8. **A `RiskRun` carries finite risk numbers only.** NaN / ±inf in `var` or `es` is refused on construction and on load.
+9. **The digest is well defined by construction.** `position_uids` must be 1-D int64, `var`/`es` 1-D float64 (never cast), `reproducible` a `bool`. The stored arrays are owned, C-ordered, read-only copies, so the digest keeps describing them.
+10. **Malformed payloads fail deliberately.** A non-object payload, a missing key or a non-bool `reproducible` raises `ValueError("malformed persisted RiskRun: …")`, never an incidental `KeyError`.
+
+### Semantics preserved
+
+- Exploratory `seed=None`: same identity, possibly different numbers (D040/D042). Each artifact now carries the digest of its own numbers.
+- `batch_size` stays operational (D041): same identity and same `result_digest`.
+- The constructor signature of `RiskRun` is unchanged; `api.py` and `run_identity/*` are unchanged.
+
+### Compatibility
+
+A persisted `RiskRun` JSON written before D083 has no `result_digest` and is REJECTED on load. This is deliberate: an unverifiable result is not admitted. RiskQuant is a development-stage codebase: historical development artifacts create no compatibility requirement, and no migration or compatibility path exists. Regenerate any stored artifact through `run_scenario_var_es`.
+
+### Evidence
+
+`tests/solutions/risk_run/test_result_integrity.py` (test-owned book `_resultfix.py`, real production path): round trip bitwise; every VaR/ES entry ±1 ULP rejected; UID permutation/replacement/duplicate, flag flip, digest replacement/absence, cross-run transplant and D2-style relabelling rejected; self-consistent forgery accepted (non-claim); NaN/±inf rejected; identity and manifest unchanged; seed=None semantics; fresh-process, batch-size and configured-thread invariance of `result_digest`.
+
+---
+
+## D084 — SPOT Taylor capability boundary: inverted-FX legs are FULL_REVAL only
+
+**Status:** LOCKED
+**Date:** 2026-09-23
+**Related:** D009, D010, D012, D060, D078.4, D081 §3–§5 and §11, D082. D009 and D081 are not modified. Evidence: `PR-02_Inverted_FX_Taylor_Boundary_Audit.md`.
+
+### Context
+
+A SPOT leg whose underlying currency differs from its settlement currency, where only the reciprocal pair is configured, resolves with `invert = 1` (D060, D078.4). One orientation per pair is configured, so one direction of every pair is inverted by construction. FULL_REVAL values such a leg exactly: `V = q·S/X` on the quoted factor X. The SPOT sensitizer refuses it with `NotImplementedError`. The run admitted a caller-built, certified TAYLOR/DERIVED book for such a leg, because P1-A binds a book's base, order and completeness, not its Greek values. A fabricated bilinear book moved portfolio VaR from −1986.092 to −1860.114 without error.
+
+### Decision
+
+1. **Capability contract.**
+   - inverted-FX SPOT + FULL_REVAL: admitted.
+   - inverted-FX SPOT + TAYLOR (SUPPLIED or DERIVED): not admitted.
+   - direct-FX or no-FX SPOT + TAYLOR/DERIVED: admitted.
+2. **The producer refusal is intentional.** `sensitize_spot_block` raises `NotImplementedError` for `invert = 1` before its kernel (D010 capability-gap convention). It is not a defect and gets no stub.
+3. **Run admission.** `run_scenario_var_es` refuses any TAYLOR position (U_S ∪ U_D) that is an inverted-FX SPOT leg with `CompositionContractError`. The check (`_require_taylor_capable_spot`) reads the run's own compiled portfolio and `UixMapper` tables. It runs before identity construction and before any valuation or scenario work. It is not a kernel check.
+4. **Taylor sensitisation is scoped to U_D.** A TAYLOR/DERIVED book is sensitised on the U_D positions only. Sensitivities are rf_id-keyed (D012) and the book aligns to the run axis by identity (D082), so a U_D sub-portfolio compiled against the same static configuration and base levels is a valid source.
+5. **Coexistence.** An inverted-FX SPOT position declared FULL_REVAL does not prevent direct TAYLOR/DERIVED positions in U_D from running.
+
+### Future authoring material (not an implementation requirement)
+
+For `V = q·S/X` on the quoted factor X (D078.4), differentiated on X in ABSOLUTE displacement (D081 §4): `V_S = q/X`, `V_X = −q·S/X²`, `V_SS = 0`, `V_XX = 2·q·S/X³`, `V_SX = −q/X²`, `V_XXX = −6·q·S/X⁴ ≠ 0`. Factor identity, displacement convention, base level and F(p) = {S, X} are unchanged relative to the direct leg; signs, scaling, the own second order and the cross term change. Expressing the leg in `1/X` would be coordinate relabelling (D081 §4) off the run axis (D082). No Taylor order is exact: SECOND_ORDER_FULL leaves an O(Δx³) remainder, so admission would also need a remainder contract. Any future admission requires a new decision, the analytic partials, a finite-difference oracle on the FULL_REVAL route and a remainder test per order.
+
+### Evidence
+
+`tests/solutions/risk_run/test_inverted_fx_taylor_admission.py`: T1 sensitizer refusal names `invert=1`; T2 a certified fabricated book for the inverted leg moves VaR when the guard is disabled (D059) and is refused before manifest construction, base valuation, scenario generation and grid allocation; T3 inverted FULL_REVAL beside direct and no-FX TAYLOR/DERIVED (U_D-scoped) gives VaR/ES bitwise equal to all-FULL_REVAL; T4 a direct-FX DERIVED position passes admission. Mutation: removing the guard fails T2; widening it to every FX leg fails T3 and T4.
+
+---
+
+## D085 — Reporting currency: run-derived source currency and reporting-only FX on the run axis
+
+**Status:** LOCKED
+**Date:** 2026-09-24
+**Related:** D013, D040, D060, D078.4, D081 (mathematical reporting semantics unchanged), D082 (execution-axis semantics amended to permit a derived reporting-only suffix), D083, D084. Evidence: PR-04 F4 and F4B audits, PR-04 final hardening.
+
+### Context
+
+`ReportingSpec.settlement_ccys` restated each position's settlement currency, which the trade record already fixes (ingest `settlement_ccy`, folded into `fx_u2s`). A false claim was accepted and produced finite, wrong reporting P&L, VaR and ES. Separately, a reporting FX factor that no valuation needs could not enter the run, because the run axis was the valuation universe: a USD position could not be reported in EUR unless an unrelated position happened to need USDEUR. The D081 conversion itself was correct.
+
+### Decision
+
+1. **The caller owns only the reporting currency.** `ReportingSpec` is `reporting_ccy`. `settlement_ccys`, `fx_factor_names`, `fx_factor_rows` and `position_uids` are removed.
+2. **The run derives each position's settlement currency** from compact ingest state: `rf_id_to_ccy_id[underlying_ids]` with no FX leg; with a leg, the quote side of the configured pair (`fx_u2s_inv = 0`) or its base side (`fx_u2s_inv = 1`). Admitted instruments: SPOT, VANILLA_FORWARD_NODE, VANILLA_EUROPEAN_OPTION_NODE. Any other instrument, an underlying without a configured currency, an FX leg that is not a configured pair, or one UID with rows in different settlement currencies is refused (`CompositionContractError`).
+3. **The run derives the reporting FX route** from `fx_spot_matrix` (D060): settlement = reporting is an identity conversion with no factor; else the direct pair (settlement, reporting) gives q = x; else the reciprocal pair gives q = 1 / x, applied once; else the run is refused.
+4. **One canonical run axis** (D082 amendment): the valuation prefix, then the reporting FX factors the prefix lacks, ascending by rf_id. One scenario stream generates both, so historical, bootstrap and parametric dependence is joint. There is no second scenario universe.
+5. **Reporting FX is scenario state, not a Taylor factor.** Valuation and the Taylor valuation prefix read rows [0, K_val) only; the reporting conversion reads the exact FX rows it needs from the whole run axis [0, K_run). D081 mathematical reporting semantics are unchanged: ΔW = ΔV q_s + V_0 (q_s − q_0), with ΔV from FULL_REVAL or the settlement-currency Taylor expansion. D082 execution-axis semantics are amended to permit a derived reporting-only suffix.
+6. **Axis ownership.** The run derives the axis; callers bind their scenario data to it through `derive_run_factor_axis(valuation_context=..., reporting_ccy=...)`; the run re-derives it and refuses any other binding before identity and numerics. `RunFactorAxis` is a descriptor: frozen fields, owned read-only C-contiguous int32 / int8 arrays. The run type-checks the five axis-aligned inputs exactly (D082 amendment, clause 11) and executes on its own writable copies, so read-only descriptor arrays may be passed as-is and a caller buffer cannot alias run state.
+7. **PR-04 R2/R3.** The route is derived during composition, so an unroutable reporting currency fails before identity and numerics (R2). R3, the check of caller-supplied FX rows against their names, lost its premise and is removed.
+8. **`source_factor_ids` is shock provenance, bound row by row (D013).** `source_factor_ids[k]` names the scenario-data column whose simulated move drives run-axis row k. It equals `required_factor_ids[k]` when that factor has its own scenario data, and is otherwise the proxy chosen by `resolve_required_factor_ids_to_market_data_factor_ids` from the caller-side `ProxyTopology`; it is therefore NOT required to equal the axis, and it is result-defining and in the identity (D040). The run does not hold the topology and does not re-derive a proxy; it enforces every part of the resolver contract its own inputs determine: every source is a column of the scenario data, and a factor that has its own column is its own source (resolver tier 1). Both are checked during composition, before identity and numerics.
+
+### Consequences
+
+A reporting-only suffix adds K_rep rows (K_rep ≤ number of distinct settlement currencies) to the shocked-level buffer and to the generators' per-factor state; for the parametric model this enlarges the whole-run normal buffer (PR-06). A suffix row (or any row) whose shock source has no column in the scenario data is refused during composition, before identity and numerics.
+
+### Evidence
+
+`tests/solutions/risk_run/test_reporting_axis.py`: single USD position reported in EUR (bitwise against an independent D081 oracle; analytic −2 up to the float32 shock and grid contracts); USD + GBP to EUR with a reciprocal quote and a shared factor; identity conversion; no duplicate of a prefix factor; missing reporting history; no caller-owned routing; parametric correlation shared across prefix and suffix; one bootstrap time index; DERIVED on the prefix equals FULL bitwise and a book on the expanded axis is refused; composition negatives. Mutation: removing the axis gate, dropping the suffix, losing the reciprocal flag, ignoring `fx_u2s_inv`, building Taylor on the full axis or removing the shape check each fails tests. K_rep = 0 regression: six existing compositions keep identity, manifest identity, VaR, ES and `result_digest` bitwise.
+
+`tests/solutions/risk_run/test_axis_input_contract.py` (final hardening): wrong dtype with equal values, 2-D, strided and non-array inputs are refused before any numerical stage (spies on manifest, generator, valuation, shock application, grid, Taylor, conversion and VaR/ES); the run executes on owned writable copies and accepts the read-only descriptor as-is; `RunFactorAxis` ownership, read-only arrays, frozen fields and exact dtypes; a proxied row reads exactly its proxy's float32 shock; two valid proxy routings differ in result and identity; substituted, permuted and tier-1-violating sources and a source without a data column are refused before numerics; poisoning the reporting-only suffix of the one shocked-level buffer leaves V_0 and settlement dV bitwise unchanged (FULL_REVAL and DERIVED) while reported P&L equals the hand D081 value on the poison level; the Taylor axis is the valuation prefix and an expanded-axis book is refused; reporting currency, reporting FX factor, route orientation and suffix base level each move the identity, and a rebuilt identical run matches identity, `result_digest`, VaR and ES bitwise; historical and bootstrap prefix and suffix read one date per scenario (asymmetric markers, exact on float32 shocks); parametric full-axis shocks equal an independent fixed-seed construction exactly; one shared row per settlement→reporting pair. Mutation: removing each new check (dtype, dimensionality, contiguity, owned copy, source column, tier 1, read-only axis, axis ownership) fails tests.
+
+---
+
+## D086 — Taylor order is a certified property of the compiled representation
+
+**Status:** LOCKED
+**Date:** 2026-09-24
+**Related:** D040, D042, D081 §5 and §7, D082, D084, P1-A. Evidence: PR-05 audit.
+
+### Context
+
+`TaylorOrder` (`FIRST_ORDER`, `SECOND_ORDER_TRUNCATED`, `SECOND_ORDER_FULL`) is declared in `TaylorDeclaration.order` and proven against the spec frames at compile (`validate_taylor_completeness`). The kernel never reads the order: it evaluates the stored terms, `Σ d1·Δx + ½ Σ d2·Δx² + Σ_{i<j} c·Δx_i·Δx_j`. The run identity binds the book through `hash_compiled_book`, which digests those stored terms and not the declaration. For the admitted SPOT sensitizer `V_ii = 0`, so FIRST_ORDER and SECOND_ORDER_TRUNCATED books store identical terms and share one identity. The PR-05 audit also showed that the certificate was coherent with its book only at compile: `dataclasses.replace` or direct construction could attach any order, including a non-member value, to any compiled book, and the run priced it without error.
+
+### Decision
+
+1. **Domain.** The order is exactly one `TaylorOrder` member. A value that merely compares equal (the string `"FIRST_ORDER"`, `1`, `True`) is not a declaration and is refused (`TaylorContractError`).
+2. **Certified pair.** A declaration and the book it is attached to form one certified pair wherever a `SensitivityPnlCalculator` is built (compile, direct construction, `dataclasses.replace`): FIRST_ORDER admits no non-zero diagonal second order and no cross term; SECOND_ORDER_TRUNCATED admits no cross term; SECOND_ORDER_FULL requires every unordered pair of each position's factor rows exactly once. Refused at construction, before any run (`verify_declared_order_against_book`).
+3. **Execution.** The order selects the method by determining which terms the representation stores; the kernel evaluates exactly those terms. There is no separate execution switch and no inference of the order from data.
+4. **Identity.** The order is not hashed separately. The identity names the stored terms (`sensitivities_digest`), which is the method actually evaluated. Two orders that store different terms get different identities; two orders coherent with the same stored terms denote the same function (each is the stated truncation of D081 §5 and the omitted terms are zero) and share one identity. For SPOT, FIRST_ORDER ≡ SECOND_ORDER_TRUNCATED always, and SECOND_ORDER_FULL coincides with both for positions with one factor. The methodology partition (FULL_REVAL / DERIVED) remains separately identity-defining (D081 §7).
+5. **Persistence.** A `RiskRun` carries no separate order claim, so no stored label can disagree with the digested representation; `reproduce=` accepts exactly the books whose stored terms match the manifest.
+
+### Evidence
+
+`tests/solutions/risk_run/test_taylor_order_semantics.py`: order domain (six non-member values refused at compile and at construction); four incoherent re-labellings and FIRST_ORDER over curvature refused at construction; coherent re-labelling admitted with an identical digest; identity follows stored terms (FIRST vs FULL differ, FIRST vs TRUNCATED equal, including `result_digest`); changed Greeks under one order and a methodology change with equal numbers both change identity; a recompiled identical book keeps it; an independent D081 §5 oracle per order with non-zero diagonal and cross terms (one float32 ulp bound); FULL_REVAL rows independent of the Taylor order; reporting-only suffix poison never reaches Taylor under any order; historical, SBB, filtered bootstrap and parametric worlds with batch invariance per order; round trip and reproduction per order, a different term set refused under `reproduce=`. Mutation: removing the construction hook, the FIRST_ORDER curvature or cross check, the TRUNCATED cross check, the FULL pair count or the domain check each fails tests.
+
+---
+
+## D087 — The parametric scenario world is one whole-run realization; a batch only partitions it
+
+**Status:** LOCKED
+**Date:** 2026-09-24
+**Related:** D026 (F7), D029, D037, D039, D040, D041, D081 §8, D082, D086. Evidence: PR-06 audit.
+
+### Context
+
+PR-06 asked whether the parametric generator's whole-run `(total_scenarios, K_total)` float64 normal buffer is the right contract and whether its memory is a production ceiling. The audit confirmed the D029 mechanism, wrote down its exact draw order, and found one missing check: the production run concatenated whatever batches the generator yielded without checking that they tile the scenario range. A repeated, skipped, reordered or truncated batch completed silently, and a skipped batch changed VaR under an unchanged identity.
+
+### Decision
+
+1. **Stochastic contract (unchanged, now explicit).** Each `iter_batches` call builds `numpy.random.default_rng(seed)` (the D037 stream 0) and fills ONE C-ordered `(S, K_total)` float64 buffer with `standard_normal`; cell `(t, k)` is draw `t·K_total + k`. A non-normal law then draws ONE size-`S` auxiliary vector (`chisquare`, `exponential`, `gamma` or `random`) after all normals. Row `t` of the shocks is `vols ∘ (row_scale(aux_t) · (Z_t Lᵀ)[:, cols])`, with the crisis multipliers applied on the crisis rows of the regime-switching law, rounded ONCE to float32 after all scaling. Generation is serial NumPy; only the deterministic transformation touches BLAS (D041).
+2. **The world is defined by the scenario configuration and the scenario data.** `K_total` is the factor set of `ParametricRiskData`, not the run axis; the run axis only selects columns through `source_factor_ids`. Adding a row to the axis (a reporting-only suffix, D085) or permuting it leaves every other column bitwise unchanged. The Taylor order never enters generation (D086).
+3. **A batch is only an execution partition.** `batch_size` chooses row slices of the whole-run buffer and nothing else (D029). The production run now requires the yielded batches to tile `[0, S)` exactly once, in order, each declaring the same total: `scenario_offset` must equal the scenarios already written and the stream must end at `generator.total_scenarios`. A violation raises `RuntimeError` before any P&L is allocated.
+4. **Identity and reproduction (unchanged).** The seed, scenario count and law are identity inputs through `scenario_config`, the correlation and volatilities through the data digest, and the NumPy / Numba versions through `EngineIdentity`. `batch_size` is operational (D041). The realised buffer is not hashed: it is a deterministic function of those inputs in a matching environment.
+5. **Memory: no streaming change.** Measured on this host (1 CPU) at the certification dimensions (`K_total = 250`, `K_run = 140`, `M = 200`, batch 4 096): at `S = 100 000` the buffer is 190.7 MiB and lives only during generation. Parametric peak RSS was 1 310.8 MiB against 1 307.4 MiB for SBB on the same world; at `S = 20 000`, 533.4 MiB against 530.6 MiB. The peak is set by the downstream whole-run arrays that D081 §8 already requires (one shocked-level buffer, one PnlGrid, the reporting rows), about 10 KB per scenario here. Streaming the normals would not lower that peak, and for a non-normal law it could not keep the D029 stream without generating the normals twice. Reassess only if `8·K_total` bytes per scenario approaches the downstream per-scenario footprint (at `M = 200`, `K_total` of the order of 1 300 factors).
+
+### Evidence
+
+`tests/simlab/scenarios/test_parametric_whole_run_stream.py`: for all five laws, the recorded whole-run buffer equals an independent `default_rng(seed).standard_normal(S·K).reshape(S, K)` and the auxiliary draw bitwise, with one normal fill and one auxiliary call in that order; buffer and concatenated shocks are bitwise identical for batch sizes 1, 2, 3, 7, 13, S−1, S and S+1; the shocks equal an explicit-sum construction from the model's formulas within one float32 ulp, and exactly under an identity Cholesky factor (single rounding point); added or permuted requested columns leave the others bitwise unchanged; the seed alone selects the buffer. `tests/solutions/risk_run/test_parametric_run_world.py`: repeated, skipped, reordered and truncated batch streams are refused before P&L allocation; every partition yields the same shocked levels, identity, `result_digest`, VaR and ES; a reporting-only suffix leaves the valuation row bitwise; FIRST and FULL Taylor orders see one world; a new seed changes world and identity; `reproduce=` with another batch size is bitwise. Mutation: a fresh draw per batch, a reseed per batch, a batch-size-derived seed, reversed factor columns, reversed scenario rows, a slice shifted by one, an F-ordered buffer, an earlier float32 rounding point, and removing either run check each fails tests.
+
 ---
 
 # Decision Record for `riskquant.credit`

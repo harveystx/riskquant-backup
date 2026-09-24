@@ -314,7 +314,9 @@ def main() -> None:
     if coverage_passed and seeded_passed and policy_passed:
         print("ALL CHECKS PASSED")
     else:
-        print("VALIDATION FAILED")
+        # A failed check must fail the process, not only the printed banner:
+        # the demo is a registered regression gate (tests/e2e, PR-07).
+        raise SystemExit("VALIDATION FAILED")
 
     print_title("END OF DEMO")
     print_success_message("DEMO RAN SUCCESSFULLY", add_space_after=False)
@@ -325,3 +327,4 @@ if __name__ == "__main__":
 
     configure_polars_display()
     main()
+
