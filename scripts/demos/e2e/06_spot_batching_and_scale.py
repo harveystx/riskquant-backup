@@ -1,6 +1,6 @@
-# scripts/demos/e2e/13_spot_batching_and_scale.py
+# scripts/demos/e2e/06_spot_batching_and_scale.py
 """
-RiskQuant SPOT -- chapter 13: batching is operational, not economic.
+RiskQuant SPOT -- chapter 06: batching is operational, not economic.
 
 `batch_size` controls how the scenario stream is partitioned: how many
 scenarios the generator yields per chunk, how many columns FULL_REVAL values
@@ -14,10 +14,17 @@ stochastic models, with batch sizes 1, 3, 7, 64, S and S + 1, and prints the
 wall time of each run. Timings are informational (single process, this
 machine); they are not a benchmark and are not asserted.
 
+Why the stochastic models are the interesting case: the scenario WORLD
+belongs to the run, not to a batch (D087). The seed fixes the whole world
+of S scenarios; the parametric model draws all its base normals up front
+(D021). A batch is only an execution window onto that world. The run
+refuses a stream whose batches do not tile [0, S) exactly once, in order
+(PR-06), because the identity names the configured world, not the windows.
+
 Multi-core thread-count determinism is certified separately by the SimLab
 release certificate; this demo does not depend on the core count.
 
-Run:  python scripts/demos/e2e/13_spot_batching_and_scale.py
+Run:  python scripts/demos/e2e/06_spot_batching_and_scale.py
 """
 
 from __future__ import annotations
@@ -42,7 +49,7 @@ CONFIDENCE: float = 0.99
 
 def main() -> None:
     ok = sw.Checks()
-    sw.title("RiskQuant SPOT executable guide - 13 batching and scale")
+    sw.title("RiskQuant SPOT executable guide - 06 batching and scale")
     t0 = time.perf_counter()
     real = sw.realistic_fixture(num_positions=NUM_POSITIONS, num_observations=NUM_OBSERVATIONS)
     world = real.world

@@ -16,27 +16,32 @@ three-position book small enough to check by hand:
     STEP 9   calculate VaR / ES              (empirical lower tail)
     STEP 10  inspect the resulting RiskRun   (the ONE production call)
 
-Steps 3-9 call the SAME public building blocks `run_scenario_var_es` composes
-internally, so each intermediate is visible. Step 10 then makes the single
-production call a real integration makes and proves its VaR/ES bitwise equal
-to steps 3-9. Every number is also checked against an INDEPENDENT hand oracle
-(q * P * X arithmetic), never against RiskQuant itself.
+Steps 3-9 call the SAME core building blocks `run_scenario_var_es` composes
+internally, so each intermediate is visible. They teach; they are not an
+integration surface. Step 10 then makes the single production call a real
+integration makes and proves its VaR/ES bitwise equal to steps 3-9 (chapter
+07 shows how an integration assembles that call's inputs). Every number is
+also checked against an INDEPENDENT hand oracle (q * P * X arithmetic), never
+against RiskQuant itself.
 
 Why the numbers are exact: the factors use DIFFERENCE shifts and every level
 and move is a dyadic rational (1.25, 0.0625, 200, 4, ...). Binary floating
 point represents them exactly, so the oracle comparisons below are EXACT
-equality, not a tolerance. Chapter 08 onward uses realistic LOG_RETURN data.
+equality, not a tolerance. Later chapters add a realistic LOG_RETURN world.
 
 Suite map
 ---------
-    00 getting started            08 scenario-model comparison
-    01 valuation world            09 model parameters
-    02 positions and P&L (D081)   10 reporting currency
-    03 sensitivity-only           11 reproducibility and identity
-    04 Taylor-derived             12 edge cases and FAIL FAST
-    05 full revaluation           13 batching and scale
-    06 mixed book                 14 production-style end-to-end example
-    07 neutralised (hedged) book
+    00 getting started: the whole pipeline, FULL_REVAL, by hand and in one call
+    01 TAYLOR/DERIVED: certification, orders, identity, what the run refuses
+    02 mixed book: FULL_REVAL + TAYLOR/DERIVED composed in one run
+    03 FX legs and the reporting currency: D081, routes, inverted legs (D084)
+    04 scenario models: five models and a horizon through one call
+    05 reproducibility and identity: manifest, reproduce=, result integrity
+    06 batching: an operational partition of the run's scenario world
+    07 production example: the integration template
+
+    demo_e2e_sensi_based_var.py: the D019 golden reference (proxy WTI <-
+    BRENT, reciprocal USDEUR quote, certified TAYLOR/DERIVED book)
 
 Run:  python scripts/demos/e2e/00_spot_getting_started.py
 """
@@ -199,8 +204,9 @@ def main() -> None:
         Ingest validates the frame and resolves names to rf_ids. The
         UixMapper assigns compact int32 indices and fixes the as-of. The
         compiler builds a struct-of-arrays SpotBlock. The universe mapping is
-        THE required-factor axis: every later array (base levels, shocks,
-        shocked levels) uses exactly this row order.
+        the VALUATION axis. Here it is also the run axis (STEP 10 shows why),
+        so every later array (base levels, shocks, shocked levels) uses
+        exactly this row order.
         """
     )
     ingest_batch = compile_raw_df_into_ingest_batch(
@@ -281,7 +287,7 @@ def main() -> None:
         are generated: here, deterministic historical simulation with 1-day
         overlapping windows. The METHODOLOGY decides how each position turns
         a move into P&L: here every position is FULL_REVAL (revalued at the
-        shocked levels). Chapters 04-06 introduce TAYLOR/DERIVED.
+        shocked levels). Chapters 01-02 introduce TAYLOR/DERIVED.
         """
     )
     sw.kv([
@@ -412,19 +418,142 @@ def main() -> None:
     dv = (
         (vs_rows - v0_rows).astype(np.float32).astype(np.float64)
     )  # the float32 PnlGrid
+
     fx_row, aapl_row, sap_row = 0, 1, 2
+
     oracle_vs = {
         101: 10.0 * shocked[aapl_row],
         102: -4.0 * shocked[sap_row],
         103: 8.0 * shocked[sap_row] * shocked[fx_row],
     }
+
     sw.para(
         """
-        FULL_REVAL values every position again at each column of the shocked
-        buffer, through the same pricer as V0, and takes dV = V_s - V_0. The
-        production run stores dV in a float32 P&L grid; this step does the
-        same so the numbers match the run exactly. dV is in each position's
-        OWN settlement currency: 102 is in EUR, the others in USD.
+        FULL_REVAL takes each shocked market-level column from STEP 6,
+        revalues the position at those levels, and subtracts its base-world
+        value:
+
+            dV_s = V_s - V_0.
+
+        For a single-currency SPOT position:
+
+            dV_s = q * P_s - q * P_0.
+
+        For position 103, the underlying SAP is EUR-quoted while the position
+        settles in USD, so the full value is:
+
+            dV_s = q * P_s * X_s - q * P_0 * X_0,
+
+        where X is EURUSD. The tables below deliberately expand these
+        equations using the signed quantity and the actual shocked levels from
+        STEP 6, so the path from market shock to P&L is visible by hand.
+        """
+    )
+
+    # ------------------------------ 7a
+    sw.para(
+        """
+        Position 101: +10 AAPL, settled in USD.
+
+        The shocked AAPL levels are read directly from STEP 6. Because the
+        position is long 10 units, the P&L moves in the same direction as
+        the shocked price.
+        """
+    )
+    sw.table(
+        ["scenario", "AAPL P_s from STEP 6", "full MTM calculation", "dV (USD)"],
+        [
+            (
+                s,
+                sw.num(shocked[aapl_row, s], 4),
+                (
+                    f"10 x {sw.num(shocked[aapl_row, s], 4)}"
+                    f" - 10 x 200"
+                    f" = {sw.num(oracle_vs[101][s] - oracle_v0[101], 2)}"
+                ),
+                sw.num(dv[0, s], 2),
+            )
+            for s in range(4)
+        ],
+        align="rlrl",
+    )
+
+    # ------------------------------ 7b
+    sw.para(
+        """
+        Position 102: -4 SAP, settled in EUR.
+
+        The quantity is negative. Therefore a higher shocked SAP price creates
+        a negative P&L, while a lower shocked SAP price creates a positive P&L.
+        """
+    )
+    sw.table(
+        ["scenario", "SAP P_s from STEP 6", "full MTM calculation", "dV (EUR)"],
+        [
+            (
+                s,
+                sw.num(shocked[sap_row, s], 4),
+                (
+                    f"(-4) x {sw.num(shocked[sap_row, s], 4)}"
+                    f" - [(-4) x 120]"
+                    f" = {sw.num(oracle_vs[102][s] - oracle_v0[102], 2)}"
+                ),
+                sw.num(dv[1, s], 2),
+            )
+            for s in range(4)
+        ],
+        align="rlrl",
+    )
+
+    # ------------------------------ 7c
+    sw.para(
+        """
+        Position 103: +8 SAP, where SAP is quoted in EUR but the position is
+        settled in USD.
+
+        Both the SAP level and EURUSD level come directly from STEP 6. The
+        shocked USD value therefore contains both market moves:
+
+            V_s = 8 * P_s * X_s.
+
+        This is the full-revaluation MTM, not a first-order sensitivity
+        approximation: the SAP and FX moves multiply each other.
+        """
+    )
+    sw.table(
+        [
+            "scenario",
+            "SAP P_s",
+            "EURUSD X_s",
+            "full MTM calculation",
+            "dV (USD)",
+        ],
+        [
+            (
+                s,
+                sw.num(shocked[sap_row, s], 4),
+                sw.num(shocked[fx_row, s], 4),
+                (
+                    f"8 x {sw.num(shocked[sap_row, s], 4)}"
+                    f" x {sw.num(shocked[fx_row, s], 4)}"
+                    f" - 8 x 120 x 1.25"
+                    f" = {sw.num(oracle_vs[103][s] - oracle_v0[103], 2)}"
+                ),
+                sw.num(dv[2, s], 2),
+            )
+            for s in range(4)
+        ],
+        align="rrlrr",
+    )
+
+    # ------------------------------ 7d
+    sw.para(
+        """
+        Reconciliation: the expanded hand calculations above must reproduce
+        the same float32 P&L grid used by the production run. The settlement
+        currency is still the position's own currency at this point: 102 is
+        EUR, while 101 and 103 are USD. STEP 8 performs the reporting-currency
+        conversion.
         """
     )
     sw.table(
@@ -437,10 +566,26 @@ def main() -> None:
             )
             for i, u in enumerate(uids)
         ],
+        align="rlrrrr",
     )
+
     ok.check(
         "V_s equals q * P_s (* EURUSD_s) exactly for every position and scenario",
         all(np.array_equal(vs_rows[i], oracle_vs[u]) for i, u in enumerate(uids)),
+    )
+    ok.check(
+        "full MTM hand calculations produce the displayed dV exactly",
+        np.array_equal(
+            dv,
+            np.asarray(
+                [
+                    [oracle_vs[101][s] - oracle_v0[101] for s in range(4)],
+                    [oracle_vs[102][s] - oracle_v0[102] for s in range(4)],
+                    [oracle_vs[103][s] - oracle_v0[103] for s in range(4)],
+                ],
+                dtype=np.float64,
+            ),
+        ),
     )
 
     # ------------------------------------------------------------------ 8
@@ -449,7 +594,9 @@ def main() -> None:
     # each position's settlement currency and FX route itself; this step
     # builds the same plan by hand, from the trade record, to show it.
     reporting = ReportingSpec(reporting_ccy="USD")
-    settlement_ccys = [str(positions.set_index("uid").loc[u, "settlement_ccy"]) for u in uids]
+    settlement_ccys = [
+        str(positions.set_index("uid").loc[u, "settlement_ccy"]) for u in uids
+    ]
     plan = build_fx_conversion_plan(
         settlement_ccys=settlement_ccys,
         reporting_ccy=reporting.reporting_ccy,
@@ -468,7 +615,15 @@ def main() -> None:
         Production reporting P&L is ordinary mark-to-market (D081):
         """
     )
-    sw.formula("dW = V_s * q_s - V_0 * q_0", "   = dV * q_s + V_0 * (q_s - q_0)")
+    sw.formula(
+        "Let dV = V_s - V_0. Then V_s = V_0 + dV",
+    )
+    sw.formula(
+        "dW = V_s * q_s - V_0 * q_0",
+        "   = (V_0 + dV) * q_s - V_0 * q_0",
+        "   = dV * q_s + V_0 * q_s - V_0 * q_0",
+        "   = dV * q_s + V_0 * (q_s - q_0)",
+    )
     sw.para(
         """
         For the EUR-settled 102, q = EURUSD (direct pair, no inversion). For
@@ -627,8 +782,9 @@ def main() -> None:
 
     sw.para(
         f"""
-        Next: 01 shows the valuation world in detail; 02 walks D081 through a
-        single scenario. Wall time of this chapter: {time.perf_counter() - t0:.2f} s.
+        Next: 01 replaces full revaluation with a certified Taylor book; 03
+        covers FX legs and the reporting currency. Wall time of this
+        chapter: {time.perf_counter() - t0:.2f} s.
         """
     )
     sw.write_evidence(

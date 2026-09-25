@@ -1,6 +1,6 @@
-# scripts/demos/e2e/04_spot_taylor_derived.py
+# scripts/demos/e2e/01_spot_taylor_derived.py
 """
-RiskQuant SPOT -- chapter 04: TAYLOR/DERIVED risk.
+RiskQuant SPOT -- chapter 01: TAYLOR/DERIVED risk.
 
     full valuation representation (the SpotBlock and its pricer)
         -> run_sensitivities            : closed-form partials at the base
@@ -26,21 +26,36 @@ from its own ValuationContext and refuses any book bound elsewhere (P1-A/B).
 Why a Taylor representation exists at all: it prices a scenario with a few
 multiply-adds per sensitivity instead of a revaluation. For SPOT the full
 second order is EXACT (the payoff is bilinear), so the orders below show
-precisely which term each approximation drops.
+precisely which term each approximation drops. Part 6 repeats the comparison
+against FULL_REVAL at realistic scale, where the dtype contracts decide the
+remaining difference.
 
-Run:  python scripts/demos/e2e/04_spot_taylor_derived.py
+The admission boundary (part 7)
+-------------------------------
+    TAYLOR/DERIVED, certified, bound to the run's base   admitted
+    TAYLOR/DERIVED, bound to another base               refused (P1-A/B)
+    TAYLOR/DERIVED, uncertified (no declaration)        refused (P1-A)
+    TAYLOR/SUPPLIED (caller-supplied Greeks)            refused (owner policy P-1)
+    TAYLOR/DERIVED on an inverted-FX SPOT leg           refused (D084, chapter 03)
+
+Run:  python scripts/demos/e2e/01_spot_taylor_derived.py
 """
 
 from __future__ import annotations
 
 import dataclasses
+import time
 
 import _spot_world as sw
 import numpy as np
 
 from riskquant.sensitivities.engine import run_sensitivities
 from riskquant.solutions.risk_run.api import run_scenario_var_es
-from riskquant.solutions.risk_run.schemas import MethodologyDeclaration, TaylorBlock
+from riskquant.solutions.risk_run.schemas import (
+    CompositionContractError,
+    MethodologyDeclaration,
+    TaylorBlock,
+)
 from riskquant.solutions.scenario_models.schemas import HistoricalGeneratorConfig
 from riskquant.solutions.sensitivity_pnl.api import (
     SensitivityPnlCalculator,
@@ -58,7 +73,7 @@ BATCH_SIZE: int = 3
 
 def main() -> None:
     ok = sw.Checks()
-    sw.title("RiskQuant SPOT executable guide - 04 Taylor-derived risk")
+    sw.title("RiskQuant SPOT executable guide - 01 Taylor-derived risk")
     fixture = sw.tiny_fixture()
     world, history = fixture.world, fixture.history
 
@@ -228,37 +243,192 @@ def main() -> None:
              runs[orders[2]].identity != runs[orders[0]].identity)
 
     # ---------------------------------------------------------------- 6
-    sw.step("6", "A book bound to a different base is refused")
-    yesterday = sw.tiny_fixture(levels={"EURUSD": 1.25, "AAPL_EQ": 196.0, "SAP_EQ": 118.0}).world
-    stale = sw.certified_taylor_block(yesterday, yesterday.uids.tolist())
+    sw.step("6", "Realistic scale: DERIVED against FULL_REVAL")
+    t0 = time.perf_counter()
+    real = sw.realistic_fixture()
+    w = real.world
+    uids = w.uids
+    rep = sw.reporting_spec(w, reporting_ccy="USD")
+    quanto = set(
+        w.positions.loc[
+            w.positions["underlying"].map(lambda n: n.startswith(("EU_", "UK_")))
+            & (w.positions["settlement_ccy"] == "USD"),
+            "uid",
+        ].astype(int)
+    )
+    sw.kv([
+        ("positions", uids.shape[0]),
+        ("factors on the run axis", w.required_factor_ids.shape[0]),
+        ("shift type", "LOG_RETURN for every factor"),
+        ("quanto (EUR/GBP asset, USD settled)", len(quanto)),
+        ("scenarios", real.num_observations - 1),
+    ])
+    # Local names only: `method` and `reporting` of parts 4-5 are reused in part 7.
+    out = {}
+    for label, method_r, block_r in (
+        ("FULL_REVAL", sw.methodology(full=uids.tolist()), None),
+        ("DERIVED FULL", sw.methodology(derived=uids.tolist()),
+         sw.certified_taylor_block(w, uids.tolist(), order=TaylorOrder.SECOND_ORDER_FULL)),
+        ("DERIVED FIRST", sw.methodology(derived=uids.tolist()),
+         sw.certified_taylor_block(w, uids.tolist(), order=TaylorOrder.FIRST_ORDER)),
+    ):
+        run_r = run_scenario_var_es(
+            scenario_config=scenario_config,
+            data=real.history,
+            required_factor_ids=w.required_factor_ids,
+            required_shift_type_id=w.required_shift_type_id,
+            source_factor_ids=w.source_factor_ids,
+            shock_scale=w.shock_scale,
+            base_levels=w.base_levels,
+            methodology=method_r,
+            valuation_context=sw.valuation_context(w),
+            taylor_derived=block_r,
+            reporting=rep,
+            confidence_level=0.99,
+            batch_size=256,
+        )
+        an_r = sw.scenario_pnl_anatomy(w, scenario_config=scenario_config, data=real.history, method=method_r,
+                                       taylor_derived=block_r, reporting=rep, confidence_level=0.99, batch_size=256)
+        ok.check(f"{label}: anatomy equals the RiskRun bitwise", sw.anatomy_matches_run(an_r, run_r))
+        out[label] = (run_r, an_r)
+
+    full = out["FULL_REVAL"][1].settlement_pnl
+    derived = out["DERIVED FULL"][1].settlement_pnl
+    first = out["DERIVED FIRST"][1].settlement_pnl
+    # ---- a priori error bound from the dtype contract ----------------------
+    # Taylor kernel (sensitivity_pnl.kernels): dx is formed in float64 and
+    # rounded ONCE to float32 (relative error <= u = 2^-24); coefficients and
+    # the accumulator are float64. Hence, per position p and scenario s,
+    #   |Taylor - exact| <= u * sum_k |d1_k dx_k| + 2u * sum_ij |c_ij dx_i dx_j|
+    # plus one float32 rounding of each side into the P&L grid (<= 1 ulp of
+    # the larger magnitude in total). The float64 terms are orders smaller
+    # and are absorbed by the factor-2 margin on the cross term.
+    u = 2.0 ** -24
+    sens_real = run_sensitivities(portfolio=w.portfolio, uix_mapper=w.uix_mapper, market_data=w.market_data)
+    dxs = out["FULL_REVAL"][1].shocked_levels - w.base_levels[:, None]
+    row_of = {int(r): i for i, r in enumerate(w.required_factor_ids)}
+    pos_of = {int(x): i for i, x in enumerate(uids.tolist())}
+    bound = np.zeros_like(full)
+    for p_uid, f_id, d1 in zip(sens_real.position_uids.tolist(), sens_real.factor_rf_ids.tolist(),
+                               sens_real.first_order.tolist(), strict=True):
+        bound[pos_of[p_uid]] += u * abs(d1) * np.abs(dxs[row_of[f_id]])
+    for p_uid, fi, fj, c in zip(sens_real.cross_position_uids.tolist(), sens_real.cross_factor_rf_ids_i.tolist(),
+                                sens_real.cross_factor_rf_ids_j.tolist(), sens_real.cross_second_order.tolist(),
+                                strict=True):
+        bound[pos_of[p_uid]] += 2.0 * u * abs(c) * np.abs(dxs[row_of[fi]] * dxs[row_of[fj]])
+    bound += np.spacing(np.maximum(np.abs(full), np.abs(derived)).astype(np.float32)).astype(np.float64)
+    within = np.abs(full - derived) <= bound
     sw.para(
         """
-        Greeks derived yesterday (AAPL 196, SAP 118) are a valid certified
-        book, but for a different base. The run values today's V_0 itself,
-        rebuilds the binding and names every field that differs.
+        Rule (derived from the Taylor kernel's dtype contract, not tuned):
+        the kernel rounds each displacement dx to float32 once (relative
+        error <= 2^-24) and accumulates in float64. So per position and
+        scenario |DERIVED FULL - FULL_REVAL| <= 2^-24 sum|d1 dx| +
+        2^-23 sum|c dx_i dx_j|, plus one float32 ulp for rounding both
+        values into the grid. In exact arithmetic the two are the same
+        number; this bound only admits the documented float32 steps.
         """
     )
+    q_rows = np.array([u_ in quanto for u_ in uids.tolist()])
+    sw.table(
+        ["comparison", "max |diff|", "max bound", "elements ok"],
+        [
+            ("FULL_REVAL vs DERIVED FULL", f"{np.abs(full - derived).max():.3e}", f"{bound.max():.3e}",
+             f"{int(within.sum()):,} / {within.size:,}"),
+            ("FIRST vs DERIVED FULL (non-quanto)", f"{np.abs(first - derived)[~q_rows].max():.3e}", "exact",
+             "-"),
+            ("FIRST vs FULL_REVAL (quanto)", f"{np.abs(full - first)[q_rows].max():.3e}", "-", "-"),
+        ],
+        align="lrrr",
+    )
+    ok.check("FULL_REVAL vs DERIVED FULL: every element within the stated bound", bool(within.all()))
+    ok.check("non-quanto rows: FIRST and second-order FULL are bitwise equal "
+             "(same coefficients, same float32 dx, same kernel)",
+             np.array_equal(first[~q_rows], derived[~q_rows]))
+    ok.check("quanto rows: FIRST_ORDER omits q dP dX, a genuine approximation error",
+             float(np.abs(full - first)[q_rows].max()) > 1.0)
+    sw.table(
+        ["methodology", "portfolio VaR 99%", "portfolio ES 99%"],
+        [(k, sw.num(r.portfolio_var, 2), sw.num(r.portfolio_es, 2)) for k, (r, _) in out.items()],
+        align="lrr",
+    )
+    sw.para(
+        f"""
+        The difference between FULL_REVAL and FIRST_ORDER is not noise: it is
+        the dropped cross term, largest in scenarios where the asset and its
+        FX leg move together. Methodology is part of the run identity even
+        where the numbers agree (chapter 02). Part 6 wall time:
+        {time.perf_counter() - t0:.2f} s.
+        """
+    )
+
+    # ---------------------------------------------------------------- 7
+    sw.step("7", "The admission boundary: what the run refuses")
+    run_kwargs = dict(
+        scenario_config=scenario_config,
+        data=history,
+        required_factor_ids=world.required_factor_ids,
+        required_shift_type_id=world.required_shift_type_id,
+        source_factor_ids=world.source_factor_ids,
+        shock_scale=world.shock_scale,
+        base_levels=world.base_levels,
+        valuation_context=sw.valuation_context(world),
+        reporting=reporting,
+        confidence_level=CONFIDENCE,
+        batch_size=BATCH_SIZE,
+    )
+    sw.para(
+        """
+        Only a certified representation, bound to the run's own base,
+        produces production P&L. Each refusal below uses the tiny book of
+        parts 1-5 and names the gate that holds the line.
+        """
+    )
+    yesterday = sw.tiny_fixture(levels={"EURUSD": 1.25, "AAPL_EQ": 196.0, "SAP_EQ": 118.0}).world
+    stale = sw.certified_taylor_block(yesterday, yesterday.uids.tolist())
     ok.expect_rejection(
-        "a Taylor book certified at yesterday's levels is refused today",
+        "a Taylor book certified at yesterday's levels (AAPL 196, SAP 118) is refused today",
+        TaylorContractError,
+        lambda: run_scenario_var_es(methodology=method, taylor_derived=stale, **run_kwargs),
+        reason="Greeks and V_0 are valid only at the exact base they were "
+        "produced at (D081 section 10); the run values today's V_0 itself, "
+        "rebuilds the binding and names every field that differs",
+        stage="P1-A gate, after the base valuation (S = 1), before scenarios",
+    )
+    uncertified = SensitivityPnlCalculator.compile(
+        build_sensitivity_book_spec(sensitivities=sens, required_factor_ids=world.valuation_factor_ids)
+    )
+    ok.expect_rejection(
+        "the same book compiled WITHOUT its TaylorDeclaration is refused",
         TaylorContractError,
         lambda: run_scenario_var_es(
-            scenario_config=scenario_config,
-            data=history,
-            required_factor_ids=world.required_factor_ids,
-            required_shift_type_id=world.required_shift_type_id,
-            source_factor_ids=world.source_factor_ids,
-            shock_scale=world.shock_scale,
-            base_levels=world.base_levels,
-            methodology=method,
-            valuation_context=sw.valuation_context(world),
-            taylor_derived=stale,
-            reporting=reporting,
-            confidence_level=CONFIDENCE,
-            batch_size=BATCH_SIZE,
+            methodology=method, taylor_derived=TaylorBlock(calculator=uncertified), **run_kwargs
         ),
-        reason="Greeks and V_0 are valid only at the exact base they were "
-        "produced at (D081 section 10)",
+        reason="P1-A: order, dependency set F(p) and base binding are unproven, "
+        "so the book cannot produce production P&L",
         stage="P1-A gate, after the base valuation (S = 1), before scenarios",
+    )
+    supplied = MethodologyDeclaration(
+        production_position_uids=world.uids,
+        full_reval_uids=np.empty(0, dtype=np.int64),
+        taylor_supplied_uids=world.uids,
+        taylor_derived_uids=np.empty(0, dtype=np.int64),
+    )
+    ok.expect_rejection(
+        "TAYLOR/SUPPLIED positions (caller-supplied Greeks) are refused",
+        CompositionContractError,
+        lambda: run_scenario_var_es(methodology=supplied, **run_kwargs),
+        reason="owner policy P-1 (supplied representations) is unresolved; a "
+        "supplied book is never silently priced as DERIVED or FULL_REVAL",
+        stage="composition contract, before identity and numerics",
+    )
+    sw.para(
+        """
+        Supplied sensitivities can still be priced OUTSIDE a RiskRun, in
+        settlement currency, with `riskquant.solutions.sensitivity_pnl`
+        (`run_sensitivity_pnl`). That result is not a production VaR. The
+        inverted-FX refusal belongs to the FX boundary (chapter 03).
+        """
     )
     ok.done()
 

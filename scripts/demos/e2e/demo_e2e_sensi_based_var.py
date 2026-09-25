@@ -20,9 +20,9 @@ sensitivity P&L, reporting-currency conversion, and VaR/ES all happen INSIDE
 that one call. This demo builds its typed inputs and calls it -- it does not
 re-derive scenarios, re-apply shocks, re-convert currency, or re-run VaR/ES
 by hand. See `_fixtures.py` for the shared input-construction code and
-`demo_e2e_sensi_based_var_models.py` for the same fixture driving every
-other scenario model (FilteredHistorical, SBB, FilteredBootstrap,
-Parametric) and a multi-day horizon.
+`04_spot_scenario_models.py` for every other scenario model
+(FilteredHistorical, SBB, FilteredBootstrap, Parametric) and a multi-day
+horizon through the same call.
 
 The multi-currency property is preserved end to end: AAPL and WTI are
 USD-priced/settled; Brent is USD-priced but EUR-settled. Scenario P&L is
@@ -181,7 +181,9 @@ def _run_validation(fixture: fx.DemoFixture) -> bool:
     axis = FactorAxis.from_keys(
         pl.Series("factor_id", su.required_factor_ids[:k].tolist(), dtype=pl.Int32)
     )
-    market = axis.levels(base_levels=su.base_levels[:k], shocked_levels=shocked_levels[:k])
+    market = axis.levels(
+        base_levels=su.base_levels[:k], shocked_levels=shocked_levels[:k]
+    )
     pnl = fixture.calculator.run(market)
 
     checks: list[tuple[str, bool, str]] = []
@@ -518,7 +520,7 @@ def main() -> None:
         f"Proxy topology: WTI_CRUDE -> BRENT_CRUDE (scale=0.95), resolved once "
         f"and shared by every scenario model.\n"
         f"Scenario model demonstrated here: {run.manifest.scenario_config.get('model')} "
-        f"(see demo_e2e_sensi_based_var_models.py for FilteredHistorical, SBB, "
+        f"(see 04_spot_scenario_models.py for FilteredHistorical, SBB, "
         f"FilteredBootstrap, Parametric, and a multi-day horizon).\n"
         f"Portfolio VaR: {run.portfolio_var:,.4f} {run.reporting_ccy}\n"
         f"Portfolio ES : {run.portfolio_es:,.4f} {run.reporting_ccy}\n"
@@ -535,4 +537,3 @@ if __name__ == "__main__":
 
     configure_polars_display()
     main()
-

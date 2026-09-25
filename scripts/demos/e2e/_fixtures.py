@@ -25,9 +25,9 @@ requires, once:
 
 This module owns NO scenario-model choice, NO shock application, NO
 reporting-currency conversion, and NO VaR/ES computation: those are
-`run_scenario_var_es`'s job. `demo_e2e_sensi_based_var.py` and
-`demo_e2e_sensi_based_var_models.py` both call `build_fixture()` and differ
-only in which `ScenarioModelConfig` they pass to the production API.
+`run_scenario_var_es`'s job. `demo_e2e_sensi_based_var.py` calls
+`build_fixture()`; the certification fixtures of `tests/solutions/risk_run`
+load this module as well.
 
 Golden fixture (D019, LOCKED): the static universe, positions, proxy scale,
 base levels, and 10-day history below back the independent oracle checks in
@@ -928,7 +928,7 @@ def _build_methodology(calculator: SensitivityPnlCalculator) -> MethodologyDecla
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DemoFixture:
     """Every typed input `run_scenario_var_es` needs, built once and shared
-    by both `demo_e2e_sensi_based_var.py` and `demo_e2e_sensi_based_var_models.py`."""
+    by `demo_e2e_sensi_based_var.py` and the `tests/solutions/risk_run` fixtures."""
 
     rsc: RiskStaticConfig
     proxy_topology: ProxyTopology

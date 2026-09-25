@@ -1,6 +1,24 @@
-# scripts/demos/e2e/10_spot_reporting_currency.py
+# scripts/demos/e2e/03_spot_fx_and_reporting_currency.py
 """
-RiskQuant SPOT -- chapter 10: reporting currency.
+RiskQuant SPOT -- chapter 03: FX legs and the reporting currency.
+
+Besides being an underlying itself, an FX rate enters a SPOT run in two
+roles that never mix:
+
+    VALUATION FX  the pricer reads a leg that converts the underlying's quote
+                  currency into the settlement currency. It is a risk factor
+                  of the position: it appears in its sensitivities.
+    REPORTING FX  the run converts settlement-currency P&L into the one
+                  reporting currency. It is applied after P&L; it is never a
+                  Taylor factor.
+
+Admitted and refused FX configurations (Part D shows the valuation legs):
+
+    no FX leg (quote ccy == settlement ccy)        FULL_REVAL, TAYLOR/DERIVED
+    direct valuation leg (quanto, q P X)           FULL_REVAL, TAYLOR/DERIVED
+    inverted valuation leg (q P / X, D084)         FULL_REVAL only
+    reporting route: direct or reciprocal pair     admitted (D085)
+    reporting route: no configured pair            refused, no triangulation
 
 Scenario P&L is computed per position in its OWN settlement currency. The
 reporting layer (`riskquant.reporting.fx_conversion`) then converts every row
@@ -23,9 +41,10 @@ reporting-only row after the valuation prefix of the run axis (D082, D085).
 
 Part A: tiny exact world, reported in USD and in EUR.
 Part B: realistic world with USD, EUR and GBP settlement.
-Part C: a reporting-only FX factor, exact.
+Part C: a reporting-only FX factor, exact; why V_0 enters the P&L.
+Part D: valuation FX legs, direct and inverted, in one run.
 
-Run:  python scripts/demos/e2e/10_spot_reporting_currency.py
+Run:  python scripts/demos/e2e/03_spot_fx_and_reporting_currency.py
 """
 
 from __future__ import annotations
@@ -75,7 +94,7 @@ def _run(world: sw.SpotWorld, data, reporting: ReportingSpec, *, derived: bool,
 
 def main() -> None:
     ok = sw.Checks()
-    sw.title("RiskQuant SPOT executable guide - 10 reporting currency")
+    sw.title("RiskQuant SPOT executable guide - 03 FX legs and the reporting currency")
 
     # ================================================================ A
     sw.step("A1", "The conversion plan: USD vs EUR reporting")
@@ -271,8 +290,18 @@ def main() -> None:
     )
     ok.check("dW equals the hand D081 value V_s q_s - V_0 q_0 exactly, every scenario",
              np.array_equal(a_full.reporting.converted_pnl[0], hand))
-    ok.check("the translation term V_0 (q_s - q_0) is live: dW differs from the retired dV * q_s",
-             bool(np.any(a_full.reporting.converted_pnl[0] != a_full.settlement_pnl[0] * fx)))
+    sw.para(
+        """
+        Scenario 2 shows why V_0 enters reporting P&L. SAP rises 4, so short
+        4 SAP loses 16 EUR. EURUSD falls 0.0625, so the base liability of 480
+        EUR is worth 30 USD less. In USD the position GAINS 11. The term
+        dV * q_s alone reports -19: the wrong sign.
+        """
+    )
+    ok.check("scenario 2: dV = -16 EUR, dW = +11 USD; dV * q_s alone would give -19",
+             float(a_full.settlement_pnl[0, 2]) == -16.0
+             and float(a_full.reporting.converted_pnl[0, 2]) == 11.0
+             and float(a_full.settlement_pnl[0, 2] * fx[2]) == -19.0)
     ok.check("DERIVED equals FULL_REVAL bitwise (linear payoff, exact inputs)",
              np.array_equal(r_der.var, r_full.var) and np.array_equal(r_der.es, r_full.es))
     ok.check("the Taylor book never sees EURUSD: its axis is the valuation prefix",
@@ -301,6 +330,119 @@ def main() -> None:
         "derive_run_factor_axis(...), reporting-only rows included",
         stage="composition (canonical run-axis gate), before identity and numerics",
     )
+
+    # ================================================================ D
+    sw.step("D1", "Valuation FX legs: direct and inverted")
+    legs_book = pd.concat(
+        [
+            sw.TINY_POSITIONS,
+            pd.DataFrame({
+                "uid": [104],
+                "instrument": ["SPOT"],
+                "quantity": [8.0],
+                "underlying": ["AAPL_EQ"],
+                "settlement_ccy": ["EUR"],
+            }),
+        ],
+        ignore_index=True,
+    )
+    legs = sw.tiny_fixture(legs_book)
+    wd = legs.world
+    batch = wd.ingest_batch
+    sw.para(
+        """
+        103 holds 8 SAP (EUR asset) settled in USD: its pricer reads EURUSD
+        directly, V = 8 x SAP x EURUSD. 104 holds 8 AAPL (USD asset) settled
+        in EUR. Only EURUSD is configured, so 104's leg is INVERTED:
+        V = 8 x AAPL / EURUSD. Ingest records each leg and its orientation.
+        """
+    )
+    leg_rows = []
+    for u, fx_id, inv in zip(batch.uids.tolist(), batch.fx_u2s_ids.tolist(), batch.fx_u2s_inv.tolist(),
+                             strict=True):
+        leg = "-" if fx_id < 0 else ("1 / " if inv else "") + wd.name_of(fx_id)
+        leg_rows.append((u, str(wd.position(u)["underlying"]), str(wd.position(u)["settlement_ccy"]), leg))
+    sw.table(["uid", "underlying", "settles", "valuation FX leg"], leg_rows, align="rlll")
+    leg_of = {u: (fx_id, inv) for u, fx_id, inv in zip(batch.uids.tolist(), batch.fx_u2s_ids.tolist(),
+                                                      batch.fx_u2s_inv.tolist(), strict=True)}
+    ok.check("103 reads EURUSD directly; 104 reads it inverted; 101 and 102 read no FX leg",
+             leg_of[103] == (wd.rf("EURUSD"), 0) and leg_of[104] == (wd.rf("EURUSD"), 1)
+             and leg_of[101][0] < 0 and leg_of[102][0] < 0)
+    ok.check("V0 of 104 = 8 x 200 / 1.25 = 1280 EUR", wd.v0_by_uid[104] == 1280.0)
+    ok.expect_rejection(
+        "TAYLOR/DERIVED derivation for the inverted leg 104",
+        NotImplementedError,
+        lambda: sw.certified_taylor_block(wd, [104]),
+        reason="V = q S / X is not bilinear in the quoted factor X; the inverted "
+        "branch of the closed-form sensitizer is not authored, so it is refused "
+        "rather than approximated",
+        stage="run_sensitivities (book construction), before any run",
+    )
+    sw.para(
+        """
+        The run holds the same line on its own (D084): a position with an
+        inverted leg declared TAYLOR/DERIVED is refused from the run's
+        compiled state, before identity and numerics, whatever book is
+        supplied (tests/solutions/risk_run/test_inverted_fx_taylor_admission.py).
+        """
+    )
+
+    sw.step("D2", "An inverted FULL_REVAL leg beside TAYLOR/DERIVED legs")
+    method_d = sw.methodology(full=[104], derived=[101, 102, 103])
+    block_d = sw.certified_taylor_block(wd, [101, 102, 103])
+    rep_d = sw.reporting_spec(wd, reporting_ccy="USD")
+    run_d = run_scenario_var_es(
+        scenario_config=SCENARIOS,
+        data=legs.history,
+        required_factor_ids=wd.required_factor_ids,
+        required_shift_type_id=wd.required_shift_type_id,
+        source_factor_ids=wd.source_factor_ids,
+        shock_scale=wd.shock_scale,
+        base_levels=wd.base_levels,
+        methodology=method_d,
+        valuation_context=sw.valuation_context(wd),
+        taylor_derived=block_d,
+        reporting=rep_d,
+        confidence_level=0.75,
+        batch_size=4,
+    )
+    a_d = sw.scenario_pnl_anatomy(wd, scenario_config=SCENARIOS, data=legs.history, method=method_d,
+                                  taylor_derived=block_d, reporting=rep_d, confidence_level=0.75, batch_size=4)
+    ok.check("the mixed run completes; anatomy equals the RiskRun bitwise", sw.anatomy_matches_run(a_d, run_d))
+    sw.para(
+        """
+        The Taylor book is sensitised on U_D only, on its own compiled
+        sub-portfolio, so 104 never reaches the sensitizer. One inverted leg
+        does not block Taylor for the rest of the book.
+        """
+    )
+    i104 = a_d.row(104)
+    fx_s = a_d.shocked_levels[wd.row("EURUSD")]
+    aapl_row = wd.row("AAPL_EQ")
+    hand_104 = 8.0 * (a_d.shocked_levels[aapl_row] - float(wd.base_levels[aapl_row]))
+    dv_104 = a_d.settlement_pnl[i104]
+    dw_104 = a_d.reporting.converted_pnl[i104]
+    v0_104 = wd.v0_by_uid[104]
+    q0 = float(wd.base_levels[wd.row("EURUSD")])
+    sw.para(
+        """
+        Economic oracle: in USD, 104 is worth V x EURUSD = 8 x AAPL. The
+        inverted valuation leg and the direct reporting rate cancel, so
+        dW = 8 x dAAPL. Rule: the grid rounds dV to float32 once (<= half a
+        float32 ulp) and D081 multiplies it by q_s. So |dW - 8 dAAPL| <=
+        q_s x one float32 ulp of dV, plus 16 float64 eps of the terms.
+        """
+    )
+    bound_104 = (np.abs(fx_s) * np.spacing(np.abs(dv_104).astype(np.float32)).astype(np.float64)
+                 + 16.0 * EPS * (np.abs(v0_104 + dv_104) * np.abs(fx_s) + abs(v0_104 * q0)))
+    sw.table(
+        ["scenario", "AAPL_s", "EURUSD_s", "dV (EUR)", "dW (USD)", "8 dAAPL"],
+        [(s_, sw.num(a_d.shocked_levels[aapl_row, s_], 1), sw.num(fx_s[s_]), sw.num(dv_104[s_], 4),
+          sw.num(dw_104[s_], 6), sw.num(hand_104[s_], 1)) for s_ in range(a_d.num_scenarios)],
+        align="rrrrrr",
+    )
+    ok.check("104: dW = 8 x dAAPL within the stated bound, every scenario",
+             bool((np.abs(dw_104 - hand_104) <= bound_104).all()))
     ok.done()
 
 

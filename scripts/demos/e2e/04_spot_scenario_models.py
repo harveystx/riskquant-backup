@@ -1,6 +1,6 @@
-# scripts/demos/e2e/08_spot_model_comparison.py
+# scripts/demos/e2e/04_spot_scenario_models.py
 """
-RiskQuant SPOT -- chapter 08: one valuation world, five scenario models.
+RiskQuant SPOT -- chapter 04: one valuation world, five scenario models.
 
 The SAME realistic book (120 SPOT positions, 3 currencies, a proxied
 factor) and the SAME valuation context run through every certified model:
@@ -13,6 +13,9 @@ factor) and the SAME valuation context run through every certified model:
     parametric          seeded Monte Carlo from vols + correlation Cholesky
                         (standard normal, and Student-t with df = 4)
 
+Historical simulation also runs at a 10-day horizon: the horizon is a model
+parameter, not a separate model.
+
 Only `scenario_config` and its construction `data` change between rows;
 every other argument of `run_scenario_var_es` is identical. The table is a
 DESCRIPTION of how each methodology shapes the P&L distribution. It is not a
@@ -21,17 +24,25 @@ ranking and declares no winner.
 Distribution statistics come from the anatomy recomposition, which is
 proven bitwise-equal to each RiskRun before any statistic is printed.
 
-Run:  python scripts/demos/e2e/08_spot_model_comparison.py
+The model configuration is a strict, typed contract (Pydantic v2,
+`extra="forbid"`): it can be parsed from an untyped mapping (JSON, Excel
+named ranges), and a parameter the model does not own fails at the solution
+boundary, before any run input is built (part 5).
+
+Run:  python scripts/demos/e2e/04_spot_scenario_models.py
 """
 
 from __future__ import annotations
 
 import time
+from typing import Any
 
 import _spot_world as sw
 import numpy as np
+from pydantic import ValidationError
 
 from riskquant.solutions.risk_run.api import run_scenario_var_es
+from riskquant.solutions.scenario_models.api import parse_scenario_model_config
 from riskquant.solutions.scenario_models.schemas import (
     FilteredBootstrapGeneratorConfig,
     FilteredHistoricalGeneratorConfig,
@@ -46,11 +57,19 @@ CONFIDENCE: float = 0.99
 BATCH_SIZE: int = 512
 SEED: int = 7
 PATHS: int = 2_000
+#: An SBB request as it arrives from a scheduler, a JSON file or Excel.
+SBB_REQUEST: dict[str, Any] = {
+    "model": "sbb",
+    "horizon": 1,
+    "total_scenarios": 1000,
+    "expected_block_size": 5.0,
+    "seed": SEED,
+}
 
 
 def main() -> None:
     ok = sw.Checks()
-    sw.title("RiskQuant SPOT executable guide - 08 scenario-model comparison")
+    sw.title("RiskQuant SPOT executable guide - 04 scenario models")
     t0 = time.perf_counter()
     real = sw.realistic_fixture()
     world = real.world
@@ -70,6 +89,7 @@ def main() -> None:
 
     models = [
         ("historical", "horizon=1", HistoricalGeneratorConfig(model="historical", horizon=1), real.history),
+        ("historical 10d", "horizon=10", HistoricalGeneratorConfig(model="historical", horizon=10), real.history),
         ("filtered_historical", "horizon=1, schema defaults",
          FilteredHistoricalGeneratorConfig(model="filtered_historical", horizon=1), real.history),
         ("sbb", f"block=5, seed={SEED}",
@@ -124,13 +144,6 @@ def main() -> None:
         rows.append((label, sw.num(run.portfolio_var, 0), sw.num(run.portfolio_es, 0),
                      sw.num(p.std(ddof=1), 0), sw.num(p.min(), 0)))
     sw.table(["model", "VaR 99%", "ES 99%", "stdev", "worst"], rows, align="lrrrr")
-    for label, _, _, _ in models:
-        run, an = results[label]
-        v, e, _ = sw.oracle_var_es(an.reporting.portfolio_pnl, CONFIDENCE)
-        ok.check(f"{label}: VaR = independent full-sort order statistic, exactly; "
-                 "ES within the float64 summation-order bound",
-                 run.portfolio_var == v
-                 and abs(run.portfolio_es - e) <= sw.es_summation_bound(an.reporting.portfolio_pnl, CONFIDENCE))
 
     sw.step("4", "Why the numbers differ")
     hist = results["historical"][1].reporting.portfolio_pnl
@@ -148,11 +161,21 @@ def main() -> None:
     )
     sw.para(
         """
+        Historical simulation at horizon h replays each observed h-day move
+        (overlapping windows) on today's levels: the 10-day distribution is
+        wider than the 1-day one.
+        """
+    )
+    ok.check("historical: the 10-day portfolio VaR is more severe than the 1-day VaR",
+             results["historical 10d"][0].portfolio_var < results["historical"][0].portfolio_var)
+    sw.para(
+        """
         The bootstraps resample. At horizon 1 a stationary block bootstrap
         draws whole historical scenarios, so every SBB scenario IS a
         historical scenario; only the weights (sampling frequency) differ.
         The filtered bootstrap does the same with the filtered scenarios.
-        Longer horizons (chapter 09) chain blocks into new multi-day paths.
+        At longer horizons the bootstraps chain blocks into new multi-day
+        paths.
         """
     )
     ok.check("horizon 1: every SBB portfolio scenario is a historical one (bitwise)",
@@ -179,11 +202,33 @@ def main() -> None:
     sw.para(
         f"""
         None of these is "the right answer". Each encodes a different view
-        of which market moves are plausible tomorrow. Wall time for six
-        production runs plus six anatomies: {time.perf_counter() - t0:.2f} s.
+        of which market moves are plausible tomorrow. Wall time for
+        {len(models)} production runs plus {len(models)} anatomies:
+        {time.perf_counter() - t0:.2f} s.
         """
     )
-    sw.write_evidence("08_spot_model_comparison", {
+
+    sw.step("5", "The configuration contract")
+    config = parse_scenario_model_config(SBB_REQUEST)
+    sw.para(
+        """
+        `model` is the discriminator. Each model's config carries ONLY its
+        own parameters; the parsed object is typed, and its canonical form is
+        what the run manifest stores (chapter 05).
+        """
+    )
+    sw.kv([(k, v) for k, v in config.model_dump().items()])
+    ok.check("the untyped mapping parses to the typed SbbGeneratorConfig",
+             type(config).__name__ == "SbbGeneratorConfig" and config.model_dump() == SBB_REQUEST)
+    ok.expect_rejection(
+        "a parameter that belongs to another model (decay_factor on sbb)",
+        ValidationError,
+        lambda: parse_scenario_model_config({**SBB_REQUEST, "decay_factor": 0.94}),
+        reason="extra='forbid': a silently ignored parameter would change "
+        "nothing while the caller believes it changed the model",
+        stage="config parsing (Pydantic), before any run input is built",
+    )
+    sw.write_evidence("04_spot_scenario_models", {
         k: {"var": r.var, "es": r.es, "identity": r.identity} for k, (r, _) in results.items()
     })
     ok.done()

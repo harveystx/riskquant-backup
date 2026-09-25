@@ -13,11 +13,11 @@ Registration contract (PR-07)
   A ``_``-prefixed file is a shared helper module, not an entry point (the
   `scripts/run_all_scripts.py` convention).
 * A registered demo passes only if it exits 0, prints no traceback on
-  stderr, and prints its completion marker. The 00-14 chapters print
+  stderr, and prints its completion marker. The 00-07 chapters print
   ``ALL CHECKS PASSED`` from `Checks.done()`, reached only after every
   `check` and `expect_rejection` succeeded; any failed check raises
-  `DemoCheckError` and the process exits non-zero. The two
-  `demo_e2e_sensi_based_var*` demos exit non-zero on ``VALIDATION FAILED``.
+  `DemoCheckError` and the process exits non-zero.
+  `demo_e2e_sensi_based_var.py` exits non-zero on ``VALIDATION FAILED``.
 * The failure detection itself is tested (`test_the_gate_detects_*`) against
   throw-away scripts, so a gate that cannot fail is caught.
 
@@ -64,80 +64,48 @@ DEMO_SCRIPTS: tuple[DemoScript, ...] = (
         "SPOT pipeline vs hand q*P*X oracle; RiskRun == building blocks bitwise",
     ),
     _demo(
-        "01_spot_valuation_world.py",
-        "rf_id/uid/uix identities, SpotBlock, axis, effective prices, V0 vs hand",
+        "01_spot_taylor_derived.py",
+        "TAYLOR/DERIVED orders vs exact increment and FULL_REVAL bound; D086 identity; "
+        "stale-base, uncertified and SUPPLIED refusals",
+        timeout_seconds=240.0,
     ),
     _demo(
-        "02_spot_positions_and_pnl.py",
-        "D081 reporting P&L by hand, both forms, per position",
-    ),
-    _demo(
-        "03_spot_sensitivity_only.py",
-        "sensitivity-only Taylor polynomial vs hand; P-1 and P1-A refusals",
-    ),
-    _demo(
-        "04_spot_taylor_derived.py",
-        "TAYLOR/DERIVED orders vs exact increment; D086 identity; stale base refused",
-    ),
-    _demo(
-        "05_spot_full_revaluation.py",
-        "FULL_REVAL vs DERIVED within the dtype-derived bound; FIRST_ORDER cross error",
-    ),
-    _demo(
-        "06_spot_mixed_book.py",
+        "02_spot_mixed_book.py",
         "mixed FULL_REVAL + DERIVED composition == pure runs bitwise; wiring refusals",
     ),
     _demo(
-        "07_spot_risk_neutral_book.py",
-        "exact hedges net to zero (D081); proxy hedge vs analytic residual",
+        "03_spot_fx_and_reporting_currency.py",
+        "D081 vs hand; routes, reciprocal FX, reporting-only suffix (D085); "
+        "inverted FX leg FULL_REVAL only beside DERIVED legs (D084)",
+        timeout_seconds=180.0,
     ),
     _demo(
-        "08_spot_model_comparison.py",
-        "five scenario models; VaR vs full-sort order statistic; ES bound",
+        "04_spot_scenario_models.py",
+        "five scenario models and a 10-day horizon through one call; strict config",
+        timeout_seconds=180.0,
     ),
     _demo(
-        "09_spot_model_parameters.py",
-        "economic vs operational parameters in identity; config fail-fast",
-    ),
-    _demo(
-        "10_spot_reporting_currency.py",
-        "reporting routes, reciprocal FX, reporting-only suffix (D085) vs hand D081",
-    ),
-    _demo(
-        "11_spot_reproducibility_and_identity.py",
+        "05_spot_reproducibility_and_identity.py",
         "identity, reproduce=, fresh process bitwise, D083 result integrity",
         timeout_seconds=240.0,
     ),
     _demo(
-        "12_spot_edge_cases.py",
-        "boundary cases vs hand values; every FAIL FAST refusal with its exact type",
-    ),
-    _demo(
-        "13_spot_batching_and_scale.py",
+        "06_spot_batching_and_scale.py",
         "batch_size operational (D041, D087): identity and VaR/ES bitwise",
         timeout_seconds=300.0,
     ),
     _demo(
-        "14_spot_end_to_end_production_example.py",
-        "production-style run, persist/reload/reproduce bitwise",
+        "07_spot_production_example.py",
+        "integration template from edge inputs; persist/reload/reproduce bitwise",
     ),
     _demo(
         "demo_e2e_sensi_based_var.py",
         "D019 golden: hand-verified proxy/FX/Taylor wiring; reproducibility",
     ),
-    _demo(
-        "demo_e2e_sensi_based_var_models.py",
-        "every scenario model: Layer-1 structural invariants; seed policy",
-    ),
 )
 
 #: Entry points of the demo directory that are deliberately NOT regression gates.
-EXCLUDED: dict[str, str] = {
-    "demo_e2e_canonical_base_valuation.py": (
-        "DIAGNOSTIC: prints a valuation walkthrough with no pass/fail criterion; "
-        "its SPOT prices are covered by tests/valuation and 01/00."
-    ),
-}
+EXCLUDED: dict[str, str] = {}
 
 
 def _run(script: DemoScript) -> subprocess.CompletedProcess[str]:

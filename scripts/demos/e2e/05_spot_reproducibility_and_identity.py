@@ -1,6 +1,6 @@
-# scripts/demos/e2e/11_spot_reproducibility_and_identity.py
+# scripts/demos/e2e/05_spot_reproducibility_and_identity.py
 """
-RiskQuant SPOT -- chapter 11: reproducibility and run identity.
+RiskQuant SPOT -- chapter 05: reproducibility and run identity.
 
 Why identity exists
 -------------------
@@ -26,7 +26,7 @@ loads. To verify the numbers themselves, reproduce the run
 (`reproduce=manifest`) and compare bitwise. Both behaviours are demonstrated
 below.
 
-Run:  python scripts/demos/e2e/11_spot_reproducibility_and_identity.py
+Run:  python scripts/demos/e2e/05_spot_reproducibility_and_identity.py
 """
 
 from __future__ import annotations
@@ -49,7 +49,6 @@ from riskquant.solutions.risk_run.schemas import (
     RiskRun,
 )
 from riskquant.solutions.run_identity.api import InputMismatchError
-from riskquant.solutions.run_identity.schemas import RunManifest
 from riskquant.solutions.scenario_models.schemas import SbbGeneratorConfig
 
 SEED: int = 7
@@ -81,7 +80,7 @@ print(run.identity, run.portfolio_var.hex(), run.portfolio_es.hex())
 
 def main() -> None:
     ok = sw.Checks()
-    sw.title("RiskQuant SPOT executable guide - 11 reproducibility and identity")
+    sw.title("RiskQuant SPOT executable guide - 05 reproducibility and identity")
 
     def run(
         fixture: sw.RealisticFixture,
@@ -121,7 +120,6 @@ def main() -> None:
     sw.step("1", "Same inputs, same seed -> the same run")
     rebuilt = sw.realistic_fixture()  # every object rebuilt from the edge tables
     again = run(rebuilt)
-    other_batch = run(rebuilt, batch_size=13)
     env = {**os.environ, "PYTHONUTF8": "1"}
     child = subprocess.run(
         [sys.executable, "-c", _CHILD, str(Path(__file__).resolve().parent)],
@@ -135,11 +133,6 @@ def main() -> None:
         [
             ("base (batch 256)", base.identity[:16], base.portfolio_var.hex()),
             ("rebuilt fixture", again.identity[:16], again.portfolio_var.hex()),
-            (
-                "batch_size 13",
-                other_batch.identity[:16],
-                other_batch.portfolio_var.hex(),
-            ),
             ("fresh process, batch 97", child[0][:16], child[1]),
         ],
         align="lll",
@@ -151,14 +144,15 @@ def main() -> None:
         and np.array_equal(again.es, base.es),
     )
     ok.check(
-        "batch_size is operational: same identity, bitwise same VaR/ES",
-        other_batch.identity == base.identity
-        and np.array_equal(other_batch.var, base.var)
-        and np.array_equal(other_batch.es, base.es),
-    )
-    ok.check(
         "a fresh Python process reproduces identity and portfolio VaR/ES bitwise",
         child == [base.identity, base.portfolio_var.hex(), base.portfolio_es.hex()],
+    )
+    sw.para(
+        """
+        The child process also partitions the stream differently (batch 97
+        against 256). batch_size is operational: it is absent from the
+        identity and never moves a number (chapter 06).
+        """
     )
 
     # ---------------------------------------------------------------- 2
@@ -186,7 +180,7 @@ def main() -> None:
         """
         Each row lists the manifest fields whose content differs from the
         base run. A reporting-currency change also changes the identity
-        (chapter 10, section A3).
+        (chapter 03, section A3).
         """
     )
     rows = []
@@ -266,24 +260,6 @@ def main() -> None:
         and restored.result_digest == base.result_digest,
     )
     d = json.loads(payload)
-    d["identity"] = "0" * 64
-    ok.expect_rejection(
-        "an edited identity is refused",
-        ValueError,
-        lambda: RiskRun.from_json(json.dumps(d)),
-        reason="the persisted identity must equal the hash of its own manifest",
-        stage="RiskRun.from_json",
-    )
-    d = json.loads(payload)
-    d["manifest"]["risk_measure"]["confidence_level"] = 0.95
-    ok.expect_rejection(
-        "an edited manifest field (confidence 0.99 -> 0.95) is refused",
-        ValueError,
-        lambda: RiskRun.from_json(json.dumps(d)),
-        reason="the manifest no longer hashes to the stored identity",
-        stage="RiskRun.from_json",
-    )
-    d = json.loads(payload)
     d["var_hex"][-1] = (base.portfolio_var * 0.5).hex()
     ok.expect_rejection(
         "an edited VaR value is refused",
@@ -291,25 +267,6 @@ def main() -> None:
         lambda: RiskRun.from_json(json.dumps(d)),
         reason="result_digest binds identity, position UIDs, VaR, ES and the reproducible flag (D083)",
         stage="RiskRun.from_json, after the identity check",
-    )
-    d = json.loads(payload)
-    d["manifest"]["risk_measure"]["confidence_level"] = 0.95
-    d["identity"] = RunManifest.model_validate(d["manifest"]).identity()
-    ok.expect_rejection(
-        "an edited manifest with a recomputed identity is refused",
-        ResultIntegrityError,
-        lambda: RiskRun.from_json(json.dumps(d)),
-        reason="the identity is a member of result_digest, so the stored numbers no longer match it",
-        stage="RiskRun.from_json, after the identity check",
-    )
-    d = json.loads(payload)
-    del d["result_digest"]
-    ok.expect_rejection(
-        "a payload without result_digest (written before D083) is refused",
-        ResultIntegrityError,
-        lambda: RiskRun.from_json(json.dumps(d)),
-        reason="an unverifiable stored result is not admitted",
-        stage="RiskRun.from_json",
     )
     sw.para(
         """

@@ -1,6 +1,6 @@
-# scripts/demos/e2e/06_spot_mixed_book.py
+# scripts/demos/e2e/02_spot_mixed_book.py
 """
-RiskQuant SPOT -- chapter 06: a mixed-methodology book (D081 section 11).
+RiskQuant SPOT -- chapter 02: a mixed-methodology book (D081 section 11).
 
 One run, one explicit production universe U, partitioned:
 
@@ -10,7 +10,7 @@ Supported combinations in the current repository:
 
     FULL_REVAL        yes
     TAYLOR/DERIVED    yes  (certified book, bound to the run's base)
-    TAYLOR/SUPPLIED   refused while owner policy P-1 is open (chapter 03)
+    TAYLOR/SUPPLIED   refused while owner policy P-1 is open (chapter 01)
 
 So the mixed book here is FULL_REVAL + TAYLOR/DERIVED. The architecture it
 teaches:
@@ -26,7 +26,7 @@ is bitwise the row the same position gets in a pure run of its own
 methodology, and the portfolio is their sum. To make the two methodologies
 numerically distinguishable, the DERIVED book here is FIRST_ORDER.
 
-Run:  python scripts/demos/e2e/06_spot_mixed_book.py
+Run:  python scripts/demos/e2e/02_spot_mixed_book.py
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ def _run(world: sw.SpotWorld, history, method: MethodologyDeclaration, block: Ta
 
 def main() -> None:
     ok = sw.Checks()
-    sw.title("RiskQuant SPOT executable guide - 06 mixed-methodology book")
+    sw.title("RiskQuant SPOT executable guide - 02 mixed-methodology book")
 
     # ---------------------------------------------------------------- 1
     sw.step("1", "Declare the partition")
@@ -202,6 +202,14 @@ def main() -> None:
         lambda: _run(world, tiny.history, method, pure_block, reporting),
         reason="the book must price exactly U_D; a position priced twice would "
         "be double counted",
+        stage="composition contract, before identity and numerics",
+    )
+    ok.expect_rejection(
+        "U omits a position the valuation context compiles (103)",
+        CompositionContractError,
+        lambda: _run(world, tiny.history, sw.methodology(full=[101, 102]), None, reporting),
+        reason="valuation rows are never dropped and absent positions are never "
+        "zero-filled: U must equal the compiled economic positions exactly",
         stage="composition contract, before identity and numerics",
     )
     ok.expect_rejection(

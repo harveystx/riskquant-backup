@@ -1,6 +1,6 @@
 # scripts/demos/e2e/_spot_world.py
 """
-Shared helper for the numbered SPOT executable-guide demos (`00_` .. `14_`).
+Shared helper for the numbered SPOT executable-guide demos (`00_` .. `07_`).
 
 Not a demo. No `main()`. The leading underscore is the repository's "not a
 script" convention (`scripts/run_all_scripts.py`, `tests/e2e`).
@@ -14,10 +14,11 @@ What lives here
    the exact expected exception type and lets anything else propagate.
 3. World construction: the repetitive, production-API setup that turns
    human-readable tables into the typed objects `run_scenario_var_es` needs.
-   `01_spot_valuation_world.py` performs the same construction inline, step by
-   step, with every intermediate object printed. Every function here calls
-   production APIs directly and adds no mathematics of its own.
-4. `scenario_pnl_anatomy`: recomposes the SAME public building blocks
+   `00_spot_getting_started.py` performs the same construction inline, step
+   by step; `07_spot_production_example.py` performs the run-input assembly
+   inline, as an integration writes it. Every function here calls production
+   APIs directly and adds no mathematics of its own.
+4. `scenario_pnl_anatomy`: recomposes the SAME core building blocks
    `run_scenario_var_es` composes (generator -> shocks -> levels -> valuation /
    Taylor -> float32 grid -> D081 conversion). It exists to make the scenario
    P&L DISTRIBUTION visible, because a `RiskRun` carries only VaR/ES. Every
@@ -860,6 +861,45 @@ def run_base_binding(world: SpotWorld, uids: Sequence[int]) -> TaylorBaseBinding
     )
 
 
+def sensitivities_for(
+    world: SpotWorld, uids: Sequence[int]
+) -> BlockSensitivities:
+    """
+    Production sensitizer output for `uids`, at the world's base.
+
+    Sensitised on the compiled sub-portfolio of `uids` ONLY (U_D-scoped). A
+    position outside the Taylor partition never reaches the sensitizer, so an
+    inverted-FX leg that is FULL_REVAL only (D084) does not block a Taylor book
+    for the rest of the book. Sensitivities are rf_id-keyed (D012); the book
+    aligns to the run axis by identity, not by the sub-portfolio's mapper.
+    """
+    keep = world.positions["uid"].isin([int(u) for u in uids])
+    rows = world.positions.loc[keep].reset_index(drop=True)
+    batch = compile_raw_df_into_ingest_batch(raw_df=rows, static_config=world.rsc)
+    mapper = build_uix_mapper(
+        [batch], as_of_ord32=int(world.uix_mapper.as_of_ord32)
+    )
+    portfolio = compile_portfolio_from_ingest_batch(
+        ingest_batch=batch, uix_mapper=mapper
+    )
+    universe_map = build_universe_mapping(
+        discounting_mode=DiscountingMode.NONE,
+        static_config=world.rsc,
+        uix_mapper=mapper,
+    )
+    market_data = build_market_data_matrix_from_snapshot(
+        discounting_mode=DiscountingMode.NONE,
+        as_of_date=world.as_of,
+        uix_mapper=mapper,
+        universe_map=universe_map,
+        snapshot=world.snapshot,
+        num_scenarios=1,
+    )
+    return run_sensitivities(
+        portfolio=portfolio, uix_mapper=mapper, market_data=market_data
+    )
+
+
 def certified_taylor_block(
     world: SpotWorld,
     uids: Sequence[int],
@@ -868,15 +908,12 @@ def certified_taylor_block(
     binding: TaylorBaseBinding | None = None,
 ) -> TaylorBlock:
     """
-    TAYLOR/DERIVED: production sensitizer output for `uids`, certified at the
-    run base and compiled on the valuation prefix of the run axis (F-1, D082
-    as amended). `04_` does this inline.
+    TAYLOR/DERIVED: production sensitizer output for `uids` (U_D-scoped, see
+    `sensitivities_for`), certified at the run base and compiled on the
+    valuation prefix of the run axis (F-1, D082 as amended). `01_` does this
+    inline; `07_` writes it as an integration would.
     """
-    sens = run_sensitivities(
-        portfolio=world.portfolio,
-        market_data=world.market_data,
-        uix_mapper=world.uix_mapper,
-    )
+    sens = sensitivities_for(world, uids)
     sub = restrict_sensitivities(
         sens, uids, keep_cross=order is TaylorOrder.SECOND_ORDER_FULL
     )
@@ -1081,50 +1118,7 @@ def anatomy_matches_run(anatomy: ScenarioAnatomy, run: RiskRun) -> bool:
 
 
 # =============================================================================
-# 7. INDEPENDENT ORACLES (never call production valuation or reporting)
-# =============================================================================
-
-
-def oracle_var_es(
-    values: npt.NDArray[np.float64], confidence: float
-) -> tuple[float, float, float]:
-    """
-    Empirical lower-tail VaR / ES from a FULL sort (independent of the
-    production quickselect). Returns `(var, es, tail_mass)`.
-
-    VaR is the ceil(m)-th order statistic, m = (1 - C) * S; ES integrates
-    exactly m observations (fractional weight on the boundary observation).
-    """
-    ordered = np.sort(np.asarray(values, dtype=np.float64))
-    s = ordered.shape[0]
-    m = (1.0 - confidence) * s
-    nearest = round(m)
-    if abs(m - nearest) <= 1e-9 * max(1.0, abs(m)):
-        m = float(nearest)
-    full = int(np.floor(m + 1e-12))
-    frac = m - full
-    var = float(ordered[max(1, int(np.ceil(m))) - 1])
-    tail = float(ordered[:full].sum()) + (
-        frac * float(ordered[full]) if frac > 0 else 0.0
-    )
-    return var, tail / m, m
-
-
-def es_summation_bound(values: npt.NDArray[np.float64], confidence: float) -> float:
-    """
-    Rounding bound for comparing an ES computed in a different summation
-    order: |sum_a - sum_b| <= 2 * n * eps * sum|x_i| over the n tail terms,
-    divided by the tail mass. Derived from the float64 dtype, not tuned.
-    """
-    ordered = np.sort(np.asarray(values, dtype=np.float64))
-    m = (1.0 - confidence) * ordered.shape[0]
-    n = int(np.ceil(m - 1e-12))
-    eps = float(np.finfo(np.float64).eps)
-    return 2.0 * max(n, 1) * eps * float(np.abs(ordered[: max(n, 1)]).sum()) / m
-
-
-# =============================================================================
-# 8. SHARED FIXTURES
+# 7. SHARED FIXTURES
 # =============================================================================
 #
 # Two kinds, as the suite plan requires:
@@ -1315,10 +1309,10 @@ def realistic_fixture(
     for u in under:
         q = quote[u]
         # Cross settlement only where the FX leg is DIRECT (EURUSD / GBPUSD
-        # multiply EUR/GBP -> USD). A USD asset settled in EUR would need the
-        # INVERTED leg 1/EURUSD, which is FULL_REVAL only (D084, see
-        # 12_spot_edge_cases.py), so every generated position stays eligible
-        # for TAYLOR/DERIVED.
+        # multiply EUR/GBP -> USD). A USD asset settled in EUR would read the
+        # INVERTED leg 1/EURUSD, which is FULL_REVAL only (D084, chapter 03).
+        # A direct-only book lets every chapter declare ANY generated position
+        # TAYLOR/DERIVED.
         cross = rng.uniform() < 0.30
         settle.append("USD" if cross and q in ("EUR", "GBP") else q)
     uid_pool = np.sort(
