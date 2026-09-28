@@ -286,9 +286,6 @@ Golden fixture (rf_id order 0=USDEUR, 1=AAPL_EQ, 2=BRENT_CRUDE, 3=WTI_CRUDE):
 
 ## ACCEPTED / KNOWN
 - `tests/dependence_stress/*` cannot collect here — `hypothesis` not installed.
-- `SimlabRunner.run()` has ZERO test coverage (which is why the float32
-  `shock_scale` / single-row layout defects went unnoticed until this workstream;
-  both now fixed at the boundary).
 - RQ-AUD-003 (A&S CDF), RQ-AUD-010 (EWMA vol clamp telemetry), RQ-AUD-011
   (`searchsorted_or_propagate_sentinel_int32` OOB return — clip explicitly
   prohibited) — all ACCEPTED-RISK/DOCUMENTED.

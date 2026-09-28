@@ -14,8 +14,7 @@ This is the single, simulation-independent path from a levels snapshot to
 a valuation-ready `MarketDataMatrix`. It lives in `market_data` precisely
 so a plain valuation never has to import `simlab`: SIMLAB simulates the
 levels; assembling a matrix from already-known levels is a market-data
-concern. `simlab.runner.SimlabRunner` is one consumer; any base/t0
-valuation is another.
+concern. A base/t0 valuation is an example of a consumer.
 
 `UniverseMapping` is the typed layout plan that extends the run's
 `UixMapper` ID-universe into the dense, kernel-facing market-data axes.

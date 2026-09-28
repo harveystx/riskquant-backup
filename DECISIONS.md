@@ -147,6 +147,8 @@ Reuse `resolve_required_factor_ids_to_market_data_factor_ids` +
 `build_shock_universe` + `apply_shocks_to_base_levels`; never reimplement proxy
 in the demo. Proxy occurs AFTER simulation, BEFORE P&L.
 
+**Status: SUPERSEDED by D088 (2026-09-25).** The definition of proxying above — re-routing which column a required factor's shock reads and scaling it, with `shock_scale` inside the exponent, selected by `resolve_required_factor_ids_to_market_data_factor_ids` — is no longer authoritative. The RiskQuant Proxy V1 contract (D088) defines a proxy as a model for the target's shock: `X_A = Σ_j β_Aj · Y_(d_j, τ_j, h)` over world columns, with an explicit driver chart `τ_j` per term and a signed finite float64 loading applied to the already-formed h-horizon column, followed by the target's own reconstruction `A_s = T⁻¹_κA(A_0, X_A)`. Mapping is compile-time and node-level; no runtime resolver selects a source. The example `WTI_level(s) = 70·exp(0.95·ΔBRENT(s))` remains valid only as the special case `κ_A = LOG`, `J_A = {(BRENT, LOG)}`, `β = 0.95`. Retained and still locked: identity ≠ provenance; the proxied factor keeps its own base level and its own sensitivity identity; proxying acts after simulation and before P&L; the D019 golden values as that special case.
+
 ## D014 — Reporting-currency P&L uses scenario FX on the settlement P&L (convention a)
 **Status:** LOCKED
 **Decision:** `dV_report[i,s] = dV_settlement[i,s] * F_settlement→report[i,s]` at
@@ -442,6 +444,8 @@ entry indexes a valid shock column) is guaranteed once upstream by
 `build_shock_universe`, mirroring the existing one-shot
 `validate_apply_shocks_buffers`. All five generators already emit a
 contract-conformant batch, verified empirically before the contract was pinned.
+
+**F7 status: SUPERSEDED IN PART by D088 (2026-09-25).** The proxy-specific batch fields `required_to_shock_uix`, `shock_scale` and `required_shift_type_id`, and the `(Nreq,)` length-sharing rule, are no longer part of the generator batch contract. Under D088 a generator is requested for world columns keyed `(d, τ, h)` and a batch carries the values of those columns as a `(B, K)` matrix; the `shocks` layout rule (2-D float32, F-contiguous), `scenario_offset`, `scenario_count_total`, the bool rejections and the O(1) structural-validation principle remain locked. Term structure and loadings belong to the proxy model (D088). The target reconstruction chart `κ_A` remains owned by the target factor definition and bound on the run axis (D082 clause 11); it does not become proxy-model-owned because the proxy operator reads it during reconstruction. F3 (discrete quantities), F5 (float64 matrix boundary) and the `expected_block_size` decision are unaffected.
 
 Test alignment (not a weakening):
 `test_float32_matrix_is_rejected_by_the_kernel_contract` previously asserted the
@@ -902,6 +906,8 @@ bare `from canonical_measures import ...` ImportError — pre-existing on the
 pristine dump, not caused by this change. FilteredBootstrap deliberately NOT
 added (Parametric was the requested proof point).
 
+**Status: SUPERSEDED IN PART by D088 (2026-09-25).** `ParametricRiskData = (factor_ids, cholesky_matrix, volatilities)` is no longer the complete semantic definition of a parametric world, and `hash_parametric_risk_data` over those three arrays is no longer the complete data identity. Under D088 every parametric world column is keyed `(d, τ, h)` — resolved node `rf_id`, concrete chart, and the world-declared horizon in the world's declared step unit — and a marginal scale carries meaning only for that key; an untagged `σ_d` is not a world variable. Where several charts of one node are supplied, the data declares Case 1 (jointly declared shock-space random variables with an explicit joint law) or Case 2 (alternative representations of one underlying level process with a common scenario-specific start/end state); no implicit conversion exists. The data digest distinguishes column keys and the representation declaration. Unaffected: the typed construction-data object in SimLab core, the nested distribution union, the single build entry point, the data-invariant ownership (sorted-unique keys, finite square Cholesky factor, finite strictly positive scales) and the model/config/data pairing.
+
 ## D035 — Seam extended to FilteredBootstrap (fifth and final model; seam proven complete)
 
 The fifth and final scenario model through the D031–D034 configuration seam. It
@@ -1079,6 +1085,8 @@ model-specific leakage, no unexplained duplication. The only open item is the
 deferred strict-typing harmonization (finding 3), which is a separate future
 decision and does not affect the freeze. D021 (RNG ownership / co-seeded
 independence) remains OPEN and is the next increment — not started here.
+
+**Status: SUPERSEDED IN PART by D088 (2026-09-25).** The frozen seam signature `iter_batches(required_shift_type_id, source_factor_ids, shock_scale, batch_size)` is no longer authoritative for the proxy architecture. Under D088 a generator request is a set of world-column keys `(d, τ, h)` and a generator output is batches of those world columns; the generator is responsible for columns that satisfy the world-column contract, the proxy operator for `X_A = Σ_j β_Aj Y_j`, and no loadings or per-required-row arrays cross the seam. Unaffected and still FROZEN: the `ScenarioModelConfig` discriminated union (5 tags), `build_scenario_generator` with its explicit model/data pairing, the validation-ownership matrix, the D030 permutation contract and the SimLab P0 correction recorded above.
 
 
 
@@ -1391,6 +1399,8 @@ digest. That conservative direction is asserted by an explicit test.
 identifies snapshots but does not store them; and adoption is caller-side — the
 production runner and E2E demo do not yet build a manifest. Wiring it in is the
 next increment.
+
+**Status: SUPERSEDED IN PART by D088 (2026-09-25).** `ShockIdentity = (required_shift_type_ids_digest, source_factor_ids_digest, shock_scale_digest)` is no longer the identity of the shock mapping. Under D088 there is exactly one rule: `ShockIdentity = (proxy_model_digest)`, where `proxy_model_digest = ID_proxy = H(canonical V1 proxy rows)` over the target node `rf_id`, the driver node `rf_id`s, the concrete driver chart ids, the canonical merged float64 loadings and the canonical row/term ordering, computed with the existing `digest_named_arrays` mechanism. Legacy fields: `required_shift_type_ids` is derived operational data already identified through `universe_map_digest` and `static_config_digest` and is not an independent proxy-identity input; `source_factor_ids` and `shock_scale` are replaced by the proxy-model digest. No identity field is optional. Unaffected: the run as the unit of reproducibility, the manifest canonical bytes and content-address semantics, the environment section, the bitwise-equality contract and the D041 and D083 relationships. Inventory finding (1) above remains true in substance — the proxy model changes the risk number — and is captured by the proxy-model digest.
 
 
 
@@ -4459,6 +4469,8 @@ The production run's required-factor axis is `UniverseMapping.required_factor_id
 11. **Every axis-aligned run input is bound to the whole run axis.** `required_factor_ids` and `required_shift_type_id` must equal the run-derived axis row for row, and `source_factor_ids`, `shock_scale` and `base_levels` must have one entry per axis row; otherwise the run refuses before identity and numerics. The five inputs must already be 1-D, C-contiguous arrays of exact dtype (int32, int8, int32, float32, float64); nothing is cast, because the identity digests the dtype. Callers obtain the axis from `solutions.risk_run.api.derive_run_factor_axis`.
 12. **Identity.** The suffix enters identity through the shock and base-level digests and the reporting FX digest (factor names and axis rows). An empty suffix leaves every existing identity unchanged.
 
+**Clause 11 status: SUPERSEDED IN PART by D088 (2026-09-25).** The requirement that `source_factor_ids` (int32) and `shock_scale` (float32) accompany the axis one entry per row is withdrawn as the canonical proxy representation. Under D088 the compiled canonical proxy model contains exactly one row per V1 target-axis node; an authored configuration may omit a node's model because identity-by-default supplies `(d, τ, β) = (A, κ_A, 1)` at compile time, so users never author identity rows; loadings are float64 and canonicalised per D088. Unaffected: the axis derivation (clauses 8–10), `required_factor_ids` and `required_shift_type_id` bound to the axis row for row, `base_levels` one per row with exact dtype, `derive_run_factor_axis`, the reporting-only suffix (D085) and clause 12's principle that the suffix enters identity.
+
 ---
 
 ## D083 — Persisted-result integrity: `RiskRun.result_digest`, separate from run identity
@@ -4562,6 +4574,8 @@ A reporting-only suffix adds K_rep rows (K_rep ≤ number of distinct settlement
 
 `tests/solutions/risk_run/test_axis_input_contract.py` (final hardening): wrong dtype with equal values, 2-D, strided and non-array inputs are refused before any numerical stage (spies on manifest, generator, valuation, shock application, grid, Taylor, conversion and VaR/ES); the run executes on owned writable copies and accepts the read-only descriptor as-is; `RunFactorAxis` ownership, read-only arrays, frozen fields and exact dtypes; a proxied row reads exactly its proxy's float32 shock; two valid proxy routings differ in result and identity; substituted, permuted and tier-1-violating sources and a source without a data column are refused before numerics; poisoning the reporting-only suffix of the one shocked-level buffer leaves V_0 and settlement dV bitwise unchanged (FULL_REVAL and DERIVED) while reported P&L equals the hand D081 value on the poison level; the Taylor axis is the valuation prefix and an expanded-axis book is refused; reporting currency, reporting FX factor, route orientation and suffix base level each move the identity, and a rebuilt identical run matches identity, `result_digest`, VaR and ES bitwise; historical and bootstrap prefix and suffix read one date per scenario (asymmetric markers, exact on float32 shocks); parametric full-axis shocks equal an independent fixed-seed construction exactly; one shared row per settlement→reporting pair. Mutation: removing each new check (dtype, dimensionality, contiguity, owned copy, source column, tier 1, read-only axis, axis ownership) fails tests.
 
+**Clause 8 status: SUPERSEDED by D088 (2026-09-25).** The rule that `source_factor_ids[k]` equals `required_factor_ids[k]` whenever that factor has its own scenario data — resolver tier 1, "a factor that has its own column is its own source" — is no longer authoritative for model selection. Under D088 the model determines the source columns and data availability validates those references: every V1 target-axis node has exactly one compiled model, identity-by-default when none is authored; data availability never chooses between models; there is no fallback tier. Unaffected: every referenced `(d, τ, h)` column must exist in the scenario data; the reporting-only FX suffix (clauses 1–7); row-by-row binding to the run axis; every other data-existence check that is not model-selection logic.
+
 ---
 
 ## D086 — Taylor order is a certified property of the compiled representation
@@ -4609,6 +4623,80 @@ PR-06 asked whether the parametric generator's whole-run `(total_scenarios, K_to
 ### Evidence
 
 `tests/simlab/scenarios/test_parametric_whole_run_stream.py`: for all five laws, the recorded whole-run buffer equals an independent `default_rng(seed).standard_normal(S·K).reshape(S, K)` and the auxiliary draw bitwise, with one normal fill and one auxiliary call in that order; buffer and concatenated shocks are bitwise identical for batch sizes 1, 2, 3, 7, 13, S−1, S and S+1; the shocks equal an explicit-sum construction from the model's formulas within one float32 ulp, and exactly under an identity Cholesky factor (single rounding point); added or permuted requested columns leave the others bitwise unchanged; the seed alone selects the buffer. `tests/solutions/risk_run/test_parametric_run_world.py`: repeated, skipped, reordered and truncated batch streams are refused before P&L allocation; every partition yields the same shocked levels, identity, `result_digest`, VaR and ES; a reporting-only suffix leaves the valuation row bitwise; FIRST and FULL Taylor orders see one world; a new seed changes world and identity; `reproduce=` with another batch size is bitwise. Mutation: a fresh draw per batch, a reseed per batch, a batch-size-derived seed, reversed factor columns, reversed scenario rows, a slice shifted by one, an F-ordered buffer, an earlier float32 rounding point, and removing either run check each fails tests.
+
+**Clause 2 status: SUPERSEDED IN PART by D088 (2026-09-25).** `K_total` is the column set of the parametric world keyed `(d, τ, h)` (D034 as superseded), not the factor-id set alone, and the run axis selects columns through the compiled proxy model's term references rather than `source_factor_ids`. Unaffected: clause 1 (whole-run draw order, single float32 rounding point), clause 3 (batch as partition; tiling check), clause 4 (seed, count and law through `scenario_config`; `batch_size` operational per D041), clause 5 (memory) and D029.
+
+## D088 — RiskQuant Proxy V1: a proxy is a model for the target's shock on world columns
+
+**Status:** LOCKED — contract and design FROZEN 2026-09-25
+**Supersedes:** D013 (definition of proxying). **Amends:** D026 F7, D034, D036, D040 `ShockIdentity`, D082 clause 11, D085 clause 8, D087 clause 2, each by the status note recorded in that decision. Unrelated clauses of those decisions remain locked.
+**Implementation status:** NOT IMPLEMENTED. Production code still executes the D013 mechanism (`resolve_required_factor_ids_to_market_data_factor_ids`, `build_shock_universe`, `shock_scale`). This record fixes the contract; conformance of the implementation is the next phase and is not claimed here.
+
+### 1. Scope
+
+The V1 proxy-model universe is the set of run-axis factor-nodes whose configured `shift_type` is a V1 reconstruction chart, `κ_A ∈ {LOG_RETURN, SIMPLE_RETURN, DIFFERENCE}`. A node whose configured `shift_type` is `ABSOLUTE_BASE_RETURN` or `NO_SHIFT` is outside the V1 target universe and keeps its D025 behaviour: ABSOLUTE_BASE has no V1 target reconstruction contract and no V1 column contract; NO_SHIFT is a configured shift type and an execution behaviour (a zero column, skipped by `validate_shift_domain`, reconstructed to the base) — it is not a chart and not a node status. The V1 driver-chart catalogue is `τ ∈ {LOG_RETURN, SIMPLE_RETURN, DIFFERENCE}`.
+
+### 2. Mathematical object
+
+    X_A(ω) = Σ_{j ∈ J_A} β_Aj · Y_(d_j, τ_j, h)(ω)
+    A_s    = T⁻¹_κA(A_0, X_A(ω_s))
+
+`A` and `d_j` are resolved factor-node identities; `κ_A` is the target's reconstruction chart; `τ_j` is the explicit driver chart of the term; `β_Aj` is a signed finite float64 modelling coefficient; `A_0` is the run-bound base level; `h` is the world-declared elapsed horizon in the world's declared step unit. The identity model `J_A = {(A, κ_A)}, β = 1` is the compiled default for every V1 node with no authored model. Charts: LOG forward `ln(v1/v0)` (inputs > 0), inverse `A_0·e^x`; SIMPLE forward `v1/v0 − 1` (v0 ≠ 0), inverse `A_0(1+x)`; DIFFERENCE forward `v1 − v0`, inverse `A_0 + x`. Reconstruction output must be finite; whether the resulting level is admissible for the factor (finite; > 0 for FX_RATE and VOL) is decided by the existing factor-state guard (D070, D075), not by the chart.
+
+### 3. Ownership
+
+| Fact | Owner |
+|---|---|
+| Factor-node identity `A`, `d` | factor definition; resolved run axis; canonical identity is the `rf_id` under the run as-of (D067) |
+| Reconstruction chart `κ_A` | target factor definition (configured `shift_type`); never the proxy model |
+| Base level `A_0` | run-bound base state (`base_levels`; D081 §1) |
+| Driver chart `τ_j`, loading `β_Aj`, term set `J_A` | proxy model |
+| Horizon `h`, step unit, scenario law | scenario world (configuration and data; D087) |
+| Physical quantity unit | factor definition where declared; absent today for PRICE/SPREAD/INDEX |
+| FX quotation convention | pair definition and orientation matrix (D078.4, D060) |
+| Provenance (calibration method, window, rationale) | governance; never numerical |
+
+The configured `shift_type` of a driver node does not imply `τ_j`. A node supplies `Y_(d, τ, h)` only when the world supplies that column and the applicable rules, including D025, permit it.
+
+### 4. World columns
+
+A world is a finite probability space with one declared horizon and jointly defined real random variables keyed `(d, τ, h)`. `Y_(d, τ, h)` is fundamentally a random variable in the declared shock space. A column may be supplied directly in shock space or constructed from levels; the distinction is per column. A level-backed column equals `T_τ(v_start, v_end)` and its level inputs must satisfy the forward chart's input domain; for a level-backed column, any valid sequential decomposition whose intermediate states satisfy that domain composes to the endpoint transformation (LOG and DIFFERENCE by sum, SIMPLE by product-minus-one). A direct column implies no level path and no level-domain obligation. The proxy contract does not prescribe how any engine constructs a column; each engine's own contract shows that its columns satisfy this definition. Loadings apply after the h-horizon column exists; the model carries no horizon and no hidden horizon or volatility scaling; horizon-invariance of `β` is a V1 modelling assumption, not a theorem. World invariants: common scenario index; common horizon; column values a function of the world identity alone; no silent missing values; no clipping; no scenario dropping, reordering or resampling by the model; a model changes no column and no other row; the probability weights belong to the risk-measure layer.
+
+### 5. Loadings and units
+
+`β_Aj = ∂X_A/∂Y_j`; `[β_Aj] = u_κA / u_τj` with `u = 1` for LOG and SIMPLE and `u = ` the node's canonical level unit for DIFFERENCE (D069). Physical-unit metadata is validation and interpretation metadata where available; missing physical-unit metadata does not invalidate a mathematically defined proxy, including reduced-form cross-currency and cross-unit terms. If physical-unit metadata is added to the compiled static configuration, the existing static-configuration digest includes it. No magnitude bound is part of the contract.
+
+### 6. Canonicalisation (deterministic, not symbolic)
+
+(1) Resolve every target and driver to node identity. (2) Remove authored coefficients that compare equal to zero (`== 0.0`, which includes `-0.0`). (3) Group terms by identical `(d, τ)`. (4) Order the coefficients of a group by their IEEE-754 binary64 bit pattern. (5) Sum in that order with plain float64 left-to-right addition. (6) Remove merged coefficients that compare equal to zero. (7) Reject a row with no remaining term. (8) Sort terms by `(rf_id, chart id)`; order rows by the run axis. (9) Digest the canonical representation. No epsilon tolerance, no Decimal, no compensated summation. Canonicalisation is deterministic over the resolved authored float64 term multiset; it is not symbolic algebraic normalisation: `0.1·Y + 0.2·Y` merges to a coefficient one ULP from authored `0.3`, and the contract does not promise one identity for every real-equivalent expression.
+
+### 7. Identity
+
+`ID_proxy = H(canonical rows in run-axis order)`, each row `(A, canonical {(d_j, τ_j, β_Aj)})`, computed with `digest_named_arrays` over `row_target_rf_ids` (int32), `row_term_offsets` (int32), `term_driver_rf_ids` (int32), `term_chart_ids` (int8), `term_loadings` (float64), mirroring `hash_compiled_book`. `ID_target = (A, κ_A)`, carried by `RunContextIdentity.static_config_digest` and `RunContextIdentity.universe_map_digest`. `ID_run = RunManifest.identity()` over `ID_proxy` (`ShockIdentity = (proxy_model_digest)`), `ID_target`, the world identity (`scenario_config` and the data digest including parametric column keys, horizon, step unit and Case-1/Case-2 declaration), `PnlIdentity.base_levels_digest`, and the as-of. Changing a canonical merged coefficient by one ULP, a driver chart, a driver node or a target node changes `ID_proxy` and `ID_run`; changing only non-semantic authoring syntax does not.
+
+### 8. Mapping, containers, graph
+
+Mapping selects nodes and never becomes weighting. `EXACT` means equal coordinate kind and equal resolved economic coordinate at the run as-of (`[HY+3]` → `2028_FH` and `[Y+3]` → `2028` are not equal; two `[M+k]` tokens with different `anchor_offset` are not equal); `EXPLICIT` means the author selects the pairing; `NEAREST` and automatic interpolation weights are deferred; level-space interpolation `w·B1 + (1−w)·B2` is not shock-space weighting `w·Y1 + (1−w)·Y2`. A container row is authoring shorthand that expands to node-level terms at compile time; the compiled model contains node identities only. A term's input is a world column; a generated shock `X_B` is never an input, so target-to-target chains cannot exist at runtime; a term may reference the data column of a node that also has a model.
+
+### 9. FX and data selection
+
+Reporting FX (D081, D085) is outside the proxy model. The exact LOG identity `A_t = B_t·P_t ⇒ X_A = Y_(B,LOG) + s·Y_(P,LOG)` uses `s = +1` when the configured pair is quoted as target currency per driver currency and `s = −1` for the reciprocal quotation (D078.4, D060); reconstruction reproduces the level identity only if `A_0 = B_0·P_0`; otherwise the same terms are a reduced-form model; omitting an FX term attributes no explicit FX dynamics. The DIFFERENCE-space identity is bilinear and deferred; reduced-form DIFFERENCE terms remain admissible. The model determines the source columns; data availability validates those references and never chooses between models; there is no fallback tier.
+
+### 10. Deferred (coherent, not in V1)
+
+ABSOLUTE_BASE as driver or target (requires an explicit h-horizon ABS contract; on the path −10 → −9 → −8.1 the endpoint statistic is 0.19 and the sign-blind product is 0.21); residual terms as world variables; nonlinear and bilinear families; edge flattening of chart-aligned chains; NEAREST and automatic interpolation; horizon-dependent loadings; physical-unit metadata for PRICE/SPREAD/INDEX; multi-chart parametric columns as a producer capability.
+
+### 11. Acceptance oracles
+
+Closed-form, prior to implementation: identity default (`80 → 82` gives `82`); LOG←LOG (`70·(82/80)^0.95 = 71.6615`); LOG←DIFFERENCE (spread `2.00 → 2.50`, `β = 0.04`: `70·e^0.02 = 71.4141`); DIFFERENCE←LOG (`0.025 + 0.002·ln(88/80) = 0.0251906`); DIFFERENCE←DIFFERENCE (`0.045 + 0.0025 = 0.0475`); two drivers (`70·e^(0.7·ln 1.025 + 0.3·ln 0.98) = 70.790`); mixed charts (`70·e^(0.9·ln(82/80) + 0.02·0.5) = 72.292`); negative loading with explicit base `A_0 = 0.90/0.92`: `EURCHF = USDCHF/USDEUR`, loadings `(+1, −1)`, `A_s = 0.978261·e^0.029853 = 1.00791 = 0.918/0.9108`; FX LOG identity with `A_0 = B_0·P_0 = 73.6`: `A_s = 76.26 = 82·0.93`, and with `A_0 = 70` the model still runs but the level identity does not hold; same node under two charts (row `B` under DIFFERENCE gives `B_0 + 2`, row `A` via `(B, LOG)` gives `71.6615`); SIMPLE aggregation order (`y = (0.10, 0.10)`, `β = 0.5`: `0.105`, not `0.1025`); direct shock-space column with no level path; level-backed domain failure only when levels are used; chart reconstruction versus factor-state admissibility (`A_0 = 1`, `X = −2` reconstructs to `−1`; an FX node is then rejected by the factor-state guard); node identity (`A_2027` and `A_2028` never collide); duplicate terms (`0.3·Y_B + 0.2·Y_B` and `0.5·Y_B` share one identity because `0.3 + 0.2` is exact); authoring-order invariance over one float64 multiset; signed zero (`+0.0` and `−0.0` authored terms disappear identically); identity sensitivity and non-sensitivity; NO_SHIFT node: own column zero and held fixed while a separately requested `(N, LOG, h)` column gives `ln(82/80)` and `A_s = 71.6615`; three-world horizon test (level-backed `h = 5`, direct `h = 5`, direct `h = 1` with `Y = ln(84/80)`, `β = 0.95`, all give `73.321`); ABS target rejected at compile; missing column rejected before numerics; parametric keying (`(B, DIFF, 1)` cannot bind a model that requests `(B, LOG)`; with `(B, LOG, 1)`, `σ = 0.02`, `σ_A = 0.019`).
+
+### 12. Clarifications (2026-09-25; precision only, no semantic change)
+
+1. **The compiled model is run-bound.** The compiled proxy model is `M = f(authored terms, static configuration, as-of, V1 run axis)`: the canonical resolved operator after totality closure against the run axis, including the materialised identity rows that closure requires. It is not a universal, run-independent object. `proxy_model_digest = hash_proxy_model(M)` identifies that operator, not the authoring syntax. The digest is a function result; it is not a stored field of the model.
+2. **As-of resolution is upstream of identity.** The dependency order is: authoring → resolution at the as-of → resolved `rf_id`s → totality closure over the run axis → canonical model → digest. An EXACT specification that resolves differently at another as-of legitimately yields a different canonical model and a different digest. The digest is not made invariant to legitimate resolution changes.
+3. **Authoring schema versus compiler contract.** The compiler's input contract is the resolved semantic information it needs: authored node terms (target, driver, `τ`, `β`) and authored container terms (target container, driver container, `τ`, `β`), the static configuration, the as-of and the run axis. The compiler owns admissibility, resolution, totality closure, canonicalisation, the canonical representation and the digest function. It does not own file parsing, scenario generation, world construction, valuation or P&L. The authoring file format is a separate edge concern.
+4. **Native rows stay outside the V1 proxy model.** `ABSOLUTE_BASE_RETURN` and `NO_SHIFT` axis nodes keep their D025 representation and numerical path. They are not rows of the V1 proxy model and not inputs to `proxy_model_digest`. A later numerical kernel may lower them to its seam as one-term, unit-loading rows; that is a numerical representation only and does not make them part of the authored model, the canonical proxy identity or the proxy digest.
+5. **World horizon binding.** The proxy model declares `(driver rf_id, driver chart id)` pairs. The run binds those pairs to the world's declared horizon `h`; the world supplies or validates `(d, τ, h)`; the generator validates the requested `h` against the world declaration. No layer infers `h` from the target, the driver, a resolver, a fallback, source selection or the target chart. `h` is not part of a compiled proxy term.
 
 ---
 

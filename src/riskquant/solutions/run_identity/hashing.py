@@ -22,10 +22,13 @@ from __future__ import annotations
 import dataclasses
 import enum
 import hashlib
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import numpy.typing as npt
+
+if TYPE_CHECKING:
+    from riskquant.config.proxy_model.compiled import CompiledProxyModel
 
 __all__ = [
     "digest_array",
@@ -34,6 +37,7 @@ __all__ = [
     "hash_compiled_book",
     "hash_compiled_portfolio",
     "hash_parametric_risk_data",
+    "hash_proxy_model",
     "hash_risk_factor_matrix",
     "hash_universe_mapping",
 ]
@@ -237,3 +241,26 @@ def hash_universe_mapping(universe_map) -> str:
     flat level rows onto market-data slots.
     """
     return digest_named_arrays(**_dataclass_arrays(universe_map, prefix=""))
+
+
+def hash_proxy_model(model: CompiledProxyModel) -> str:
+    """
+    Identity of the compiled, run-bound Proxy V1 operator (D088 §7).
+
+    Hashes the canonical CSR arrays the run will evaluate, in this fixed
+    declaration order: row targets, row offsets, term drivers, term driver
+    charts, term loadings. The digest is therefore over the canonical resolved
+    operator after totality closure, never over authoring syntax: equivalent
+    authoring forms that canonicalise to identical binary content share an
+    identity, and any change of canonical content (one ULP of a merged loading,
+    a chart, a driver, a target, a row) changes it. The target chart kappa_A is
+    not part of this digest; it enters the run identity through the static
+    configuration and universe-map digests.
+    """
+    return digest_named_arrays(
+        row_target_rf_ids=model.row_target_rf_ids,
+        row_term_offsets=model.row_term_offsets,
+        term_driver_rf_ids=model.term_driver_rf_ids,
+        term_chart_ids=model.term_chart_ids,
+        term_loadings=model.term_loadings,
+    )
