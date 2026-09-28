@@ -84,6 +84,11 @@ RiskFactorMatrix ──> ScenarioGenerator.iter_batches(...) ──> ScenarioSet
                                                          (D018 oracle; ZERO test coverage)
 ```
 
+
+**Update (2026-09-28):** `riskquant.simlab.runner.py` (and the contained `SimlabRunner`)
+have been removed from the code base as they were a legacy path.
+
+
 - **Producers**: scenario generators (shocks); proxy resolver (source/scale).
 - **Consumers**: `apply_shocks_to_base_levels`; `SimlabRunner`; the sensitivity
   demo constituents.
@@ -124,6 +129,10 @@ to remove or preserve.
 | `runner.py` | Full-reval streaming VaR | `SimlabRunner` | via valuation | config/portfolio/generator | `PnlMatrix` f32 | F3-crash, **zero coverage** |
 
 ---
+
+
+**Update (2026-09-28):** `riskquant.simlab.runner.py` (and the contained `SimlabRunner`)
+have been removed from the code base as they were a legacy path.
 
 ## C. Canonical contract table (from code)
 
@@ -356,6 +365,10 @@ by line in this audit — flagged for the remediation test phase.)
 16. **Justified architecture changes?** None new. No config/registry/factory seam
     is justified until F1–F3 (and F7) close. The package is **not** internally
     coherent on fail-fast grounds until then.
+
+
+**Update (2026-09-28):** `riskquant.simlab.runner.py` (and the contained `SimlabRunner`)
+have been removed from the code base as they were a legacy path.
 
 ---
 

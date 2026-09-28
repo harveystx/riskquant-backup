@@ -130,6 +130,10 @@ SimLabRunner / demo scripts / credit exposure runner
 
 `CompiledPortfolio` exposes exactly three block slots — `spot`, `vanilla_forward`, `vanilla_european_option` — and `BlockT` is the union of those three. The three cashflow types cannot be placed in a portfolio at all.
 
+
+**Update (2026-09-28):** `riskquant.simlab.runner.py` (and the contained `SimlabRunner`)
+have been removed from the code base as they were a legacy path.
+
 ### Scope boundary
 
 | | |
@@ -400,6 +404,10 @@ The sanctioned production path is `compile_portfolio_from_ingest_batch → build
 | `resolve_pricer` | dead | VAL-17 |
 
 No production caller manipulates `BLOCK_PRICERS` directly or calls a `pricer_kernels.*` symbol outside its pricer. The single public production entry point is `run_valuation`, and the model-primitive reuse is deliberate and correctly placed.
+
+
+**Update (2026-09-28):** `riskquant.simlab.runner.py` (and the contained `SimlabRunner`)
+have been removed from the code base as they were a legacy path.
 
 ---
 

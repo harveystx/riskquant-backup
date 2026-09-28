@@ -197,6 +197,9 @@ scenario-stream reproducibility is governed by D029: for fixed seed, model,
 data, parameters, and scenario count, the concatenated stream is invariant to
 `batch_size`.
 
+**Update (2026-09-28):** `riskquant.simlab.runner.py` (and the contained `SimlabRunner`)
+have been removed from the code base as they were a legacy path.
+
 ## D017 — `RiskFactorMatrix` / history default dtype is float64 (kernel contract)
 **Status:** LOCKED (2026-09-14)
 **Decision:** `build_risk_factor_matrix_from_df` /
@@ -2695,6 +2698,8 @@ revaluation path until the SimLab caller is repaired.
 Evidence: `tests/valuation/oracle/test_valuation_authority.py`; `tests/solutions/risk_run/test_run_owned_identity.py::test_discounting_mode_is_bound_to_identity_or_refused`.
 
 
+**Update (2026-09-28):** `riskquant.simlab.runner.py` (and the contained `SimlabRunner`)
+have been removed from the code base as they were a legacy path.
 
 ## D058 — Dense UIX are range-checked, not type-checked; the compiler is the only guard
 
@@ -3080,6 +3085,10 @@ producer requiring date-bound market state must have a real run as-of.
 `SimLabRunner` was not changed (D057 remains).
 
 
+**Update (2026-09-28):** `riskquant.simlab.runner.py` (and the contained `SimlabRunner`)
+have been removed from the code base as they were a legacy path.
+
+
 ## D068 — Expired options are rejected
 
 **Status:** LOCKED
@@ -3305,6 +3314,10 @@ state / mapper B
   the mapper and does not permit callers to choose an arbitrary identity.
 * `SimLabRunner` remains governed by D057 and must eventually provide a
   portfolio, mapper and valuation state from the same production lineage.
+
+
+**Update (2026-09-28):** `riskquant.simlab.runner.py` (and the contained `SimlabRunner`)
+have been removed from the code base as they were a legacy path.
 
 **Evidence:**
 
