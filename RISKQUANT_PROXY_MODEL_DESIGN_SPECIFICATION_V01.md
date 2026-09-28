@@ -10,7 +10,8 @@
 | Design status | Frozen. D088 is recorded as "LOCKED" with "contract and design FROZEN 2026-09-25". D088 §12 adds five precision clarifications and states "no semantic change". |
 | Implementation status (as recorded in D088) | D088 states "Implementation status: NOT IMPLEMENTED" and "Production code still executes the D013 mechanism". This document does not change that wording. |
 | Slice 1 (semantic compilation and identity) | Closed. The compiler, canonical representation and digest function exist in the current snapshot, and their tests pass (Section 36). |
-| Slice 2 and later | Not started. No V1 numerical operator, world-column binding, generator change, production-run integration, certification or atomic switch exists in the current snapshot. The Slice 2 numerical contract is closed (D088 §13.4 to §13.6; Section 26). |
+| Slice 2 (numerical seam and binding function) | Implemented and independently validated; not wired into the production run. `src/riskquant/simlab/shocks/{linear_term_kernel,linear_term_apply,column_binding}.py` implement the closed contract (D088 §13.4 to §13.6; Section 26). |
+| Slice 3 and later | Not started. No world-side production of $(d,\tau,h)$ columns, generator change, parametric representation, production-run integration, certification or atomic switch exists in the current snapshot. |
 | Production proxy behaviour today | The legacy D013 input contract of `run_scenario_var_es` (`required_shift_type_id`, `source_factor_ids`, `shock_scale`). The legacy resolver still exists but has no caller under `src/`. `SimlabRunner` has been removed from the code base (`DECISIONS.md` update notes, 2026-09-28). |
 | Authoritative decisions | D088 including §12 and §13. D088 supersedes D013 and amends, by recorded status notes, D026 F7, D034, D036, D040 (`ShockIdentity`), D082 clause 11, D085 clause 8 and D087 clause 2. D025, D041, D060, D067, D069, D070, D075, D078.4, D081 and D085 are referenced and remain in force. |
 | Nature of this document | Normative and explanatory. Content labelled DECISION and the rules in Section 41 restate D088. All other content explains D088, the repository and their consequences. If this document and D088 differ, D088 governs. |
@@ -56,9 +57,9 @@ Proxy V1 is the contract recorded in D088. For every V1 target node, the scenari
 | Proxy compilation | Yes | Proxy compiler | Implemented (Slice 1) |
 | Proxy identity | Yes | Canonical model and `hash_proxy_model` | Function implemented (Slice 1). Not yet used by the run manifest. |
 | World shock generation | No. The world supplies columns (D088 §4). | Scenario world and generators | Legacy generators exist. No V1 column request. |
-| World-column binding | The seam is defined by D088 §12.5. | Run and world seam | Not implemented |
-| Numerical shock aggregation | Yes, as operator semantics (D088 §2). | Numerical proxy application | Not implemented for V1 |
-| Target reconstruction | V1 fixes its order and its owner. The inverse charts already exist. | Numerical application, using the target-owned chart | Legacy inverse kernel exists. V1 path not implemented. |
+| World-column binding | The seam is defined by D088 §12.5. | Run and world seam | Integer-key binding function implemented (Slice 2: `bind_term_columns`). World-side column production is Slice 3. |
+| Numerical shock aggregation | Yes, as operator semantics (D088 §2). | Numerical proxy application | Implemented (Slice 2); not wired into the production run |
+| Target reconstruction | V1 fixes its order and its owner. The inverse charts already exist. | Numerical application, using the target-owned chart | V1 path implemented (Slice 2); not wired into the production run. The legacy inverse kernel is unchanged. |
 | Valuation | No | Existing valuation | Unchanged |
 | P&L | No | Existing risk-run machinery (D081) | Unchanged |
 | Risk aggregation (VaR, ES) | No | Existing risk-run machinery | Unchanged |
@@ -499,9 +500,9 @@ levels -> existing valuation, P&L and risk machinery
 | Canonicalisation | Term sets | Canonical CSR arrays | `canonical.py` | Implemented |
 | Compiled operator | Canonical arrays | `CompiledProxyModel` | `compiled.py` | Implemented |
 | Identity | Compiled operator | `proxy_model_digest` | `hash_proxy_model` in `run_identity/hashing.py` | Function implemented. Not in the manifest. |
-| World-column binding | $(d,\tau)$ pairs, world $h$, world column set | Column index per term | Run and world seam | Not implemented |
-| Sparse aggregation | Shock batch, column indices, loadings | $X$ per row and scenario | Numerical application | Not implemented for V1 |
-| Reconstruction | $X$, $A_0$, $\kappa$ per row | Levels | Numerical application | Not implemented for V1. Legacy inverse exists. |
+| World-column binding | $(d,\tau)$ pairs, world $h$, world column set | Column index per term | Run and world seam | Binding function implemented (Slice 2); worlds do not yet supply $(d,\tau,h)$ columns (Slice 3) |
+| Sparse aggregation | Shock batch, column indices, loadings | $X$ per row and scenario | Numerical application | Implemented (Slice 2); not wired |
+| Reconstruction | $X$, $A_0$, $\kappa$ per row | Levels | Numerical application | Implemented (Slice 2); not wired. Legacy inverse unchanged. |
 | Downstream | Levels | Valuation, P&L, VaR/ES | Existing risk run | Unchanged |
 
 ---
@@ -1126,7 +1127,7 @@ The second row is BRENT's identity row.
 | Result | One row (USDEUR identity). The digest equals the digest for axis [USDEUR]. |
 | Authored target AAPL_EQ | `ConfigurationError` ("outside the V1 target universe") |
 | As a driver | `USDEUR <- 0.5 LOG(AAPL_ATM_VOL)` compiles. $\tau$ does not follow the driver's configured shift type. |
-| Later numerical seam | The ABS row may be lowered to a one-term, unit-loading row on its native column $(A,\text{ABS},h)$. The NO_SHIFT row is a zero-term row with output $A_0$ (D088 §12.4, §13.4). **Not implemented.** |
+| Later numerical seam | The ABS row may be lowered to a one-term, unit-loading row on its native column $(A,\text{ABS},h)$. The NO_SHIFT row is a zero-term row with output $A_0$ (D088 §12.4, §13.4). Numerical seam implemented (Slice 2); native-row lowering is not implemented. |
 | Tests | `test_native_axis_nodes_are_not_rows`, `test_native_targets_are_rejected`, `test_native_nodes_may_drive_under_a_v1_chart` |
 
 ### Example 12: missing world column
@@ -1135,7 +1136,7 @@ The second row is BRENT's identity row.
 |---|---|
 | Model | WTI ← 0.95 LOG(C). The world has no column $(C,\text{LOG},h)$. |
 | Required behaviour | Rejection before numerics. D088 §11: "missing column rejected before numerics". D088 §4: "no silent missing values". D088 §9: no fallback tier. |
-| Status | **Not implemented.** The V1 binding does not exist. The legacy analogue is `_require_shock_sources` (`CompositionContractError`). |
+| Status | The Slice 2 function `bind_term_columns` rejects a missing $(d,\tau,h)$ (`ValueError`). It is not wired into the production run, and worlds do not yet supply $(d,\tau,h)$ columns (Slice 3). The legacy analogue is `_require_shock_sources` (`CompositionContractError`). |
 | Why | Replacing a missing column with another column would reintroduce source selection. |
 
 ---
@@ -1148,28 +1149,28 @@ Each invariant is **DECISION** unless marked otherwise. The final column gives t
 |---|---|---|---|
 | 1 | No source selection. The model determines its driver columns. | D088 §9 | Compiler: yes. No availability input exists (signature test). Run: not integrated. |
 | 2 | No fallback source. | D088 §9 ("there is no fallback tier") | Compiler: an authored row never becomes identity (tested). Run: not integrated. |
-| 3 | No horizon inference. | D088 §12.5 | Compiler: no horizon field or input (tested). Binding: not implemented. |
+| 3 | No horizon inference. | D088 §12.5 | Compiler: no horizon field or input (tested). Binding: requested $h$ must equal the world $h$ (Slice 2, tested). |
 | 4 | No target-chart-as-driver-chart substitution. | D088 §2, §3 | Compiler: $\tau$ is taken from the term (tested; mutation-killed) |
 | 5 | Signed loadings are supported. | D088 §2 | Compiler (tested) |
 | 6 | Multiple driver terms are supported. | D088 §2 | Compiler (tested) |
-| 7 | The same driver under two charts gives two distinct terms and two distinct columns. | D088 §4, §6 step 3 | Compiler (tested). Columns: not implemented. |
-| 8 | Aggregation occurs in shock space. | D088 §2, §8 | Not implemented (numerical seam) |
-| 9 | Reconstruction happens after aggregation. | D088 §2, §4 | Not implemented (numerical seam) |
+| 7 | The same driver under two charts gives two distinct terms and two distinct columns. | D088 §4, §6 step 3 | Compiler (tested). Binding and numerical seam (Slice 2, tested). |
+| 8 | Aggregation occurs in shock space. | D088 §2, §8 | Numerical seam (Slice 2, tested); not wired |
+| 9 | Reconstruction happens after aggregation. | D088 §2, §4 | Numerical seam (Slice 2, tested); not wired |
 | 10 | Target reconstruction is target-owned. | D088 §3 | Compiler stores no $\kappa$ (tested) |
-| 11 | The world owns the horizon. | D088 §3, §12.5 | Not implemented |
-| 12 | $(d,\tau,h)$ identifies a world column. | D088 §4 | Not implemented |
+| 11 | The world owns the horizon. | D088 §3, §12.5 | Binding compares the requested and the world $h$ (Slice 2). Worlds declaring $h$ for $(d,\tau,h)$ columns: Slice 3. |
+| 12 | $(d,\tau,h)$ identifies a world column. | D088 §4 | Binding keys (Slice 2, tested). World-side columns: Slice 3. |
 | 13 | Canonicalisation is deterministic. | D088 §6 | Tested (permutations; mutation-killed) |
 | 14 | The digest is over canonical semantics. | D088 §7, §12.1 | Tested |
 | 15 | Native ABS and NO_SHIFT rows remain outside the proxy model. | D088 §1, §12.4 | Tested |
-| 16 | Missing world columns fail fast. | D088 §4, §11 | Not implemented |
+| 16 | Missing world columns fail fast. | D088 §4, §11 | Binding (Slice 2, tested); not wired |
 | 17 | Proxy compilation is independent of scenario count, batch size, valuation and P&L. | D088 §12.1, §12.3 | Tested (signature; import-graph subprocess test) |
 | 18 | As-of resolution precedes canonicalisation. | D088 §6 step 1, §12.2 | Tested (alias and as-of tests) |
 | 19 | EXACT uses coordinates, not tokens. | D088 §8 | Tested (mutation-killed) |
 | 20 | Exact zero is the only zero-elimination criterion. | D088 §6 | Tested (inexact residue kept; mutation-killed) |
 | 21 | `proxy_model_digest` identifies the operator only; it is not $ID_{\text{run}}$. | D088 §13.1 | Identity table (Section 19.3); manifest not yet migrated |
 | 22 | A V1 manifest carrying the proxy digest carries `RunContextIdentity`. | D088 §13.3 | Not implemented (Slice 4) |
-| 23 | The term sum follows ascending canonical order in float64 without reassociation. | D088 §13.5 | Not implemented (Slice 2) |
-| 24 | A NO_SHIFT row outputs $A_0$ and requires no world column. | D088 §13.4 | Not implemented (Slice 2) |
+| 23 | The term sum follows ascending canonical order in float64 without reassociation. | D088 §13.5 | Numerical seam (Slice 2, tested) |
+| 24 | A NO_SHIFT row outputs $A_0$ and requires no world column. | D088 §13.4 | Numerical seam and binding (Slice 2, tested) |
 
 ---
 
@@ -1190,11 +1191,11 @@ Each invariant is **DECISION** unless marked otherwise. The final column gives t
 | Base level $A_0$ | Run-bound base state (`base_levels`) | D088 §3; D081 §1 |
 | Horizon $h$ and step unit | Scenario world | D088 §3 |
 | Concrete $(d,\tau,h)$ column | World | D088 §4 |
-| Term-to-column binding | Run and world seam | D088 §12.5. Not implemented. |
+| Term-to-column binding | Run and world seam | D088 §12.5. Binding function implemented (Slice 2); not wired. |
 | Shock values | World generators | D088 §4 |
 | Level-domain rule for level-backed columns | Generator edge | D025; `shift_domain.py` |
-| Sparse shock aggregation | Numerical proxy application | D088 §2. Not implemented. |
-| Target reconstruction | Numerical application, using $\kappa$ from the run axis | D088 §2, §3. Not implemented for V1. |
+| Sparse shock aggregation | Numerical proxy application | D088 §2. Implemented (Slice 2); not wired. |
+| Target reconstruction | Numerical application, using $\kappa$ from the run axis | D088 §2, §3. Implemented (Slice 2); not wired. |
 | Factor-state admissibility of levels | Market-data producer (`build_market_data_matrix`) | D075; D070 |
 | Valuation | Existing RiskQuant valuation | Unchanged |
 | P&L | Existing risk-run machinery | D081 |
@@ -1219,6 +1220,14 @@ Each invariant is **DECISION** unless marked otherwise. The final column gives t
 
 **FACT.** No module outside these files and their tests imports `riskquant.config.proxy_model` in the current snapshot. The compiler imports no module from `simlab`, `valuation`, `sensitivity_pnl`, `pnl`, `reporting`, `scenario_metrics`, `portfolio`, `proxy_resolver`, `config.proxy_config`, `solutions.risk_run` or `solutions.scenario_models`. This is checked by the subprocess test `test_compiler_imports_no_world_runtime_or_legacy_module`.
 
+### 24.1a Implemented (Slice 2; not wired into the production run)
+
+| Path | Owns |
+|---|---|
+| `src/riskquant/simlab/shocks/column_binding.py` | `bind_term_columns`: integer-key binding $(d,\tau)$ plus the world horizon to column indices; horizon equality; missing and duplicate keys rejected; NO_SHIFT never requested |
+| `src/riskquant/simlab/shocks/linear_term_apply.py` | `apply_linear_terms_to_base_levels`: edge validation of the Section 26 contract, then the kernel call with zero-copy read-only views |
+| `src/riskquant/simlab/shocks/linear_term_kernel.py` | `_kernel_apply_linear_terms`: term aggregation and reconstruction under `stable_math_parallel_njit` |
+
 ### 24.2 Conceptual architecture and mapping
 
 ```text
@@ -1231,10 +1240,10 @@ proxy compiler                                        implemented: compile.py, c
 CompiledProxyModel  -> hash_proxy_model              implemented: compiled.py, hashing.py
     |
     v
-world-column binding  (d, tau) x h -> c              NOT IMPLEMENTED; no module exists
+world-column binding  (d, tau) x h -> c              IMPLEMENTED (Slice 2): column_binding.py; not wired
     |
     v
-numerical sparse operator + reconstruction           NOT IMPLEMENTED for V1; no module exists
+numerical sparse operator + reconstruction           IMPLEMENTED (Slice 2): linear_term_apply.py, linear_term_kernel.py; not wired
     |                                                 (legacy: simlab/shocks/apply.py, shock_kernel.py)
     v
 existing level path: build_market_data_matrix_from_flat_levels (market_data/assemble.py)
@@ -1272,11 +1281,11 @@ CompiledProxyModel
         |                                     proxy_model_digest = hash_proxy_model(model)
         v
 world h                                       (declared by the scenario world)
-    (EUA_EUR, LOG, h) -> column 17            (binding: not implemented)
+    (EUA_EUR, LOG, h) -> column 17            (binding: Slice 2 function; worlds supply (d, tau, h) in Slice 3)
     (CER_EUR, LOG, h) -> column 28
         |
         v
-aggregation per scenario b                    (numerical seam: not implemented)
+aggregation per scenario b                    (numerical seam: Slice 2; not wired)
     X_VER[b] = 0.7 * Y[b, 17] + 0.3 * Y[b, 28]
         |
         v
@@ -1298,7 +1307,7 @@ P&L is formed per D081. Reporting FX conversion is applied per D085. VaR and ES 
 
 ## 26. Numerical application
 
-The V1 numerical seam is **not implemented**. Its contract is closed (**DECISION**, D088 §13.4 to §13.6). Slice 2 implements it.
+The V1 numerical seam is implemented by Slice 2 (`linear_term_apply.py`, `linear_term_kernel.py`) and is not wired into the production run. Its contract is closed (**DECISION**, D088 §13.4 to §13.6).
 
 ### 26.1 Aggregation
 
@@ -1340,14 +1349,14 @@ The sum is evaluated in ascending canonical term index $t$. Reconstruction appli
 | Input | Owner |
 |---|---|
 | Base levels $A_0$, float64 `(N,)` | Run-bound base state (D088 §3) |
-| Row offsets, term column indices $c_t$, term loadings $\beta_t$ | Compiled model plus binding (Slice 3) |
+| Row offsets, term column indices $c_t$, term loadings $\beta_t$ | Compiled model plus binding (`bind_term_columns`, Slice 2); world-side column production is Slice 3 |
 | Reconstruction ids $\kappa_n$ | Run axis (D088 §3) |
 | Shock matrix $Y$ | World (Slice 3) |
 | Output buffer `(N, B)` float64 | Allocated at the edge |
 
 Offsets, column indices, dtypes and layouts are validated at the numerical edge, before the kernel. The kernel performs no semantic resolution. D041 batch invariance applies: the result is bitwise invariant to `batch_size` within one execution environment (Section 26.6).
 
-**Not yet specified.** Whether the V1 output keeps the legacy `(N, B)` C-contiguous layout. The legacy apply contract uses it (`shock_kernel.py`).
+**FACT (Slice 2).** The implemented output is `(N, B)` float64, C-contiguous, the same layout as the legacy apply contract (`shock_kernel.py`).
 
 ### 26.6 Oracle tolerance policy
 
@@ -1376,10 +1385,10 @@ Offsets, column indices, dtypes and layouts are validated at the numerical edge,
 | Run axis not a 1-D int32 array, has duplicates, is out of range, or contains unoccupied `rf_id`s | Compiler | `TypeError`, `ValueError`, `ConfigurationError` | Implemented, tested |
 | `as_of_date` not a `date` (`datetime` and `str` are rejected) | Compiler | `TypeError` | Implemented, tested |
 | Non-canonical compiled arrays | `CompiledProxyModel` construction | `TypeError`, `ValueError` | Implemented, tested |
-| Missing world column $(d,\tau,h)$ | Run and world seam | Rejected before numerics (D088 §11) | **Not implemented** |
-| Requested $h$ differs from the world's declared $h$ | Generator | Rejected (D088 §12.5) | **Not implemented** |
-| Invalid column index; malformed numerical input | Numerical application edge | Rejected before the kernel (CLAUDE.md §4; D088 §13.5) | **Not implemented** |
-| Zero-term row with $\kappa\neq\text{NO\_SHIFT}$ | Numerical application edge | Rejected (D088 §13.5) | **Not implemented** |
+| Missing world column $(d,\tau,h)$ | Run and world seam | Rejected before numerics (D088 §11) | Binding function implemented and tested (Slice 2); not wired |
+| Requested $h$ differs from the world's declared $h$ | Generator | Rejected (D088 §12.5) | Binding function rejects it (Slice 2); generator-side validation is Slice 3 |
+| Invalid column index; malformed numerical input | Numerical application edge | Rejected before the kernel (CLAUDE.md §4; D088 §13.5) | Implemented and tested (Slice 2) |
+| Zero-term row with $\kappa\neq\text{NO\_SHIFT}$ | Numerical application edge | Rejected (D088 §13.5) | Implemented and tested (Slice 2) |
 | Level-backed column outside its chart's level domain | Generator edge | Existing `validate_shift_domain` (D025) | Exists (legacy path) |
 | Reconstructed level inadmissible for its factor | Market-data producer | Existing D075 guard | Exists |
 
@@ -1541,8 +1550,8 @@ This document does not select either reading. The compiler accepts whatever axis
 | Identity and digest | D088 §7 | Digest equality if and only if canonical bit equality (15 variants); the one-ULP rule; pinned encoding; $\kappa$ not in the digest; as-of sensitivity | 11 tests in `tests/config/proxy_model/test_proxy_model_identity.py` |
 | Target chart versus driver chart | D088 §2, §3 | LOG target ← DIFF spread: a closed-form oracle on the compiled term ($71.4141$ against $70.6276$) | Tested |
 | Two charts on one driver | D088 §4 | Two distinct terms | Tested |
-| Numerical application | Aggregation before reconstruction; canonical order; negative loadings; precision; NO_SHIFT and ABS rows; batch and thread invariance (D041) | D088 §11 oracles under the Section 26.6 tolerance; bitwise kernel-to-kernel determinism | Not written (Slice 2) |
-| World binding | Missing column; horizon mismatch; key $(d,\tau,h)$ | D088 §11: "missing column rejected before numerics"; parametric keying | Not written (Slice 3) |
+| Numerical application | Aggregation before reconstruction; canonical order; negative loadings; precision; NO_SHIFT and ABS rows; batch and thread invariance (D041) | D088 §11 oracles under the Section 26.6 tolerance; bitwise kernel-to-kernel determinism | Written (Slice 2): `tests/simlab/shocks/test_linear_term_application.py`. The thread-count test skips when only one Numba thread is available. |
+| World binding | Missing column; horizon mismatch; key $(d,\tau,h)$ | D088 §11: "missing column rejected before numerics"; parametric keying | Binding function: written (Slice 2), `tests/simlab/shocks/test_column_binding.py`. World-side and parametric keying: Slice 3. |
 | Integration | Run identity uses `proxy_model_digest`; D019 goldens as the LOG/LOG special case | Release certification | Not written (Slice 4) |
 
 **EXECUTED (mutation run, Slice 1 delivery, scratch copy).** 14 deliberate defects were introduced. The suite detected 11. The 3 undetected mutants are output-equivalent:
@@ -1586,8 +1595,8 @@ The detected defects included:
 | Digest function | Implemented | `hashing.py::hash_proxy_model`; 11 tests |
 | Digest in the run manifest (`ShockIdentity`) | Not implemented | `run_identity/schemas.py` keeps the three legacy fields |
 | Slice 2 numerical contract | Closed | D088 §13.4 to §13.6; Section 26 |
-| Numerical seam | Not implemented | No V1 module exists. Legacy `apply.py` and `shock_kernel.py` are unchanged. |
-| World binding | Not implemented | No module exists |
+| Numerical seam | Implemented (Slice 2), independently validated, not wired | `linear_term_apply.py`, `linear_term_kernel.py`. Legacy `apply.py` and `shock_kernel.py` are unchanged. |
+| World binding | Binding function implemented (Slice 2), not wired | `column_binding.py`. Worlds do not yet supply $(d,\tau,h)$ columns (Slice 3). |
 | Generator integration (column requests) | Not implemented | `iter_batches` keeps the legacy signature. `ScenarioSetBatch` keeps the legacy fields. |
 | Parametric keyed columns | Not implemented | `ParametricRiskData` is factor-keyed |
 | Production risk-run integration | Not implemented | `run_scenario_var_es` takes `source_factor_ids` and `shock_scale` |
@@ -1646,8 +1655,8 @@ Structure only. Function names are not specified.
 | Slice | Input | Output | Ownership | Acceptance criterion | Must not modify |
 |---|---|---|---|---|---|
 | 1 (closed) | Authored records, static configuration, as-of, run axis | `CompiledProxyModel`; `hash_proxy_model` | Proxy compiler; run identity (function) | Sections 22, 34 | Legacy path |
-| 2 | Canonical rows with bound column indices; $\kappa$ per row; base levels; shock batch; output buffer | Scenario levels | Numerical application (kernel plus edge validation) | Section 26 contract (D088 §13.4 to §13.6); D088 §11 oracles under the Section 26.6 tolerance; D041 batch invariance | The legacy `apply_shocks_to_base_levels` path, which production uses until the switch |
-| 3 | Model $(d,\tau)$ pairs; world declaration ($h$, step unit); native D025 keys | World-column requests $(d,\tau,h)$; column batches; binding $(d,\tau,h)\to c$ | Run and world seam; generators | D026 F7, D034, D036 and D087 status notes: missing column rejected; $h$ mismatch rejected; parametric keying | Proxy compilation; valuation |
+| 2 (implemented, validated) | Canonical rows with bound column indices; $\kappa$ per row; base levels; shock batch; output buffer | Scenario levels; integer-key binding function | Numerical application (kernel plus edge validation); `bind_term_columns` | Section 26 contract (D088 §13.4 to §13.6); D088 §11 oracles under the Section 26.6 tolerance; D041 batch invariance | The legacy `apply_shocks_to_base_levels` path, which production uses until the switch |
+| 3 | Model $(d,\tau)$ pairs; world declaration ($h$, step unit); native D025 keys | World-column requests $(d,\tau,h)$; column batches keyed $(d,\tau,h)$; parametric representation and step unit; use of the Slice 2 binding with real worlds | Run and world seam; generators | D026 F7, D034, D036 and D087 status notes: missing column rejected; $h$ mismatch rejected; parametric keying | Proxy compilation; valuation |
 | 4 | Compiled model; world; axis | `run_scenario_var_es` on V1 inputs; the `ShockIdentity` section carries only `proxy_model_digest` and `RunContextIdentity` is mandatory (D088 §13.3); tier-1 precedence removed | Production run | D040, D082 clause 11 and D085 clause 8 status notes; D088 §13.3 (manifest must carry `RunContextIdentity`); decision on reporting-only FX rows (D088 §13.8(a)) | Valuation, P&L and reporting semantics |
 | Certification | Complete V1 path | Regression, determinism and release evidence | Release process | D041; D019 goldens as the LOG/LOG special case (tolerance **OPEN**); D088 §11 | |
 | Atomic switch | Certified V1 path | Legacy production behaviour replaced | Production run | Section 38 | |
@@ -1660,7 +1669,7 @@ Structure only. Function names are not specified.
 
 * **Untouched now.** The legacy configuration, resolver, shock universe keying, batch fields, apply kernel, `run_scenario_var_es` inputs and legacy `ShockIdentity`. Production runs use them.
 * **Legacy code does not define V1.** D088 supersedes D013. The status notes in D026 F7, D034, D036, D040, D082 clause 11, D085 clause 8 and D087 clause 2 mark the conflicting legacy requirements as no longer authoritative. The legacy code remains as the executing implementation only.
-* **Coexistence.** The Slice 1 compiler is additive and unwired. Slice 2 can also be added unwired. The generator seam and batch contract are shared by the legacy production paths, so changing them (Slice 3) and switching the run (Slice 4) break the legacy path at the same time. **RATIONALE:** they belong in one atomic switch.
+* **Coexistence.** The Slice 1 compiler and the Slice 2 numerical seam and binding are additive and unwired. The generator seam and batch contract are shared by the legacy production paths, so changing them (Slice 3) and switching the run (Slice 4) break the legacy path at the same time. **RATIONALE:** they belong in one atomic switch.
 * **Atomic switch.** After the switch, production reads only the V1 path:
   * the resolver, `ProxyTopology`, `ProxyResolution`, the legacy batch fields and the legacy `ShockIdentity` are no longer used;
   * the legacy canonical proxy fixture rows are migrated (explicit $\tau$; the POWER_CH_BASELOAD_HY ← CO2_EUA_ANNUAL_FWD row is not expressible by EXACT);
