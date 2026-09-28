@@ -338,6 +338,114 @@ def test_exact_pairs_by_resolved_coordinate_not_token(extended_static_config):
         _compile(cfg, [term], _axis(cfg, "TEST_ANCHOR2_FWD[M+3]"))
 
 
+def _surface_points(cfg, surface_name: str) -> dict[tuple[str, str], int]:
+    """(x token, y label) -> rf_id for one surface, read from static metadata."""
+    surface_id = int(cfg.container_name_to_id[surface_name])
+    return {
+        (p.x_tenor_token, p.y_label): int(p.rf_id)
+        for p in cfg.surface_point_meta_dict.values()
+        if p.surface_id == surface_id
+    }
+
+
+def test_surface_self_exact_maps_every_point_to_itself(extended_static_config):
+    # Surface branch of EXACT: coordinate kind (x_axis_kind, y_axis_kind) and
+    # resolved coordinate (x suffix plus [y_label]) are equal by construction.
+    cfg = extended_static_config
+    points = _surface_points(cfg, "BRENT_CRUDE_VOL_SURF")
+    axis = np.array(sorted(points.values()), dtype=np.int32)
+    model = _compile(
+        cfg,
+        [
+            ContainerProxyTerm(
+                target_container_name="BRENT_CRUDE_VOL_SURF",
+                driver_container_name="BRENT_CRUDE_VOL_SURF",
+                driver_chart=LOG,
+                loading=0.5,
+            )
+        ],
+        axis,
+    )
+    np.testing.assert_array_equal(model.row_target_rf_ids, axis)
+    np.testing.assert_array_equal(model.term_driver_rf_ids, axis)
+    np.testing.assert_array_equal(model.term_chart_ids, np.full(axis.shape, int(LOG)))
+    assert model.term_loadings.tolist() == [0.5] * axis.shape[0]
+
+
+def test_surface_exact_pairs_by_resolved_coordinate_and_label(extended_static_config):
+    # TEST_ANCHOR2_VOL_SURF copies BRENT_CRUDE_VOL_SURF with anchor 2 against
+    # BRENT's anchor 1 (both CALENDAR_PERIOD, OFFSET_M / STRIKE). Hand oracle:
+    # TEST [M+k][K] and BRENT [M+(k+1)][K] resolve to the same delivery month
+    # and the same strike label.
+    cfg = extended_static_config
+    target = _surface_points(cfg, "TEST_ANCHOR2_VOL_SURF")
+    driver = _surface_points(cfg, "BRENT_CRUDE_VOL_SURF")
+    expected: dict[int, int] = {}
+    for (token, label), rf in target.items():
+        k = int(token[3:-1])  # "[M+k]"
+        match = driver.get((f"[M+{k + 1}]", label))
+        if match is not None:
+            expected[rf] = match
+    assert expected, "fixture must contain at least one EXACT surface pair"
+    assert any(t != d for t, d in expected.items())
+    axis = np.array(sorted(expected), dtype=np.int32)
+    model = _compile(
+        cfg,
+        [
+            ContainerProxyTerm(
+                target_container_name="TEST_ANCHOR2_VOL_SURF",
+                driver_container_name="BRENT_CRUDE_VOL_SURF",
+                driver_chart=LOG,
+                loading=1.0,
+            )
+        ],
+        axis,
+    )
+    np.testing.assert_array_equal(model.row_target_rf_ids, axis)
+    np.testing.assert_array_equal(
+        model.term_driver_rf_ids, [expected[int(rf)] for rf in axis]
+    )
+    # Equal tokens are not equal coordinates: the same-token driver is never used.
+    same_token = {rf: driver[key] for key, rf in target.items() if key in driver}
+    assert all(
+        int(d) != same_token[int(t)]
+        for t, d in zip(model.row_target_rf_ids, model.term_driver_rf_ids)
+        if int(t) in same_token
+    )
+
+
+@pytest.mark.parametrize(
+    ("target", "driver"),
+    [
+        # (OFFSET_M, STRIKE) against (LABEL, DELTA_CALL): both kinds differ.
+        ("BRENT_CRUDE_VOL_SURF", "USDEUR_VOL_SURF"),
+        # (LABEL, DELTA_CALL) against (LABEL, LOG_MONEYNESS_FWD): only the
+        # y-axis kind differs, so the y kind must take part in the comparison.
+        ("USDEUR_VOL_SURF", "AAPL_VOL_SURF"),
+        # A surface against a curve: different topology.
+        ("BRENT_CRUDE_VOL_SURF", "WTI_CRUDE_FWD"),
+    ],
+)
+def test_surface_exact_rejects_unequal_surface_kinds(
+    extended_static_config, target, driver
+):
+    cfg = extended_static_config
+    axis = np.array(sorted(_surface_points(cfg, target).values())[:1], dtype=np.int32)
+    with pytest.raises(ConfigurationError, match="coordinate kinds"):
+        _compile(
+            cfg,
+            [
+                ContainerProxyTerm(
+                    target_container_name=target,
+                    driver_container_name=driver,
+                    driver_chart=LOG,
+                    loading=1.0,
+                )
+            ],
+            axis,
+        )
+
+
 def test_container_shorthand_equals_explicit_expansion(extended_static_config):
     cfg = extended_static_config
     tokens = ("M+0", "M+1", "M+2", "M+3", "M+6", "M+12")

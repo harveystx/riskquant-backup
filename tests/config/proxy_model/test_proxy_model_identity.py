@@ -117,7 +117,15 @@ def _variants(cfg):
             _node(wti, henry, LOG, float(np.nextafter(0.3, 1.0))),
             _node(wti, henry, LOG, -float(np.nextafter(0.3, 1.0))),
         ],
-        "split_exact": [_node(wti, brent, LOG, 0.5), _node(wti, brent, LOG, 0.45)],
+        # 0.45 + 0.5 is not exact: it rounds (half-ULP tie, round-to-even) to
+        # the binary64 value of the literal 0.95.
+        "split_rounds_to_0_95": [
+            _node(wti, brent, LOG, 0.5),
+            _node(wti, brent, LOG, 0.45),
+        ],
+        # 0.3 + 0.2 is exact: the rational sum of the two doubles is 0.5.
+        "split_exact": [_node(wti, brent, LOG, 0.3), _node(wti, brent, LOG, 0.2)],
+        "authored_0_5": [_node(wti, brent, LOG, 0.5)],
         "split_inexact": [_node(wti, brent, LOG, 0.1), _node(wti, brent, LOG, 0.2)],
         "authored_0_3": [_node(wti, brent, LOG, 0.3)],
         "other_chart": [_node(wti, brent, DIFF, 0.95)],
@@ -154,8 +162,12 @@ def test_real_equivalence_is_not_identity(extended_static_config):
     cfg = extended_static_config
     axis, variants = _variants(cfg)
     h = {k: hash_proxy_model(_compile(cfg, v, axis)) for k, v in variants.items()}
-    assert 0.5 + 0.45 == 0.95  # exact in binary64: merges to authored 0.95
-    assert h["split_exact"] == h["base"]
+    # Rounded, not exact, but the binary64 result equals the literal 0.95.
+    assert 0.5 + 0.45 == 0.95
+    assert h["split_rounds_to_0_95"] == h["base"]
+    # Exact: the rational sum of the doubles 0.3 and 0.2 is 0.5.
+    assert 0.3 + 0.2 == 0.5
+    assert h["split_exact"] == h["authored_0_5"]
     assert 0.1 + 0.2 != 0.3  # one ULP apart in binary64
     assert h["split_inexact"] != h["authored_0_3"]
 

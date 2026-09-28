@@ -15,6 +15,10 @@ It adds exactly what the canonical fixture cannot express, and nothing else:
 * ``TEST_ANCHOR2_FWD`` (rf 16000-16003): OFFSET_M / CALENDAR_PERIOD with
   anchor 2 against BRENT's anchor 1, so equal tokens denote different
   delivery months.
+* ``TEST_ANCHOR2_VOL_SURF`` (surface 500_003_000, rf 400000+): a copy of
+  ``BRENT_CRUDE_VOL_SURF`` (OFFSET_M / STRIKE) with anchor 2 against BRENT's
+  anchor 1, so equal x tokens denote different delivery months while the
+  strike labels are shared. It exercises surface EXACT across two surfaces.
 * ``AAPL_EQ`` reconfigured to ABSOLUTE_BASE_RETURN and ``AAPL_ATM_VOL`` to
   NO_SHIFT, the two native (non-V1) shift types of D025.
 
@@ -108,7 +112,25 @@ def build_extended_static_config(
         .otherwise(pl.col("shift_type"))
         .alias("shift_type")
     )
+    sm = CANONICAL_DFS["surface_meta"]
+    sp = CANONICAL_DFS["surface_point_meta"]
+    brent_surface = sm.filter(pl.col("surface_name") == "BRENT_CRUDE_VOL_SURF")
+    brent_surface_id = int(brent_surface["surface_id"][0])
+    anchor2_surface = brent_surface.with_columns(
+        pl.lit(500_003_000).cast(sm.schema["surface_id"]).alias("surface_id"),
+        pl.lit("TEST_ANCHOR2_VOL_SURF").alias("surface_name"),
+        pl.lit(2).cast(sm.schema["anchor_offset"]).alias("anchor_offset"),
+    )
+    brent_points = sp.filter(pl.col("surface_id") == brent_surface_id).sort("rf_id")
+    anchor2_points = brent_points.with_columns(
+        (pl.int_range(pl.len()) + 400_000).cast(sp.schema["rf_id"]).alias("rf_id"),
+        pl.lit(500_003_000).cast(sp.schema["surface_id"]).alias("surface_id"),
+    )
     tables = dict(CANONICAL_DFS)
+    tables["surface_meta"] = pl.concat([sm, anchor2_surface], how="vertical_relaxed")
+    tables["surface_point_meta"] = pl.concat(
+        [sp, anchor2_points], how="vertical_relaxed"
+    )
     tables["curve_meta"] = curves
     tables["curve_point_meta"] = pl.concat([cp, points], how="vertical_relaxed")
     tables["node_meta"] = nodes
