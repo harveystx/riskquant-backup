@@ -350,3 +350,25 @@ def test_a_matching_crisis_multiplier_form_runs_once(
     )
     assert built == [1]
     assert run.manifest.scenario_config["distribution"]["crisis_vol_multipliers"] == mult
+
+
+@pytest.mark.parametrize(
+    ("mutated", "with_vector"),
+    [([2.0, 3.0, 5.0], False), ("PER_FACTOR", True), (0.0, False)],
+    ids=["stale_list", "wrong_case_declaration", "zero"],
+)
+def test_a_config_mutated_after_validation_fails_before_the_manifest(
+    monkeypatch, mutated: Any, with_vector: bool
+) -> None:
+    """F1: the validated config object is mutable; the run-level D092 gate must
+    reject the mutated state before any manifest exists."""
+    built = _manifest_spy(monkeypatch)
+    w = _world()
+    ids = list(w.axis.factor_ids)
+    cfg = _regime_cfg(2.0)
+    cfg.distribution.crisis_vol_multipliers = mutated
+    data = _data_with_vector(ids) if with_vector else _data(ids)
+    kw = w.inputs(scenario_config=cfg, data=data, batch_size=7)
+    with pytest.raises(ValueError, match="D092"):
+        run_scenario_var_es(**kw)
+    assert built == []

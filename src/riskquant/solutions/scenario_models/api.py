@@ -11,6 +11,7 @@ arguments; a config paired with the wrong data type fails fast here.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from typing import Any
 
@@ -186,13 +187,22 @@ def resolve_parametric_crisis_multipliers(
             )
         return None
     declared = dist.crisis_vol_multipliers
-    if isinstance(declared, str):  # the only admissible string: "per_factor"
+    # The configuration object is mutable after validation, so the gate re-checks
+    # the two admissible runtime states itself rather than trusting the schema.
+    if type(declared) is str and declared == PER_FACTOR_CRISIS_MULTIPLIERS:
         if vector is None:
             raise ValueError(
                 f"Crisis multiplier mismatch (D092): {PER_FACTOR_CRISIS_MULTIPLIERS!r} "
                 "requires ParametricRiskData.crisis_vol_multipliers."
             )
         return vector
+    if type(declared) is not float or not math.isfinite(declared) or declared <= 0.0:
+        raise ValueError(
+            "Crisis multiplier form invalid (D092): crisis_vol_multipliers must be a "
+            "finite, strictly positive float or "
+            f"{PER_FACTOR_CRISIS_MULTIPLIERS!r}; got {declared!r} "
+            f"({type(declared).__name__})."
+        )
     if vector is not None:
         raise ValueError(
             "Crisis multiplier mismatch (D092): a scalar crisis_vol_multipliers "

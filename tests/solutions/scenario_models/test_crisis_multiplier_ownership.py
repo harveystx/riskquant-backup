@@ -320,3 +320,58 @@ def test_dataclass_copies_keep_the_vector_aligned() -> None:
     copy = dataclasses.replace(_data(m))
     assert copy.crisis_vol_multipliers is m
     assert copy.factor_ids.tolist() == [4, 7, 9]
+
+
+# ---- F1: the gate re-checks the runtime state of a mutable, validated config -------------
+
+
+@pytest.mark.parametrize(
+    ("mutated", "with_vector"),
+    [
+        ([2.0, 3.0, 5.0], False),  # stale list form, no data vector
+        ([2.0, 3.0, 5.0], True),
+        ("PER_FACTOR", True),  # wrong-case declaration with a data vector
+        ("PER_FACTOR", False),
+        ("per-factor", True),
+        (0.0, False),
+        (-1.0, False),
+        (float("nan"), False),
+        (float("inf"), False),
+        (True, False),
+        (2, False),  # int, not float
+        (np.float64(2.0), False),  # NumPy scalar, not a Python float
+        (None, False),
+    ],
+)
+def test_the_gate_rejects_a_config_mutated_after_validation(
+    mutated: Any, with_vector: bool
+) -> None:
+    cfg = parse_scenario_model_config(_regime(2.0))
+    cfg.distribution.crisis_vol_multipliers = mutated  # bypasses the schema
+    data = _data(np.array([2.0, 1.5, 3.0])) if with_vector else _data()
+    with pytest.raises(ValueError, match="D092"):
+        resolve_parametric_crisis_multipliers(cfg, data)
+    with pytest.raises(ValueError, match="D092"):
+        build_scenario_generator(cfg, data=data)
+
+
+def test_a_mutation_to_another_admissible_state_is_judged_on_that_state() -> None:
+    """The gate re-validates the current state; it does not reject mutation as such."""
+    m = np.array([2.0, 1.5, 3.0])
+    cfg = parse_scenario_model_config(_regime(2.0))
+    cfg.distribution.crisis_vol_multipliers = "per_factor"
+    assert resolve_parametric_crisis_multipliers(cfg, _data(m)) is m
+    cfg.distribution.crisis_vol_multipliers = 2.5
+    assert resolve_parametric_crisis_multipliers(cfg, _data()) == 2.5
+
+
+# ---- F2: multiplier order is part of DataIdentity ------------------------------------------
+
+
+def test_permuting_the_multiplier_vector_changes_the_data_identity() -> None:
+    """Identical factor_ids, L, sigma, period and charts; only the multiplier
+    order differs. Fails if the vector is sorted or canonicalised before hashing."""
+    data_a = _data(np.array([2.0, 3.0, 5.0]))
+    data_b = _data(np.array([5.0, 3.0, 2.0]))
+    assert data_a.factor_ids.tolist() == data_b.factor_ids.tolist()
+    assert hash_parametric_risk_data(data_a) != hash_parametric_risk_data(data_b)
