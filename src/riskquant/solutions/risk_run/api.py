@@ -112,6 +112,16 @@ from riskquant.universe import UixMapper
 from riskquant.utils.business_days import ord_to_date
 from riskquant.valuation.engine import run_valuation
 
+
+from riskquant.solutions.scenario_models.api import (
+    build_scenario_generator,
+    resolve_parametric_binding_horizon,
+)
+from riskquant.solutions.scenario_models.schemas import (
+    ParametricGeneratorConfig,
+    ScenarioModelConfig,
+)
+
 __all__ = ["derive_run_factor_axis", "run_scenario_var_es"]
 
 
@@ -869,6 +879,11 @@ def run_scenario_var_es(
         raise ValueError(f"batch_size must be positive, got {batch_size}.")
     # The VaR/ES owner's own domain check, run before identity and numerics.
     _validate_confidence_level(confidence_level)
+    # D090: a parametric world's requested and effective forecast periods must
+    # be equal before the run is accepted, identified or computed. The reduced
+    # h = count(H_W) is the only horizon the (d, τ, h) binder will receive.
+    if isinstance(scenario_config, ParametricGeneratorConfig):
+        resolve_parametric_binding_horizon(scenario_config, data)
     reproducible = _is_reproducible(scenario_config)
     if mode == "reproducible" and not reproducible:
         raise NonReproducibleRunError(

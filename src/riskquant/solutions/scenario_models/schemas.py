@@ -32,6 +32,10 @@ from pydantic import (
 )
 
 from riskquant.constants import EWMA_DECAY_FACTOR, MAX_EWMA_VOL_RATIO
+from riskquant.simlab.scenarios.parametric_data import (
+    FORECAST_PERIOD_COUNT_MAX,
+    ForecastPeriodUnit,
+)
 
 _STRICT = ConfigDict(extra="forbid", protected_namespaces=())
 
@@ -306,13 +310,46 @@ ParametricDistributionConfig = Annotated[
 ]
 
 
+class ForecastPeriodConfig(BaseModel):
+    """
+    The requested forecast period of a parametric world (D090):
+    ``(count, unit)`` with ``count > 0`` and, in V1, ``unit = "BUSINESS_DAY"``.
+
+    It is the period of the direct parametric law, not an observation count,
+    lookback or number of simulation steps. The unit name is checked against
+    ``ForecastPeriodUnit``, the single definition of the vocabulary; no other
+    unit, no default and no conversion exist.
+    """
+
+    model_config = _STRICT
+
+    count: StrictInt = Field(
+        gt=0,
+        le=FORECAST_PERIOD_COUNT_MAX,
+        description="number of forecast-period steps; hashed as int64.",
+    )
+    unit: str = Field(description="forecast-period unit name (V1: BUSINESS_DAY).")
+
+    @field_validator("unit", mode="before")
+    @classmethod
+    def _known_unit(cls, v: object) -> object:
+        if not isinstance(v, str) or v not in ForecastPeriodUnit.__members__:
+            raise ValueError(
+                f"forecast_horizon.unit must be one of "
+                f"{tuple(ForecastPeriodUnit.__members__)}; got {v!r}."
+            )
+        return v
+
+
 class ParametricGeneratorConfig(BaseModel):
     """
     Selects the parametric Monte-Carlo model. Common config (``total_scenarios``,
-    ``seed``) plus a nested distribution variant. The numerical construction data
-    (factor ids, Cholesky, vols) is NOT here — it is supplied at build time as a
-    ``ParametricRiskData`` object. The generator's ``__post_init__`` stays
-    authoritative for model/runtime invariants.
+    ``seed``), the requested forecast period (``forecast_horizon``, D090) and a
+    nested distribution variant. The numerical construction data (factor ids,
+    Cholesky, vols, effective period) is NOT here — it is supplied at build time
+    as a ``ParametricRiskData`` object, and the requested and effective periods
+    must be equal. The generator's ``__post_init__`` stays authoritative for
+    model/runtime invariants.
     """
 
     model_config = _STRICT
@@ -328,6 +365,9 @@ class ParametricGeneratorConfig(BaseModel):
             "failure surfaces deep inside the bit generator during iteration rather "
             "than at the solution boundary."
         ),
+    )
+    forecast_horizon: ForecastPeriodConfig = Field(
+        description="requested forecast period H_requested (D090); required."
     )
     distribution: ParametricDistributionConfig
 

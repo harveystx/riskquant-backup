@@ -23,7 +23,10 @@ from riskquant.simlab.scenarios.bootstrap_sbb import StationaryBlockBootstrapGen
 from riskquant.simlab.scenarios.historical import HistoricalGenerator
 from riskquant.simlab.scenarios.historical_fhs import FilteredHistoricalGenerator
 from riskquant.simlab.scenarios.parametric import ParametricGenerator
-from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
+from riskquant.simlab.scenarios.parametric_data import (
+    ForecastPeriodUnit,
+    ParametricRiskData,
+)
 from riskquant.solutions.scenario_models.schemas import (
     FilteredBootstrapGeneratorConfig,
     FilteredHistoricalGeneratorConfig,
@@ -36,7 +39,11 @@ from riskquant.solutions.scenario_models.schemas import (
     VarianceGammaDistribution,
 )
 
-__all__ = ["build_scenario_generator", "parse_scenario_model_config"]
+__all__ = [
+    "build_scenario_generator",
+    "parse_scenario_model_config",
+    "resolve_parametric_binding_horizon",
+]
 
 # The typed construction-data object required to build a generator. Each config
 # is paired with exactly one data type; a mismatch is rejected in build.
@@ -100,6 +107,53 @@ def _build_parametric(
     return ParametricGenerator(**kwargs)
 
 
+def resolve_parametric_binding_horizon(
+    config: ParametricGeneratorConfig, data: ScenarioModelData
+) -> int:
+    """
+    D090 composition gate for a parametric world.
+
+    The requested period (``config.forecast_horizon``) and the effective period
+    declared by the data must be equal: same count and same unit. Equality is
+    exact; no unit or count conversion exists. Only after the check passes is
+    the period reduced to the integer horizon ``h = count(H_W)``, the one value
+    the ``(d, τ, h)`` binder accepts.
+
+    Parameters
+    ----------
+    config
+        The parametric scenario configuration (declares ``H_requested``).
+    data
+        The construction data (declares ``H_effective``); must be
+        ``ParametricRiskData``.
+
+    Returns
+    -------
+    int
+        ``h = count(H_W)``, a plain ``int``.
+
+    Raises
+    ------
+    TypeError
+        ``data`` is not ``ParametricRiskData``.
+    ValueError
+        The requested and effective periods differ.
+    """
+    pdata = _require_parametric_data(data, config)
+    requested = config.forecast_horizon
+    requested_unit = int(ForecastPeriodUnit[requested.unit])
+    effective_count = int(pdata.effective_period_count)
+    effective_unit = int(pdata.effective_period_unit)
+    if requested.count != effective_count or requested_unit != effective_unit:
+        raise ValueError(
+            "Parametric forecast period mismatch (D090): requested "
+            f"({requested.count}, {requested.unit}), effective "
+            f"({effective_count}, unit code {effective_unit}). "
+            "The periods must be equal; no conversion exists."
+        )
+    return requested.count
+
+
 def build_scenario_generator(
     config: ScenarioModelConfig, *, data: ScenarioModelData
 ) -> ScenarioGenerator:
@@ -139,5 +193,8 @@ def build_scenario_generator(
             seed=config.seed,
         )
     if isinstance(config, ParametricGeneratorConfig):
-        return _build_parametric(config, _require_parametric_data(data, config))
+        pdata = _require_parametric_data(data, config)
+        # D090: an independently built generator obeys the same period gate.
+        resolve_parametric_binding_horizon(config, pdata)
+        return _build_parametric(config, pdata)
     raise TypeError(f"Unsupported scenario-model config: {type(config).__name__}")

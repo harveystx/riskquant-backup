@@ -13,7 +13,7 @@
 | Slice 2 (numerical seam and binding function) | Implemented and independently validated; not wired into the production run. `src/riskquant/simlab/shocks/{linear_term_kernel,linear_term_apply,column_binding}.py` implement the closed contract (D088 §13.4 to §13.6; Section 26). |
 | Slice 3 and later | Not started. No world-side production of $(d,\tau,h)$ columns, generator change, parametric representation, production-run integration, certification or atomic switch exists in the current snapshot. |
 | Production proxy behaviour today | The legacy D013 input contract of `run_scenario_var_es` (`required_shift_type_id`, `source_factor_ids`, `shock_scale`). The legacy resolver still exists but has no caller under `src/`. `SimlabRunner` has been removed from the code base (`DECISIONS.md` update notes, 2026-09-28). |
-| Authoritative decisions | D088 including §12 and §13. D088 supersedes D013 and amends, by recorded status notes, D026 F7, D034, D036, D040 (`ShockIdentity`), D082 clause 11, D085 clause 8 and D087 clause 2. D025, D041, D060, D067, D069, D070, D075, D078.4, D081 and D085 are referenced and remain in force. |
+| Authoritative decisions | D088 including §12 and §13; D089 (parametric two-sided horizon contract). D088 supersedes D013 and amends, by recorded status notes, D026 F7, D034, D036, D040 (`ShockIdentity`), D082 clause 11, D085 clause 8 and D087 clause 2. D025, D041, D060, D067, D069, D070, D075, D078.4, D081 and D085 are referenced and remain in force. |
 | Nature of this document | Normative and explanatory. Content labelled DECISION and the rules in Section 41 restate D088. All other content explains D088, the repository and their consequences. If this document and D088 differ, D088 governs. |
 | Repository snapshot | Project context dumps as supplied on 2026-09-28; `DECISIONS.md` containing D088 §12 and §13. |
 
@@ -1423,6 +1423,7 @@ Offsets, column indices, dtypes and layouts are validated at the numerical edge,
 | 19 | A V1 manifest carrying `proxy_model_digest` must carry `RunContextIdentity`. | D088 §13.3 (Slice 4 requirement) | $\kappa_A$ of authored rows is identified only there. | Composition-less V1 manifests are refused. | Two runs differing in $\kappa_A$ sharing one identity |
 | 20 | Slice 2 numerical contract: ascending canonical order, float64 accumulation, `stable_math_parallel_njit`, parallel over rows. | D088 §13.5 | Canonical order must also be the executed order. | Deterministic, batch-invariant term sums | Compiler reassociation; order drift |
 | 21 | NO_SHIFT rows need no world column; ABS rows keep their native column. | D088 §13.4 | $T^{-1}_{\text{NO\_SHIFT}}$ ignores the shock. | Zero-term NO_SHIFT rows | Fake columns; a false world-column invariant |
+| 22 | A parametric world has one horizon, declared as requested (`ParametricGeneratorConfig`) and effective (`ParametricRiskData`); the two must match exactly before identity; the generator performs no temporal/horizon conversion. | D089 | The arrays cannot reveal their period; the run and the data are produced independently. | Mismatch fails before the manifest; n-period parameters give an n-period shock. | Mislabelled pairings; hidden √h or dependence scaling; confusing lookback with horizon |
 
 ---
 
@@ -1511,6 +1512,8 @@ A proxy model declares $(d,\tau)$. A world must supply $(d,\tau,h)$.
 * `ParametricRiskData` is keyed by factor only, with no chart and no horizon.
 
 The D034 and D087 status notes require parametric columns keyed $(d,\tau,h)$, a declared horizon and step unit, and a Case-1 or Case-2 declaration where a world supplies several charts of one node. These are **not implemented**, and their representation is **not yet specified**.
+
+**DECISION (D089).** A parametric world has one forecast horizon $H_W$ with two declarations: the requested horizon in `ParametricGeneratorConfig` (entering `scenario_config` identity) and the effective period of the supplied law in `ParametricRiskData` (entering `DataIdentity`). The run's composition contract checks $H_{\text{requested}}=H_{\text{effective}}$ exactly, before identity, RNG, generation and P&L; a mismatch fails and nothing is converted. The generator performs no temporal/horizon conversion, so weekly parameters give a one-week shock and five-week parameters a five-week shock. The calibration lookback is not the horizon; producing horizon-matched parameters is a calibration concern outside the generator. VaR and ES are both calculated from the P&L distribution generated for $H_W$. The representation of the horizon remains a subsequent decision (D088 §13.8(b)).
 
 ---
 
@@ -1814,6 +1817,7 @@ The legacy mechanism chose one existing column per target, based on configuratio
 **Decision records (`DECISIONS.md`, as attached):**
 
 * D088 including §12 and §13;
+* D089;
 * D013 and its status note;
 * D025;
 * D026 F7 status note;
