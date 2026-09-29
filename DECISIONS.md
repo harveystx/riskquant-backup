@@ -4656,7 +4656,7 @@ PR-06 asked whether the parametric generator's whole-run `(total_scenarios, K_to
 
 **Status:** LOCKED — contract and design FROZEN 2026-09-25
 **Supersedes:** D013 (definition of proxying). **Amends:** D026 F7, D034, D036, D040 `ShockIdentity`, D082 clause 11, D085 clause 8, D087 clause 2, each by the status note recorded in that decision. Unrelated clauses of those decisions remain locked.
-**Implementation status:** NOT IMPLEMENTED. Production code still executes the D013 mechanism (`resolve_required_factor_ids_to_market_data_factor_ids`, `build_shock_universe`, `shock_scale`). This record fixes the contract; conformance of the implementation is the next phase and is not claimed here.
+**Implementation status:** D088 STAGE D COMPLETE (2026-09-29). `run_scenario_var_es` executes Proxy V1: it compiles the authored `proxy_terms` over the full run axis (§13.8(a)), lowers the model onto the axis, binds every `(d, τ)` to the world's `(d, τ, h)` columns before identity and generation, and applies `X_A = Σ β Y` then `T⁻¹_κA` (Slices 1–3). `ShockIdentity` is `proxy_model_digest` (manifest schema v5, SHA-256), and a v5 manifest without `RunContextIdentity` is refused (§13.3). Repository callers (scripts, release certifiers, tests) pass `proxy_terms`; the D013 path (`resolve_required_factor_ids_to_market_data_factor_ids`, `apply_shocks_to_base_levels`, `proxy_config`) is unreachable from production and remains in the repository for Stage E removal, together with the generators' neutral `shock_scale` protocol argument.
 
 ### 1. Scope
 

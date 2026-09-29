@@ -35,8 +35,9 @@ Before the canonical call, a small VALIDATION section hand-verifies the
 wiring: a 3-scenario deterministic shock set (never fed through
 `run_scenario_var_es` -- there is no production model for "these exact
 numbers") drives the same low-level building blocks `run_scenario_var_es`
-composes internally (proxy resolution, `apply_shocks_to_base_levels`,
-`calculator.run`, `compute_var_es`), and every result is checked against an
+composes internally (Proxy V1 compile, lowering, world-column binding,
+`apply_linear_terms_to_base_levels`, `calculator.run`, `compute_var_es`),
+and every result is checked against an
 economic identity computed from FIRST PRINCIPLES, never by calling the
 function under test. This proves the shock/proxy/FX/VaR wiring is correct
 by hand; it is deliberately NOT presented as "how to call RiskQuant" -- that
@@ -53,24 +54,16 @@ import pandas as pd
 import polars as pl
 
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
-from riskquant.proxy_resolver.proxy import (
-    RES_CONTAINER_PROXY,
-    RES_DIRECT,
-    RES_ID_PROXY,
-    RES_NOT_SIMULATED,
-    RES_TENOR_FALLBACK,
-)
 from riskquant.reporting.fx_conversion import (
     build_fx_conversion_plan,
     convert_scenario_pnl_to_reporting_currency,
 )
 from riskquant.scenario_metrics.api.var_es import compute_var_es
-from riskquant.simlab.builder.shock_universe import build_shock_universe
-from riskquant.simlab.scenarios.base import ScenarioSetBatch
-from riskquant.simlab.shocks.apply import (
-    apply_shocks_to_base_levels,
-    validate_apply_shocks_buffers,
-)
+from riskquant.config.proxy_model.compile import compile_proxy_model
+from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID
+from riskquant.simlab.shocks.axis_operator import lower_axis_operator
+from riskquant.simlab.shocks.column_binding import bind_term_columns
+from riskquant.simlab.shocks.linear_term_apply import apply_linear_terms_to_base_levels
 from riskquant.solutions.risk_run.api import run_scenario_var_es
 from riskquant.solutions.risk_run.schemas import RiskRun
 from riskquant.solutions.run_identity.api import InputMismatchError
@@ -107,22 +100,14 @@ _VALIDATION_SHOCKS: tuple[tuple[float, ...], ...] = (
 # exactly integral tail mass.
 _VALIDATION_CONFIDENCE_LEVEL: float = 2.0 / 3.0
 
-_RESOLUTION_CODE_NAMES: dict[int, str] = {
-    int(RES_NOT_SIMULATED): "NOT_SIMULATED",
-    int(RES_DIRECT): "DIRECT",
-    int(RES_TENOR_FALLBACK): "TENOR_FALLBACK",
-    int(RES_ID_PROXY): "ID_PROXY",
-    int(RES_CONTAINER_PROXY): "CONTAINER_PROXY",
-}
-
-
 def _run_validation(fixture: fx.DemoFixture) -> bool:
     """Hand-verify proxy/shock/P&L/reporting-currency/VaR-ES wiring.
 
-    Uses `fixture.shock_universe` (resolved once, shared with the canonical
-    call below) to reconstruct scenario levels for the deterministic
-    3-scenario shock set, then checks the result against economic
-    identities derived independently of the Taylor kernel:
+    Uses `fixture.shock_universe` (the run axis and the authored Proxy V1
+    terms shared with the canonical call below) to reconstruct scenario
+    levels for the deterministic 3-scenario shock set through the D088
+    building blocks, then checks the result against economic identities
+    derived independently of the Taylor kernel:
 
         AAPL   V = Q * S            ->  dV = Q * dS
         WTI    V = Q * S            ->  dV = Q * dS,  S(s) = S0*exp(0.95*BRENT_shock(s))
@@ -149,31 +134,43 @@ def _run_validation(fixture: fx.DemoFixture) -> bool:
     )
     print("---")
 
-    available_factor_ids = np.ascontiguousarray(
+    # The hand-authored shocks are a world of one-day LOG_RETURN columns, one
+    # per source factor, in `_SCENARIO_SOURCE_NAMES` order: keys (d, LOG, 1).
+    world_ids = np.ascontiguousarray(
         [rsc.rel_name_to_rf_id[name] for name in fx._SCENARIO_SOURCE_NAMES],
         dtype=np.int32,
     )
-    shock_uni = build_shock_universe(
-        required_shift_type_id=su.required_shift_type_id,
-        source_factor_ids=su.source_factor_ids,
-        available_factor_ids=available_factor_ids,
+    world_charts = np.full(world_ids.shape[0], SHIFT_LOG_RETURN_ID, dtype=np.int8)
+    operator = lower_axis_operator(
+        model=compile_proxy_model(
+            authored_terms=su.proxy_terms,
+            static_config=rsc,
+            as_of_date=fx._SNAPSHOT_AS_OF_DATE,
+            run_axis_rf_ids=su.required_factor_ids,
+        ),
+        axis_rf_ids=su.required_factor_ids,
+        axis_shift_type_ids=su.required_shift_type_id,
     )
-    batch = ScenarioSetBatch(
-        shocks=raw_shocks,
-        required_to_shock_uix=shock_uni.required_to_shock_uix,
-        shock_scale=su.shock_scale,
-        required_shift_type_id=su.required_shift_type_id,
-        scenario_offset=0,
+    term_column_uix = bind_term_columns(
+        term_driver_rf_ids=operator.term_driver_rf_ids,
+        term_chart_ids=operator.term_chart_ids,
+        requested_horizon=1,
+        world_column_driver_rf_ids=world_ids,
+        world_column_chart_ids=world_charts,
+        world_horizon=1,
     )
     num_scenarios = int(raw_shocks.shape[0])
     shocked_levels = np.empty(
         (su.required_factor_ids.shape[0], num_scenarios), dtype=np.float64, order="C"
     )
-    validate_apply_shocks_buffers(
-        base_levels=su.base_levels, shocks=raw_shocks, out=shocked_levels
-    )
-    apply_shocks_to_base_levels(
-        base_levels=su.base_levels, batch=batch, out=shocked_levels
+    apply_linear_terms_to_base_levels(
+        base_levels=su.base_levels,
+        row_term_offsets=operator.row_term_offsets,
+        term_column_uix=term_column_uix,
+        term_loadings=operator.term_loadings,
+        target_shift_types=operator.target_shift_type_ids,
+        shocks=raw_shocks,
+        out=shocked_levels,
     )
 
     # The Taylor book lives on the run axis's valuation prefix (D082, D085).
@@ -374,8 +371,7 @@ def _run_canonical(fixture: fx.DemoFixture) -> tuple[RiskRun, bool]:
         data=fixture.historical_matrix,
         required_factor_ids=su.required_factor_ids,
         required_shift_type_id=su.required_shift_type_id,
-        source_factor_ids=su.source_factor_ids,
-        shock_scale=su.shock_scale,
+        proxy_terms=su.proxy_terms,
         base_levels=su.base_levels,
         methodology=fixture.methodology,
         valuation_context=fixture.valuation_context,
@@ -405,8 +401,7 @@ def _run_canonical(fixture: fx.DemoFixture) -> tuple[RiskRun, bool]:
         data=fixture.historical_matrix,
         required_factor_ids=su.required_factor_ids,
         required_shift_type_id=su.required_shift_type_id,
-        source_factor_ids=su.source_factor_ids,
-        shock_scale=su.shock_scale,
+        proxy_terms=su.proxy_terms,
         base_levels=su.base_levels,
         methodology=fixture.methodology,
         valuation_context=fixture.valuation_context,
@@ -426,8 +421,7 @@ def _run_canonical(fixture: fx.DemoFixture) -> tuple[RiskRun, bool]:
         data=fixture.historical_matrix,
         required_factor_ids=su.required_factor_ids,
         required_shift_type_id=su.required_shift_type_id,
-        source_factor_ids=su.source_factor_ids,
-        shock_scale=su.shock_scale,
+        proxy_terms=su.proxy_terms,
         base_levels=su.base_levels,
         methodology=fixture.methodology,
         valuation_context=fixture.valuation_context,
@@ -454,8 +448,7 @@ def _run_canonical(fixture: fx.DemoFixture) -> tuple[RiskRun, bool]:
             data=stale_matrix,
             required_factor_ids=su.required_factor_ids,
             required_shift_type_id=su.required_shift_type_id,
-            source_factor_ids=su.source_factor_ids,
-            shock_scale=su.shock_scale,
+            proxy_terms=su.proxy_terms,
             base_levels=su.base_levels,
             methodology=fixture.methodology,
             valuation_context=fixture.valuation_context,

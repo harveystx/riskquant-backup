@@ -7,16 +7,16 @@ requires, once:
 
     static source tables
         -> validate -> compile RiskStaticConfig
-        -> proxy source table -> validate -> compile ProxyTopology
+        -> authored Proxy V1 terms (D088; compiled by the run over its axis)
         -> positions (human-readable edge) -> ingest -> CompiledPortfolio
         -> risk-factor level snapshot (name -> rf_id resolved once, at the edge)
         -> market-data assembly -> pricing (MTM) -> trade sensitivities
         -> canonical `solutions.sensitivity_pnl` book (SensitivityPnlCalculator)
         -> the canonical run axis (`derive_run_factor_axis`: valuation
-           universe, then any reporting-only FX factor) and its shock universe
-           (required_factor_ids, required_shift_type_id, source_factor_ids,
-           shock_scale, base_levels) via the ONE proxy resolution call every
-           scenario model downstream shares
+           universe, then any reporting-only FX factor) and the run inputs
+           bound to it (required_factor_ids, required_shift_type_id,
+           base_levels) with the authored proxy terms every scenario model
+           downstream shares
         -> construction data for each scenario-model family
            (RiskFactorMatrix for Historical/SBB/FilteredHistorical/
            FilteredBootstrap; ParametricRiskData for Parametric)
@@ -47,9 +47,7 @@ import pandas as pd
 import polars as pl
 
 from riskquant.config.enums.discounting_modes import DiscountingMode
-from riskquant.config.proxy_config.audit import audit_proxy_topology
-from riskquant.config.proxy_config.compile import compile_proxy_topology_from_df
-from riskquant.config.proxy_config.proxy_topology import ProxyTopology
+from riskquant.config.proxy_model.schema_objects import NodeProxyTerm
 from riskquant.config.static_config.audit import audit_risk_static_config
 from riskquant.config.static_config.compile import (
     compile_risk_static_config_from_dict_of_dfs,
@@ -77,11 +75,12 @@ from riskquant.portfolio.engine import (
 )
 from riskquant.portfolio.ingest.batch import IngestBatch
 from riskquant.portfolio.ingest.pipeline import compile_raw_df_into_ingest_batch
-from riskquant.proxy_resolver.proxy import (
-    resolve_required_factor_ids_to_market_data_factor_ids,
-)
 from riskquant.sensitivities.engine import run_sensitivities
-from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
+from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID, ShiftType
+from riskquant.simlab.scenarios.parametric_data import (
+    FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+    ParametricRiskData,
+)
 from riskquant.solutions.risk_run.api import derive_run_factor_axis
 from riskquant.solutions.risk_run.schemas import (
     MethodologyDeclaration,
@@ -330,45 +329,36 @@ def _run_risk_static_config(*, verbose: bool = True) -> RiskStaticConfig:
 
 
 # =============================================================================
-# MINIMAL PROXY TOPOLOGY  (D019 LOCKED: WTI_CRUDE -> BRENT_CRUDE, scale 0.95)
+# PROXY V1 TERMS  (D019 LOCKED: WTI_CRUDE <- BRENT_CRUDE, 0.95)
 # =============================================================================
 
-_PROXY_CONFIG_DF = pl.DataFrame({
-    "proxying_level": [
-        "RISK_FACTOR",
-    ],
-    "required_name": [
-        "WTI_CRUDE",
-    ],
-    "proxy_name": [
-        "BRENT_CRUDE",
-    ],
-    "vol_scaling_factor": [
-        0.95,
-    ],
-})
+#: WTI_CRUDE has no history. Its scenario log return is modelled as 0.95 x
+#: BRENT_CRUDE's log return over the world horizon (D019 golden constant):
+#: X_WTI = 0.95 * Y(BRENT_CRUDE, LOG_RETURN, h), then WTI_s = WTI_0 * exp(X_WTI).
+#: One authored Proxy V1 term (D088); the driver chart is stated, never taken
+#: from WTI's own configured shift type. Every other factor keeps its
+#: identity row, compiled by the run.
+_PROXY_TERMS: tuple[NodeProxyTerm, ...] = (
+    NodeProxyTerm(
+        target_name="WTI_CRUDE",
+        driver_name="BRENT_CRUDE",
+        driver_chart=ShiftType.LOG_RETURN,
+        loading=0.95,
+    ),
+)
 
 
-def _run_proxy_topology(
-    rsc: RiskStaticConfig, *, verbose: bool = True
-) -> ProxyTopology:
-    """Build and audit the minimal risk-proxy topology."""
+def _run_proxy_terms(*, verbose: bool = True) -> tuple[NodeProxyTerm, ...]:
+    """The authored Proxy V1 terms of this fixture."""
     if verbose:
-        print_header("Importing, Validating and Compiling Proxy Topology")
-        print("Proxy configuration:")
-        print(_PROXY_CONFIG_DF)
+        print_header("Authored Proxy V1 Terms")
+        for t in _PROXY_TERMS:
+            print(
+                f"X[{t.target_name}] = {t.loading} * Y[{t.driver_name}, "
+                f"{t.driver_chart.name}, h]"
+            )
         print("---")
-
-    rpt = compile_proxy_topology_from_df(
-        df=_PROXY_CONFIG_DF,
-        static_config=rsc,
-    )
-
-    if verbose:
-        rpt.summary()
-    audit_proxy_topology(topology=rpt, static_config=rsc, n=200)
-
-    return rpt
+    return _PROXY_TERMS
 
 
 # =============================================================================
@@ -617,7 +607,7 @@ def _run_sensitivities(
 
 # Source factors that actually carry market data. WTI_CRUDE is deliberately
 # absent: it has no history of its own and is proxied from BRENT_CRUDE by
-# the compiled ProxyTopology (resolved once, below, for every scenario model).
+# its authored Proxy V1 term (compiled by the run, shared by every scenario model).
 _SCENARIO_SOURCE_NAMES: tuple[str, ...] = ("USDEUR", "AAPL_EQ", "BRENT_CRUDE")
 
 
@@ -632,87 +622,57 @@ class ShockUniverseAxis:
     num_valuation_factors: int
     required_factor_ids: npt.NDArray[np.int32]
     required_shift_type_id: npt.NDArray[np.int8]
-    source_factor_ids: npt.NDArray[np.int32]
-    shock_scale: npt.NDArray[np.float32]
     base_levels: npt.NDArray[np.float64]
-    resolution_code: npt.NDArray[np.int8]
+    proxy_terms: tuple[NodeProxyTerm, ...]
 
 
 def _run_shock_universe(
     *,
     rsc: RiskStaticConfig,
-    proxy_topology: ProxyTopology,
+    proxy_terms: tuple[NodeProxyTerm, ...],
     run_axis: RunFactorAxis,
     snapshot: RiskFactorLevelSnapshot,
     verbose: bool = True,
 ) -> ShockUniverseAxis:
-    """Bind the run's scenario data to the canonical run axis.
-
-    Composes the existing public production path -- this module adds no
-    scenario machinery of its own:
+    """Bind the run inputs to the canonical run axis.
 
         derive_run_factor_axis        : the run-owned axis (valuation
                                          universe, then reporting-only FX)
                                          + each factor's declared shift_type;
                                          computed by the caller and passed in
         extract_levels_from_snapshot  : t0 BASE levels for those factors
-        resolve_required_factor_ids_.. : required -> (source, shock_scale),
-                                         i.e. the compiled ProxyTopology
-                                         applied to a concrete market-data
-                                         universe
+        proxy_terms                    : the authored Proxy V1 terms; the run
+                                         compiles them over this axis (D088)
 
-    This is the ONE place proxy resolution happens: every scenario model
-    downstream (the validation-only deterministic case in the canonical
-    demo, or any production `ScenarioModelConfig` in either demo) reads this
-    SAME axis, so WTI_CRUDE is proxied to BRENT_CRUDE exactly once here, not
-    re-derived per model. Proxying changes SHOCK PROVENANCE, never a base
-    level: WTI_CRUDE keeps its own base level (70.00) and its own identity
-    in the sensitivity book; only the shock driving it is sourced from
-    BRENT_CRUDE and scaled by 0.95.
+    Every scenario model downstream reads this SAME axis and the SAME terms.
+    WTI_CRUDE keeps its own base level (70.00) and its own identity in the
+    sensitivity book; only its scenario shock is modelled, by its authored
+    term, from BRENT_CRUDE's log return with loading 0.95.
     """
-    # The run axis is a read-only descriptor; the scenario data bound to it is
-    # this fixture's own execution arrays (the scenario building blocks below
-    # and in the demos take writable arrays).
     required_factor_ids = np.array(run_axis.factor_ids, copy=True)
-
     base_levels = extract_levels_from_snapshot(
         required_ids=required_factor_ids, snapshot=snapshot
     )
-
-    available_factor_ids = np.ascontiguousarray(
-        [rsc.rel_name_to_rf_id[name] for name in _SCENARIO_SOURCE_NAMES],
-        dtype=np.int32,
-    )
-
-    proxy_resolution = resolve_required_factor_ids_to_market_data_factor_ids(
-        static_config=rsc,
-        proxy_topology=proxy_topology,
-        required_factor_ids=required_factor_ids,
-        market_data_factor_ids=available_factor_ids,
-    )
-
     if verbose:
         rf_id_to_name = {v: k for k, v in rsc.rel_name_to_rf_id.items()}
-        print_header("Shock-Universe Axis (proxy resolution)")
+        authored = {t.target_name: t for t in proxy_terms}
+        print_header("Run Axis and Proxy V1 Model")
         print_df(
             pd.DataFrame({
-                "required_factor": [
-                    rf_id_to_name[int(rf)] for rf in required_factor_ids
-                ],
+                "factor": [rf_id_to_name[int(rf)] for rf in required_factor_ids],
                 "base_level": base_levels,
-                "source_factor": [
-                    rf_id_to_name[int(rf)] for rf in proxy_resolution.source_factor_ids
+                "scenario shock": [
+                    (
+                        f"{authored[n].loading} * Y[{authored[n].driver_name}, "
+                        f"{authored[n].driver_chart.name}]"
+                    )
+                    if n in authored
+                    else "identity row"
+                    for n in (rf_id_to_name[int(rf)] for rf in required_factor_ids)
                 ],
-                "shock_scale": proxy_resolution.shock_scale,
             }),
-            title="Proxy resolution (exposure identity vs shock provenance)",
+            title="Authored terms (every other factor: its own column, loading 1)",
             float_format="_.4f",
-        )
-        print(
-            "WTI_CRUDE keeps its OWN base level and its OWN sensitivity identity.\n"
-            "Only its shock provenance changes: it reads BRENT_CRUDE's shock,\n"
-            "scaled by 0.95, inside the exponent. This axis is resolved ONCE and\n"
-            "shared by every scenario model demonstrated downstream."
         )
         print("---")
 
@@ -720,10 +680,8 @@ def _run_shock_universe(
         num_valuation_factors=run_axis.num_valuation_factors,
         required_factor_ids=required_factor_ids,
         required_shift_type_id=np.array(run_axis.shift_type_ids, copy=True),
-        source_factor_ids=proxy_resolution.source_factor_ids,
-        shock_scale=proxy_resolution.shock_scale,
         base_levels=base_levels,
-        resolution_code=proxy_resolution.resolution_code,
+        proxy_terms=tuple(proxy_terms),
     )
 
 
@@ -733,7 +691,7 @@ def _run_shock_universe(
 # =============================================================================
 
 # Tiny hand-authored history over the SOURCE factors only. WTI_CRUDE has NO
-# history column by design: it is not observed here, and the ProxyTopology
+# history column by design: it is not observed here, and its authored term
 # sources its shock from BRENT_CRUDE. It is never given synthetic history and
 # then overwritten.
 _HISTORY_DATES: tuple[str, ...] = (
@@ -824,6 +782,12 @@ def _build_parametric_data(rsc: RiskStaticConfig) -> ParametricRiskData:
         factor_ids=source_ids,
         cholesky_matrix=cholesky,
         volatilities=vols,
+        # Statistics of consecutive business-day closes: every column is the
+        # law of a one-business-day log return (D090 (1, BUSINESS_DAY); D091
+        # chart LOG_RETURN per column).
+        effective_period_count=1,
+        effective_period_unit=FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+        chart_ids=np.full(source_ids.shape[0], SHIFT_LOG_RETURN_ID, dtype=np.int8),
     )
 
 
@@ -931,7 +895,7 @@ class DemoFixture:
     by `demo_e2e_sensi_based_var.py` and the `tests/solutions/risk_run` fixtures."""
 
     rsc: RiskStaticConfig
-    proxy_topology: ProxyTopology
+    proxy_terms: tuple[NodeProxyTerm, ...]
     portfolio: CompiledPortfolio
     uix_mapper: UixMapper
     snapshot: RiskFactorLevelSnapshot
@@ -962,7 +926,7 @@ def build_fixture(*, verbose: bool = True) -> DemoFixture:
     `run_scenario_var_es`'s job, not this module's.
     """
     rsc = _run_risk_static_config(verbose=verbose)
-    proxy_topology = _run_proxy_topology(rsc, verbose=verbose)
+    proxy_terms = _run_proxy_terms(verbose=verbose)
     portfolio, uix_mapper, ingest_batch = _run_portfolio(rsc, verbose=verbose)
     snapshot = _run_risk_factor_snapshot(rsc, verbose=verbose)
     market_data = _run_market_data(rsc=rsc, uix_mapper=uix_mapper, snapshot=snapshot)
@@ -984,7 +948,7 @@ def build_fixture(*, verbose: bool = True) -> DemoFixture:
     )
     shock_universe = _run_shock_universe(
         rsc=rsc,
-        proxy_topology=proxy_topology,
+        proxy_terms=proxy_terms,
         run_axis=derive_run_factor_axis(
             valuation_context=valuation_context, reporting_ccy=_REPORTING_CCY
         ),
@@ -1010,7 +974,7 @@ def build_fixture(*, verbose: bool = True) -> DemoFixture:
 
     return DemoFixture(
         rsc=rsc,
-        proxy_topology=proxy_topology,
+        proxy_terms=proxy_terms,
         portfolio=portfolio,
         uix_mapper=uix_mapper,
         snapshot=snapshot,

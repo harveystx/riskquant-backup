@@ -957,8 +957,6 @@ def identity_mutations():
     for key in (
         "required_factor_ids",
         "required_shift_type_id",
-        "source_factor_ids",
-        "shock_scale",
         "base_levels",
     ):
         inp[key] = np.ascontiguousarray(np.asarray(inp[key])[order])

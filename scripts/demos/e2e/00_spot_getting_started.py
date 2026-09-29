@@ -69,15 +69,15 @@ from riskquant.portfolio.engine import (
     compile_portfolio_from_ingest_batch,
 )
 from riskquant.portfolio.ingest.pipeline import compile_raw_df_into_ingest_batch
-from riskquant.proxy_resolver.proxy import (
-    resolve_required_factor_ids_to_market_data_factor_ids,
-)
 from riskquant.reporting.fx_conversion import (
     build_fx_conversion_plan,
     convert_scenario_pnl_to_reporting_currency,
 )
 from riskquant.scenario_metrics.api.var_es import compute_var_es
-from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
+from riskquant.config.proxy_model.compile import compile_proxy_model
+from riskquant.simlab.scenarios.world_column_stream import iter_world_column_batches
+from riskquant.simlab.shocks.axis_operator import lower_axis_operator
+from riskquant.simlab.shocks.linear_term_apply import apply_linear_terms_to_base_levels
 from riskquant.solutions.risk_run.api import derive_run_factor_axis, run_scenario_var_es
 from riskquant.solutions.risk_run.schemas import (
     MethodologyDeclaration,
@@ -87,6 +87,7 @@ from riskquant.solutions.risk_run.schemas import (
 )
 from riskquant.solutions.scenario_models.api import build_scenario_generator
 from riskquant.solutions.scenario_models.schemas import HistoricalGeneratorConfig
+from riskquant.solutions.scenario_models.world_columns import bind_operator_to_world
 from riskquant.utils.business_days import ord_to_date
 from riskquant.utils.dates import date_to_ord32
 from riskquant.valuation.engine import run_valuation
@@ -147,7 +148,7 @@ def main() -> None:
         """
     )
     rsc = sw.compile_static_config(sw.TINY_FACTORS, sw.TINY_CCYS)
-    proxy_topology = sw.compile_proxies(rsc)  # no proxies in this world
+    proxy_terms = sw.author_proxy_terms()  # no authored terms: identity rows only
     sw.table(
         ["factor", "rf_id", "quote ccy", "quote type", "shift type"],
         [
@@ -304,12 +305,22 @@ def main() -> None:
 
     # ------------------------------------------------------------------ 5
     sw.step("STEP 5", "Generate scenario shocks")
-    resolution = resolve_required_factor_ids_to_market_data_factor_ids(
+    # Proxy V1 (D088): the run compiles the authored terms over its axis. With
+    # no authored term every factor has its identity row (factor, own chart,
+    # 1.0); lowering adds each row's target chart kappa; binding maps every
+    # (driver, driver chart) the rows read to a world column at the world's h.
+    proxy_model = compile_proxy_model(
+        authored_terms=proxy_terms,
         static_config=rsc,
-        proxy_topology=proxy_topology,
-        required_factor_ids=axis,
-        market_data_factor_ids=history.factor_ids,
+        as_of_date=sw.TINY_AS_OF,
+        run_axis_rf_ids=axis,
     )
+    operator = lower_axis_operator(
+        model=proxy_model,
+        axis_rf_ids=axis,
+        axis_shift_type_ids=universe_map.required_shift_type_ids,
+    )
+    binding = bind_operator_to_world(operator, scenario_config, history)
     generator = build_scenario_generator(scenario_config, data=history)
     # The generator REUSES one batch buffer across yields (zero-allocation
     # streaming). Consume each batch before advancing: here the shocks are
@@ -319,10 +330,10 @@ def main() -> None:
     level_chunks: list[np.ndarray] = []
     batch_facts: list[bool] = []
     base_before = base_levels.copy()
-    for batch in generator.iter_batches(
-        required_shift_type_id=universe_map.required_shift_type_ids,
-        source_factor_ids=resolution.source_factor_ids,
-        shock_scale=resolution.shock_scale,
+    for batch in iter_world_column_batches(
+        generator,
+        driver_rf_ids=binding.request_driver_rf_ids,
+        chart_ids=binding.request_chart_ids,
         batch_size=BATCH_SIZE,
     ):
         batch_facts.append(
@@ -334,7 +345,15 @@ def main() -> None:
         out = np.empty(
             (axis.shape[0], batch.shocks.shape[0]), dtype=np.float64, order="C"
         )
-        apply_shocks_to_base_levels(base_levels=base_levels, batch=batch, out=out)
+        apply_linear_terms_to_base_levels(
+            base_levels=base_levels,
+            row_term_offsets=operator.row_term_offsets,
+            term_column_uix=binding.term_column_uix,
+            term_loadings=operator.term_loadings,
+            target_shift_types=operator.target_shift_type_ids,
+            shocks=batch.shocks,
+            out=out,
+        )
         level_chunks.append(out)
     shocks = np.vstack(shock_chunks)
     sw.para(
@@ -342,10 +361,10 @@ def main() -> None:
         The generator streams scenarios in batches of {BATCH_SIZE}. Each batch
         holds (B, K) float32 shocks in F-order, so the scenario axis has unit
         stride for the apply kernel. The shocked levels (STEP 6) are built
-        inside the same loop, batch by batch. Proxy resolution maps each required
-        factor to the history column that drives it (here every factor drives
-        itself: source = required, scale = 1). The base valuation world is not
-        touched by this step.
+        inside the same loop, batch by batch. The compiled Proxy V1 model states
+        which world column drives each factor (here every factor has its
+        identity row: its own column in its own chart, loading 1). The base
+        valuation world is not touched by this step.
         """
     )
     hist = np.asarray(sw.TINY_HISTORY_VALUES, dtype=np.float64)
@@ -363,8 +382,9 @@ def main() -> None:
         len(batch_facts) == 2 and all(batch_facts),
     )
     ok.check(
-        "factor axis matches the valuation world (source ids = axis ids)",
-        np.array_equal(resolution.source_factor_ids, axis),
+        "every factor reads its own column: identity rows, world request = axis",
+        np.array_equal(binding.request_driver_rf_ids, axis)
+        and np.array_equal(binding.request_chart_ids, universe_map.required_shift_type_ids),
     )
     ok.check(
         "shocks equal the hand-computed 1-day differences exactly",
@@ -378,7 +398,7 @@ def main() -> None:
         """
         One canonical (K, S) float64 buffer of shocked levels. For a
         DIFFERENCE factor, x_s = x0 + shock; for LOG_RETURN it would be
-        x0 * exp(scale * shock). Every methodology reads this ONE buffer.
+        x0 * exp(sum of loading * shock). Every methodology reads this ONE buffer.
         """
     )
     sw.table(
@@ -729,8 +749,7 @@ def main() -> None:
         data=history,
         required_factor_ids=axis,
         required_shift_type_id=universe_map.required_shift_type_ids,
-        source_factor_ids=resolution.source_factor_ids,
-        shock_scale=resolution.shock_scale,
+        proxy_terms=proxy_terms,
         base_levels=base_levels,
         methodology=full_reval,
         valuation_context=ValuationContext(

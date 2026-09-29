@@ -40,9 +40,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "solutions" / "risk_run"))
-from _proxyterms import authored_terms_from_d013_routing  # noqa: E402
-
 
 from riskquant.config.static_config.static_config import RiskStaticConfig
 from riskquant.constants import INVALID_UIX
@@ -474,13 +471,7 @@ def canonical_risk_run():
         data=fixture.historical_matrix,
         required_factor_ids=su.required_factor_ids,
         required_shift_type_id=su.required_shift_type_id,
-        proxy_terms=authored_terms_from_d013_routing(
-            static_config=fixture.valuation_context.static_config,
-            required_factor_ids=su.required_factor_ids,
-            required_shift_type_id=su.required_shift_type_id,
-            source_factor_ids=su.source_factor_ids,
-            shock_scale=su.shock_scale,
-        ),
+        proxy_terms=su.proxy_terms,
         base_levels=su.base_levels,
         methodology=fixture.methodology,
         valuation_context=fixture.valuation_context,
@@ -493,7 +484,7 @@ def canonical_risk_run():
 
 
 def test_demo_fixture_drives_the_production_entry_point(canonical_risk_run) -> None:
-    """The demo's fixture (proxy-resolved shock-universe axis, compiled
+    """The demo's fixture (run axis with authored Proxy V1 terms, compiled
     book, ReportingSpec) is well-formed input to `run_scenario_var_es`: a
     complete, self-identifying `RiskRun` comes back."""
     run, fixture = canonical_risk_run
@@ -517,26 +508,25 @@ def _independent_reporting_pnl(fixture) -> np.ndarray:
     """
     import polars as pl
 
-    from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
-    from riskquant.solutions.scenario_models.api import build_scenario_generator
     from riskquant.solutions.sensitivity_pnl.api import FactorAxis
 
+    # Shocked levels from first principles (no generator, no kernel): the
+    # historical world's one-day log return of each history column, stored as
+    # float32 (the world's shock representation); every axis factor with its
+    # own column reconstructs as x0 * exp(y); WTI_CRUDE, which has none, as
+    # x0 * exp(0.95 * y_BRENT) (its authored D019 term).
     su = fixture.shock_universe
-    gen = build_scenario_generator(
-        HistoricalGeneratorConfig(model="historical", horizon=1),
-        data=fixture.historical_matrix,
-    )
-    k, s_total = su.required_factor_ids.shape[0], gen.total_scenarios
+    rsc = fixture.valuation_context.static_config
+    hist = fixture.historical_matrix
+    values = np.asarray(hist.values, dtype=np.float64)
+    y = np.log(values[1:] / values[:-1]).astype(np.float32).astype(np.float64)
+    col = {int(f): j for j, f in enumerate(hist.factor_ids.tolist())}
+    k, s_total = su.required_factor_ids.shape[0], y.shape[0]
     shocked = np.empty((k, s_total), dtype=np.float64)
-    for batch in gen.iter_batches(
-        required_shift_type_id=su.required_shift_type_id,
-        source_factor_ids=su.source_factor_ids,
-        shock_scale=su.shock_scale,
-        batch_size=s_total,
-    ):
-        out = np.empty((k, batch.shocks.shape[0]), dtype=np.float64)
-        apply_shocks_to_base_levels(base_levels=su.base_levels, batch=batch, out=out)
-        shocked[:, batch.scenario_offset : batch.scenario_offset + out.shape[1]] = out
+    wti, brent = rsc.rel_name_to_rf_id["WTI_CRUDE"], rsc.rel_name_to_rf_id["BRENT_CRUDE"]
+    for r, rf in enumerate(su.required_factor_ids.tolist()):
+        x = 0.95 * y[:, col[brent]] if rf == wti else y[:, col[rf]]
+        shocked[r] = su.base_levels[r] * np.exp(x)
     axis = FactorAxis.from_keys(
         pl.Series("factor_id", su.required_factor_ids.tolist(), dtype=pl.Int32)
     )

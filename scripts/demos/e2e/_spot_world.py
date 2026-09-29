@@ -49,8 +49,8 @@ import pandas as pd
 import polars as pl
 
 from riskquant.config.enums.discounting_modes import DiscountingMode
-from riskquant.config.proxy_config.compile import compile_proxy_topology_from_df
-from riskquant.config.proxy_config.proxy_topology import ProxyTopology
+from riskquant.config.proxy_model.compile import compile_proxy_model
+from riskquant.config.proxy_model.schema_objects import NodeProxyTerm
 from riskquant.config.static_config.compile import (
     compile_risk_static_config_from_dict_of_dfs,
 )
@@ -80,9 +80,6 @@ from riskquant.portfolio.engine import (
 )
 from riskquant.portfolio.ingest.batch import IngestBatch
 from riskquant.portfolio.ingest.pipeline import compile_raw_df_into_ingest_batch
-from riskquant.proxy_resolver.proxy import (
-    resolve_required_factor_ids_to_market_data_factor_ids,
-)
 from riskquant.reporting.fx_conversion import (
     ReportingCurrencyPnl,
     build_fx_conversion_plan,
@@ -91,8 +88,15 @@ from riskquant.reporting.fx_conversion import (
 from riskquant.scenario_metrics.api.var_es import compute_var_es
 from riskquant.sensitivities.engine import run_sensitivities
 from riskquant.sensitivities.result import BlockSensitivities
-from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
-from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
+from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID, ShiftType
+from riskquant.simlab.scenarios.parametric_data import (
+    FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+    ParametricRiskData,
+)
+from riskquant.simlab.scenarios.world_column_stream import iter_world_column_batches
+from riskquant.simlab.shocks.axis_operator import lower_axis_operator
+from riskquant.simlab.shocks.linear_term_apply import apply_linear_terms_to_base_levels
+from riskquant.solutions.scenario_models.world_columns import bind_operator_to_world
 from riskquant.solutions.risk_run.api import derive_run_factor_axis
 from riskquant.solutions.risk_run.schemas import (
     MethodologyDeclaration,
@@ -545,25 +549,26 @@ _EMPTY_SURFACE_POINT_META = pl.DataFrame({
 })
 
 
-def compile_proxies(
-    rsc: RiskStaticConfig, proxies: Sequence[tuple[str, str, float]] = ()
-) -> ProxyTopology:
-    """`(required_name, proxy_name, vol_scaling_factor)` rows -> ProxyTopology."""
-    frame = pl.DataFrame(
-        {
-            "proxying_level": ["RISK_FACTOR"] * len(proxies),
-            "required_name": [p[0] for p in proxies],
-            "proxy_name": [p[1] for p in proxies],
-            "vol_scaling_factor": [float(p[2]) for p in proxies],
-        },
-        schema={
-            "proxying_level": pl.String,
-            "required_name": pl.String,
-            "proxy_name": pl.String,
-            "vol_scaling_factor": pl.Float64,
-        },
+def author_proxy_terms(
+    proxies: Sequence[tuple[str, str, ShiftType, float]] = (),
+) -> tuple[NodeProxyTerm, ...]:
+    """
+    `(target_name, driver_name, driver_chart, loading)` rows -> Proxy V1 terms.
+
+    Each row states one term of X_target = sum loading * Y(driver, driver_chart, h)
+    (D088). The driver chart is written by the author; it is never taken from
+    the target's configured shift type. A factor with no row keeps its
+    identity row (target, its own chart, 1.0), compiled by the run.
+    """
+    return tuple(
+        NodeProxyTerm(
+            target_name=target,
+            driver_name=driver,
+            driver_chart=chart,
+            loading=float(loading),
+        )
+        for target, driver, chart, loading in proxies
     )
-    return compile_proxy_topology_from_df(df=frame, static_config=rsc)
 
 
 # =============================================================================
@@ -586,10 +591,12 @@ class SpotWorld:
                   the canonical run axis (D082 amended, D085): the valuation
                   universe (`num_valuation_factors` rows, universe-map order),
                   then any reporting-only FX factor `reporting_ccy` needs.
+    proxy model : `proxy_terms`, the authored Proxy V1 terms (D088); the run
+                  compiles them over its full axis.
     """
 
     rsc: RiskStaticConfig
-    proxy_topology: ProxyTopology
+    proxy_terms: tuple[NodeProxyTerm, ...]
     positions: pd.DataFrame
     levels: Mapping[str, float]
     as_of: date
@@ -602,8 +609,6 @@ class SpotWorld:
     v0_by_uid: Mapping[int, float]
     required_factor_ids: npt.NDArray[np.int32]
     required_shift_type_id: npt.NDArray[np.int8]
-    source_factor_ids: npt.NDArray[np.int32]
-    shock_scale: npt.NDArray[np.float32]
     base_levels: npt.NDArray[np.float64]
     num_valuation_factors: int
     reporting_ccy: str
@@ -647,11 +652,10 @@ class SpotWorld:
 def build_world(
     *,
     rsc: RiskStaticConfig,
-    proxy_topology: ProxyTopology,
+    proxy_terms: tuple[NodeProxyTerm, ...],
     positions: pd.DataFrame,
     levels: Mapping[str, float],
     as_of: date,
-    history_factor_names: Sequence[str],
     reporting_ccy: str = "USD",
 ) -> SpotWorld:
     """
@@ -663,7 +667,9 @@ def build_world(
         build_universe_mapping            : the valuation universe (V0)
         build_market_data_matrix_from_snapshot + run_valuation : V0
         derive_run_factor_axis            : THE run axis for `reporting_ccy`
-        resolve_required_factor_ids_...   : shock provenance (proxying)
+
+    The scenario law of every run-axis factor is the Proxy V1 model: the
+    authored `proxy_terms`, compiled by the run over its full axis (D088).
     """
     as_of_ord = int(date_to_ord32(as_of))
     ingest_batch = compile_raw_df_into_ingest_batch(
@@ -707,19 +713,9 @@ def build_world(
     # arrays bound to it (the scenario building blocks take writable arrays).
     required = np.array(run_axis.factor_ids, copy=True)
     base_levels = extract_levels_from_snapshot(required_ids=required, snapshot=snapshot)
-    available = np.ascontiguousarray(
-        sorted(int(rsc.rel_name_to_rf_id[n]) for n in history_factor_names),
-        dtype=np.int32,
-    )
-    resolution = resolve_required_factor_ids_to_market_data_factor_ids(
-        static_config=rsc,
-        proxy_topology=proxy_topology,
-        required_factor_ids=required,
-        market_data_factor_ids=available,
-    )
     return SpotWorld(
         rsc=rsc,
-        proxy_topology=proxy_topology,
+        proxy_terms=tuple(proxy_terms),
         positions=positions.reset_index(drop=True),
         levels=dict(levels),
         as_of=as_of,
@@ -732,8 +728,6 @@ def build_world(
         v0_by_uid=v0_by_uid,
         required_factor_ids=required,
         required_shift_type_id=np.array(run_axis.shift_type_ids, copy=True),
-        source_factor_ids=resolution.source_factor_ids,
-        shock_scale=resolution.shock_scale,
         base_levels=base_levels,
         num_valuation_factors=run_axis.num_valuation_factors,
         reporting_ccy=reporting_ccy,
@@ -780,10 +774,17 @@ def parametric_data_from_history(matrix: RiskFactorMatrix) -> ParametricRiskData
     vols = np.ascontiguousarray(np.std(returns, axis=0, ddof=1), dtype=np.float64)
     corr = np.corrcoef(returns, rowvar=False)
     chol = np.ascontiguousarray(np.linalg.cholesky(corr), dtype=np.float64)
+    k = matrix.factor_ids.shape[0]
     return ParametricRiskData(
         factor_ids=np.ascontiguousarray(matrix.factor_ids, dtype=np.int32),
         cholesky_matrix=chol,
         volatilities=vols,
+        # The statistics are those of consecutive business-day closes of the
+        # history, so every column is the law of a one-business-day log return
+        # (D090 period (1, BUSINESS_DAY); D091 chart LOG_RETURN per column).
+        effective_period_count=1,
+        effective_period_unit=FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+        chart_ids=np.full(k, SHIFT_LOG_RETURN_ID, dtype=np.int8),
     )
 
 
@@ -977,18 +978,43 @@ def shocked_levels_for(
     data: RiskFactorMatrix | ParametricRiskData,
     batch_size: int,
 ) -> npt.NDArray[np.float64]:
-    """(K, S) canonical shocked levels, streamed from the D036 scenario seam."""
+    """
+    (K, S) canonical shocked levels through the D088 building blocks, in the
+    order `run_scenario_var_es` composes them: compile the authored terms over
+    the full axis, lower onto it, bind (d, tau) to the world's (d, tau, h),
+    stream the bound world columns, then X = sum beta Y and T^-1_kappa.
+    """
+    model = compile_proxy_model(
+        authored_terms=world.proxy_terms,
+        static_config=world.rsc,
+        as_of_date=world.as_of,
+        run_axis_rf_ids=world.required_factor_ids,
+    )
+    operator = lower_axis_operator(
+        model=model,
+        axis_rf_ids=world.required_factor_ids,
+        axis_shift_type_ids=world.required_shift_type_id,
+    )
+    binding = bind_operator_to_world(operator, scenario_config, data)
     generator = build_scenario_generator(scenario_config, data=data)
     k = world.base_levels.shape[0]
     chunks: list[npt.NDArray[np.float64]] = []
-    for batch in generator.iter_batches(
-        required_shift_type_id=world.required_shift_type_id,
-        source_factor_ids=world.source_factor_ids,
-        shock_scale=world.shock_scale,
+    for batch in iter_world_column_batches(
+        generator,
+        driver_rf_ids=binding.request_driver_rf_ids,
+        chart_ids=binding.request_chart_ids,
         batch_size=batch_size,
     ):
         out = np.empty((k, batch.shocks.shape[0]), dtype=np.float64, order="C")
-        apply_shocks_to_base_levels(base_levels=world.base_levels, batch=batch, out=out)
+        apply_linear_terms_to_base_levels(
+            base_levels=world.base_levels,
+            row_term_offsets=operator.row_term_offsets,
+            term_column_uix=binding.term_column_uix,
+            term_loadings=operator.term_loadings,
+            target_shift_types=operator.target_shift_type_ids,
+            shocks=batch.shocks,
+            out=out,
+        )
         chunks.append(out)
     return np.ascontiguousarray(np.hstack(chunks), dtype=np.float64)
 
@@ -1194,11 +1220,10 @@ def tiny_fixture(
     rsc = compile_static_config(TINY_FACTORS, TINY_CCYS)
     world = build_world(
         rsc=rsc,
-        proxy_topology=compile_proxies(rsc),
+        proxy_terms=author_proxy_terms(),  # every factor keeps its identity row
         positions=TINY_POSITIONS if positions is None else positions,
         levels=TINY_LEVELS if levels is None else levels,
         as_of=TINY_AS_OF,
-        history_factor_names=TINY_HISTORY_NAMES,
         reporting_ccy=reporting_ccy,
     )
     history = history_matrix(
@@ -1267,7 +1292,10 @@ def realistic_fixture(
     rng = np.random.default_rng(seed)
     factors = _realistic_factors()
     rsc = compile_static_config(factors, REALISTIC_CCYS)
-    proxies = compile_proxies(rsc, [("WTI_CRUDE", "BRENT_CRUDE", 0.95)])
+    # WTI_CRUDE has no history. Its scenario log return is modelled as 0.95 x
+    # BRENT_CRUDE's log return over the world horizon: one authored Proxy V1
+    # term, driver chart LOG_RETURN written explicitly (D088).
+    proxies = author_proxy_terms([("WTI_CRUDE", "BRENT_CRUDE", ShiftType.LOG_RETURN, 0.95)])
 
     hist_names = [f.name for f in factors if f.name != "WTI_CRUDE"]
     n = len(hist_names)
@@ -1336,11 +1364,10 @@ def realistic_fixture(
         positions = generated
     world = build_world(
         rsc=rsc,
-        proxy_topology=proxies,
+        proxy_terms=proxies,
         positions=positions,
         levels=levels,
         as_of=REALISTIC_AS_OF,
-        history_factor_names=hist_names,
         reporting_ccy=reporting_ccy,
     )
     return RealisticFixture(

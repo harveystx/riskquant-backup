@@ -26,7 +26,7 @@ Import surface, stated plainly
 The run, its contracts, the run-axis derivation, the scenario-model parser
 and the Taylor contract come from `riskquant.solutions.*`. Assembling the
 run's inputs still needs core-package calls: ingest, the UixMapper, the level
-snapshot, proxy resolution and, for Taylor certification only, the U_D base
+snapshot, the authored Proxy V1 terms and, for Taylor certification only, the U_D base
 valuation and the sensitizer. No solution facade exists for them today. The
 run itself values every V_0; the caller values V_0 only to certify a Taylor
 book at the base the run will derive (P1-B).
@@ -63,10 +63,9 @@ from riskquant.portfolio.engine import (
     compile_portfolio_from_ingest_batch,
 )
 from riskquant.portfolio.ingest.pipeline import compile_raw_df_into_ingest_batch
-from riskquant.proxy_resolver.proxy import (
-    resolve_required_factor_ids_to_market_data_factor_ids,
-)
+from riskquant.config.proxy_model.compile import compile_proxy_model
 from riskquant.sensitivities.engine import run_sensitivities
+from riskquant.simlab.shocks.axis_operator import lower_axis_operator, world_request
 from riskquant.solutions.risk_run.api import derive_run_factor_axis, run_scenario_var_es
 from riskquant.solutions.risk_run.schemas import (
     MethodologyDeclaration,
@@ -119,12 +118,11 @@ def main() -> None:
     sw.step("1", "Receive the inputs")
     feed = sw.realistic_fixture()  # <- replace with the firm's data feeds
     rsc = feed.world.rsc  # compiled static configuration
-    proxy_topology = feed.world.proxy_topology  # compiled proxy configuration
+    proxy_terms = feed.world.proxy_terms  # authored Proxy V1 terms (D088)
     positions = feed.world.positions  # human-readable positions frame
     levels = dict(feed.world.levels)  # name -> level at the as-of
     as_of = feed.world.as_of
     history = feed.history  # RiskFactorMatrix: the scenario model's data
-    names = {int(v): k for k, v in rsc.rel_name_to_rf_id.items()}
     sw.kv([
         ("positions", f"{len(positions)} rows, columns {list(positions.columns)}"),
         ("settlement ccys", positions["settlement_ccy"].value_counts().to_dict()),
@@ -174,23 +172,31 @@ def main() -> None:
     required_factor_ids = np.array(run_axis.factor_ids, copy=True)
     required_shift_type_id = np.array(run_axis.shift_type_ids, copy=True)
     base_levels = extract_levels_from_snapshot(required_ids=required_factor_ids, snapshot=snapshot)
-    resolution = resolve_required_factor_ids_to_market_data_factor_ids(
-        static_config=rsc,
-        proxy_topology=proxy_topology,
-        required_factor_ids=required_factor_ids,
-        market_data_factor_ids=np.ascontiguousarray(history.factor_ids, dtype=np.int32),
+    # Preview of the run's own Proxy V1 composition (the run repeats it): the
+    # authored terms compiled over the full axis, lowered onto it, and the
+    # (driver, driver chart) world columns the rows read.
+    preview = lower_axis_operator(
+        model=compile_proxy_model(
+            authored_terms=proxy_terms,
+            static_config=rsc,
+            as_of_date=as_of,
+            run_axis_rf_ids=required_factor_ids,
+        ),
+        axis_rf_ids=required_factor_ids,
+        axis_shift_type_ids=required_shift_type_id,
     )
+    request_drivers, _ = world_request(preview)
     k_val = run_axis.num_valuation_factors
-    proxied = [names[int(r)] for r, s in zip(required_factor_ids.tolist(),
-                                             resolution.source_factor_ids.tolist(), strict=True) if r != s]
+    on_axis = set(required_factor_ids.tolist())
+    proxied = [t.target_name for t in proxy_terms if rsc.rel_name_to_rf_id[t.target_name] in on_axis]
     sw.kv([
         ("run axis", f"{required_factor_ids.shape[0]} factors: {k_val} valuation, "
                      f"{required_factor_ids.shape[0] - k_val} reporting-only"),
         ("proxied factors on this axis", proxied or "none (no position reads WTI_CRUDE)"),
         ("base levels", f"{base_levels.dtype}, one per axis row"),
     ])
-    ok.check("every run-axis row takes its shocks from a column of the history",
-             bool(np.isin(resolution.source_factor_ids, history.factor_ids).all()))
+    ok.check("every world column the compiled model reads is a column of the history",
+             bool(np.isin(request_drivers, history.factor_ids).all()))
 
     # ---------------------------------------------------------------- 4
     sw.step("4", "Methodology by explicit policy")
@@ -280,8 +286,7 @@ def main() -> None:
         data=history,
         required_factor_ids=required_factor_ids,
         required_shift_type_id=required_shift_type_id,
-        source_factor_ids=resolution.source_factor_ids,
-        shock_scale=resolution.shock_scale,
+        proxy_terms=proxy_terms,
         base_levels=base_levels,
         methodology=method,
         valuation_context=context,
@@ -333,8 +338,7 @@ def main() -> None:
         data=history,
         required_factor_ids=required_factor_ids,
         required_shift_type_id=required_shift_type_id,
-        source_factor_ids=resolution.source_factor_ids,
-        shock_scale=resolution.shock_scale,
+        proxy_terms=proxy_terms,
         base_levels=base_levels,
         methodology=method,
         valuation_context=context,

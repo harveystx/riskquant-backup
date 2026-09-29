@@ -24,7 +24,7 @@ import hashlib
 import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 __all__ = [
     "MANIFEST_SCHEMA_VERSION",
@@ -57,6 +57,10 @@ __all__ = [
 MANIFEST_SCHEMA_VERSION = "5"
 
 _STRICT = ConfigDict(extra="forbid", frozen=True, protected_namespaces=())
+
+#: Canonical form of every content digest this layer produces: lowercase
+#: hexadecimal SHA-256 (`hashing.digest_named_arrays`).
+_SHA256_HEX = r"^[0-9a-f]{64}$"
 
 
 class EngineIdentity(BaseModel):
@@ -92,7 +96,7 @@ class ShockIdentity(BaseModel):
     """
 
     model_config = _STRICT
-    proxy_model_digest: str
+    proxy_model_digest: str = Field(pattern=_SHA256_HEX)
 
 
 class MethodologyIdentity(BaseModel):
@@ -138,8 +142,9 @@ class CompositionIdentity(BaseModel):
 class PnlIdentity(BaseModel):
     """Inputs to the P&L step downstream of the shocks.
 
-    `composition` is None only for a manifest built outside the production
-    entry point (e.g. a plain sensitivity vector); `RiskRun` requires it.
+    `composition` carries the run context (`RunContextIdentity`, ID_target).
+    A v5 `RunManifest` refuses it absent (D088 §13.3); the field keeps its
+    optional type only so that refusal is stated by the manifest itself.
     """
 
     model_config = _STRICT
@@ -190,8 +195,10 @@ class RunManifest(BaseModel):
     def _target_identity_accompanies_proxy_identity(self) -> RunManifest:
         # D088 §13.3: ID_target (the target charts kappa_A) is carried by
         # RunContextIdentity; a manifest naming a proxy operator without it
-        # does not identify the run. Refused, never filled in.
-        if self.shocks.proxy_model_digest and self.pnl.composition is None:
+        # does not identify the run. Every v5 manifest names one (the digest
+        # is a required SHA-256), so the context is required unconditionally.
+        # Refused, never filled in.
+        if self.pnl.composition is None:
             raise ValueError(
                 "a manifest carrying shocks.proxy_model_digest must carry "
                 "pnl.composition.context (RunContextIdentity; D088 §13.3)."

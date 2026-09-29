@@ -167,7 +167,14 @@ _FIXTURE = textwrap.dedent(
     from riskquant.scenario_metrics.api.var_es import compute_var_es
     from riskquant.sensitivity_pnl.conventions import DisplacementConvention
     from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
-    from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
+    from riskquant.config.proxy_model.compile import compile_proxy_model
+    from riskquant.config.proxy_model.schema_objects import NodeProxyTerm
+    from riskquant.market_data.risk_factors.shift_types import ShiftType
+    from riskquant.simlab.scenarios.world_column_stream import iter_world_column_batches
+    from riskquant.simlab.shocks.axis_operator import lower_axis_operator
+    from riskquant.simlab.shocks.linear_term_apply import apply_linear_terms_to_base_levels
+    from riskquant.solutions.scenario_models.world_columns import bind_operator_to_world
+    from riskquant.utils.business_days import ord_to_date
     from riskquant.solutions.risk_run.api import (
         derive_run_factor_axis, run_scenario_var_es)
     from riskquant.solutions.risk_run.schemas import (
@@ -236,14 +243,29 @@ _FIXTURE = textwrap.dedent(
             valuation_context=inp["valuation_context"],
             reporting_ccy=inp["reporting"].reporting_ccy)
         k_run, k_val = int(run_axis.factor_ids.shape[0]), int(run_axis.num_valuation_factors)
+        # Reference rebuild through the D088 blocks the run composes: the
+        # authored terms compiled over the full axis, lowered, bound to the
+        # world's (d, tau, h) columns, streamed, then X = sum beta Y, T^-1_kappa.
+        ctx = inp["valuation_context"]
+        operator = lower_axis_operator(
+            model=compile_proxy_model(
+                authored_terms=inp["proxy_terms"],
+                static_config=ctx.static_config,
+                as_of_date=ord_to_date(int(ctx.uix_mapper.as_of_ord32)),
+                run_axis_rf_ids=run_axis.factor_ids),
+            axis_rf_ids=run_axis.factor_ids,
+            axis_shift_type_ids=run_axis.shift_type_ids)
+        binding = bind_operator_to_world(operator, inp["scenario_config"], inp["data"])
         gen = build_scenario_generator(inp["scenario_config"], data=inp["data"])
         shocks, chunks = [], []
-        for b in gen.iter_batches(
-                required_shift_type_id=inp["required_shift_type_id"],
-                source_factor_ids=inp["source_factor_ids"],
-                shock_scale=inp["shock_scale"], batch_size=batch_size):
+        for b in iter_world_column_batches(
+                gen, driver_rf_ids=binding.request_driver_rf_ids,
+                chart_ids=binding.request_chart_ids, batch_size=batch_size):
             out = np.empty((k_run, b.shocks.shape[0]), dtype=np.float64, order="C")
-            apply_shocks_to_base_levels(base_levels=inp["base_levels"], batch=b, out=out)
+            apply_linear_terms_to_base_levels(
+                base_levels=inp["base_levels"], row_term_offsets=operator.row_term_offsets,
+                term_column_uix=binding.term_column_uix, term_loadings=operator.term_loadings,
+                target_shift_types=operator.target_shift_type_ids, shocks=b.shocks, out=out)
             shocks.append(np.array(b.shocks, copy=True))
             chunks.append(out)
         stream = np.vstack(shocks)
@@ -597,6 +619,7 @@ _CONTRACTS = textwrap.dedent(
 
     base = inputs("sbb", 64)
     ref = run_scenario_var_es(**base)
+    _NAMES = dict((int(v), k) for k, v in RSC.rel_name_to_rf_id.items())
 
     # environment gate: one changed field must stop the run pre-numerics
     env_results = {}
@@ -645,10 +668,14 @@ _CONTRACTS = textwrap.dedent(
                                 values=np.asfortranarray(revised))},
         "factor_order": {"data": _remat(base["data"], values=np.asfortranarray(
             np.array(base["data"].values)[:, list(range(1, K_TOTAL)) + [0]]))},
-        "source_factor_ids": {"source_factor_ids": base["source_factor_ids"][::-1].copy()},
+        # A different Proxy V1 operator: the first axis factor driven by its
+        # own column with loading 0.9 (D088; the model is result-defining).
+        "proxy_model": {"proxy_terms": (NodeProxyTerm(
+            target_name=_NAMES[int(FIDS[0])], driver_name=_NAMES[int(FIDS[0])],
+            driver_chart=ShiftType(int(RSC.rf_id_to_shift_type_id[int(FIDS[0])])),
+            loading=0.9),)},
         "shift_types": {"required_shift_type_id":
             np.full(K, 2, dtype=np.int8)},
-        "shock_scale": {"shock_scale": (base["shock_scale"] * 0.9).astype(np.float32)},
         "base_levels": {"base_levels": base["base_levels"] * 1.001},
         "confidence": {"confidence_level": 0.95},
         "compiled_book": {"taylor_derived": derived(calculator(variant=1))},

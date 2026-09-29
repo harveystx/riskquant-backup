@@ -69,8 +69,7 @@ run = run_scenario_var_es(
     scenario_config=SbbGeneratorConfig(model="sbb", horizon=1, total_scenarios=1000,
                                        expected_block_size=5.0, seed=7),
     data=real.history, required_factor_ids=w.required_factor_ids,
-    required_shift_type_id=w.required_shift_type_id, source_factor_ids=w.source_factor_ids,
-    shock_scale=w.shock_scale, base_levels=w.base_levels,
+    required_shift_type_id=w.required_shift_type_id, proxy_terms=w.proxy_terms, base_levels=w.base_levels,
     methodology=sw.methodology(full=w.uids.tolist()), valuation_context=sw.valuation_context(w),
     reporting=sw.reporting_spec(w, reporting_ccy="USD"),
     confidence_level=0.99, batch_size=97)
@@ -99,8 +98,7 @@ def main() -> None:
             data=fixture.history if data is None else data,
             required_factor_ids=w.required_factor_ids,
             required_shift_type_id=w.required_shift_type_id,
-            source_factor_ids=w.source_factor_ids,
-            shock_scale=w.shock_scale,
+            proxy_terms=w.proxy_terms,
             base_levels=w.base_levels,
             methodology=sw.methodology(full=w.uids.tolist()),
             valuation_context=sw.valuation_context(w),
@@ -308,13 +306,10 @@ def _with_levels(levels: dict[str, float]) -> sw.RealisticFixture:
     real = sw.realistic_fixture()
     world = sw.build_world(
         rsc=real.world.rsc,
-        proxy_topology=real.world.proxy_topology,
+        proxy_terms=real.world.proxy_terms,
         positions=real.world.positions,
         levels=levels,
         as_of=real.world.as_of,
-        history_factor_names=[
-            real.world.name_of(int(r)) for r in real.history.factor_ids
-        ],
     )
     return sw.RealisticFixture(
         world=world,

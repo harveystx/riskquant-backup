@@ -23,7 +23,6 @@ import pytest
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.solutions.risk_run.api import run_scenario_var_es
 from riskquant.solutions.risk_run.schemas import (
-    CompositionContractError,
     NonReproducibleRunError,
     RiskRun,
 )
@@ -36,10 +35,14 @@ from riskquant.solutions.scenario_models.api import parse_scenario_model_config
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _fixture import FACTOR_IDS, K, S, calculator, derived, inputs, reporting_spec
-from _proxyterms import rf_name
 
 from riskquant.config.proxy_model.schema_objects import NodeProxyTerm
 from riskquant.market_data.risk_factors.shift_types import ShiftType
+
+
+def rf_name(static_config, rf_id: int) -> str:
+    """The relative name of one rf_id in the static configuration."""
+    return {int(v): k for k, v in static_config.rel_name_to_rf_id.items()}[int(rf_id)]
 
 
 def _term(inp, *, own: int, driver: int, beta: float) -> NodeProxyTerm:

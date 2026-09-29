@@ -44,6 +44,7 @@ from pydantic import ValidationError
 from riskquant.solutions.risk_run.api import run_scenario_var_es
 from riskquant.solutions.scenario_models.api import parse_scenario_model_config
 from riskquant.solutions.scenario_models.schemas import (
+    ForecastPeriodConfig,
     FilteredBootstrapGeneratorConfig,
     FilteredHistoricalGeneratorConfig,
     HistoricalGeneratorConfig,
@@ -52,6 +53,11 @@ from riskquant.solutions.scenario_models.schemas import (
     StandardNormalDistribution,
     StudentTDistribution,
 )
+
+#: D090: the parametric construction data describes one-business-day log
+#: returns (effective period (1, BUSINESS_DAY)); the request states the same
+#: period, and the run refuses any other.
+ONE_BUSINESS_DAY = ForecastPeriodConfig(count=1, unit="BUSINESS_DAY")
 
 CONFIDENCE: float = 0.99
 BATCH_SIZE: int = 512
@@ -99,11 +105,11 @@ def main() -> None:
          FilteredBootstrapGeneratorConfig(model="filtered_bootstrap", horizon=1, total_scenarios=PATHS, seed=SEED),
          real.history),
         ("parametric normal", f"seed={SEED}",
-         ParametricGeneratorConfig(model="parametric", total_scenarios=PATHS, seed=SEED,
+         ParametricGeneratorConfig(model="parametric", forecast_horizon=ONE_BUSINESS_DAY, total_scenarios=PATHS, seed=SEED,
                                    distribution=StandardNormalDistribution(kind="standard_normal")),
          real.parametric),
         ("parametric t(4)", f"df=4, seed={SEED}",
-         ParametricGeneratorConfig(model="parametric", total_scenarios=PATHS, seed=SEED,
+         ParametricGeneratorConfig(model="parametric", forecast_horizon=ONE_BUSINESS_DAY, total_scenarios=PATHS, seed=SEED,
                                    distribution=StudentTDistribution(kind="student_t", df=4.0)),
          real.parametric),
     ]
@@ -116,8 +122,7 @@ def main() -> None:
             data=data,
             required_factor_ids=world.required_factor_ids,
             required_shift_type_id=world.required_shift_type_id,
-            source_factor_ids=world.source_factor_ids,
-            shock_scale=world.shock_scale,
+            proxy_terms=world.proxy_terms,
             base_levels=world.base_levels,
             methodology=method,
             valuation_context=context,

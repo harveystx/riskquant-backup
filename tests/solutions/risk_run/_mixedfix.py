@@ -3,7 +3,7 @@
 Mixed-methodology fixture on the REAL production path.
 
 Six SPOT positions are ingested, compiled and valued through the same public
-functions the D019 demo uses (static config, proxy topology, snapshot,
+functions the D019 demo uses (static config, proxy terms, snapshot,
 UixMapper, UniverseMapping). The economics of slot k never change; its UID
 does. `BASE` UIDs are ascending and contiguous. `HOSTILE` UIDs are sparse and
 are ingested in NON-ascending order, so the compiled `trade_uids` are unsorted,
@@ -36,10 +36,11 @@ import numpy as np
 import pandas as pd
 import polars as pl
 
-from _proxyterms import authored_terms_from_d013_routing
-
+from riskquant.config.proxy_model.compile import compile_proxy_model
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
-from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
+from riskquant.simlab.scenarios.world_column_stream import iter_world_column_batches
+from riskquant.simlab.shocks.axis_operator import lower_axis_operator
+from riskquant.simlab.shocks.linear_term_apply import apply_linear_terms_to_base_levels
 from riskquant.solutions.risk_run.api import derive_run_factor_axis
 from riskquant.solutions.risk_run.schemas import (
     MethodologyDeclaration,
@@ -51,6 +52,8 @@ from riskquant.solutions.scenario_models.api import (
     build_scenario_generator,
     parse_scenario_model_config,
 )
+from riskquant.solutions.scenario_models.world_columns import bind_operator_to_world
+from riskquant.utils.business_days import ord_to_date
 
 _DEMO = pathlib.Path(__file__).resolve().parents[3] / "scripts" / "demos" / "e2e"
 _spec = importlib.util.spec_from_file_location("_mixedfix_demo", _DEMO / "_fixtures.py")
@@ -118,7 +121,7 @@ def _shared(rf=None) -> SimpleNamespace:
         rsc = FX.compile_risk_static_config_from_dict_of_dfs(sheets)
     return SimpleNamespace(
         rsc=rsc,
-        topo=FX._run_proxy_topology(rsc, verbose=False),
+        terms=FX._run_proxy_terms(verbose=False),
         snapshot=FX._run_risk_factor_snapshot(rsc, verbose=False),
         historical=FX._build_historical_matrix(rsc),
         as_of=int(FX.date_to_ord32(FX._SNAPSHOT_AS_OF_DATE)),
@@ -148,7 +151,7 @@ def build_world(frame: pd.DataFrame, *, rf=None, uids=None) -> SimpleNamespace:
     )
     su = FX._run_shock_universe(
         rsc=sh.rsc,
-        proxy_topology=sh.topo,
+        proxy_terms=sh.terms,
         run_axis=derive_run_factor_axis(
             valuation_context=ValuationContext(
                 static_config=sh.rsc,
@@ -303,13 +306,7 @@ def inputs(
         data=w.historical if data is None else data,
         required_factor_ids=w.su.required_factor_ids,
         required_shift_type_id=w.su.required_shift_type_id,
-        proxy_terms=authored_terms_from_d013_routing(
-            static_config=w.rsc,
-            required_factor_ids=w.su.required_factor_ids,
-            required_shift_type_id=w.su.required_shift_type_id,
-            source_factor_ids=w.su.source_factor_ids,
-            shock_scale=w.su.shock_scale,
-        ),
+        proxy_terms=w.su.proxy_terms,
         base_levels=w.su.base_levels,
         methodology=MethodologyDeclaration(
             production_position_uids=list(universe),
@@ -344,21 +341,45 @@ def history(*, move: set[str]) -> RiskFactorMatrix:
 
 
 def shocked_levels(data=None, *, uids=BASE, rf=None) -> np.ndarray:
-    """Canonical (K, S) scenario levels, rebuilt from the scenario seam in one batch."""
+    """
+    Canonical (K, S) scenario levels, rebuilt from the D088 scenario seam in one
+    batch: the fixture's authored terms compiled over the run axis, lowered,
+    bound to the world's (d, tau, h) columns, streamed, then X = sum beta Y and
+    T^-1_kappa. The tests compare the run's one shocked-level buffer with this
+    rebuild bitwise (plumbing, not an independent numerical oracle).
+    """
     w = world(uids, rf)
-    gen = build_scenario_generator(
-        HISTORICAL, data=w.historical if data is None else data
+    m = w.historical if data is None else data
+    operator = lower_axis_operator(
+        model=compile_proxy_model(
+            authored_terms=w.su.proxy_terms,
+            static_config=w.rsc,
+            as_of_date=ord_to_date(int(w.as_of)),
+            run_axis_rf_ids=w.su.required_factor_ids,
+        ),
+        axis_rf_ids=w.su.required_factor_ids,
+        axis_shift_type_ids=w.su.required_shift_type_id,
     )
+    binding = bind_operator_to_world(operator, HISTORICAL, m)
+    gen = build_scenario_generator(HISTORICAL, data=m)
     k, s = w.su.required_factor_ids.shape[0], gen.total_scenarios
     out = np.empty((k, s), dtype=np.float64)
-    for b in gen.iter_batches(
-        required_shift_type_id=w.su.required_shift_type_id,
-        source_factor_ids=w.su.source_factor_ids,
-        shock_scale=w.su.shock_scale,
+    for b in iter_world_column_batches(
+        gen,
+        driver_rf_ids=binding.request_driver_rf_ids,
+        chart_ids=binding.request_chart_ids,
         batch_size=s,
     ):
         chunk = np.empty((k, b.shocks.shape[0]), dtype=np.float64)
-        apply_shocks_to_base_levels(base_levels=w.su.base_levels, batch=b, out=chunk)
+        apply_linear_terms_to_base_levels(
+            base_levels=w.su.base_levels,
+            row_term_offsets=operator.row_term_offsets,
+            term_column_uix=binding.term_column_uix,
+            term_loadings=operator.term_loadings,
+            target_shift_types=operator.target_shift_type_ids,
+            shocks=b.shocks,
+            out=chunk,
+        )
         out[:, b.scenario_offset : b.scenario_offset + chunk.shape[1]] = chunk
     return out
 

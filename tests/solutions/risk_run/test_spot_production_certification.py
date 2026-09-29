@@ -237,7 +237,11 @@ def test_run_axes_are_authoritative_and_hostile(cap) -> None:
         101,
         4002,
     ]  # from the universe map
-    assert w.su.source_factor_ids.tolist() == [9007, 12, 4002, 4002]
+    # The fixture's one authored Proxy V1 term (D019): WTI_CRUDE (rf 101, no
+    # history) <- 0.95 * BRENT_CRUDE (rf 4002) log return; every other row is
+    # its identity row.
+    assert [(w.rf[t.target_name], w.rf[t.driver_name], int(t.driver_chart), t.loading)
+            for t in w.su.proxy_terms] == [(101, 4002, 1, 0.95)]
     assert w.historical.factor_ids.tolist() == [12, 4002, 9007]
     run = run_scenario_var_es(**inp)
     assert run.position_uids.tolist() == sorted(UIDS)  # final economic axis = U

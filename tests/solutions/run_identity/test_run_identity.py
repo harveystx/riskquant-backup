@@ -52,6 +52,7 @@ from riskquant.solutions.run_identity.schemas import (
     MethodologyIdentity,
     RunContextIdentity,
     RunManifest,
+    ShockIdentity,
 )
 from riskquant.solutions.scenario_models.api import (
     build_scenario_generator,
@@ -615,3 +616,76 @@ def test_shock_identity_is_exactly_the_proxy_model_digest() -> None:
     )
     shocks = _manifest(inp).shocks
     assert shocks.model_dump() == {"proxy_model_digest": expected}
+
+
+# --------------------------------------------------------------------------
+# D088 §13.3 at the schema boundary: direct model construction
+# --------------------------------------------------------------------------
+
+_VALID_DIGEST = "0123456789abcdef" * 4  # 64 lowercase hex characters
+
+
+@pytest.mark.parametrize(
+    "digest",
+    [
+        "",
+        "x",
+        "0123456789ABCDEF" * 4,  # uppercase is not the canonical form
+        _VALID_DIGEST[:-1],  # 63 characters
+        _VALID_DIGEST + "0",  # 65 characters
+        "sha256:" + _VALID_DIGEST[:57],
+        " " + _VALID_DIGEST[1:],
+    ],
+    ids=["empty", "one_char", "uppercase", "short", "long", "prefixed", "space"],
+)
+def test_shock_identity_refuses_a_non_sha256_digest(digest) -> None:
+    with pytest.raises(ValidationError):
+        ShockIdentity(proxy_model_digest=digest)
+
+
+def test_shock_identity_accepts_a_sha256_digest() -> None:
+    assert ShockIdentity(proxy_model_digest=_VALID_DIGEST).proxy_model_digest == _VALID_DIGEST
+
+
+def _manifest_dict(*, digest: str, with_context: bool) -> dict:
+    d = json.loads(_manifest(_inputs()).to_json())
+    d["shocks"] = {"proxy_model_digest": digest}
+    if not with_context:
+        d["pnl"] = {**d["pnl"], "composition": None}
+    return d
+
+
+@pytest.mark.parametrize(
+    ("digest", "with_context"),
+    [
+        ("", False),  # empty proxy identity, no context
+        ("", True),  # empty proxy identity, context present
+        ("not-a-digest", True),  # malformed proxy identity, context present
+        (_VALID_DIGEST.upper(), True),  # non-canonical hex, context present
+        (_VALID_DIGEST, False),  # valid proxy identity, no context
+    ],
+    ids=[
+        "empty_digest_no_context",
+        "empty_digest_with_context",
+        "malformed_digest_with_context",
+        "uppercase_digest_with_context",
+        "valid_digest_no_context",
+    ],
+)
+def test_v5_manifest_refuses_an_invalid_proxy_identity_or_a_missing_context(
+    digest, with_context
+) -> None:
+    d = _manifest_dict(digest=digest, with_context=with_context)
+    assert d["manifest_schema_version"] == "5"
+    with pytest.raises(ValidationError):
+        RunManifest.model_validate(d)
+    with pytest.raises(ValidationError):
+        RunManifest.from_json(json.dumps(d))
+
+
+def test_v5_manifest_accepts_a_valid_proxy_identity_with_its_context() -> None:
+    d = _manifest_dict(digest=_VALID_DIGEST, with_context=True)
+    m = RunManifest.model_validate(d)
+    assert m.shocks.proxy_model_digest == _VALID_DIGEST
+    assert m.pnl.composition is not None
+    assert RunManifest.from_json(m.to_json()).identity() == m.identity()

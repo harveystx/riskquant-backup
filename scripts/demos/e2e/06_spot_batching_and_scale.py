@@ -36,10 +36,16 @@ import numpy as np
 
 from riskquant.solutions.risk_run.api import run_scenario_var_es
 from riskquant.solutions.scenario_models.schemas import (
+    ForecastPeriodConfig,
     ParametricGeneratorConfig,
     SbbGeneratorConfig,
     StandardNormalDistribution,
 )
+
+#: D090: the parametric construction data describes one-business-day log
+#: returns (effective period (1, BUSINESS_DAY)); the request states the same
+#: period, and the run refuses any other.
+ONE_BUSINESS_DAY = ForecastPeriodConfig(count=1, unit="BUSINESS_DAY")
 
 NUM_POSITIONS: int = 400
 NUM_OBSERVATIONS: int = 1_001
@@ -75,7 +81,7 @@ def main() -> None:
     models = {
         "sbb": (SbbGeneratorConfig(model="sbb", horizon=1, total_scenarios=NUM_SCENARIOS,
                                    expected_block_size=5.0, seed=11), real.history),
-        "parametric": (ParametricGeneratorConfig(model="parametric", total_scenarios=NUM_SCENARIOS, seed=11,
+        "parametric": (ParametricGeneratorConfig(model="parametric", forecast_horizon=ONE_BUSINESS_DAY, total_scenarios=NUM_SCENARIOS, seed=11,
                                                  distribution=StandardNormalDistribution(kind="standard_normal")),
                        real.parametric),
     }
@@ -92,8 +98,7 @@ def main() -> None:
                 data=data,
                 required_factor_ids=world.required_factor_ids,
                 required_shift_type_id=world.required_shift_type_id,
-                source_factor_ids=world.source_factor_ids,
-                shock_scale=world.shock_scale,
+                proxy_terms=world.proxy_terms,
                 base_levels=world.base_levels,
                 methodology=method,
                 valuation_context=context,

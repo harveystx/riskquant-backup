@@ -11,6 +11,7 @@ atol 1e-15); determinism checks are bitwise.
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import math
 import sys
@@ -226,11 +227,30 @@ def test_missing_driver_chart_fails_before_generation_and_manifest(monkeypatch) 
     assert built == [] and gens == []
 
 
-def test_log_target_driven_by_difference_uses_the_difference_column(capture) -> None:
+def _request_spy(monkeypatch) -> list[list[tuple[int, int]]]:
+    """Record the (driver, driver chart) world request the run streams."""
+    seen: list[list[tuple[int, int]]] = []
+    real = api.iter_world_column_batches
+
+    def spy(generator, **kw: Any):
+        seen.append(list(zip(kw["driver_rf_ids"].tolist(), kw["chart_ids"].tolist(), strict=True)))
+        return real(generator, **kw)
+
+    monkeypatch.setattr(api, "iter_world_column_batches", spy)
+    return seen
+
+
+def test_log_target_driven_by_difference_uses_the_difference_column(capture, monkeypatch) -> None:
+    """kappa(EQ_USD) = LOG, tau = DIFF: the authored term requests (USDEUR, DIFF),
+    the world supplies that column, and reconstruction is LOG over it. EQ_USD's
+    own (EQ_USD, LOG) column is never requested (its row is authored), and
+    USDEUR's identity row requests (USDEUR, LOG) as a separate column."""
+    requests = _request_spy(monkeypatch)
     w = _world()
     kw = w.inputs()
     kw["proxy_terms"] = (_term("EQ_USD", "USDEUR", DIFF, 0.5),)
     run_scenario_var_es(**kw)
+    assert requests == [[(RF["USDEUR"], DIFF), (RF["USDEUR"], LOG)]]
     got = _shocked(capture)[w.row("EQ_USD"), 0]
     np.testing.assert_allclose(got, 100.0 * math.exp(0.5 * _y("USDEUR", DIFF)), rtol=RTOL, atol=ATOL)
     assert abs(got - 100.0 * math.exp(0.5 * _y("USDEUR", LOG))) > 0.1
@@ -379,12 +399,187 @@ def test_the_run_has_no_d013_inputs_or_calls(monkeypatch) -> None:
     def boom(*a: Any, **k: Any) -> None:
         raise AssertionError("D013 path reached")
 
+    import riskquant.config.proxy_config.compile as legacy_topology
     import riskquant.proxy_resolver.proxy as legacy_resolver
     import riskquant.simlab.shocks.apply as legacy_apply
+    import riskquant.simlab.shocks.shock_kernel as legacy_kernel
 
     monkeypatch.setattr(legacy_apply, "apply_shocks_to_base_levels", boom)
+    monkeypatch.setattr(legacy_apply, "validate_apply_shocks_buffers", boom)
+    monkeypatch.setattr(legacy_kernel, "_kernel_apply_shocks", boom)
     monkeypatch.setattr(
         legacy_resolver, "resolve_required_factor_ids_to_market_data_factor_ids", boom
     )
-    run = run_scenario_var_es(**_world().inputs())
+    monkeypatch.setattr(legacy_topology, "compile_proxy_topology_from_df", boom)
+    monkeypatch.setattr(legacy_topology, "compile_proxy_topology_from_xlsx", boom)
+    kw = _world().inputs()
+    kw["proxy_terms"] = (_term("EQ_USD", "USDEUR", DIFF, 0.5),)  # an authored proxy too
+    run = run_scenario_var_es(**kw)
     assert np.isfinite(run.var).all()
+
+
+# ---- D089 / D090 horizon equality at the production run --------------------------------------------
+
+
+def _generator_spy(monkeypatch) -> list[int]:
+    built: list[int] = []
+    real = api.build_scenario_generator
+
+    def spy(*a: Any, **k: Any):
+        built.append(1)
+        return real(*a, **k)
+
+    monkeypatch.setattr(api, "build_scenario_generator", spy)
+    return built
+
+
+def _period_data(w: World, count: int):
+    base = _param_data(list(w.axis.factor_ids))
+    return dataclasses.replace(base, effective_period_count=count)
+
+
+def _period_cfg(count: int):
+    return parse_scenario_model_config({
+        "model": "parametric",
+        "forecast_horizon": {"count": count, "unit": "BUSINESS_DAY"},
+        "total_scenarios": 16,
+        "seed": 3,
+        "distribution": {"kind": "standard_normal"},
+    })
+
+
+@pytest.mark.parametrize(("requested", "effective"), [(1, 5), (5, 1), (2, 3)])
+def test_a_horizon_mismatch_fails_before_manifest_and_generation(
+    monkeypatch, requested, effective
+) -> None:
+    """Requested (config) and effective (data) periods differ: the production
+    run refuses before any manifest or generator exists. No tolerance, no
+    scaling, no conversion (D089, D090)."""
+    manifests, generators = _manifest_spy(monkeypatch), _generator_spy(monkeypatch)
+    w = _world(hist={"EQ_USD": [100.0, 101.0], "USDEUR": [0.90, 0.91]})
+    kw = w.inputs(scenario_config=_period_cfg(requested), data=_period_data(w, effective))
+    with pytest.raises(ValueError, match="D090"):
+        run_scenario_var_es(**kw)
+    assert manifests == [] and generators == []
+
+
+def test_an_equal_horizon_runs_once_through_the_world() -> None:
+    w = _world(hist={"EQ_USD": [100.0, 101.0], "USDEUR": [0.90, 0.91]})
+    runs = [
+        run_scenario_var_es(**w.inputs(scenario_config=_period_cfg(h), data=_period_data(w, h)))
+        for h in (1, 5)
+    ]
+    assert all(np.isfinite(r.var).all() for r in runs)
+    # Same proxy operator at both horizons; the world (and so the run) differs.
+    assert runs[0].manifest.shocks.proxy_model_digest == runs[1].manifest.shocks.proxy_model_digest
+    assert runs[0].identity != runs[1].identity
+
+
+# ---- one run: V1 prefix, V1 suffix, ABS suffix, NO_SHIFT suffix --------------------------------------
+
+
+def _rsc_with_usdjpy(**shift: int):
+    """The fixture configuration plus one FX pair USDJPY (JPY per USD), so a
+    reporting-USD book can carry three reporting-only suffix nodes."""
+    dfs = t.hf.static_config_dfs()
+    node = dfs["node_meta"]
+    row = node.filter(pl.col("node_name") == "USDCHF").with_columns(
+        pl.lit(5009, dtype=node.schema["node_id"]).alias("node_id"),
+        pl.lit("USDJPY").alias("node_name"),
+        pl.lit("JPY").alias("quote_ccy"),
+    )
+    assert 5009 not in node["node_id"].to_list()
+    node = pl.concat([node, row])
+    for name, sid in shift.items():
+        node = node.with_columns(
+            pl.when(pl.col("node_name") == name)
+            .then(pl.lit(_SHIFT_NAME[sid]))
+            .otherwise(pl.col("shift_type"))
+            .alias("shift_type")
+        )
+    dfs["node_meta"] = node
+    return compile_risk_static_config_from_dict_of_dfs(dfs)
+
+
+def test_one_run_mixes_v1_prefix_v1_suffix_and_native_suffix_rows(capture, monkeypatch) -> None:
+    rsc = _rsc_with_usdjpy(USDCHF=ABS, USDJPY=NO_SHIFT)
+    jpy = int(rsc.rel_name_to_rf_id["USDJPY"])
+    rows = [
+        spot(1, "EQ_USD", "USD", 1.0),
+        spot(2, "EQ_EUR", "EUR", 1.0),
+        spot(3, "EQ_CHF", "CHF", 1.0),
+        spot(4, "EQ_JPY", "JPY", 1.0),
+    ]
+    base = {"EQ_USD": 100.0, "EQ_EUR": 50.0, "EQ_CHF": 40.0, "EQ_JPY": 2000.0,
+            "USDEUR": 0.90, "USDCHF": 0.88, "USDJPY": 150.0}
+    hist = {"EQ_USD": [100.0, 102.0], "EQ_EUR": [50.0, 49.0], "EQ_CHF": [40.0, 41.0],
+            "EQ_JPY": [2000.0, 2010.0], "USDEUR": [0.90, 0.92], "USDCHF": [0.88, 0.87],
+            "USDJPY": [150.0, 151.0]}
+    requests = _request_spy(monkeypatch)
+    with mock.patch.dict(t.NAME, {jpy: "USDJPY"}), mock.patch.object(t, "RSC", rsc):
+        w = World(rows, "USD", base, hist)
+        suffix = [t.NAME[int(f)] for f in w.axis.factor_ids[w.axis.num_valuation_factors:]]
+        assert sorted(suffix) == ["USDCHF", "USDEUR", "USDJPY"]
+        names = [t.NAME[int(f)] for f in w.axis.factor_ids]
+        assert len(names) == len(set(names))  # every FX factor once on the axis
+        run = run_scenario_var_es(**w.inputs(data=w.data(drop=("USDJPY",))))
+        full = compile_proxy_model(
+            authored_terms=(), static_config=rsc, as_of_date=ord_to_date(AS_OF),
+            run_axis_rf_ids=w.axis.factor_ids,
+        )
+    native = {RF["USDCHF"], jpy}
+    v1_axis = np.array([f for f in w.axis.factor_ids.tolist() if f not in native], dtype=np.int32)
+    # Compiled rows: the four V1 prefix nodes and the V1 suffix node, nothing native.
+    assert sorted(full.row_target_rf_ids.tolist()) == sorted(v1_axis.tolist())
+    assert run.manifest.shocks.proxy_model_digest == hash_proxy_model(full)
+    # World request: every V1 row's own LOG column, the ABS node's native
+    # column; nothing for NO_SHIFT.
+    expect = {(int(f), LOG) for f in v1_axis.tolist()} | {(RF["USDCHF"], ABS)}
+    assert len(requests) == 1 and set(requests[0]) == expect and len(requests[0]) == len(expect)
+    # Levels, from the chart definitions of the two-point history.
+    s = _shocked(capture)[:, 0]
+    row = {n: i for i, n in enumerate(names)}
+    np.testing.assert_allclose(
+        s[row["USDEUR"]], 0.90 * math.exp(_y("USDEUR", LOG, hist)), rtol=RTOL, atol=ATOL
+    )
+    np.testing.assert_allclose(
+        s[row["USDCHF"]], 0.88 + _y("USDCHF", ABS, hist) * 0.88, rtol=RTOL, atol=ATOL
+    )
+    assert s[row["USDJPY"]] == 150.0
+    np.testing.assert_allclose(
+        s[row["EQ_JPY"]], 2000.0 * math.exp(_y("EQ_JPY", LOG, hist)), rtol=RTOL, atol=ATOL
+    )
+    # The reporting conversion reads each suffix FX level from the shocked axis.
+    fx = capture["convert_in"]["fx_levels"]
+    shocked = _shocked(capture)
+    assert sorted(
+        next(n for n in ("USDEUR", "USDCHF", "USDJPY") if fx[i].tobytes() == shocked[row[n]].tobytes())
+        for i in range(fx.shape[0])
+    ) == ["USDCHF", "USDEUR", "USDJPY"]
+
+
+# ---- shock_scale has no semantic role on the production path ----------------------------------------
+
+
+def test_the_generator_shock_scale_payload_cannot_act_as_a_loading(monkeypatch) -> None:
+    """Poison every batch's legacy `shock_scale` payload with NaN: VaR and ES
+    stay bitwise identical, so nothing on the D088 path reads it as beta."""
+    w = _world()
+    kw = w.inputs()
+    kw["proxy_terms"] = (_term("EQ_USD", "USDEUR", DIFF, 0.5),)
+    clean = run_scenario_var_es(**kw)
+    real = api.build_scenario_generator
+
+    class Poisoned:
+        def __init__(self, g):
+            self._g = g
+            self.total_scenarios = g.total_scenarios
+
+        def iter_batches(self, **k: Any):
+            for b in self._g.iter_batches(**k):
+                yield dataclasses.replace(b, shock_scale=np.full_like(b.shock_scale, np.nan))
+
+    monkeypatch.setattr(api, "build_scenario_generator", lambda *a, **k: Poisoned(real(*a, **k)))
+    poisoned = run_scenario_var_es(**kw)
+    assert poisoned.var.tobytes() == clean.var.tobytes()
+    assert poisoned.es.tobytes() == clean.es.tobytes()
