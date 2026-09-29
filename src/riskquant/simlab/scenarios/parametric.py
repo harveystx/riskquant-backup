@@ -117,6 +117,16 @@ class ParametricGenerator(ScenarioGenerator):
             if not np.isfinite(self.vg_nu) or self.vg_nu <= 0.0:
                 raise ValueError("vg_nu must be finite and positive")
 
+        if (
+            self.distribution_kind != "regime_switching_gmm"
+            and self.crisis_vol_multipliers is not None
+        ):
+            # D092: a crisis multiplier has no meaning outside regime switching;
+            # it is rejected, never silently ignored.
+            raise ValueError(
+                "crisis_vol_multipliers is only valid for regime_switching_gmm, got "
+                f"distribution_kind={self.distribution_kind!r}."
+            )
         if self.distribution_kind == "regime_switching_gmm":
             if self.prob_crisis is None:
                 raise ValueError("prob_crisis is required for regime_switching_gmm")

@@ -109,16 +109,23 @@ def hash_parametric_risk_data(data) -> str:
     effective forecast period they represent (D090), and the driver chart of
     each column (D091). The period is hashed as int64 count and int8 unit code
     and the charts as the int8 ``chart_ids`` array, so the same numbers declared
-    for a different period or a different chart are a different artifact.
+    for a different period or a different chart are a different artifact. The
+    per-factor crisis multipliers, when present, are one more named array
+    (D092); their presence or absence changes the digest.
     """
-    return digest_named_arrays(
-        factor_ids=data.factor_ids,
-        cholesky_matrix=data.cholesky_matrix,
-        volatilities=data.volatilities,
-        effective_period_count=np.array([data.effective_period_count], dtype=np.int64),
-        effective_period_unit=np.array([data.effective_period_unit], dtype=np.int8),
-        chart_ids=data.chart_ids,
-    )
+    arrays = {
+        "factor_ids": data.factor_ids,
+        "cholesky_matrix": data.cholesky_matrix,
+        "volatilities": data.volatilities,
+        "effective_period_count": np.array(
+            [data.effective_period_count], dtype=np.int64
+        ),
+        "effective_period_unit": np.array([data.effective_period_unit], dtype=np.int8),
+        "chart_ids": data.chart_ids,
+    }
+    if data.crisis_vol_multipliers is not None:
+        arrays["crisis_vol_multipliers"] = data.crisis_vol_multipliers
+    return digest_named_arrays(**arrays)
 
 
 def hash_compiled_book(book) -> str:

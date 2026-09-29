@@ -44,7 +44,7 @@ def _vols():
     return np.ascontiguousarray(np.array([0.10, 0.20, 0.15], dtype=np.float64))
 
 
-def _pdata():
+def _pdata(crisis_vol_multipliers=None):
     return ParametricRiskData(
         factor_ids=_fids(),
         cholesky_matrix=_chol(),
@@ -52,6 +52,7 @@ def _pdata():
         effective_period_count=1,
         effective_period_unit=FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
         chart_ids=np.full(_K, SHIFT_LOG_RETURN_ID, dtype=np.int8),
+        crisis_vol_multipliers=crisis_vol_multipliers,
     )
 
 
@@ -170,7 +171,7 @@ def test_empty_factor_ids_rejected() -> None:
         {
             "kind": "regime_switching_gmm",
             "prob_crisis": 0.1,
-            "crisis_vol_multipliers": [2.0, 3.0, 4.0],
+            "crisis_vol_multipliers": "per_factor",
         },
     ],
 )
@@ -290,19 +291,22 @@ def test_build_returns_parametric_generator() -> None:
     assert gen.total_scenarios == 10 and gen.seed == 7
 
 
-def test_build_runs_generator_own_validation() -> None:
-    """A df <= 2 is caught at config; but a data/model mismatch the config can't
-    see (e.g. per-factor multipliers of wrong length) still fails at
-    construction — the generator remains authoritative."""
-    cfg = parse_scenario_model_config(
-        _cfg({
-            "kind": "regime_switching_gmm",
-            "prob_crisis": 0.1,
-            "crisis_vol_multipliers": [2.0, 3.0],
-        })  # length 2 != K=3
-    )
+def test_per_factor_vector_length_is_checked_by_data_and_generator() -> None:
+    """D092: a per-factor vector of the wrong length (2 != K=3) is a data
+    invariant violation; the directly callable generator also rejects it."""
     with pytest.raises(ValueError):
-        build_scenario_generator(cfg, data=_pdata())
+        _pdata(np.array([2.0, 3.0]))
+    with pytest.raises(ValueError):
+        ParametricGenerator(
+            available_factor_ids=_fids(),
+            cholesky_matrix=_chol(),
+            volatilities=_vols(),
+            total_scenarios=10,
+            distribution_kind="regime_switching_gmm",
+            seed=7,
+            prob_crisis=0.1,
+            crisis_vol_multipliers=np.array([2.0, 3.0]),
+        )
 
 
 @pytest.mark.parametrize(
@@ -316,11 +320,18 @@ def test_build_runs_generator_own_validation() -> None:
             "prob_crisis": 0.2,
             "crisis_vol_multipliers": 3.0,
         },
+        {
+            "kind": "regime_switching_gmm",
+            "prob_crisis": 0.2,
+            "crisis_vol_multipliers": "per_factor",
+        },
     ],
 )
 def test_seam_equivalent_to_direct(distribution) -> None:
     cfg = parse_scenario_model_config(_cfg(distribution))
-    seamed = build_scenario_generator(cfg, data=_pdata())
+    per_factor = distribution.get("crisis_vol_multipliers") == "per_factor"
+    vector = np.array([2.0, 3.0, 4.0]) if per_factor else None
+    seamed = build_scenario_generator(cfg, data=_pdata(vector))
 
     kwargs = dict(
         available_factor_ids=_fids(),
@@ -336,7 +347,9 @@ def test_seam_equivalent_to_direct(distribution) -> None:
         kwargs["vg_nu"] = distribution["nu"]
     elif distribution["kind"] == "regime_switching_gmm":
         kwargs["prob_crisis"] = distribution["prob_crisis"]
-        kwargs["crisis_vol_multipliers"] = distribution["crisis_vol_multipliers"]
+        kwargs["crisis_vol_multipliers"] = (
+            vector if per_factor else distribution["crisis_vol_multipliers"]
+        )
     direct = ParametricGenerator(**kwargs)
 
     rd, rs = _drive(direct), _drive(seamed)

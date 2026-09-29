@@ -99,6 +99,7 @@ from riskquant.solutions.run_identity.schemas import (
 from riskquant.solutions.scenario_models.api import (
     build_scenario_generator,
     resolve_parametric_binding_horizon,
+    resolve_parametric_crisis_multipliers,
 )
 from riskquant.solutions.scenario_models.schemas import (
     ParametricGeneratorConfig,
@@ -878,8 +879,11 @@ def run_scenario_var_es(
     # D090: a parametric world's requested and effective forecast periods must
     # be equal before the run is accepted, identified or computed. The reduced
     # h = count(H_W) is the only horizon the (d, τ, h) binder will receive.
+    # D092: the crisis-multiplier form declared by the configuration must match
+    # the data (scalar <-> no data vector; "per_factor" <-> data vector).
     if isinstance(scenario_config, ParametricGeneratorConfig):
         resolve_parametric_binding_horizon(scenario_config, data)
+        resolve_parametric_crisis_multipliers(scenario_config, data)
     reproducible = _is_reproducible(scenario_config)
     if mode == "reproducible" and not reproducible:
         raise NonReproducibleRunError(

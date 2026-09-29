@@ -275,6 +275,7 @@ def test_effective_unit_enters_the_data_digest() -> None:
         "volatilities": base.volatilities,
         "effective_period_count": 4,
         "chart_ids": base.chart_ids,
+        "crisis_vol_multipliers": None,
     }
     one = SimpleNamespace(**arrays, effective_period_unit=np.int8(1))
     two = SimpleNamespace(**arrays, effective_period_unit=np.int8(2))

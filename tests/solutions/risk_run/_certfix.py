@@ -182,6 +182,8 @@ _PARAMETRIC_FIELDS = (
     "effective_period_unit",
     "chart_ids",
 )
+# D092: present only when the data carries a per-factor crisis-multiplier vector.
+_PARAMETRIC_OPTIONAL_FIELDS = ("crisis_vol_multipliers",)
 
 
 def build_parametric_data():
@@ -221,6 +223,11 @@ def freeze_parametric_data(path: str) -> str:
     np.savez(
         path,
         **{name: getattr(data, name) for name in _PARAMETRIC_FIELDS},
+        **{
+            name: getattr(data, name)
+            for name in _PARAMETRIC_OPTIONAL_FIELDS
+            if getattr(data, name) is not None
+        },
     )
 
     return hash_parametric_risk_data(data)
@@ -233,11 +240,14 @@ def load_parametric_data(path: str) -> ParametricRiskData:
     content fails.
     """
     with np.load(path, allow_pickle=False) as frozen:
-        if sorted(frozen.files) != sorted(_PARAMETRIC_FIELDS):
+        files = set(frozen.files)
+        required = set(_PARAMETRIC_FIELDS)
+        if not required <= files <= required | set(_PARAMETRIC_OPTIONAL_FIELDS):
             raise ValueError(
                 f"frozen parametric data {path!r} holds "
-                f"{sorted(frozen.files)}, expected exactly "
-                f"{sorted(_PARAMETRIC_FIELDS)}."
+                f"{sorted(frozen.files)}, expected "
+                f"{sorted(_PARAMETRIC_FIELDS)} plus optionally "
+                f"{sorted(_PARAMETRIC_OPTIONAL_FIELDS)}."
             )
 
         # A 0-d array holds a scalar field (the D090 period); `[()]` restores the
@@ -245,7 +255,7 @@ def load_parametric_data(path: str) -> ParametricRiskData:
         return ParametricRiskData(
             **{
                 name: frozen[name][()] if frozen[name].ndim == 0 else frozen[name]
-                for name in _PARAMETRIC_FIELDS
+                for name in sorted(files)
             }
         )
 

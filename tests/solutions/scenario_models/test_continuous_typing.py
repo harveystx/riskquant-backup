@@ -325,7 +325,7 @@ def test_domain_boundaries_unchanged(raw, ok) -> None:
             parse_scenario_model_config(raw)
 
 
-# ---- vector semantics of crisis_vol_multipliers preserved --------------------
+# ---- D092: crisis_vol_multipliers is a scalar or "per_factor" ------------------
 
 
 def _regime(mult):
@@ -355,22 +355,19 @@ def test_multipliers_scalar_form(mult, expected) -> None:
     assert type(got) is float and got == expected
 
 
-@pytest.mark.parametrize(
-    "mult",
-    [[2.0, 3.0], [2, 3], [np.float64(2), np.int64(3)]],
-    ids=["floats", "ints", "numpy_scalars"],
-)
-def test_multipliers_vector_form_leaves_canonicalized(mult) -> None:
-    """The sequence form stays a sequence; D038 typing applies to its leaves."""
-    got = parse_scenario_model_config(_regime(mult)).distribution.crisis_vol_multipliers
-    assert isinstance(got, list) and len(got) == 2
-    assert all(type(x) is float for x in got)
-    assert got == [2.0, 3.0]
+def test_multipliers_per_factor_declaration() -> None:
+    got = parse_scenario_model_config(_regime("per_factor")).distribution
+    assert got.crisis_vol_multipliers == "per_factor"
 
 
 @pytest.mark.parametrize(
     "mult",
     [
+        [2.0, 3.0],
+        [2, 3],
+        [np.float64(2), np.int64(3)],
+        (2.0, 3.0),
+        np.array([2.0, 3.0]),
         [2.0, "3.0"],
         [2.0, True],
         [2.0, Decimal("3.0")],
@@ -381,6 +378,11 @@ def test_multipliers_vector_form_leaves_canonicalized(mult) -> None:
         [],
     ],
     ids=[
+        "floats",
+        "ints",
+        "numpy_scalars",
+        "tuple",
+        "ndarray",
         "str_leaf",
         "bool_leaf",
         "decimal_leaf",
@@ -391,6 +393,13 @@ def test_multipliers_vector_form_leaves_canonicalized(mult) -> None:
         "empty",
     ],
 )
-def test_multipliers_vector_invalid_leaves_rejected(mult) -> None:
+def test_multipliers_sequence_form_is_rejected(mult) -> None:
+    """D092 removed the configuration sequence form; nothing reinterprets it."""
+    with pytest.raises(ValidationError):
+        parse_scenario_model_config(_regime(mult))
+
+
+@pytest.mark.parametrize("mult", ["PER_FACTOR", "per-factor", "", "3.0", "uniform"])
+def test_multipliers_other_strings_are_rejected(mult) -> None:
     with pytest.raises(ValidationError):
         parse_scenario_model_config(_regime(mult))

@@ -28,6 +28,12 @@ chart of ``factor_ids[i]``, one chart per factor, drawn from the existing
 here transforms a value by chart. ``cholesky_matrix`` is a dependence factor L
 whose rows have unit norm, so that ``R = L Lᵀ`` has a unit diagonal; no
 triangularity or definiteness is required, and L is accepted unchanged.
+
+Heterogeneous crisis multipliers of the regime-switching law are factor-law
+data (D092): the optional ``crisis_vol_multipliers[i]`` belongs to
+``factor_ids[i]``. Whether they are required is a composition rule of the
+solution tier; this object validates the vector whenever it is present and
+never infers the distribution.
 """
 
 from __future__ import annotations
@@ -99,6 +105,10 @@ class ParametricRiskData:
       - ``chart_ids``       : int8, 1-D, length K, C-contiguous; ``chart_ids[i]``
                               is the driver chart of ``factor_ids[i]``, one of
                               ``PARAMETRIC_DRIVER_CHART_IDS`` (D091).
+      - ``crisis_vol_multipliers`` : optional (D092). When present: float64, 1-D,
+                              length K, C-contiguous, finite, strictly positive;
+                              ``crisis_vol_multipliers[i]`` belongs to
+                              ``factor_ids[i]``. No upper bound.
 
     The effective period ``(effective_period_count, effective_period_unit)`` is
     the forecast period the supplied law represents. It is neither an
@@ -111,6 +121,7 @@ class ParametricRiskData:
     effective_period_count: int
     effective_period_unit: np.int8
     chart_ids: np.ndarray
+    crisis_vol_multipliers: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         f = self.factor_ids
@@ -207,3 +218,28 @@ class ParametricRiskData:
                 f"(LOG, SIMPLE, DIFFERENCE); got {int(t[np.argmax(bad)])} at "
                 f"position {int(np.argmax(bad))}."
             )
+
+        # D092 per-factor crisis multipliers: a data invariant whenever present.
+        m = self.crisis_vol_multipliers
+        if m is not None:
+            if not isinstance(m, np.ndarray) or m.ndim != 1 or m.dtype != np.float64:
+                raise TypeError(
+                    "crisis_vol_multipliers must be a 1-D float64 array, got "
+                    f"{getattr(m, 'ndim', '?')}-D "
+                    f"{getattr(m, 'dtype', type(m).__name__)}."
+                )
+            if m.shape[0] != k:
+                raise ValueError(
+                    f"crisis_vol_multipliers length must be {k}, got {m.shape[0]}."
+                )
+            if not m.flags.c_contiguous:
+                raise ValueError("crisis_vol_multipliers must be C-contiguous.")
+            with np.errstate(all="ignore"):
+                if not np.isfinite(m).all():
+                    raise ValueError(
+                        "crisis_vol_multipliers must contain only finite values."
+                    )
+                if np.any(m <= 0.0):
+                    raise ValueError(
+                        "crisis_vol_multipliers must be strictly positive."
+                    )

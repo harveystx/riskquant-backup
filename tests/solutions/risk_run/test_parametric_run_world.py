@@ -283,3 +283,70 @@ def test_equal_periods_build_exactly_one_manifest(monkeypatch) -> None:
     )
     run_scenario_var_es(**kw)
     assert built == [1]
+
+
+# ---- 7. D092: the crisis-multiplier form gate runs before acceptance and identity -------
+
+
+def _regime_cfg(mult: Any) -> Any:
+    return parse_scenario_model_config({
+        "model": "parametric",
+        "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
+        "total_scenarios": _S,
+        "distribution": {
+            "kind": "regime_switching_gmm",
+            "prob_crisis": 0.25,
+            "crisis_vol_multipliers": mult,
+        },
+        "seed": 3,
+    })
+
+
+def _data_with_vector(ids: list[int]) -> ParametricRiskData:
+    base = _data(ids)
+    return ParametricRiskData(
+        factor_ids=base.factor_ids,
+        cholesky_matrix=base.cholesky_matrix,
+        volatilities=base.volatilities,
+        effective_period_count=base.effective_period_count,
+        effective_period_unit=base.effective_period_unit,
+        chart_ids=base.chart_ids,
+        crisis_vol_multipliers=np.linspace(1.5, 2.5, base.factor_ids.size),
+    )
+
+
+@pytest.mark.parametrize(
+    ("config", "with_vector"),
+    [("scalar", True), ("per_factor", False), ("non_regime", True)],
+)
+def test_a_crisis_multiplier_mismatch_fails_before_the_manifest(
+    monkeypatch, config: str, with_vector: bool
+) -> None:
+    built = _manifest_spy(monkeypatch)
+    w = _world()
+    ids = list(w.axis.factor_ids)
+    cfg = {
+        "scalar": lambda: _regime_cfg(2.0),
+        "per_factor": lambda: _regime_cfg("per_factor"),
+        "non_regime": lambda: _cfg(),
+    }[config]()
+    data = _data_with_vector(ids) if with_vector else _data(ids)
+    kw = w.inputs(scenario_config=cfg, data=data, batch_size=7)
+    with pytest.raises(ValueError, match="D092"):
+        run_scenario_var_es(**kw)
+    assert built == []
+
+
+@pytest.mark.parametrize(("mult", "with_vector"), [(2.0, False), ("per_factor", True)])
+def test_a_matching_crisis_multiplier_form_runs_once(
+    monkeypatch, mult: Any, with_vector: bool
+) -> None:
+    built = _manifest_spy(monkeypatch)
+    w = _world()
+    ids = list(w.axis.factor_ids)
+    data = _data_with_vector(ids) if with_vector else _data(ids)
+    run = run_scenario_var_es(
+        **w.inputs(scenario_config=_regime_cfg(mult), data=data, batch_size=7)
+    )
+    assert built == [1]
+    assert run.manifest.scenario_config["distribution"]["crisis_vol_multipliers"] == mult

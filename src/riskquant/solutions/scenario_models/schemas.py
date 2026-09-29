@@ -19,7 +19,7 @@ data contract.
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal
 
 import numpy as np
 from pydantic import (
@@ -38,6 +38,11 @@ from riskquant.simlab.scenarios.parametric_data import (
 )
 
 _STRICT = ConfigDict(extra="forbid", protected_namespaces=())
+
+#: D092 declaration that the per-factor crisis multipliers are supplied by
+#: ``ParametricRiskData.crisis_vol_multipliers``. Configuration-layer only; it
+#: never reaches the numerical generator.
+PER_FACTOR_CRISIS_MULTIPLIERS: Final = "per_factor"
 
 
 def _require_real(value: object, name: str) -> float:
@@ -264,10 +269,14 @@ class RegimeSwitchingDistribution(BaseModel):
     prob_crisis: float = Field(
         ge=0.0, le=1.0, allow_inf_nan=False, description="crisis probability in [0, 1]."
     )
-    # Scalar (all factors) or per-factor list of positive multipliers. The
-    # per-factor length is checked against K at construction (data-coupled).
-    crisis_vol_multipliers: float | list[float] = Field(
-        description="crisis vol multiplier(s), strictly positive."
+    # D092: exactly two states. A finite, strictly positive scalar is the uniform
+    # (model-level) multiplier. The literal "per_factor" declares that the
+    # per-factor values come from ParametricRiskData. A sequence is rejected and
+    # never reinterpreted; absence is not a form.
+    crisis_vol_multipliers: float | Literal["per_factor"] = Field(
+        description=(
+            'uniform crisis vol multiplier (finite, > 0) or "per_factor" (D092).'
+        )
     )
 
     @field_validator("prob_crisis", mode="before")
@@ -277,17 +286,15 @@ class RegimeSwitchingDistribution(BaseModel):
 
     @field_validator("crisis_vol_multipliers", mode="before")
     @classmethod
-    def _real_mults(cls, v: object) -> object:
-        if isinstance(v, (list, tuple)):
-            if len(v) == 0:
-                raise ValueError("crisis_vol_multipliers must be non-empty.")
-            out = [_require_real(x, "crisis_vol_multipliers") for x in v]
-            for x in out:
-                if not (x == x and x not in (float("inf"), float("-inf")) and x > 0.0):
-                    raise ValueError(
-                        "crisis_vol_multipliers must be finite and strictly positive."
-                    )
-            return out
+    def _uniform_or_per_factor(cls, v: object) -> object:
+        if isinstance(v, str):
+            if v == PER_FACTOR_CRISIS_MULTIPLIERS:
+                return v
+            raise ValueError(
+                "crisis_vol_multipliers must be a finite, strictly positive real "
+                f"scalar or {PER_FACTOR_CRISIS_MULTIPLIERS!r}; got {v!r}."
+            )
+        # D038 typing: rejects bool, sequences, arrays and non-real types.
         value = _require_real(v, "crisis_vol_multipliers")
         if not (
             value == value

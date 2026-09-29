@@ -50,7 +50,7 @@ def _matrix() -> RiskFactorMatrix:
     )
 
 
-def _parametric_data() -> ParametricRiskData:
+def _parametric_data(crisis_vol_multipliers=None) -> ParametricRiskData:
     rng = np.random.default_rng(0)
     a = rng.normal(0, 1, (_K, _K))
     cov = a @ a.T / _K + np.eye(_K) * 0.1
@@ -63,6 +63,7 @@ def _parametric_data() -> ParametricRiskData:
         effective_period_count=1,
         effective_period_unit=FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
         chart_ids=np.full(_K, SHIFT_LOG_RETURN_ID, dtype=np.int8),
+        crisis_vol_multipliers=crisis_vol_multipliers,
     )
 
 
@@ -214,13 +215,14 @@ def test_no_dependence_on_numpy_global_state(model) -> None:
         {
             "kind": "regime_switching_gmm",
             "prob_crisis": 0.3,
-            "crisis_vol_multipliers": [2.0, 3.0, 4.0],
+            "crisis_vol_multipliers": "per_factor",
         },
     ],
     ids=["normal", "laplace", "student_t", "vg", "regime_scalar", "regime_vector"],
 )
 def test_parametric_every_distribution_is_batch_invariant(distribution) -> None:
-    data = _parametric_data()
+    per_factor = distribution.get("crisis_vol_multipliers") == "per_factor"
+    data = _parametric_data(np.array([2.0, 3.0, 4.0]) if per_factor else None)
     raw = {
         "model": "parametric",
         "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},

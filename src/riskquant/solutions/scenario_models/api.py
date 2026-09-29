@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+import numpy as np
 from pydantic import TypeAdapter
 
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
@@ -28,6 +29,7 @@ from riskquant.simlab.scenarios.parametric_data import (
     ParametricRiskData,
 )
 from riskquant.solutions.scenario_models.schemas import (
+    PER_FACTOR_CRISIS_MULTIPLIERS,
     FilteredBootstrapGeneratorConfig,
     FilteredHistoricalGeneratorConfig,
     HistoricalGeneratorConfig,
@@ -43,6 +45,7 @@ __all__ = [
     "build_scenario_generator",
     "parse_scenario_model_config",
     "resolve_parametric_binding_horizon",
+    "resolve_parametric_crisis_multipliers",
 ]
 
 # The typed construction-data object required to build a generator. Each config
@@ -130,11 +133,82 @@ def resolve_parametric_binding_horizon(
     return requested.count
 
 
+def resolve_parametric_crisis_multipliers(
+    config: ParametricGeneratorConfig, data: ScenarioModelData
+) -> float | np.ndarray | None:
+    """
+    D092 composition gate for the crisis multipliers of a parametric world.
+
+    The configuration declares the form; the data may carry a per-factor vector:
+
+    ==========================  =================  ==========================
+    configuration               data vector        result
+    ==========================  =================  ==========================
+    scalar ``m``                absent             ``m`` (uniform)
+    ``"per_factor"``            present            the data vector
+    scalar ``m``                present            ``ValueError``
+    ``"per_factor"``            absent             ``ValueError``
+    non-regime distribution     present            ``ValueError``
+    non-regime distribution     absent             ``None``
+    ==========================  =================  ==========================
+
+    No broadcasting, fallback or conversion. The vector is returned as stored,
+    in canonical ``factor_ids`` order, which is the position the generator uses.
+
+    Parameters
+    ----------
+    config
+        The parametric scenario configuration (declares the form).
+    data
+        The construction data; must be ``ParametricRiskData``.
+
+    Returns
+    -------
+    float | numpy.ndarray | None
+        What the generator receives as ``crisis_vol_multipliers``.
+
+    Raises
+    ------
+    TypeError
+        ``data`` is not ``ParametricRiskData``.
+    ValueError
+        The declared form and the data disagree.
+    """
+    pdata = _require_parametric_data(data, config)
+    dist = config.distribution
+    vector = pdata.crisis_vol_multipliers
+    if not isinstance(dist, RegimeSwitchingDistribution):
+        if vector is not None:
+            raise ValueError(
+                f"Crisis multiplier mismatch (D092): distribution {dist.kind!r} is "
+                "not regime switching, so ParametricRiskData.crisis_vol_multipliers "
+                "must be absent."
+            )
+        return None
+    declared = dist.crisis_vol_multipliers
+    if isinstance(declared, str):  # the only admissible string: "per_factor"
+        if vector is None:
+            raise ValueError(
+                f"Crisis multiplier mismatch (D092): {PER_FACTOR_CRISIS_MULTIPLIERS!r} "
+                "requires ParametricRiskData.crisis_vol_multipliers."
+            )
+        return vector
+    if vector is not None:
+        raise ValueError(
+            "Crisis multiplier mismatch (D092): a scalar crisis_vol_multipliers "
+            f"({declared}) cannot be combined with "
+            "ParametricRiskData.crisis_vol_multipliers."
+        )
+    return declared
+
+
 def _build_parametric(
     config: ParametricGeneratorConfig, pdata: ParametricRiskData
 ) -> ParametricGenerator:
     """Map the nested distribution variant onto the generator's flat parameters.
     The generator re-validates every input; no numerical logic lives here."""
+    # D092: the multiplier source is fixed by the composition gate, never here.
+    multipliers = resolve_parametric_crisis_multipliers(config, pdata)
     dist = config.distribution
     kwargs: dict[str, Any] = {
         "available_factor_ids": pdata.factor_ids,
@@ -150,7 +224,7 @@ def _build_parametric(
         kwargs["vg_nu"] = dist.nu
     elif isinstance(dist, RegimeSwitchingDistribution):
         kwargs["prob_crisis"] = dist.prob_crisis
-        kwargs["crisis_vol_multipliers"] = dist.crisis_vol_multipliers
+        kwargs["crisis_vol_multipliers"] = multipliers
     return ParametricGenerator(**kwargs)
 
 
