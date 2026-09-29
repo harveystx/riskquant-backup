@@ -57,7 +57,7 @@ def spy(monkeypatch):
             "compute_var_es",
             "allocate_pnl_grid",
             "build_scenario_generator",
-            "apply_shocks_to_base_levels",
+            "apply_linear_terms_to_base_levels",
             "build_market_data_matrix_from_flat_levels",
             "_write_full_reval_block",
         )
@@ -83,7 +83,7 @@ def spy(monkeypatch):
 
     def _shock(**kw):
         seen["shock_batches"] += 1
-        return real["apply_shocks_to_base_levels"](**kw)
+        return real["apply_linear_terms_to_base_levels"](**kw)
 
     def _matrix(**kw):
         seen["matrices"].append({
@@ -105,7 +105,7 @@ def spy(monkeypatch):
         ("compute_var_es", _var_es),
         ("allocate_pnl_grid", _alloc),
         ("build_scenario_generator", _gen),
-        ("apply_shocks_to_base_levels", _shock),
+        ("apply_linear_terms_to_base_levels", _shock),
         ("build_market_data_matrix_from_flat_levels", _matrix),
         ("_write_full_reval_block", _full),
     ):
@@ -304,8 +304,6 @@ def _axis_case(case, inp):
     for key in (
         "required_factor_ids",
         "required_shift_type_id",
-        "source_factor_ids",
-        "shock_scale",
         "base_levels",
     ):
         inp[key] = np.ascontiguousarray(inp[key][order])
@@ -647,8 +645,6 @@ def test_run_does_not_mutate_caller_arrays() -> None:
     keys = (
         "required_factor_ids",
         "required_shift_type_id",
-        "source_factor_ids",
-        "shock_scale",
         "base_levels",
     )
     before = {k: np.array(inp[k], copy=True) for k in keys}

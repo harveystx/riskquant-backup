@@ -36,6 +36,28 @@ from riskquant.solutions.scenario_models.api import parse_scenario_model_config
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _fixture import FACTOR_IDS, K, S, calculator, derived, inputs, reporting_spec
+from _proxyterms import rf_name
+
+from riskquant.config.proxy_model.schema_objects import NodeProxyTerm
+from riskquant.market_data.risk_factors.shift_types import ShiftType
+
+
+def _term(inp, *, own: int, driver: int, beta: float) -> NodeProxyTerm:
+    """One authored Proxy V1 term, driver chart = the target's configured chart."""
+    sc = inp["valuation_context"].static_config
+    kappa = int(sc.rf_id_to_shift_type_id[own])
+    return NodeProxyTerm(
+        target_name=rf_name(sc, own),
+        driver_name=rf_name(sc, driver),
+        driver_chart=ShiftType(kappa),
+        loading=beta,
+    )
+
+
+def _scaled_first_row(inp) -> tuple[NodeProxyTerm, ...]:
+    """The first axis factor driven by its own column with beta = 0.9."""
+    own = int(FACTOR_IDS[0])
+    return (_term(inp, own=own, driver=own, beta=0.9),)
 
 
 def _remat(m: RiskFactorMatrix, **over) -> RiskFactorMatrix:
@@ -180,7 +202,7 @@ def test_stale_book_is_refused_before_execution() -> None:
 @pytest.mark.parametrize(
     "field,value",
     [
-        ("shock_scale", np.array([0.9, 1.0, 1.0], np.float32)),
+        ("proxy_terms", "scaled_first_row"),
         ("confidence_level", 0.95),
         ("base_levels", None),
     ],
@@ -188,23 +210,27 @@ def test_stale_book_is_refused_before_execution() -> None:
 def test_substituted_input_is_refused_before_execution(field, value) -> None:
     r = run_scenario_var_es(**inputs())
     inp = inputs()
+    if value == "scaled_first_row":
+        value = _scaled_first_row(inp)
     inp[field] = inp["base_levels"] * 1.001 if value is None else value
     with pytest.raises(InputMismatchError):
         run_scenario_var_es(**inp, reproduce=r.manifest)
 
 
-def test_swapped_shock_source_of_a_factor_with_data_is_refused() -> None:
-    """Every factor of this world has its own history, so its shock source is
-    itself (proxy tier 1, D013). Swapping two sources is not a proxy: it is
-    refused at composition, before identity (also under reproduce=). A valid
-    proxy re-routing still changes result and identity: see
-    tests/solutions/risk_run/test_axis_input_contract.py."""
+def test_an_authored_proxy_on_a_factor_with_data_is_a_different_run() -> None:
+    """D088 (D085 clause 8 superseded): data availability never selects the
+    model. Authoring factor 10 <- factor 20 is a legitimate proxy model even
+    though factor 10 has its own history; it is a different operator, so it is
+    a different run, and reproducing the identity-model manifest with it is
+    refused before execution."""
     r = run_scenario_var_es(**inputs())
     inp = inputs()
-    inp["source_factor_ids"] = np.array([20, 10, 30], np.int32)
-    for extra in ({}, {"reproduce": r.manifest}):
-        with pytest.raises(CompositionContractError, match="own shock source"):
-            run_scenario_var_es(**inp, **extra)
+    inp["proxy_terms"] = (_term(inp, own=10, driver=20, beta=1.0),)
+    other = run_scenario_var_es(**inp)
+    assert other.identity != r.identity
+    assert other.manifest.shocks.proxy_model_digest != r.manifest.shocks.proxy_model_digest
+    with pytest.raises(InputMismatchError):
+        run_scenario_var_es(**inp, reproduce=r.manifest)
 
 
 def test_foreign_environment_is_refused_before_execution() -> None:
@@ -273,7 +299,7 @@ def _mutations():
             "data": _remat(base["data"], values=np.asfortranarray(revised))
         },
         "factor_order": {"data": _remat(base["data"], values=permuted)},
-        "shock_scale": {"shock_scale": np.array([0.9, 1.0, 1.0], np.float32)},
+        "proxy_loading": {"proxy_terms": _scaled_first_row(base)},
         # P1-A: a new base is a new Taylor representation. Moving the levels
         # under a book certified at the OLD base now fails closed (see
         # test_greeks_from_another_base_fail_closed); the result-defining
@@ -361,4 +387,3 @@ def test_shift_types_are_owned_by_the_static_configuration() -> None:
     inp["required_shift_type_id"] = np.array([2] * K, np.int8)
     with pytest.raises(CompositionContractError, match="required_shift_type_ids"):
         run_scenario_var_es(**inp)
-

@@ -519,11 +519,7 @@ def inputs(
             UNIVERSE_MAP.required_shift_type_ids,
             np.int8,
         ),
-        source_factor_ids=FIDS.copy(),
-        shock_scale=np.ones(
-            K,
-            np.float32,
-        ),
+        proxy_terms=(),
         base_levels=BASE,
         methodology=MethodologyDeclaration(
             production_position_uids=UIDS,

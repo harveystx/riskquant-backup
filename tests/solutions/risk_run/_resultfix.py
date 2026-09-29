@@ -103,8 +103,7 @@ def inputs(**over: Any) -> dict[str, Any]:
         "required_shift_type_id": np.asarray(
             layout.required_shift_type_ids, dtype=np.int8
         ),
-        "source_factor_ids": factor_ids.copy(),
-        "shock_scale": np.ones(k, dtype=np.float32),
+        "proxy_terms": (),
         "base_levels": np.full(k, 150.0, dtype=np.float64),
         "methodology": MethodologyDeclaration(
             production_position_uids=UIDS,

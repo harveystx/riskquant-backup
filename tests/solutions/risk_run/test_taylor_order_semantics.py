@@ -403,7 +403,7 @@ def test_reporting_suffix_poison_never_reaches_taylor(monkeypatch, order) -> Non
     def settled(poison):
         seen: dict[str, Any] = {}
         real_apply, real_conv = (
-            api.apply_shocks_to_base_levels,
+            api.apply_linear_terms_to_base_levels,
             api.convert_scenario_pnl_to_reporting_currency,
         )
 
@@ -416,7 +416,7 @@ def test_reporting_suffix_poison_never_reaches_taylor(monkeypatch, order) -> Non
             seen["dv"] = np.array(kw["settlement_pnl"], copy=True)
             return real_conv(**kw)
 
-        monkeypatch.setattr(api, "apply_shocks_to_base_levels", apply)
+        monkeypatch.setattr(api, "apply_linear_terms_to_base_levels", apply)
         monkeypatch.setattr(api, "convert_scenario_pnl_to_reporting_currency", conv)
         run_scenario_var_es(**w.inputs(derived=(1, 2), block=block))
         monkeypatch.undo()

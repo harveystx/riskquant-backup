@@ -36,6 +36,8 @@ import numpy as np
 import pandas as pd
 import polars as pl
 
+from _proxyterms import authored_terms_from_d013_routing
+
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
 from riskquant.solutions.risk_run.api import derive_run_factor_axis
@@ -301,8 +303,13 @@ def inputs(
         data=w.historical if data is None else data,
         required_factor_ids=w.su.required_factor_ids,
         required_shift_type_id=w.su.required_shift_type_id,
-        source_factor_ids=w.su.source_factor_ids,
-        shock_scale=w.su.shock_scale,
+        proxy_terms=authored_terms_from_d013_routing(
+            static_config=w.rsc,
+            required_factor_ids=w.su.required_factor_ids,
+            required_shift_type_id=w.su.required_shift_type_id,
+            source_factor_ids=w.su.source_factor_ids,
+            shock_scale=w.su.shock_scale,
+        ),
         base_levels=w.su.base_levels,
         methodology=MethodologyDeclaration(
             production_position_uids=list(universe),
@@ -391,4 +398,3 @@ def reporting_rate(uid: int, levels: np.ndarray, uids=BASE, rf=None) -> np.ndarr
 
 def l0_reporting(v0: float, dv: np.ndarray, q0: float, qs: np.ndarray) -> np.ndarray:
     return (v0 + dv) * qs - v0 * q0
-

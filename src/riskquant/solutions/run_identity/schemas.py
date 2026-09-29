@@ -24,7 +24,7 @@ import hashlib
 import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 __all__ = [
     "MANIFEST_SCHEMA_VERSION",
@@ -50,7 +50,11 @@ __all__ = [
 # v4 (P1-B) replaced the per-block FULL/Taylor identities by ONE run-owned base
 # valuation context (as-of, static configuration, valuation contract, compiled
 # representation, market-data layout). Every V_0 is run-computed and absent.
-MANIFEST_SCHEMA_VERSION = "4"
+# v5 (D088 Stage D) replaced the D013 shock triple (required shift types, source
+# factor ids, shock scales) by the Proxy V1 operator identity
+# `shocks.proxy_model_digest` and made `pnl.composition` mandatory with it
+# (D088 §13.3).
+MANIFEST_SCHEMA_VERSION = "5"
 
 _STRICT = ConfigDict(extra="forbid", frozen=True, protected_namespaces=())
 
@@ -78,16 +82,17 @@ class DataIdentity(BaseModel):
 
 
 class ShockIdentity(BaseModel):
-    """The scenario-to-factor mapping and shock conventions. These are arguments
-    to `iter_batches`, NOT part of the scenario config, and each of them changes
-    the result: proven by mutation (shift type, source factor, shock scale).
-    Hashed as ordered vectors because position binds a required factor to its
-    source factor."""
+    """Identity of the run-bound Proxy V1 operator (D088 §7, §13.1).
+
+    `proxy_model_digest = hash_proxy_model(M)` for the model compiled over the
+    run's full axis. Despite the section name it identifies the proxy operator,
+    not the world shocks: the world is identified by `scenario_config` and
+    `data`, and the target charts by `pnl.composition.context` (D088 §13.3).
+    It is never a run, world, result or cache key on its own.
+    """
 
     model_config = _STRICT
-    required_shift_type_ids_digest: str
-    source_factor_ids_digest: str
-    shock_scale_digest: str
+    proxy_model_digest: str
 
 
 class MethodologyIdentity(BaseModel):
@@ -172,7 +177,7 @@ class RunManifest(BaseModel):
 
     model_config = _STRICT
 
-    manifest_schema_version: Literal["4"] = MANIFEST_SCHEMA_VERSION
+    manifest_schema_version: Literal["5"] = MANIFEST_SCHEMA_VERSION
     engine: EngineIdentity
     scenario_config: dict[str, Any]
     data: DataIdentity
@@ -180,6 +185,18 @@ class RunManifest(BaseModel):
     pnl: PnlIdentity
     reporting: ReportingIdentity
     risk_measure: RiskMeasureIdentity
+
+    @model_validator(mode="after")
+    def _target_identity_accompanies_proxy_identity(self) -> RunManifest:
+        # D088 §13.3: ID_target (the target charts kappa_A) is carried by
+        # RunContextIdentity; a manifest naming a proxy operator without it
+        # does not identify the run. Refused, never filled in.
+        if self.shocks.proxy_model_digest and self.pnl.composition is None:
+            raise ValueError(
+                "a manifest carrying shocks.proxy_model_digest must carry "
+                "pnl.composition.context (RunContextIdentity; D088 §13.3)."
+            )
+        return self
 
     def canonical_bytes(self) -> bytes:
         """

@@ -105,9 +105,11 @@ _CERT = textwrap.dedent(
 
     gen = build_scenario_generator(inp["scenario_config"], data=inp["data"])
     shocks, chunks = [], []
+    # Independent legacy reference: identity routing (own column, unit scale),
+    # the numerical content of the run's identity Proxy V1 rows.
     for b in gen.iter_batches(required_shift_type_id=inp["required_shift_type_id"],
-                              source_factor_ids=inp["source_factor_ids"],
-                              shock_scale=inp["shock_scale"], batch_size={bs}):
+                              source_factor_ids=inp["required_factor_ids"],
+                              shock_scale=np.ones(K, np.float32), batch_size={bs}):
         out = np.empty((K, b.shocks.shape[0]), dtype=np.float64, order="C")
         apply_shocks_to_base_levels(base_levels=inp["base_levels"], batch=b, out=out)
         shocks.append(np.array(b.shocks, copy=True)); chunks.append(out)

@@ -240,8 +240,7 @@ def _inputs(
         "required_shift_type_id": np.asarray(
             w.layout.required_shift_type_ids, dtype=np.int8
         ),
-        "source_factor_ids": w.fids.copy(),
-        "shock_scale": np.ones(w.fids.size, dtype=np.float32),
+        "proxy_terms": (),
         "base_levels": w.base,
         "methodology": MethodologyDeclaration(
             production_position_uids=w.uids,

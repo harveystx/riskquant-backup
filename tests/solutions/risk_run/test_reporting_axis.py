@@ -7,7 +7,7 @@ Every numerical oracle here is independent of `riskquant.reporting`: settlement
 values are `q * S` (and `q * S * x` for a direct instrument FX leg), the
 settlement -> reporting rate is chosen by hand from the pair orientation, and
 the D081 identity dW = V_s q_s - V_0 q_0 is evaluated on the run's own
-canonical shocked levels (captured at `apply_shocks_to_base_levels`). Two
+canonical shocked levels (captured at `apply_linear_terms_to_base_levels`). Two
 repository representation contracts are applied to the oracle explicitly,
 never as a tolerance: scenario shocks are float32, and the PnlGrid stores
 settlement dV in float32.
@@ -150,8 +150,7 @@ class World:
             "data": self.data(),
             "required_factor_ids": self.axis.factor_ids.copy(),
             "required_shift_type_id": self.axis.shift_type_ids.copy(),
-            "source_factor_ids": self.axis.factor_ids.copy(),
-            "shock_scale": np.ones(self.axis.factor_ids.shape[0], dtype=np.float32),
+            "proxy_terms": (),
             "base_levels": self.base.copy(),
             "methodology": MethodologyDeclaration(
                 production_position_uids=self.uids,
@@ -228,7 +227,7 @@ class World:
 def capture(monkeypatch):
     """Record the canonical shocked levels and the conversion's inputs/outputs."""
     seen: dict[str, Any] = {"shocked": []}
-    real_apply = api.apply_shocks_to_base_levels
+    real_apply = api.apply_linear_terms_to_base_levels
     real_convert = api.convert_scenario_pnl_to_reporting_currency
 
     def apply(**kw: Any) -> None:
@@ -240,7 +239,7 @@ def capture(monkeypatch):
         seen["convert_out"] = real_convert(**kw)
         return seen["convert_out"]
 
-    monkeypatch.setattr(api, "apply_shocks_to_base_levels", apply)
+    monkeypatch.setattr(api, "apply_linear_terms_to_base_levels", apply)
     monkeypatch.setattr(api, "convert_scenario_pnl_to_reporting_currency", convert)
     return seen
 
@@ -397,11 +396,12 @@ def test_d_reporting_factor_already_in_the_prefix_is_not_duplicated(capture) -> 
 
 
 def test_f_missing_reporting_fx_history_fails_at_composition(no_numerics) -> None:
-    """A reporting-only factor with no column in the scenario data has no shock
-    source: refused during composition, before identity and numerics."""
+    """A reporting-only suffix node is a Proxy V1 row (D088 §13.8(a)); with no
+    authored term its identity row requests (USDEUR, LOG, h). A world without
+    that column is refused before identity and numerics; nothing substitutes."""
     w = World(A_ROWS, "EUR", A_BASE, A_HIST)
     kw = w.inputs(data=w.data(drop=("USDEUR",)))
-    with pytest.raises(CompositionContractError, match="no column in the scenario"):
+    with pytest.raises(ValueError, match="not in the matrix world"):
         run_scenario_var_es(**kw)
 
 
@@ -526,8 +526,6 @@ def test_valuation_only_axis_is_refused(no_numerics) -> None:
             **w.inputs(
                 required_factor_ids=w.axis.factor_ids[:k].copy(),
                 required_shift_type_id=w.axis.shift_type_ids[:k].copy(),
-                source_factor_ids=w.axis.factor_ids[:k].copy(),
-                shock_scale=np.ones(k, np.float32),
                 base_levels=w.base[:k].copy(),
             )
         )
@@ -543,8 +541,6 @@ def test_permuted_prefix_or_unsorted_suffix_is_refused(no_numerics, rows) -> Non
     for key in (
         "required_factor_ids",
         "required_shift_type_id",
-        "source_factor_ids",
-        "shock_scale",
         "base_levels",
     ):
         kw[key] = _swap(kw[key], *rows)

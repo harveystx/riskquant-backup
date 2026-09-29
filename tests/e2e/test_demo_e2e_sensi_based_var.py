@@ -40,6 +40,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "solutions" / "risk_run"))
+from _proxyterms import authored_terms_from_d013_routing  # noqa: E402
+
+
 from riskquant.config.static_config.static_config import RiskStaticConfig
 from riskquant.constants import INVALID_UIX
 from riskquant.portfolio.compiled import CompiledPortfolio
@@ -470,8 +474,13 @@ def canonical_risk_run():
         data=fixture.historical_matrix,
         required_factor_ids=su.required_factor_ids,
         required_shift_type_id=su.required_shift_type_id,
-        source_factor_ids=su.source_factor_ids,
-        shock_scale=su.shock_scale,
+        proxy_terms=authored_terms_from_d013_routing(
+            static_config=fixture.valuation_context.static_config,
+            required_factor_ids=su.required_factor_ids,
+            required_shift_type_id=su.required_shift_type_id,
+            source_factor_ids=su.source_factor_ids,
+            shock_scale=su.shock_scale,
+        ),
         base_levels=su.base_levels,
         methodology=fixture.methodology,
         valuation_context=fixture.valuation_context,

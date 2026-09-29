@@ -36,7 +36,10 @@ from riskquant.simlab.scenarios.parametric_data import (
     FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
     ParametricRiskData,
 )
-from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
+from riskquant.config.proxy_model.compiled import CompiledProxyModel
+from riskquant.simlab.scenarios.world_column_stream import iter_world_column_batches
+from riskquant.simlab.shocks.axis_operator import lower_axis_operator
+from riskquant.simlab.shocks.linear_term_apply import apply_linear_terms_to_base_levels
 from riskquant.solutions.run_identity.api import (
     InputMismatchError,
     build_run_manifest,
@@ -44,11 +47,17 @@ from riskquant.solutions.run_identity.api import (
     verify_run_inputs,
 )
 from riskquant.solutions.run_identity.hashing import digest_array, digest_named_arrays
-from riskquant.solutions.run_identity.schemas import RunManifest
+from riskquant.solutions.run_identity.schemas import (
+    CompositionIdentity,
+    MethodologyIdentity,
+    RunContextIdentity,
+    RunManifest,
+)
 from riskquant.solutions.scenario_models.api import (
     build_scenario_generator,
     parse_scenario_model_config,
 )
+from riskquant.solutions.scenario_models.world_columns import bind_operator_to_world
 
 _K, _T, _S = 4, 80, 64
 
@@ -78,8 +87,8 @@ def _inputs() -> dict:
         },
         "data": matrix,
         "required_shift_type_id": np.array([SHIFT_LOG_RETURN_ID] * _K, np.int8),
-        "source_factor_ids": np.arange(_K, dtype=np.int32),
-        "shock_scale": np.ones(_K, np.float32),
+        # Authored Proxy V1 rows by target position; None: identity rows only.
+        "proxy_rows": None,
         "base_levels": np.ascontiguousarray(vals[-1].astype(np.float64)),
         "sensitivities": np.array([1000.0, -500.0, 250.0, 750.0], np.float64),
         "reporting_currency": "USD",
@@ -89,21 +98,54 @@ def _inputs() -> dict:
     }
 
 
-def _run_risk(inp: dict) -> tuple[float, float, np.ndarray]:
-    gen = build_scenario_generator(
-        parse_scenario_model_config(inp["scenario_cfg"]), data=inp["data"]
+def _model(inp: dict) -> CompiledProxyModel:
+    """The run-bound Proxy V1 operator on axis 0..K-1: identity rows
+    (k, kappa_k, 1.0) unless `proxy_rows` authors a row."""
+    kappa = inp["required_shift_type_id"]
+    rows = inp["proxy_rows"] or {}
+    offsets, drivers, charts, loads = [0], [], [], []
+    for k in range(_K):
+        for d, c, b in rows.get(k, [(k, int(kappa[k]), 1.0)]):
+            drivers.append(d)
+            charts.append(c)
+            loads.append(b)
+        offsets.append(len(drivers))
+    return CompiledProxyModel(
+        row_target_rf_ids=np.arange(_K, dtype=np.int32),
+        row_term_offsets=np.array(offsets, dtype=np.int32),
+        term_driver_rf_ids=np.array(drivers, dtype=np.int32),
+        term_chart_ids=np.array(charts, dtype=np.int8),
+        term_loadings=np.array(loads, dtype=np.float64),
     )
+
+
+def _run_risk(inp: dict) -> tuple[float, float, np.ndarray]:
+    """The D088 path: lower -> bind (d, tau, h) -> world columns -> Slice 2."""
+    cfg = parse_scenario_model_config(inp["scenario_cfg"])
+    op = lower_axis_operator(
+        model=_model(inp),
+        axis_rf_ids=np.arange(_K, dtype=np.int32),
+        axis_shift_type_ids=inp["required_shift_type_id"],
+    )
+    wb = bind_operator_to_world(op, cfg, inp["data"])
+    gen = build_scenario_generator(cfg, data=inp["data"])
     n = inp["base_levels"].shape[0]
     chunks = []
-    for batch in gen.iter_batches(
-        required_shift_type_id=inp["required_shift_type_id"],
-        source_factor_ids=inp["source_factor_ids"],
-        shock_scale=inp["shock_scale"],
+    for batch in iter_world_column_batches(
+        gen,
+        driver_rf_ids=wb.request_driver_rf_ids,
+        chart_ids=wb.request_chart_ids,
         batch_size=inp["batch_size"],
     ):
         out = np.empty((n, batch.shocks.shape[0]), dtype=np.float64, order="C")
-        apply_shocks_to_base_levels(
-            base_levels=inp["base_levels"], batch=batch, out=out
+        apply_linear_terms_to_base_levels(
+            base_levels=inp["base_levels"],
+            row_term_offsets=op.row_term_offsets,
+            term_column_uix=wb.term_column_uix,
+            term_loadings=op.term_loadings,
+            target_shift_types=op.target_shift_type_ids,
+            shocks=batch.shocks,
+            out=out,
         )
         chunks.append(inp["sensitivities"] @ (out - inp["base_levels"][:, None]))
     pnl = np.concatenate(chunks) * float(inp["fx"][0])
@@ -117,18 +159,37 @@ def _run_risk(inp: dict) -> tuple[float, float, np.ndarray]:
     )
 
 
+def _composition(inp: dict) -> CompositionIdentity:
+    """Stand-in run context. ID_target (the target charts kappa) is carried by
+    `universe_map_digest`, as in production (D088 §7, §13.3)."""
+    return CompositionIdentity(
+        methodology=MethodologyIdentity(partition_digest="m" * 64),
+        context=RunContextIdentity(
+            as_of_ord32=0,
+            static_config_digest="s" * 64,
+            valuation_contract_fingerprint="v" * 64,
+            discounting_mode="single_curve",
+            portfolio_digest="p" * 64,
+            uix_mapper_fingerprint="u" * 64,
+            universe_map_digest=digest_named_arrays(
+                required_factor_ids=np.arange(_K, dtype=np.int32),
+                required_shift_type_ids=inp["required_shift_type_id"],
+            ),
+        ),
+    )
+
+
 def _manifest(inp: dict) -> RunManifest:
     return build_run_manifest(
         scenario_config=parse_scenario_model_config(inp["scenario_cfg"]),
         data=inp["data"],
-        required_shift_type_id=inp["required_shift_type_id"],
-        source_factor_ids=inp["source_factor_ids"],
-        shock_scale=inp["shock_scale"],
+        proxy_model=_model(inp),
         base_levels=inp["base_levels"],
         sensitivities_digest=digest_array(inp["sensitivities"]),
         reporting_currency=inp["reporting_currency"],
         fx_digest=digest_array(inp["fx"]),
         confidence_level=inp["confidence_level"],
+        composition=_composition(inp),
     )
 
 
@@ -236,6 +297,17 @@ def test_scenario_config_reconstructs_through_the_frozen_seam() -> None:
         lambda d: {**d, "manifest_schema_version": "1"},
         lambda d: {**d, "data": {**d["data"], "kind": "not_a_kind"}},
         lambda d: {**d, "execution": {"batch_size": 4}},  # v1 field must be rejected
+        lambda d: {**d, "manifest_schema_version": "4"},  # pre-D088 layout
+        lambda d: {  # the D013 shock triple is not a v5 ShockIdentity
+            **d,
+            "shocks": {
+                "required_shift_type_ids_digest": "a",
+                "source_factor_ids_digest": "b",
+                "shock_scale_digest": "c",
+            },
+        },
+        # D088 §13.3: a proxy identity without RunContextIdentity is refused.
+        lambda d: {**d, "pnl": {**d["pnl"], "composition": None}},
     ],
     ids=[
         "foreign_field",
@@ -243,6 +315,9 @@ def test_scenario_config_reconstructs_through_the_frozen_seam() -> None:
         "superseded_schema_version",
         "bad_data_kind",
         "bad_batch_size",
+        "v4_schema_version",
+        "d013_shock_triple",
+        "proxy_digest_without_run_context",
     ],
 )
 def test_malformed_manifest_rejected(corrupt) -> None:
@@ -296,8 +371,9 @@ def _mutations():
             )
         },
         "shift_type": {"required_shift_type_id": np.array([2] * _K, np.int8)},
-        "source_factor_ids": {"source_factor_ids": np.array([1, 1, 2, 3], np.int32)},
-        "shock_scale": {"shock_scale": np.array([0.95, 1, 1, 1], np.float32)},
+        # D088: the proxy operator replaces the D013 source / scale pair.
+        "proxy_driver": {"proxy_rows": {0: [(1, SHIFT_LOG_RETURN_ID, 1.0)]}},
+        "proxy_loading": {"proxy_rows": {0: [(0, SHIFT_LOG_RETURN_ID, 0.95)]}},
         "base_levels": {"base_levels": base["base_levels"] * 1.0001},
         "sensitivities": {"sensitivities": base["sensitivities"] * 1.01},
         "reporting_fx": {"fx": np.array([1.26], np.float64)},
@@ -399,7 +475,7 @@ def test_verify_accepts_the_identified_inputs() -> None:
         _manifest(inp),
         data=inp["data"],
         sensitivities=inp["sensitivities"],
-        shock_scale=inp["shock_scale"],
+        proxy_model=_model(inp),
         confidence_level=inp["confidence_level"],
     )
 
@@ -408,8 +484,10 @@ def test_verify_accepts_the_identified_inputs() -> None:
     "name,value",
     [
         ("sensitivities", np.array([1000.0, -500.0, 250.0, 751.0], np.float64)),
-        ("shock_scale", np.array([0.9, 1, 1, 1], np.float32)),
-        ("source_factor_ids", np.array([3, 2, 1, 0], np.int32)),
+        (
+            "proxy_model",
+            _model({**_inputs(), "proxy_rows": {0: [(0, SHIFT_LOG_RETURN_ID, 0.9)]}}),
+        ),
         ("base_levels", np.arange(4, dtype=np.float64)),
         ("fx", np.array([9.99], np.float64)),
         ("confidence_level", 0.90),
@@ -501,3 +579,39 @@ def test_fresh_process_matches_in_process_result(request) -> None:
     assert child["identity"] == _manifest(_inputs()).identity()
     # and the persisted manifest reloads to the same identity
     assert RunManifest.from_json(child["manifest"]).identity() == child["identity"]
+
+
+# --------------------------------------------------------------------------
+# D088 §13.3 and §13.1: the proxy identity and its companion target identity
+# --------------------------------------------------------------------------
+
+
+def test_build_run_manifest_refuses_a_proxy_identity_without_run_context() -> None:
+    inp = _inputs()
+    with pytest.raises(ValidationError, match="RunContextIdentity"):
+        build_run_manifest(
+            scenario_config=parse_scenario_model_config(inp["scenario_cfg"]),
+            data=inp["data"],
+            proxy_model=_model(inp),
+            base_levels=inp["base_levels"],
+            sensitivities_digest=digest_array(inp["sensitivities"]),
+            reporting_currency=inp["reporting_currency"],
+            fx_digest=digest_array(inp["fx"]),
+            confidence_level=inp["confidence_level"],
+        )
+
+
+def test_shock_identity_is_exactly_the_proxy_model_digest() -> None:
+    """Independent oracle: the five canonical arrays named in D088 §7, hashed
+    by the shared named-array digest; nothing else enters ShockIdentity."""
+    inp = _inputs()
+    m = _model(inp)
+    expected = digest_named_arrays(
+        row_target_rf_ids=m.row_target_rf_ids,
+        row_term_offsets=m.row_term_offsets,
+        term_driver_rf_ids=m.term_driver_rf_ids,
+        term_chart_ids=m.term_chart_ids,
+        term_loadings=m.term_loadings,
+    )
+    shocks = _manifest(inp).shocks
+    assert shocks.model_dump() == {"proxy_model_digest": expected}

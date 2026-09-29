@@ -25,8 +25,15 @@ every position of U (so every V_0, FULL and TAYLOR/DERIVED, is run-computed),
 derives the full Taylor base binding itself and requires each certified book to
 carry exactly that binding. No caller-supplied V_0 or binding exists.
 
-Composes ONLY existing production functions (the D036 scenario seam,
-`apply_shocks_to_base_levels`, market-data assembly, `run_valuation`, the
+Scenario levels come from the Proxy V1 operator (D088): the run compiles the
+authored proxy terms over its full axis (valuation prefix + reporting-FX suffix,
+D088 §13.8(a)), lowers the compiled model onto that axis, binds its (d, tau)
+terms to the world's (d, tau, h) columns before generation, and applies
+X_A = sum_j beta_Aj * Y_(d_j, tau_j, h), A_s = T^-1_kappa_A(A_0, X_A).
+
+Composes ONLY existing production functions (the D036 scenario seam, the D088
+compiler, lowering, world binding and linear-term application, market-data
+assembly, `run_valuation`, the
 certified `SensitivityPnlCalculator`, `PnlGrid`, the FX conversion and
 `compute_var_es`). Its own arithmetic is limited to summing valuation rows into
 their parent economic UID (D055). The manifest is built from the very objects
@@ -36,12 +43,15 @@ generator, a kernel or a Numba signature (D001).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
 import numpy.typing as npt
 import polars as pl
 
+from riskquant.config.proxy_model.compile import compile_proxy_model
+from riskquant.config.proxy_model.schema_objects import AuthoredProxyTerm
 from riskquant.config.static_config.static_config import RiskStaticConfig
 from riskquant.constants import INVALID_UIX, NO_FX_RF_REQUIRED
 from riskquant.market_data.assemble import (
@@ -65,7 +75,9 @@ from riskquant.scenario_metrics._validate import _validate_confidence_level
 from riskquant.scenario_metrics.api.var_es import compute_var_es
 from riskquant.sensitivity_pnl.grid import PnlGrid, allocate_pnl_grid
 from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
-from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
+from riskquant.simlab.scenarios.world_column_stream import iter_world_column_batches
+from riskquant.simlab.shocks.axis_operator import lower_axis_operator
+from riskquant.simlab.shocks.linear_term_apply import apply_linear_terms_to_base_levels
 from riskquant.solutions.risk_run.schemas import (
     CompositionContractError,
     MethodologyDeclaration,
@@ -105,6 +117,7 @@ from riskquant.solutions.scenario_models.schemas import (
     ParametricGeneratorConfig,
     ScenarioModelConfig,
 )
+from riskquant.solutions.scenario_models.world_columns import bind_operator_to_world
 from riskquant.solutions.sensitivity_pnl.api import FactorAxis
 from riskquant.solutions.sensitivity_pnl.taylor_contract import (
     TaylorBaseBinding,
@@ -202,14 +215,12 @@ def _require_taylor_capable_spot(
         )
 
 
-#: The five axis-aligned run inputs and their exact element types. Exact, not
-#: "compatible": the identity digests the dtype (`digest_array`), so a float64
-#: shock scale equal in value to the float32 one would name a different run.
+#: The three axis-aligned run inputs and their exact element types. Exact, not
+#: "compatible": the identity digests the dtype (`digest_array`), so float32
+#: base levels equal in value to the float64 ones would name a different run.
 _AXIS_INPUT_DTYPES: tuple[tuple[str, type[np.generic]], ...] = (
     ("required_factor_ids", np.int32),
     ("required_shift_type_id", np.int8),
-    ("source_factor_ids", np.int32),
-    ("shock_scale", np.float32),
     ("base_levels", np.float64),
 )
 
@@ -219,8 +230,6 @@ def _owned_axis_inputs(
 ) -> tuple[
     npt.NDArray[np.int32],
     npt.NDArray[np.int8],
-    npt.NDArray[np.int32],
-    npt.NDArray[np.float32],
     npt.NDArray[np.float64],
 ]:
     """
@@ -229,10 +238,9 @@ def _owned_axis_inputs(
     Each input must already be a 1-D, C-contiguous `numpy.ndarray` of its
     exact dtype; nothing is cast, reshaped or re-laid-out. The run then works
     on its own C-contiguous, writable copies: the caller may pass read-only
-    arrays (for example straight from the read-only `RunFactorAxis`), a caller
-    buffer mutated after the call cannot reach the run, and the shock kernels,
-    whose signatures take writable array types (VAL-12), receive writable
-    arrays. The copies are byte-identical, so the identity is unchanged.
+    arrays (for example straight from the read-only `RunFactorAxis`) and a
+    caller buffer mutated after the call cannot reach the run. The copies are
+    byte-identical, so the identity is unchanged.
     """
     owned: list[np.ndarray] = []
     for name, dtype in _AXIS_INPUT_DTYPES:
@@ -254,7 +262,7 @@ def _owned_axis_inputs(
         if not value.flags.c_contiguous:
             raise CompositionContractError(f"{name} must be C-contiguous.")
         owned.append(np.array(value, dtype=dtype, copy=True, order="C"))
-    return (owned[0], owned[1], owned[2], owned[3], owned[4])
+    return (owned[0], owned[1], owned[2])
 
 
 def _require_factor_axis(
@@ -262,8 +270,6 @@ def _require_factor_axis(
     axis: RunFactorAxis,
     required_factor_ids: npt.NDArray[np.int32],
     required_shift_type_id: npt.NDArray[np.int8],
-    source_factor_ids: npt.NDArray[np.int32],
-    shock_scale: npt.NDArray[np.float32],
     base_levels: npt.NDArray[np.float64],
 ) -> None:
     """
@@ -304,61 +310,12 @@ def _require_factor_axis(
             f"({detail}); the level rows would feed the wrong slots."
         )
     k = axis.factor_ids.shape[0]
-    for label, values in (
-        ("source_factor_ids", source_factor_ids),
-        ("shock_scale", shock_scale),
-        ("base_levels", base_levels),
-    ):
+    for label, values in (("base_levels", base_levels),):
         if values.shape != (k,):
             raise CompositionContractError(
                 f"{label} has shape {values.shape} but the canonical "
                 f"run axis has {k} row(s); scenario data must be bound to that axis."
             )
-
-
-def _require_shock_sources(
-    *,
-    required_factor_ids: npt.NDArray[np.int32],
-    source_factor_ids: npt.NDArray[np.int32],
-    available_factor_ids: npt.NDArray[np.int32],
-) -> None:
-    """
-    `source_factor_ids[k]` is the shock PROVENANCE of run-axis row k (D013).
-
-    It is the market-data column whose simulated move drives row k: equal to
-    `required_factor_ids[k]` when that factor has its own data, and otherwise the
-    proxy chosen by `resolve_required_factor_ids_to_market_data_factor_ids`
-    (ProxyTopology, a caller-side input the run does not hold). The run can
-    therefore not re-derive a proxy, but it enforces every part of the
-    resolver's contract that its own inputs determine:
-
-    * every source is a column of the scenario data (a missing column would
-      otherwise surface inside the generator, after the base valuation);
-    * resolution tier 1 (DIRECT) wins first: a row whose own factor is in
-      the scenario data reads its own column. A different source there is not
-      a proxy the resolver can produce; it is a mis-bound row.
-    """
-    available = np.asarray(available_factor_ids)
-    missing = ~np.isin(source_factor_ids, available)
-    if bool(missing.any()):
-        rows = np.flatnonzero(missing)
-        raise CompositionContractError(
-            f"{rows.size} run-axis row(s) take their shocks from factor(s) with no "
-            f"column in the scenario data (rows {rows[:10].tolist()}, sources "
-            f"{source_factor_ids[rows][:10].tolist()})."
-        )
-    own_data = np.isin(required_factor_ids, available)
-    remapped = own_data & (source_factor_ids != required_factor_ids)
-    if bool(remapped.any()):
-        row = int(np.flatnonzero(remapped)[0])
-        own, used = int(required_factor_ids[row]), int(source_factor_ids[row])
-        raise CompositionContractError(
-            f"run-axis row {row} (rf_id {own}) has its own "
-            f"scenario data but reads the shocks of rf_id {used} "
-            f"({int(remapped.sum())} such row(s)). A factor with its own data is its "
-            "own shock source (proxy resolution tier 1, D013); a proxy applies only "
-            "to a factor without data."
-        )
 
 
 # =============================================================================
@@ -556,8 +513,8 @@ def derive_run_factor_axis(
     """
     The canonical run axis of a (valuation context, reporting currency) pair.
 
-    Callers bind every axis-aligned scenario input (source factor ids, shift
-    types, shock scale, base levels, history columns) to exactly this order;
+    Callers bind every axis-aligned input (factor ids, shift types, base
+    levels, history columns) to exactly this order;
     `run_scenario_var_es` derives the same axis and refuses any other.
     """
     universe_map = build_universe_mapping(
@@ -816,8 +773,7 @@ def run_scenario_var_es(
     data: RiskFactorMatrix | ParametricRiskData,
     required_factor_ids: npt.NDArray[np.int32],
     required_shift_type_id: npt.NDArray[np.int8],
-    source_factor_ids: npt.NDArray[np.int32],
-    shock_scale: npt.NDArray[np.float32],
+    proxy_terms: Sequence[AuthoredProxyTerm],
     base_levels: npt.NDArray[np.float64],
     methodology: MethodologyDeclaration,
     valuation_context: ValuationContext,
@@ -834,16 +790,22 @@ def run_scenario_var_es(
 
     Parameters
     ----------
-    required_factor_ids, required_shift_type_id, source_factor_ids, shock_scale
-        The shock universe on the canonical run axis, in axis order. These are
-        result-defining and are part of the identity (D040) — they are NOT part
-        of the scenario config. The axis must equal, row for row,
+    required_factor_ids, required_shift_type_id
+        The canonical run axis and each node's configured shift type (the
+        target chart kappa), in axis order. The axis must equal, row for row,
         `derive_run_factor_axis(valuation_context=..., reporting_ccy=...)`: the
         valuation prefix, then the reporting-only FX suffix (D085). Exact
-        dtypes int32 / int8 / int32 / float32, 1-D, C-contiguous; nothing is
-        cast, and the run works on its own copies. `source_factor_ids[k]` is
-        row k's shock provenance (D013): row k's own factor when it has
-        scenario data, otherwise its resolved proxy.
+        dtypes int32 / int8, 1-D, C-contiguous; nothing is cast, and the run
+        works on its own copies.
+    proxy_terms
+        The authored Proxy V1 terms (`NodeProxyTerm` / `ContainerProxyTerm`).
+        The run compiles them with its own static configuration, as-of and
+        full run axis (D088 §12.1, §13.8(a)); every V1 axis node without an
+        authored term gets its identity row. The compiled operator's identity,
+        `hash_proxy_model`, is the manifest's `shocks.proxy_model_digest`.
+        Data availability never selects a model: every referenced
+        `(d, tau, h)` world column must exist, or the run is refused before
+        identity and numerics.
     base_levels
         Base levels x_0 on the same axis, `(K_run,)` float64, C-contiguous.
     methodology
@@ -897,14 +859,10 @@ def run_scenario_var_es(
     (
         required_factor_ids,
         required_shift_type_id,
-        source_factor_ids,
-        shock_scale,
         base_levels,
     ) = _owned_axis_inputs(
         required_factor_ids=required_factor_ids,
         required_shift_type_id=required_shift_type_id,
-        source_factor_ids=source_factor_ids,
-        shock_scale=shock_scale,
         base_levels=base_levels,
     )
     universe = methodology.production_position_uids
@@ -938,17 +896,37 @@ def run_scenario_var_es(
         axis=route.axis,
         required_factor_ids=required_factor_ids,
         required_shift_type_id=required_shift_type_id,
-        source_factor_ids=source_factor_ids,
-        shock_scale=shock_scale,
         base_levels=base_levels,
     )
-    # Row binding source[k] <-> required[k]; `required` already equals the
-    # canonical axis (checked above), so the two checks stay independent.
-    _require_shock_sources(
-        required_factor_ids=required_factor_ids,
-        source_factor_ids=source_factor_ids,
-        available_factor_ids=data.factor_ids,
+    # ---- D088: the run-bound Proxy V1 operator over the FULL run axis ---------
+    # M = f(authored terms, static configuration, as-of, run axis) (§12.1). The
+    # axis is the valuation prefix plus the reporting-FX suffix (§13.8(a)): a
+    # suffix node with a V1 chart is a compiled row like any other node; the
+    # reporting conversion below only reads its scenario level.
+    as_of_ord32 = context.uix_mapper.as_of_ord32
+    if as_of_ord32 is None:
+        raise CompositionContractError(
+            "the valuation context's mapper carries no as-of; the proxy model is "
+            "compiled at the run as-of (D088 §12.2)."
+        )
+    proxy_model = compile_proxy_model(
+        authored_terms=proxy_terms,
+        static_config=context.static_config,
+        as_of_date=ord_to_date(int(as_of_ord32)),
+        run_axis_rf_ids=route.axis.factor_ids,
     )
+    # Execution operator: V1 rows from the model, native ABSOLUTE_BASE rows as
+    # one unit term on their own column, NO_SHIFT rows with no term (§13.4).
+    # kappa per row is the target definition, never a term chart.
+    operator = lower_axis_operator(
+        model=proxy_model,
+        axis_rf_ids=route.axis.factor_ids,
+        axis_shift_type_ids=route.axis.shift_type_ids,
+    )
+    # Every requested (d, tau) bound to the world's (d, tau, h) before identity
+    # and before any scenario is generated; a missing column or a horizon
+    # mismatch fails here. h is the world's (D088 §12.5).
+    world_binding = bind_operator_to_world(operator, scenario_config, data)
     plan, fx_axis_rows, fx_factor_names = _conversion_plan(
         route=route,
         universe_positions=universe_positions,
@@ -985,9 +963,7 @@ def run_scenario_var_es(
     manifest = build_run_manifest(
         scenario_config=scenario_config,
         data=data,
-        required_shift_type_id=required_shift_type_id,
-        source_factor_ids=source_factor_ids,
-        shock_scale=shock_scale,
+        proxy_model=proxy_model,
         base_levels=base_levels,
         sensitivities_digest=_NO_TAYLOR_REPRESENTATION_DIGEST
         if taylor_derived is None
@@ -1011,9 +987,7 @@ def run_scenario_var_es(
             reproduce,
             scenario_config=scenario_config,
             data=data,
-            required_shift_type_id=required_shift_type_id,
-            source_factor_ids=source_factor_ids,
-            shock_scale=shock_scale,
+            proxy_model=proxy_model,
             base_levels=base_levels,
             confidence_level=confidence_level,
             reporting_currency=reporting.reporting_ccy,
@@ -1080,26 +1054,37 @@ def run_scenario_var_es(
     k = base_levels.shape[0]
     chunks: list[npt.NDArray[np.float64]] = []
     written = 0
-    for batch in generator.iter_batches(
-        required_shift_type_id=required_shift_type_id,
-        source_factor_ids=source_factor_ids,
-        shock_scale=shock_scale,
+    # The world streams exactly the bound (d, tau) columns, in request order;
+    # the operator's terms index them through world_binding.term_column_uix.
+    # Loadings are the compiled float64 betas; nothing else weights a column.
+    for batch in iter_world_column_batches(
+        generator,
+        driver_rf_ids=world_binding.request_driver_rf_ids,
+        chart_ids=world_binding.request_chart_ids,
         batch_size=batch_size,
     ):
         count = int(batch.shocks.shape[0])
         if (
-            int(batch.scenario_offset) != written
+            batch.scenario_offset != written
             or batch.scenario_count_total != total_scenarios
             or written + count > total_scenarios
         ):
             raise RuntimeError(
-                f"scenario batch [{int(batch.scenario_offset)}, "
-                f"{int(batch.scenario_offset) + count}) of a declared total "
+                f"scenario batch [{batch.scenario_offset}, "
+                f"{batch.scenario_offset + count}) of a declared total "
                 f"{batch.scenario_count_total} does not continue the run's "
                 f"{total_scenarios}-scenario stream at scenario {written}."
             )
         out = np.empty((k, count), dtype=np.float64, order="C")
-        apply_shocks_to_base_levels(base_levels=base_levels, batch=batch, out=out)
+        apply_linear_terms_to_base_levels(
+            base_levels=base_levels,
+            row_term_offsets=operator.row_term_offsets,
+            term_column_uix=world_binding.term_column_uix,
+            term_loadings=operator.term_loadings,
+            target_shift_types=operator.target_shift_type_ids,
+            shocks=batch.shocks,
+            out=out,
+        )
         chunks.append(out)
         written += count
     if written != total_scenarios:

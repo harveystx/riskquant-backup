@@ -46,11 +46,14 @@ class WorldColumnBatch:
 
     ``shocks`` is ``(B, K)`` float32, F-contiguous; column ``k`` is the world
     variable of request position ``k``. ``scenario_offset`` is the index of the
-    batch's first scenario in the world's common scenario index.
+    batch's first scenario in the world's common scenario index;
+    ``scenario_count_total`` is the world's declared scenario count, as the
+    generator reports it (``None`` if it declares none).
     """
 
     shocks: npt.NDArray[np.float32]
     scenario_offset: int
+    scenario_count_total: int | None
 
 
 def iter_world_column_batches(
@@ -112,5 +115,7 @@ def iter_world_column_batches(
                 )
             checked = True
         yield WorldColumnBatch(
-            shocks=batch.shocks, scenario_offset=int(batch.scenario_offset)
+            shocks=batch.shocks,
+            scenario_offset=int(batch.scenario_offset),
+            scenario_count_total=batch.scenario_count_total,
         )

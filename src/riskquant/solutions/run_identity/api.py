@@ -17,12 +17,14 @@ import numba
 import numpy as np
 import numpy.typing as npt
 
+from riskquant.config.proxy_model.compiled import CompiledProxyModel
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
 from riskquant.solutions.run_identity.hashing import (
     digest_array,
     hash_compiled_book,
     hash_parametric_risk_data,
+    hash_proxy_model,
     hash_risk_factor_matrix,
 )
 from riskquant.solutions.run_identity.schemas import (
@@ -110,9 +112,7 @@ def build_run_manifest(
     *,
     scenario_config: ScenarioModelConfig,
     data: RiskFactorMatrix | ParametricRiskData,
-    required_shift_type_id: npt.NDArray[np.int8],
-    source_factor_ids: npt.NDArray[np.int32],
-    shock_scale: npt.NDArray[np.float32],
+    proxy_model: CompiledProxyModel,
     base_levels: npt.NDArray[np.float64],
     sensitivities_digest: str,
     reporting_currency: str,
@@ -132,16 +132,16 @@ def build_run_manifest(
     the same computation. `batch_size` is deliberately absent: the official risk
     path is bitwise invariant to batch partitioning (D041), so it is an
     execution knob, not a mathematical input.
+
+    `proxy_model` is the run-bound Proxy V1 operator compiled over the run's
+    full axis; its identity is `hash_proxy_model(proxy_model)` (D088 §7). A
+    manifest carrying it requires `composition` (D088 §13.3).
     """
     return RunManifest(
         engine=engine_identity(),
         scenario_config=scenario_config.model_dump(mode="json"),
         data=_data_identity(data),
-        shocks=ShockIdentity(
-            required_shift_type_ids_digest=digest_array(required_shift_type_id),
-            source_factor_ids_digest=digest_array(source_factor_ids),
-            shock_scale_digest=digest_array(shock_scale),
-        ),
+        shocks=ShockIdentity(proxy_model_digest=hash_proxy_model(proxy_model)),
         pnl=PnlIdentity(
             base_levels_digest=digest_array(base_levels),
             sensitivities_digest=sensitivities_digest,
@@ -199,9 +199,6 @@ def verify_run_inputs(manifest: RunManifest, **inputs: Any) -> None:
     detectable instead of silently producing a different risk number.
     """
     expected: dict[str, str] = {
-        "required_shift_type_id": manifest.shocks.required_shift_type_ids_digest,
-        "source_factor_ids": manifest.shocks.source_factor_ids_digest,
-        "shock_scale": manifest.shocks.shock_scale_digest,
         "base_levels": manifest.pnl.base_levels_digest,
         "sensitivities": manifest.pnl.sensitivities_digest,
         "fx": manifest.reporting.fx_digest,
@@ -218,6 +215,15 @@ def verify_run_inputs(manifest: RunManifest, **inputs: Any) -> None:
                 raise InputMismatchError(
                     f"data content mismatch: manifest identifies "
                     f"{manifest.data.digest[:16]}..., got {actual.digest[:16]}..."
+                )
+            continue
+        if name == "proxy_model":
+            actual_digest = hash_proxy_model(value)
+            if actual_digest != manifest.shocks.proxy_model_digest:
+                raise InputMismatchError(
+                    f"proxy model mismatch: manifest identifies "
+                    f"{manifest.shocks.proxy_model_digest[:16]}..., got "
+                    f"{actual_digest[:16]}..."
                 )
             continue
         if name == "book":

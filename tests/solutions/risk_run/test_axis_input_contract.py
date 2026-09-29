@@ -39,7 +39,8 @@ from test_reporting_axis import (
 import riskquant.solutions.risk_run.api as api
 from riskquant.constants import INVALID_UIX, NO_FX_RF_REQUIRED
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
-from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID
+from riskquant.config.proxy_model.schema_objects import NodeProxyTerm
+from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID, ShiftType
 from riskquant.simlab.scenarios.parametric_data import (
     FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
     ParametricRiskData,
@@ -63,8 +64,6 @@ from riskquant.solutions.sensitivity_pnl.api import (
 _AXIS_INPUTS = (
     "required_factor_ids",
     "required_shift_type_id",
-    "source_factor_ids",
-    "shock_scale",
     "base_levels",
 )
 
@@ -114,7 +113,7 @@ def boundary(monkeypatch):
         "build_run_manifest",
         "build_scenario_generator",
         "_value_positions",
-        "apply_shocks_to_base_levels",
+        "apply_linear_terms_to_base_levels",
         "allocate_pnl_grid",
         "convert_scenario_pnl_to_reporting_currency",
         "compute_var_es",
@@ -140,8 +139,6 @@ def _refused(kw: dict[str, Any], match: str, reached: list[str]) -> None:
     [
         ("required_factor_ids", np.int64),
         ("required_shift_type_id", np.int32),
-        ("source_factor_ids", np.int64),
-        ("shock_scale", np.float64),
         ("base_levels", np.float32),
     ],
 )
@@ -197,19 +194,21 @@ def test_run_takes_owned_copies_and_accepts_the_read_only_descriptor(
     )
     assert not kw["required_shift_type_id"].flags.writeable
     seen: dict[str, Any] = {}
-    real = api.apply_shocks_to_base_levels
+    real = api.apply_linear_terms_to_base_levels
 
     def spy(**k: Any) -> None:
         seen.setdefault("base", k["base_levels"])
-        seen.setdefault("shift", k["batch"].required_shift_type_id)
+        seen.setdefault("shift", k["target_shift_types"])
         real(**k)
 
-    monkeypatch.setattr(api, "apply_shocks_to_base_levels", spy)
+    monkeypatch.setattr(api, "apply_linear_terms_to_base_levels", spy)
     run = run_scenario_var_es(**kw)
     assert np.isfinite(run.var).all()
     assert not np.shares_memory(seen["base"], kw["base_levels"])
+    # kappa reaches the kernel from the run's own lowered operator (D088),
+    # equal to, but never aliasing, the caller's read-only axis descriptor.
     assert not np.shares_memory(seen["shift"], w.axis.shift_type_ids)
-    assert seen["shift"].flags.writeable
+    assert np.array_equal(seen["shift"], w.axis.shift_type_ids)
 
 
 # ---- 2. RunFactorAxis ownership and immutability (EXACT) -----------------------------
@@ -272,10 +271,11 @@ def test_invalid_run_factor_axis_is_refused(kwargs, error, match) -> None:
         RunFactorAxis(**{**base, **kwargs})
 
 
-# ---- 3. source_factor_ids: shock provenance, row-bound (EXACT) -----------------------
+# ---- 3. D088 authored proxy terms: the model selects the columns (EXACT) --------------
 
-# EQ_GBP has NO history of its own: its shocks are proxied (D013). Reported in
-# EUR: GBP -> EUR reads EURGBP reciprocally, USD -> EUR reads USDEUR directly.
+# EQ_GBP has NO history of its own: its scenario shock is an authored Proxy V1
+# term (D088). Reported in EUR: GBP -> EUR reads EURGBP reciprocally, USD -> EUR
+# reads USDEUR directly.
 PROXY_ROWS = [spot(1, "EQ_USD", "USD", 5.0), spot(2, "EQ_GBP", "GBP", 4.0)]
 PROXY_BASE = {"EQ_USD": 212.37, "EQ_GBP": 148.91, "USDEUR": 0.9259, "EURGBP": 0.8561}
 _P = np.random.default_rng(31)
@@ -291,18 +291,25 @@ PROXY_HIST = {
 _WORLD_HIST = {**PROXY_HIST, "EQ_GBP": PROXY_HIST["EQ_USD"]}
 
 
+def _term(target: str, driver: str, beta: float = 1.0) -> NodeProxyTerm:
+    return NodeProxyTerm(
+        target_name=target,
+        driver_name=driver,
+        driver_chart=ShiftType.LOG_RETURN,
+        loading=beta,
+    )
+
+
 def _proxy_world(proxy: str) -> tuple[World, dict[str, Any]]:
     w = World(PROXY_ROWS, "EUR", PROXY_BASE, _WORLD_HIST)
     kw = w.inputs(data=_matrix(PROXY_HIST))
-    source = kw["source_factor_ids"].copy()
-    source[w.row("EQ_GBP")] = RF[proxy]
-    kw["source_factor_ids"] = source
+    kw["proxy_terms"] = (_term("EQ_GBP", proxy),)
     return w, kw
 
 
 def test_a_proxied_row_reads_its_proxy_shock(capture) -> None:
-    """EXACT (float32 shock). Row EQ_GBP moves with EQ_EUR's historical return;
-    the other rows move with their own."""
+    """EXACT (float32 shock). Row EQ_GBP moves with EQ_EUR's historical return
+    (authored term, beta = 1); every other row has its identity row."""
     w, kw = _proxy_world("EQ_EUR")
     run_scenario_var_es(**kw)
     shocked = np.hstack(capture["shocked"])
@@ -317,44 +324,39 @@ def test_a_proxied_row_reads_its_proxy_shock(capture) -> None:
         assert np.array_equal(got[w.row(row_name)], expected), row_name
 
 
-def test_a_valid_proxy_re_routing_changes_result_and_identity() -> None:
-    """EXACT. D040: the shock provenance is result-defining and in the
-    identity. Two VALID resolutions of the data-less row differ in both."""
+def test_a_different_authored_model_changes_result_and_identity() -> None:
+    """EXACT. The proxy model is result-defining and identified by
+    `shocks.proxy_model_digest` (D088 §7)."""
     _, kw_eur = _proxy_world("EQ_EUR")
     _, kw_usd = _proxy_world("EQ_USD")
     a, b = run_scenario_var_es(**kw_eur), run_scenario_var_es(**kw_usd)
     assert a.identity != b.identity
-    sa, sb = a.manifest.shocks, b.manifest.shocks
-    assert sa.source_factor_ids_digest != sb.source_factor_ids_digest
+    assert a.manifest.shocks.proxy_model_digest != b.manifest.shocks.proxy_model_digest
     assert [v.hex() for v in a.var.tolist()] != [v.hex() for v in b.var.tolist()]
 
 
-@pytest.mark.parametrize(
-    "case",
-    ["one_row_substituted", "permuted", "proxy_of_a_row_with_data"],
-)
-def test_invalid_source_binding_is_refused_before_numerics(boundary, case) -> None:
-    """EXACT. Same shape, all ids known; the binding is still wrong."""
+def test_data_availability_never_overrides_an_authored_model(capture) -> None:
+    """EXACT. USDEUR has its own history, yet an authored model USDEUR <- 1.0
+    (EQ_EUR, LOG) is used: the model selects columns, data only validates them
+    (D088 §9; D085 clause 8 superseded)."""
     w, kw = _proxy_world("EQ_EUR")
-    s = kw["source_factor_ids"].copy()
-    if case == "one_row_substituted":
-        s[w.row("EQ_USD")] = RF["EQ_EUR"]
-    elif case == "permuted":
-        i, j = w.row("USDEUR"), w.row("EURGBP")
-        s[[i, j]] = s[[j, i]]
-    else:  # USDEUR has its own history but is routed to EQ_EUR's
-        s[w.row("USDEUR")] = RF["EQ_EUR"]
-    kw["source_factor_ids"] = s
-    _refused(kw, "own shock source", boundary)
+    kw["proxy_terms"] = (*kw["proxy_terms"], _term("USDEUR", "EQ_EUR"))
+    run_scenario_var_es(**kw)
+    got = np.log(np.hstack(capture["shocked"]) / w.base[:, None]).astype(np.float32)
+    h = np.asarray(PROXY_HIST["EQ_EUR"])
+    assert np.array_equal(got[w.row("USDEUR")], np.log(h[1:] / h[:-1]).astype(np.float32))
 
 
-def test_source_without_a_data_column_is_refused_before_numerics(boundary) -> None:
-    """EXACT. The data-less row pointed at itself has no column to read."""
+def test_a_row_without_a_column_and_without_a_model_is_refused_before_numerics(
+    boundary,
+) -> None:
+    """EXACT. With no authored term, EQ_GBP's identity row requests
+    (EQ_GBP, LOG, h), which the world does not hold: no substitute, no tier."""
     w, kw = _proxy_world("EQ_EUR")
-    s = kw["source_factor_ids"].copy()
-    s[w.row("EQ_GBP")] = RF["EQ_GBP"]
-    kw["source_factor_ids"] = s
-    _refused(kw, "no column in the scenario data", boundary)
+    kw["proxy_terms"] = ()
+    with pytest.raises(ValueError, match="not in the matrix world"):
+        run_scenario_var_es(**kw)
+    assert boundary == [], f"numerical stage entered before refusal: {boundary}"
 
 
 # ---- 4. prefix / suffix isolation under controlled poisoning -------------------------
@@ -364,7 +366,7 @@ def _poisoned_run(monkeypatch, kw: dict[str, Any], k_val: int, poison: float | N
     """Run through production; after the real shock application, overwrite the
     reporting-only suffix rows of the ONE shocked-level buffer with `poison`."""
     seen: dict[str, Any] = {"shocked": []}
-    real_apply = api.apply_shocks_to_base_levels
+    real_apply = api.apply_linear_terms_to_base_levels
     real_convert = api.convert_scenario_pnl_to_reporting_currency
 
     def apply(**k: Any) -> None:
@@ -380,7 +382,7 @@ def _poisoned_run(monkeypatch, kw: dict[str, Any], k_val: int, poison: float | N
         seen["reported"] = np.array(out.converted_pnl, copy=True)
         return out
 
-    monkeypatch.setattr(api, "apply_shocks_to_base_levels", apply)
+    monkeypatch.setattr(api, "apply_linear_terms_to_base_levels", apply)
     monkeypatch.setattr(api, "convert_scenario_pnl_to_reporting_currency", convert)
     run = run_scenario_var_es(**kw)
     monkeypatch.undo()
@@ -646,7 +648,6 @@ def test_missing_route_is_refused_before_numerics(boundary) -> None:
         ("shift_order_swapped", "canonical axis"),
         ("suffix_omitted", "canonical axis"),
         ("K_mismatch_base_levels", "base_levels has shape"),
-        ("K_mismatch_source", "source_factor_ids has shape"),
     ],
 )
 def test_axis_misalignment_fails_before_numerics(boundary, case, match) -> None:
@@ -662,10 +663,8 @@ def test_axis_misalignment_fails_before_numerics(boundary, case, match) -> None:
     elif case == "suffix_omitted":
         for name in _AXIS_INPUTS:
             kw[name] = np.ascontiguousarray(kw[name][:k_val])
-    elif case == "K_mismatch_base_levels":
+    else:  # K_mismatch_base_levels
         kw["base_levels"] = np.ascontiguousarray(kw["base_levels"][:-1])
-    else:
-        kw["source_factor_ids"] = np.ascontiguousarray(kw["source_factor_ids"][:-1])
     _refused(kw, match, boundary)
 
 

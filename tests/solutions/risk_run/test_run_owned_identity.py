@@ -225,8 +225,6 @@ def _permuted_axis():
     for k in (
         "required_factor_ids",
         "required_shift_type_id",
-        "source_factor_ids",
-        "shock_scale",
         "base_levels",
     ):
         inp[k] = np.ascontiguousarray(inp[k][order])
