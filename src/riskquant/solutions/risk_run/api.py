@@ -96,8 +96,14 @@ from riskquant.solutions.run_identity.schemas import (
     RunContextIdentity,
     RunManifest,
 )
-from riskquant.solutions.scenario_models.api import build_scenario_generator
-from riskquant.solutions.scenario_models.schemas import ScenarioModelConfig
+from riskquant.solutions.scenario_models.api import (
+    build_scenario_generator,
+    resolve_parametric_binding_horizon,
+)
+from riskquant.solutions.scenario_models.schemas import (
+    ParametricGeneratorConfig,
+    ScenarioModelConfig,
+)
 from riskquant.solutions.sensitivity_pnl.api import FactorAxis
 from riskquant.solutions.sensitivity_pnl.taylor_contract import (
     TaylorBaseBinding,
@@ -111,16 +117,6 @@ from riskquant.solutions.sensitivity_pnl.taylor_contract import (
 from riskquant.universe import UixMapper
 from riskquant.utils.business_days import ord_to_date
 from riskquant.valuation.engine import run_valuation
-
-
-from riskquant.solutions.scenario_models.api import (
-    build_scenario_generator,
-    resolve_parametric_binding_horizon,
-)
-from riskquant.solutions.scenario_models.schemas import (
-    ParametricGeneratorConfig,
-    ScenarioModelConfig,
-)
 
 __all__ = ["derive_run_factor_axis", "run_scenario_var_es"]
 

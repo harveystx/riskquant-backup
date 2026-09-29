@@ -32,7 +32,10 @@ import pytest
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID
 from riskquant.scenario_metrics.api.var_es import compute_var_es
-from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
+from riskquant.simlab.scenarios.parametric_data import (
+    FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+    ParametricRiskData,
+)
 from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
 from riskquant.solutions.scenario_models.api import (
     build_scenario_generator,
@@ -57,15 +60,23 @@ def _matrix() -> RiskFactorMatrix:
     )
 
 
+def _correlation(a: np.ndarray) -> np.ndarray:
+    """D091: L must factor a correlation matrix (unit diagonal)."""
+    cov = a @ a.T / _K + np.eye(_K) * 0.1
+    inv_sd = 1.0 / np.sqrt(np.diag(cov))
+    return cov * np.outer(inv_sd, inv_sd)
+
+
 def _parametric_data() -> ParametricRiskData:
     rng = np.random.default_rng(1)
     a = rng.normal(0, 1, (_K, _K))
     return ParametricRiskData(
         factor_ids=np.arange(_K, dtype=np.int32),
-        cholesky_matrix=np.ascontiguousarray(
-            np.linalg.cholesky(a @ a.T / _K + np.eye(_K) * 0.1)
-        ),
+        cholesky_matrix=np.ascontiguousarray(np.linalg.cholesky(_correlation(a))),
         volatilities=np.ascontiguousarray(np.full(_K, 0.02)),
+        effective_period_count=1,
+        effective_period_unit=FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+        chart_ids=np.full(_K, SHIFT_LOG_RETURN_ID, dtype=np.int8),
     )
 
 
@@ -85,6 +96,7 @@ _CONFIGS = {
     },
     "parametric": {
         "model": "parametric",
+        "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
         "total_scenarios": _S,
         "distribution": {"kind": "student_t", "df": 5.0},
         "seed": 7,

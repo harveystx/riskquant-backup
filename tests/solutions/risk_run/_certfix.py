@@ -26,7 +26,11 @@ from riskquant.market_data.assemble import (
 )
 from riskquant.market_data.compile import assemble_valuation_state
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
-from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
+from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID
+from riskquant.simlab.scenarios.parametric_data import (
+    FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+    ParametricRiskData,
+)
 from riskquant.solutions.risk_run.schemas import (
     MethodologyDeclaration,
     ReportingSpec,
@@ -174,6 +178,9 @@ _PARAMETRIC_FIELDS = (
     "factor_ids",
     "cholesky_matrix",
     "volatilities",
+    "effective_period_count",
+    "effective_period_unit",
+    "chart_ids",
 )
 
 
@@ -187,13 +194,19 @@ def build_parametric_data():
     """
     r = np.random.default_rng(1)
     a = r.normal(0, 1, (K_TOTAL, K_TOTAL))
+    # D091: L factors a correlation matrix; the covariance is normalised first
+    # (still through BLAS and LAPACK, as the docstring above requires).
+    cov = a @ a.T / K_TOTAL + np.eye(K_TOTAL) * 0.05
+    inv_sd = 1.0 / np.sqrt(np.diag(cov))
+    corr = cov * np.outer(inv_sd, inv_sd)
 
     return ParametricRiskData(
         factor_ids=ALL_IDS,
-        cholesky_matrix=np.ascontiguousarray(
-            np.linalg.cholesky(a @ a.T / K_TOTAL + np.eye(K_TOTAL) * 0.05)
-        ),
+        cholesky_matrix=np.ascontiguousarray(np.linalg.cholesky(corr)),
         volatilities=np.ascontiguousarray(np.full(K_TOTAL, 0.02)),
+        effective_period_count=1,
+        effective_period_unit=FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+        chart_ids=np.full(K_TOTAL, SHIFT_LOG_RETURN_ID, dtype=np.int8),
     )
 
 
@@ -227,7 +240,14 @@ def load_parametric_data(path: str) -> ParametricRiskData:
                 f"{sorted(_PARAMETRIC_FIELDS)}."
             )
 
-        return ParametricRiskData(**{name: frozen[name] for name in _PARAMETRIC_FIELDS})
+        # A 0-d array holds a scalar field (the D090 period); `[()]` restores the
+        # NumPy scalar with its stored dtype, no recasting.
+        return ParametricRiskData(
+            **{
+                name: frozen[name][()] if frozen[name].ndim == 0 else frozen[name]
+                for name in _PARAMETRIC_FIELDS
+            }
+        )
 
 
 def parametric_data():
@@ -429,6 +449,7 @@ CFGS = {
     },
     "parametric": {
         "model": "parametric",
+        "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
         "total_scenarios": S,
         "distribution": {
             "kind": "student_t",

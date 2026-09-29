@@ -25,7 +25,10 @@ from pydantic import ValidationError
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID
 from riskquant.simlab.scenarios.base import ScenarioGenerator, ScenarioSetBatch
-from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
+from riskquant.simlab.scenarios.parametric_data import (
+    FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+    ParametricRiskData,
+)
 from riskquant.solutions.scenario_models.api import (
     build_scenario_generator,
     parse_scenario_model_config,
@@ -59,6 +62,9 @@ def _parametric_data() -> ParametricRiskData:
         factor_ids=np.arange(_N, dtype=np.int32),
         cholesky_matrix=np.ascontiguousarray(np.eye(_N, dtype=np.float64)),
         volatilities=np.ascontiguousarray(np.full(_N, 0.1, dtype=np.float64)),
+        effective_period_count=1,
+        effective_period_unit=FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+        chart_ids=np.full(_N, SHIFT_LOG_RETURN_ID, dtype=np.int8),
     )
 
 
@@ -83,6 +89,7 @@ _MODELS = [
     (
         {
             "model": "parametric",
+            "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
             "total_scenarios": 6,
             "distribution": {"kind": "standard_normal"},
         },

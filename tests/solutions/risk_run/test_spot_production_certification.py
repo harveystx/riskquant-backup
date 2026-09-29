@@ -28,7 +28,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 import _mixedfix as mf
 
 import riskquant.solutions.risk_run.api as api
-from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
+from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID
+from riskquant.simlab.scenarios.parametric_data import (
+    FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+    ParametricRiskData,
+)
 from riskquant.solutions.risk_run.api import run_scenario_var_es
 from riskquant.solutions.run_identity.hashing import hash_compiled_portfolio
 from riskquant.solutions.scenario_models.api import parse_scenario_model_config
@@ -80,6 +84,7 @@ MODELS = {
     },
     "parametric": {
         "model": "parametric",
+        "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
         "total_scenarios": 64,
         "distribution": {"kind": "student_t", "df": 5.0},
         "seed": 7,
@@ -194,6 +199,9 @@ def _inputs(model="historical", rf=RF, batch_size=4):
             factor_ids=np.array(ids, np.int32),
             cholesky_matrix=np.ascontiguousarray(np.eye(3)),
             volatilities=np.ascontiguousarray([VOL[name[i]] for i in ids]),
+            effective_period_count=1,
+            effective_period_unit=FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+            chart_ids=np.full(len(ids), SHIFT_LOG_RETURN_ID, dtype=np.int8),
         )
     return inp
 

@@ -32,7 +32,10 @@ from pydantic import ValidationError
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID
 from riskquant.scenario_metrics.api.var_es import compute_var_es
-from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
+from riskquant.simlab.scenarios.parametric_data import (
+    FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+    ParametricRiskData,
+)
 from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
 from riskquant.solutions.run_identity.api import (
     InputMismatchError,
@@ -436,6 +439,9 @@ def test_wrong_data_kind_is_detected() -> None:
         factor_ids=np.arange(_K, dtype=np.int32),
         cholesky_matrix=np.ascontiguousarray(np.eye(_K, dtype=np.float64)),
         volatilities=np.ascontiguousarray(np.full(_K, 0.1)),
+        effective_period_count=1,
+        effective_period_unit=FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+        chart_ids=np.full(_K, SHIFT_LOG_RETURN_ID, dtype=np.int8),
     )
     with pytest.raises(InputMismatchError):
         verify_run_inputs(_manifest(_inputs()), data=parametric)

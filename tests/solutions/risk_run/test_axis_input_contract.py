@@ -39,7 +39,11 @@ from test_reporting_axis import (
 import riskquant.solutions.risk_run.api as api
 from riskquant.constants import INVALID_UIX, NO_FX_RF_REQUIRED
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
-from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
+from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID
+from riskquant.simlab.scenarios.parametric_data import (
+    FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+    ParametricRiskData,
+)
 from riskquant.solutions.risk_run.api import (
     derive_run_factor_axis,
     run_scenario_var_es,
@@ -561,9 +565,13 @@ def test_parametric_full_axis_matches_an_independent_fixed_seed_oracle(capture) 
         factor_ids=ids,
         cholesky_matrix=np.ascontiguousarray(chol),
         volatilities=np.ascontiguousarray(vols),
+        effective_period_count=1,
+        effective_period_unit=FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+        chart_ids=np.full(ids.shape[0], SHIFT_LOG_RETURN_ID, dtype=np.int8),
     )
     cfg = parse_scenario_model_config({
         "model": "parametric", "total_scenarios": s,
+        "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
         "distribution": {"kind": "standard_normal"}, "seed": seed,
     })
     run_scenario_var_es(**w.inputs(scenario_config=cfg, data=data, batch_size=3))

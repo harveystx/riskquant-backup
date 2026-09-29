@@ -21,7 +21,11 @@ from test_reporting_axis import RF, World, capture, spot  # noqa: F401  (fixture
 from test_taylor_order_semantics import FO, Q_BASE, Q_HIST, Q_ROWS, SOF, certified
 
 import riskquant.solutions.risk_run.api as api
-from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
+from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID
+from riskquant.simlab.scenarios.parametric_data import (
+    FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+    ParametricRiskData,
+)
 from riskquant.solutions.risk_run.api import run_scenario_var_es
 from riskquant.solutions.scenario_models.api import parse_scenario_model_config
 
@@ -32,6 +36,7 @@ def _cfg(seed: int = 3, total: int = _S, kind: str = "student_t") -> Any:
     dist = {"kind": kind, "df": 5.0} if kind == "student_t" else {"kind": kind}
     return parse_scenario_model_config({
         "model": "parametric",
+        "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
         "total_scenarios": total,
         "distribution": dist,
         "seed": seed,
@@ -46,6 +51,9 @@ def _data(ids: list[int]) -> ParametricRiskData:
         factor_ids=ids_,
         cholesky_matrix=np.ascontiguousarray(np.linalg.cholesky(corr)),
         volatilities=np.linspace(0.01, 0.02, k),
+        effective_period_count=1,
+        effective_period_unit=FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+        chart_ids=np.full(k, SHIFT_LOG_RETURN_ID, dtype=np.int8),
     )
 
 
@@ -199,3 +207,79 @@ def test_seed_defines_the_world_and_the_identity_batch_size_does_not(capture) ->
         reproduce=a.manifest,
     )
     assert again.identity == a.identity and again.var.tobytes() == a.var.tobytes()
+
+
+# ---- 6. D090: the forecast-period gate runs before acceptance and identity -------------
+
+
+def _data_for_period(ids: list[int], count: int) -> ParametricRiskData:
+    base = _data(ids)
+    return ParametricRiskData(
+        factor_ids=base.factor_ids,
+        cholesky_matrix=base.cholesky_matrix,
+        volatilities=base.volatilities,
+        effective_period_count=count,
+        effective_period_unit=FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+        chart_ids=base.chart_ids,
+    )
+
+
+def _manifest_spy(monkeypatch) -> list[int]:
+    built: list[int] = []
+    real = api.build_run_manifest
+
+    def spy(**k: Any):
+        built.append(1)
+        return real(**k)
+
+    monkeypatch.setattr(api, "build_run_manifest", spy)
+    return built
+
+
+def test_a_forecast_period_mismatch_fails_before_the_manifest(monkeypatch) -> None:
+    """Requested (1, BUSINESS_DAY) against effective (2, BUSINESS_DAY): refused
+    before any manifest exists (D090)."""
+    built = _manifest_spy(monkeypatch)
+    w = _world()
+    kw = w.inputs(
+        scenario_config=_cfg(),
+        data=_data_for_period(list(w.axis.factor_ids), 2),
+        batch_size=7,
+    )
+    with pytest.raises(ValueError, match="D090"):
+        run_scenario_var_es(**kw)
+    assert built == []
+
+
+def test_the_period_gate_precedes_reproducibility_acceptance(monkeypatch) -> None:
+    """A mismatched, unseeded parametric run in reproducible mode fails on the
+    period, not on the missing seed: the gate runs first."""
+    built = _manifest_spy(monkeypatch)
+    w = _world()
+    cfg = parse_scenario_model_config({
+        "model": "parametric",
+        "forecast_horizon": {"count": 3, "unit": "BUSINESS_DAY"},
+        "total_scenarios": _S,
+        "distribution": {"kind": "standard_normal"},
+        "seed": None,
+    })
+    kw = w.inputs(
+        scenario_config=cfg,
+        data=_data_for_period(list(w.axis.factor_ids), 4),
+        batch_size=7,
+    )
+    with pytest.raises(ValueError, match="D090"):
+        run_scenario_var_es(**kw, mode="reproducible")
+    assert built == []
+
+
+def test_equal_periods_build_exactly_one_manifest(monkeypatch) -> None:
+    built = _manifest_spy(monkeypatch)
+    w = _world()
+    kw = w.inputs(
+        scenario_config=_cfg(),
+        data=_data_for_period(list(w.axis.factor_ids), 1),
+        batch_size=7,
+    )
+    run_scenario_var_es(**kw)
+    assert built == [1]

@@ -16,7 +16,10 @@ from pydantic import ValidationError
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID
 from riskquant.simlab.scenarios.parametric import ParametricGenerator
-from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
+from riskquant.simlab.scenarios.parametric_data import (
+    FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+    ParametricRiskData,
+)
 from riskquant.solutions.scenario_models.api import (
     build_scenario_generator,
     parse_scenario_model_config,
@@ -43,7 +46,12 @@ def _vols():
 
 def _pdata():
     return ParametricRiskData(
-        factor_ids=_fids(), cholesky_matrix=_chol(), volatilities=_vols()
+        factor_ids=_fids(),
+        cholesky_matrix=_chol(),
+        volatilities=_vols(),
+        effective_period_count=1,
+        effective_period_unit=FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+        chart_ids=np.full(_K, SHIFT_LOG_RETURN_ID, dtype=np.int8),
     )
 
 
@@ -72,6 +80,7 @@ def _drive(gen, batch_size=4):
 def _cfg(distribution, **over):
     base = {
         "model": "parametric",
+        "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
         "total_scenarios": 10,
         "seed": 7,
         "distribution": distribution,
@@ -118,7 +127,14 @@ def test_valid_parametric_risk_data() -> None:
     ],
 )
 def test_parametric_risk_data_rejects_non_canonical(override, exc) -> None:
-    base = {"factor_ids": _fids(), "cholesky_matrix": _chol(), "volatilities": _vols()}
+    base = {
+        "factor_ids": _fids(),
+        "cholesky_matrix": _chol(),
+        "volatilities": _vols(),
+        "effective_period_count": 1,
+        "effective_period_unit": FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+        "chart_ids": np.full(_K, SHIFT_LOG_RETURN_ID, dtype=np.int8),
+    }
     base.update(override)
     with pytest.raises(exc):
         ParametricRiskData(**base)
@@ -130,6 +146,9 @@ def test_empty_factor_ids_rejected() -> None:
             factor_ids=np.zeros(0, np.int32),
             cholesky_matrix=np.zeros((0, 0), np.float64),
             volatilities=np.zeros(0, np.float64),
+            effective_period_count=1,
+            effective_period_unit=FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+            chart_ids=np.full(0, SHIFT_LOG_RETURN_ID, dtype=np.int8),
         )
 
 

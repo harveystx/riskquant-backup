@@ -70,6 +70,7 @@ _FIELDS = [
         "parametric.df",
         lambda v: {
             "model": "parametric",
+            "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
             "total_scenarios": 5,
             "distribution": {"kind": "student_t", "df": v},
         },
@@ -79,6 +80,7 @@ _FIELDS = [
         "parametric.nu",
         lambda v: {
             "model": "parametric",
+            "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
             "total_scenarios": 5,
             "distribution": {"kind": "variance_gamma", "nu": v},
         },
@@ -88,6 +90,7 @@ _FIELDS = [
         "parametric.prob_crisis",
         lambda v: {
             "model": "parametric",
+            "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
             "total_scenarios": 5,
             "distribution": {
                 "kind": "regime_switching_gmm",
@@ -101,6 +104,7 @@ _FIELDS = [
         "parametric.crisis_vol_multipliers",
         lambda v: {
             "model": "parametric",
+            "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
             "total_scenarios": 5,
             "distribution": {
                 "kind": "regime_switching_gmm",
@@ -257,6 +261,7 @@ def test_numpy_non_finite_rejected(label, make, get, bad) -> None:
         (
             {
                 "model": "parametric",
+                "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
                 "total_scenarios": 5,
                 "distribution": {"kind": "student_t", "df": 2.0},
             },
@@ -265,6 +270,7 @@ def test_numpy_non_finite_rejected(label, make, get, bad) -> None:
         (
             {
                 "model": "parametric",
+                "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
                 "total_scenarios": 5,
                 "distribution": {"kind": "student_t", "df": 2.001},
             },
@@ -273,6 +279,7 @@ def test_numpy_non_finite_rejected(label, make, get, bad) -> None:
         (
             {
                 "model": "parametric",
+                "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
                 "total_scenarios": 5,
                 "distribution": {
                     "kind": "regime_switching_gmm",
@@ -285,6 +292,7 @@ def test_numpy_non_finite_rejected(label, make, get, bad) -> None:
         (
             {
                 "model": "parametric",
+                "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
                 "total_scenarios": 5,
                 "distribution": {
                     "kind": "regime_switching_gmm",
@@ -297,6 +305,7 @@ def test_numpy_non_finite_rejected(label, make, get, bad) -> None:
         (
             {
                 "model": "parametric",
+                "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
                 "total_scenarios": 5,
                 "distribution": {
                     "kind": "regime_switching_gmm",
@@ -322,6 +331,7 @@ def test_domain_boundaries_unchanged(raw, ok) -> None:
 def _regime(mult):
     return {
         "model": "parametric",
+        "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
         "total_scenarios": 5,
         "distribution": {
             "kind": "regime_switching_gmm",

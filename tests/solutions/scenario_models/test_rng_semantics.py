@@ -24,7 +24,10 @@ from pydantic import ValidationError
 
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID
-from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
+from riskquant.simlab.scenarios.parametric_data import (
+    FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+    ParametricRiskData,
+)
 from riskquant.solutions.scenario_models.api import (
     build_scenario_generator,
     parse_scenario_model_config,
@@ -50,11 +53,16 @@ def _matrix() -> RiskFactorMatrix:
 def _parametric_data() -> ParametricRiskData:
     rng = np.random.default_rng(0)
     a = rng.normal(0, 1, (_K, _K))
-    chol = np.ascontiguousarray(np.linalg.cholesky(a @ a.T / _K + np.eye(_K) * 0.1))
+    cov = a @ a.T / _K + np.eye(_K) * 0.1
+    inv_sd = 1.0 / np.sqrt(np.diag(cov))
+    chol = np.ascontiguousarray(np.linalg.cholesky(cov * np.outer(inv_sd, inv_sd)))
     return ParametricRiskData(
         factor_ids=np.arange(_K, dtype=np.int32),
         cholesky_matrix=chol,
         volatilities=np.ascontiguousarray(np.full(_K, 0.02)),
+        effective_period_count=1,
+        effective_period_unit=FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+        chart_ids=np.full(_K, SHIFT_LOG_RETURN_ID, dtype=np.int8),
     )
 
 
@@ -76,6 +84,7 @@ def _cfg(model: str, seed):
         }
     return {
         "model": "parametric",
+        "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
         "total_scenarios": _S,
         "distribution": {"kind": "student_t", "df": 5.0},
         "seed": seed,
@@ -214,6 +223,7 @@ def test_parametric_every_distribution_is_batch_invariant(distribution) -> None:
     data = _parametric_data()
     raw = {
         "model": "parametric",
+        "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
         "total_scenarios": _S,
         "distribution": distribution,
         "seed": 99,

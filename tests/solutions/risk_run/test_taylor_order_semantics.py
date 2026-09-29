@@ -55,7 +55,11 @@ from riskquant.portfolio.engine import (
 )
 from riskquant.portfolio.ingest.pipeline import compile_raw_df_into_ingest_batch
 from riskquant.sensitivities.engine import run_sensitivities
-from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
+from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID
+from riskquant.simlab.scenarios.parametric_data import (
+    FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+    ParametricRiskData,
+)
 from riskquant.solutions.risk_run.api import run_scenario_var_es
 from riskquant.solutions.risk_run.schemas import RiskRun, TaylorBlock
 from riskquant.solutions.run_identity.api import InputMismatchError
@@ -447,6 +451,7 @@ _WORLDS = {
     "parametric": (
         {
             "model": "parametric",
+            "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
             "total_scenarios": 200,
             "distribution": {"kind": "standard_normal"},
             "seed": 3,
@@ -466,6 +471,9 @@ def _data(w: World, kind: str):
             np.linalg.cholesky(np.array([[1.0, 0.4], [0.4, 1.0]]))
         ),
         volatilities=np.array([0.015, 0.006]),
+        effective_period_count=1,
+        effective_period_unit=FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+        chart_ids=np.full(ids.shape[0], SHIFT_LOG_RETURN_ID, dtype=np.int8),
     )
 
 

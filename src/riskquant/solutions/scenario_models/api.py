@@ -83,30 +83,6 @@ def _require_parametric_data(
     return data
 
 
-def _build_parametric(
-    config: ParametricGeneratorConfig, pdata: ParametricRiskData
-) -> ParametricGenerator:
-    """Map the nested distribution variant onto the generator's flat parameters.
-    The generator re-validates every input; no numerical logic lives here."""
-    dist = config.distribution
-    kwargs: dict[str, Any] = {
-        "available_factor_ids": pdata.factor_ids,
-        "cholesky_matrix": pdata.cholesky_matrix,
-        "volatilities": pdata.volatilities,
-        "total_scenarios": config.total_scenarios,
-        "distribution_kind": dist.kind,
-        "seed": config.seed,
-    }
-    if isinstance(dist, StudentTDistribution):
-        kwargs["student_t_df"] = dist.df
-    elif isinstance(dist, VarianceGammaDistribution):
-        kwargs["vg_nu"] = dist.nu
-    elif isinstance(dist, RegimeSwitchingDistribution):
-        kwargs["prob_crisis"] = dist.prob_crisis
-        kwargs["crisis_vol_multipliers"] = dist.crisis_vol_multipliers
-    return ParametricGenerator(**kwargs)
-
-
 def resolve_parametric_binding_horizon(
     config: ParametricGeneratorConfig, data: ScenarioModelData
 ) -> int:
@@ -152,6 +128,30 @@ def resolve_parametric_binding_horizon(
             "The periods must be equal; no conversion exists."
         )
     return requested.count
+
+
+def _build_parametric(
+    config: ParametricGeneratorConfig, pdata: ParametricRiskData
+) -> ParametricGenerator:
+    """Map the nested distribution variant onto the generator's flat parameters.
+    The generator re-validates every input; no numerical logic lives here."""
+    dist = config.distribution
+    kwargs: dict[str, Any] = {
+        "available_factor_ids": pdata.factor_ids,
+        "cholesky_matrix": pdata.cholesky_matrix,
+        "volatilities": pdata.volatilities,
+        "total_scenarios": config.total_scenarios,
+        "distribution_kind": dist.kind,
+        "seed": config.seed,
+    }
+    if isinstance(dist, StudentTDistribution):
+        kwargs["student_t_df"] = dist.df
+    elif isinstance(dist, VarianceGammaDistribution):
+        kwargs["vg_nu"] = dist.nu
+    elif isinstance(dist, RegimeSwitchingDistribution):
+        kwargs["prob_crisis"] = dist.prob_crisis
+        kwargs["crisis_vol_multipliers"] = dist.crisis_vol_multipliers
+    return ParametricGenerator(**kwargs)
 
 
 def build_scenario_generator(

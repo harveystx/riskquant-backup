@@ -24,7 +24,10 @@ from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.market_data.risk_factors.shift_types import SHIFT_DIFFERENCE_ID, SHIFT_LOG_RETURN_ID
 from riskquant.simlab.builder.shock_universe import build_shock_universe
 from riskquant.simlab.scenarios.historical import _kernel_fused_h_day_shock
-from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
+from riskquant.simlab.scenarios.parametric_data import (
+    FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+    ParametricRiskData,
+)
 from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
 from riskquant.solutions.scenario_models.api import build_scenario_generator, parse_scenario_model_config
 
@@ -82,6 +85,7 @@ _MODELS = {
     "filtered_bootstrap": ({"model": "filtered_bootstrap", "horizon": 1, "total_scenarios": 40, "seed": 7},
                            "log", SHIFT_LOG_RETURN_ID),
     "parametric": ({"model": "parametric", "total_scenarios": 4000,
+                    "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
                     "distribution": {"kind": "student_t", "df": 5.0}, "seed": 7}, "param", SHIFT_LOG_RETURN_ID),
 }
 
@@ -89,7 +93,9 @@ _MODELS = {
 def _data(kind):
     if kind == "param":
         return ParametricRiskData(factor_ids=IDS, cholesky_matrix=np.ascontiguousarray(np.eye(3)),
-                                  volatilities=np.ascontiguousarray([VOL[f] for f in IDS.tolist()]))
+                                  volatilities=np.ascontiguousarray([VOL[f] for f in IDS.tolist()]),
+                                  effective_period_count=1,
+                                  effective_period_unit=FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID, chart_ids=np.full(IDS.shape[0], SHIFT_LOG_RETURN_ID, dtype=np.int8))
     return _matrix(kind)
 
 

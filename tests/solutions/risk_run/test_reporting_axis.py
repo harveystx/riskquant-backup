@@ -49,7 +49,11 @@ from riskquant.portfolio.engine import (
 from riskquant.portfolio.ingest.pipeline import compile_raw_df_into_ingest_batch
 from riskquant.scenario_metrics.api.var_es import compute_var_es
 from riskquant.sensitivities.engine import run_sensitivities
-from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
+from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID
+from riskquant.simlab.scenarios.parametric_data import (
+    FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+    ParametricRiskData,
+)
 from riskquant.solutions.risk_run.api import derive_run_factor_axis, run_scenario_var_es
 from riskquant.solutions.risk_run.schemas import (
     CompositionContractError,
@@ -435,9 +439,13 @@ def test_j_parametric_reporting_fx_shares_the_joint_draw(capture) -> None:
         factor_ids=ids,
         cholesky_matrix=np.ascontiguousarray(chol),
         volatilities=np.ascontiguousarray(vols),
+        effective_period_count=1,
+        effective_period_unit=FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
+        chart_ids=np.full(ids.shape[0], SHIFT_LOG_RETURN_ID, dtype=np.int8),
     )
     cfg = parse_scenario_model_config({
         "model": "parametric",
+        "forecast_horizon": {"count": 1, "unit": "BUSINESS_DAY"},
         "total_scenarios": 20_000,
         "distribution": {"kind": "standard_normal"},
         "seed": 3,
@@ -601,4 +609,3 @@ def test_source_currency_of_an_inverted_instrument_leg_is_the_pair_base() -> Non
     assert RSC.ccy_id_to_name[int(settle[0])] == "EUR"
     # valuation needs EURGBP (the fold); EUR -> USD reporting needs USDEUR (suffix)
     assert w.axis.reporting_factor_ids.tolist() == [RF["USDEUR"]]
-

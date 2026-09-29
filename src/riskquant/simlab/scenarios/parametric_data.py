@@ -177,7 +177,7 @@ class ParametricRiskData:
                 f"(int64), got {count}."
             )
         unit = self.effective_period_unit
-        if not (isinstance(unit, np.signedinteger) and np.dtype(type(unit)) == np.int8):
+        if type(unit) is not np.int8:
             raise TypeError(
                 "effective_period_unit must be an np.int8 ForecastPeriodUnit code, "
                 f"got {type(unit).__name__}."
