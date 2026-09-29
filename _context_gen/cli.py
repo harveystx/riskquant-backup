@@ -14,13 +14,15 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
+from datetime import datetime
 
-from _context_gen import core, fs, generate
+from _context_gen import fs, generate
 
 
 def _build_parser(available_domains: list[str]) -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Generate RiskQuant context snapshots.")
+    parser = argparse.ArgumentParser(
+        description="Generate RiskQuant context snapshots."
+    )
     parser.add_argument(
         "--profile",
         choices=["all", "index", "core", "tests", *available_domains],
@@ -30,8 +32,14 @@ def _build_parser(available_domains: list[str]) -> argparse.ArgumentParser:
             "'tests' generates only context_riskquant_tests.txt (every file under tests/)."
         ),
     )
-    parser.add_argument("--tests", action="store_true", help="Include this profile's test source.")
-    parser.add_argument("--demos", action="store_true", help="Include this profile's demo/solution scripts.")
+    parser.add_argument(
+        "--tests", action="store_true", help="Include this profile's test source."
+    )
+    parser.add_argument(
+        "--demos",
+        action="store_true",
+        help="Include this profile's demo/solution scripts.",
+    )
     parser.add_argument(
         "--allow-incomplete",
         action="store_true",
@@ -42,18 +50,30 @@ def _build_parser(available_domains: list[str]) -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     repo_root = fs.repo_root()
-    domains = generate.discover_domains(repo_root) + generate.discover_solution_domains(repo_root)
+    domains = generate.discover_domains(repo_root) + generate.discover_solution_domains(
+        repo_root
+    )
     parser = _build_parser(domains)
     args = parser.parse_args(argv)
 
     snap = generate.take_snapshot(repo_root)
     special = {"all", "index", "core", "tests", "scripts"}
-    targets = domains if args.profile == "all" else [args.profile] if args.profile not in special else []
+    targets = (
+        domains
+        if args.profile == "all"
+        else [args.profile]
+        if args.profile not in special
+        else []
+    )
 
     rendered: list[generate.RenderedProfile] = []
     for domain in targets:
         profile = generate.build_profile(domain, repo_root)
-        rendered.append(generate.render_domain_profile(profile, snap, repo_root, tests=args.tests, demos=args.demos))
+        rendered.append(
+            generate.render_domain_profile(
+                profile, snap, repo_root, tests=args.tests, demos=args.demos
+            )
+        )
 
     if args.profile in {"all", "core"}:
         rendered.append(generate.render_core_artifact(snap))
@@ -70,15 +90,30 @@ def main(argv: list[str] | None = None) -> int:
         # run is index-only, still summarise the full domain set so the
         # index is never generated in isolation from what it describes.
         summary_source = rendered or [
-            generate.render_domain_profile(generate.build_profile(d, repo_root), snap, repo_root, tests=False, demos=False)
+            generate.render_domain_profile(
+                generate.build_profile(d, repo_root),
+                snap,
+                repo_root,
+                tests=False,
+                demos=False,
+            )
             for d in domains
-        ] + [generate.render_core_artifact(snap), generate.render_tests_artifact(snap, repo_root)]
+        ] + [
+            generate.render_core_artifact(snap),
+            generate.render_tests_artifact(snap, repo_root),
+        ]
         rendered.append(generate.render_index_artifact(snap, repo_root, summary_source))
 
     output_dir = repo_root / "_contexts"
-    written = generate.publish(rendered, output_dir, allow_incomplete=args.allow_incomplete)
+    written = generate.publish(
+        rendered, output_dir, allow_incomplete=args.allow_incomplete
+    )
     for name in written:
         print(f"WROTE {output_dir / name}")
+
+    print("\n" + "-" * 40)
+    print(f"DONE: {datetime.now()}")
+    print("-" * 40 + "\n")
     return 0
 
 
