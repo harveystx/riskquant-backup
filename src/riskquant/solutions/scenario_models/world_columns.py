@@ -23,7 +23,7 @@ A scenario world is one horizon ``h`` and a set of columns keyed
    columns. The request is first bound against the declared world keys, so a
    column the world does not supply fails before any scenario is generated;
    the terms are then bound against the request, so each term indexes the
-   request-ordered column stream of ``iter_world_column_batches``. Both steps
+   request-ordered columns a generator's ``iter_batches`` returns. Both steps
    use ``bind_term_columns``, the one ``(d, tau, h)`` binder.
 
 Nothing here selects a source, ranks availability, converts a chart, infers a

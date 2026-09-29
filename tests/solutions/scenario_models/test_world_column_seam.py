@@ -23,7 +23,6 @@ from riskquant.config.proxy_model.compiled import CompiledProxyModel
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.simlab.scenarios.parametric import ParametricGenerator
 from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
-from riskquant.simlab.scenarios.world_column_stream import iter_world_column_batches
 from riskquant.simlab.shocks.axis_operator import lower_axis_operator
 from riskquant.simlab.shocks.linear_term_apply import apply_linear_terms_to_base_levels
 from riskquant.solutions.run_identity.hashing import hash_proxy_model
@@ -117,9 +116,7 @@ def _run(model, axis, kappa, base, config, data, batch_size=64):
     wb = bind_operator_to_world(op, config, data)
     gen = build_scenario_generator(config, data=data)
     outs, cols = [], []
-    for wc in iter_world_column_batches(
-        gen,
-        driver_rf_ids=wb.request_driver_rf_ids,
+    for wc in gen.iter_batches(driver_rf_ids=wb.request_driver_rf_ids,
         chart_ids=wb.request_chart_ids,
         batch_size=batch_size,
     ):
@@ -225,16 +222,15 @@ def test_same_node_under_two_charts_binds_two_distinct_columns() -> None:
 def test_parametric_same_factor_other_chart_is_a_missing_column_before_generation(
     monkeypatch,
 ) -> None:
-    """The live defect: the legacy parametric path serves (B, DIFF) from the
+    """The parametric generator is chart-blind by D091 design: asked directly, it serves (B, DIFF) from the
     (B, LOG) column. The Slice 3 seam must refuse it before generation."""
     data = _param_data([B], [LOG])
     cfg = _param_cfg()
-    # Reproduce the legacy acceptance (the defect this seam removes).
-    legacy = build_scenario_generator(cfg, data=data)
-    batch = next(legacy.iter_batches(
-        required_shift_type_id=np.array([LOG, DIFF], dtype=np.int8),
-        source_factor_ids=np.array([B, B], dtype=np.int32),
-        shock_scale=np.ones(2, dtype=np.float32),
+    # Asked directly, the chart-blind generator returns one column twice.
+    direct = build_scenario_generator(cfg, data=data)
+    batch = next(direct.iter_batches(
+        chart_ids=np.array([LOG, DIFF], dtype=np.int8),
+        driver_rf_ids=np.array([B, B], dtype=np.int32),
         batch_size=8,
     ))
     s = np.asarray(batch.shocks)
@@ -374,11 +370,10 @@ def test_the_seam_is_batch_invariant(batch_size: int) -> None:
     assert got.tobytes() == ref.tobytes()
 
 
-# ---- the legacy boundary ---------------------------------------------------------------------------
+# ---- the D013 boundary: absent ---------------------------------------------------------------------------
 
 _SEAM = [
     "src/riskquant/simlab/shocks/axis_operator.py",
-    "src/riskquant/simlab/scenarios/world_column_stream.py",
     "src/riskquant/solutions/scenario_models/world_columns.py",
 ]
 
@@ -398,14 +393,6 @@ def test_seam_modules_import_nothing_from_the_d013_mechanism(path: str) -> None:
         "riskquant.proxy_resolver.proxy_audit",
         "riskquant.simlab.shocks.apply",
         "riskquant.simlab.shocks.shock_kernel",
+        "riskquant.simlab.builder.shock_universe",
     }
     assert not (imported & forbidden)
-
-
-@pytest.mark.parametrize("path", _SEAM)
-def test_seam_modules_never_read_a_shock_scale(path: str) -> None:
-    tree = ast.parse((_repo() / path).read_text(encoding="utf-8"))
-    reads = [
-        n for n in ast.walk(tree) if isinstance(n, ast.Attribute) and n.attr == "shock_scale"
-    ]
-    assert reads == []

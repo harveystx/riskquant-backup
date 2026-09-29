@@ -26,9 +26,8 @@ MOCK_REQ_SHOCK_SCALES = np.ones(2, dtype=np.float32)
 def _iter_batches(generator: ParametricGenerator, batch_size: int):
     return list(
         generator.iter_batches(
-            required_shift_type_id=MOCK_REQ_SHIFT_TYPES,
-            source_factor_ids=MOCK_REQ_FACTOR_IDS,
-            shock_scale=MOCK_REQ_SHOCK_SCALES,
+            chart_ids=MOCK_REQ_SHIFT_TYPES,
+            driver_rf_ids=MOCK_REQ_FACTOR_IDS,
             batch_size=batch_size,
         )
     )
@@ -106,9 +105,8 @@ def test_iter_batches_rejects_non_positive_batch_size() -> None:
     with pytest.raises(ValueError, match="batch_size must be positive"):
         next(
             generator.iter_batches(
-                required_shift_type_id=MOCK_REQ_SHIFT_TYPES,
-                source_factor_ids=MOCK_REQ_FACTOR_IDS,
-                shock_scale=MOCK_REQ_SHOCK_SCALES,
+                chart_ids=MOCK_REQ_SHIFT_TYPES,
+                driver_rf_ids=MOCK_REQ_FACTOR_IDS,
                 batch_size=0,
             )
         )

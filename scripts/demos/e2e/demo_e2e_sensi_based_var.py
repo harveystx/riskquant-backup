@@ -5,7 +5,7 @@ Canonical end-to-end demo for sensitivity-based Value at Risk (VaR).
 Demonstrates the CURRENT production usage model for scenario-based VaR/ES:
 
     human-readable inputs (static config, proxy config, positions, snapshot)
-        -> validated RiskStaticConfig / ProxyTopology
+        -> validated RiskStaticConfig, authored Proxy V1 terms
         -> compiled portfolio (SoA blocks)
         -> market state -> pricing (MTM) -> trade sensitivities
         -> canonical compiled sensitivity book (SensitivityPnlCalculator)

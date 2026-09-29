@@ -62,9 +62,8 @@ def _shocks(gen: Any, batch_size: int = 16) -> np.ndarray:
     return np.vstack([
         np.array(b.shocks, copy=True)
         for b in gen.iter_batches(
-            required_shift_type_id=np.ones(_K, dtype=np.int8),
-            source_factor_ids=np.array([4, 7, 9], dtype=np.int32),
-            shock_scale=np.ones(_K, dtype=np.float32),
+            chart_ids=np.ones(_K, dtype=np.int8),
+            driver_rf_ids=np.array([4, 7, 9], dtype=np.int32),
             batch_size=batch_size,
         )
     ])

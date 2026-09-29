@@ -73,9 +73,8 @@ def _columns(model: str, two_factor: bool, batch_size: int) -> np.ndarray:
     return np.vstack([
         np.array(b.shocks, copy=True)
         for b in gen.iter_batches(
-            required_shift_type_id=charts,
-            source_factor_ids=np.full(3, _B, dtype=np.int32),
-            shock_scale=np.ones(3, dtype=np.float32),
+            chart_ids=charts,
+            driver_rf_ids=np.full(3, _B, dtype=np.int32),
             batch_size=batch_size,
         )
     ])

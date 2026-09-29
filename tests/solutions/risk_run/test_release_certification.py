@@ -87,7 +87,7 @@ _CERT = textwrap.dedent(
     from _certfix import inputs, FIDS, K
     from riskquant.solutions.risk_run.api import run_scenario_var_es
     from riskquant.solutions.scenario_models.api import build_scenario_generator
-    from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
+    from riskquant.simlab.shocks.linear_term_apply import apply_linear_terms_to_base_levels
     from riskquant.solutions.sensitivity_pnl.api import FactorAxis
     from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
     from riskquant.solutions.run_identity.hashing import (
@@ -105,13 +105,16 @@ _CERT = textwrap.dedent(
 
     gen = build_scenario_generator(inp["scenario_config"], data=inp["data"])
     shocks, chunks = [], []
-    # Independent legacy reference: identity routing (own column, unit scale),
-    # the numerical content of the run's identity Proxy V1 rows.
-    for b in gen.iter_batches(required_shift_type_id=inp["required_shift_type_id"],
-                              source_factor_ids=inp["required_factor_ids"],
-                              shock_scale=np.ones(K, np.float32), batch_size={bs}):
+    # Reference: identity Proxy V1 rows (own column, own chart, loading 1)
+    # applied with the Slice 2 kernel.
+    for b in gen.iter_batches(chart_ids=inp["required_shift_type_id"],
+                              driver_rf_ids=inp["required_factor_ids"],
+                              batch_size={bs}):
         out = np.empty((K, b.shocks.shape[0]), dtype=np.float64, order="C")
-        apply_shocks_to_base_levels(base_levels=inp["base_levels"], batch=b, out=out)
+        apply_linear_terms_to_base_levels(
+            base_levels=inp["base_levels"], row_term_offsets=np.arange(K + 1, dtype=np.int32),
+            term_column_uix=np.arange(K, dtype=np.int32), term_loadings=np.ones(K),
+            target_shift_types=inp["required_shift_type_id"], shocks=b.shocks, out=out)
         shocks.append(np.array(b.shocks, copy=True)); chunks.append(out)
     stream = np.vstack(shocks); levels = np.ascontiguousarray(np.hstack(chunks))
     axis = FactorAxis.from_keys(pl.Series("factor_id", FIDS.tolist(), dtype=pl.Int32))

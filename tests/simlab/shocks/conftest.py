@@ -1,6 +1,6 @@
 # tests/simlab/shocks/conftest.py
 """
-Subject: the proxy-routed simlab shock path over the spot universe.
+Subject: the Proxy V1 simlab shock path over the spot universe.
 
 Fixtures come from `tests/_support`: one definition, imported by every suite
 that needs it. Transitive fixture dependencies are imported too, because
@@ -10,7 +10,7 @@ pytest resolves a fixture argument by name in the requesting conftest scope.
 from __future__ import annotations
 
 from tests._support.spot_scenario import (
-    proxy_topology,
+    proxy_terms,
     raw_shocks,
     resolved,
 )
@@ -29,7 +29,7 @@ __all__ = [
     "golden_levels",
     "level_snapshot",
     "portfolio_mapper_market",
-    "proxy_topology",
+    "proxy_terms",
     "raw_positions",
     "raw_shocks",
     "resolved",

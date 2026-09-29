@@ -66,9 +66,8 @@ def test_historical_generator_all_batches_f_contiguous(total_scenarios, batch_si
     matrix = _build_matrix(t=total_scenarios + 1)  # horizon=1 -> T-1 scenarios
     gen = HistoricalGenerator(matrix=matrix, horizon=1)
     batches = list(gen.iter_batches(
-        required_shift_type_id=_SHIFT_TYPES,
-        source_factor_ids=_FACTOR_IDS,
-        shock_scale=_SHOCK_SCALES,
+        chart_ids=_SHIFT_TYPES,
+        driver_rf_ids=_FACTOR_IDS,
         batch_size=batch_size,
     ))
     _assert_every_batch_f_contiguous(batches)
@@ -89,9 +88,8 @@ def test_bootstrap_sbb_all_batches_f_contiguous(total_scenarios, batch_size):
         seed=7,
     )
     batches = list(gen.iter_batches(
-        required_shift_type_id=_SHIFT_TYPES,
-        source_factor_ids=_FACTOR_IDS,
-        shock_scale=_SHOCK_SCALES,
+        chart_ids=_SHIFT_TYPES,
+        driver_rf_ids=_FACTOR_IDS,
         batch_size=batch_size,
     ))
     _assert_every_batch_f_contiguous(batches)
@@ -112,9 +110,8 @@ def test_parametric_generator_all_batches_f_contiguous(total_scenarios, batch_si
         seed=5,
     )
     batches = list(gen.iter_batches(
-        required_shift_type_id=_SHIFT_TYPES,
-        source_factor_ids=_FACTOR_IDS,
-        shock_scale=_SHOCK_SCALES,
+        chart_ids=_SHIFT_TYPES,
+        driver_rf_ids=_FACTOR_IDS,
         batch_size=batch_size,
     ))
     _assert_every_batch_f_contiguous(batches)
@@ -129,18 +126,16 @@ def test_single_scenario_final_batch_matches_full_batch_value():
 
     gen_partial = HistoricalGenerator(matrix=matrix, horizon=1)
     partial_batches = list(gen_partial.iter_batches(
-        required_shift_type_id=_SHIFT_TYPES,
-        source_factor_ids=_FACTOR_IDS,
-        shock_scale=_SHOCK_SCALES,
+        chart_ids=_SHIFT_TYPES,
+        driver_rf_ids=_FACTOR_IDS,
         batch_size=3,  # 3,3,3,1 -> last batch is the ambiguous 1-row case
     ))
     last_batch_value = partial_batches[-1].shocks[0]
 
     gen_full = HistoricalGenerator(matrix=matrix, horizon=1)
     full_batches = list(gen_full.iter_batches(
-        required_shift_type_id=_SHIFT_TYPES,
-        source_factor_ids=_FACTOR_IDS,
-        shock_scale=_SHOCK_SCALES,
+        chart_ids=_SHIFT_TYPES,
+        driver_rf_ids=_FACTOR_IDS,
         batch_size=10,  # single full batch, no partial-batch code path at all
     ))
     full_value_at_same_scenario = full_batches[0].shocks[9]

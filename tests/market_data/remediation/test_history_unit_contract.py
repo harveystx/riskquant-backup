@@ -56,7 +56,7 @@ from riskquant.portfolio.engine import (
 )
 from riskquant.portfolio.ingest.pipeline import compile_raw_df_into_ingest_batch
 from riskquant.simlab.scenarios.historical import HistoricalGenerator
-from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
+from tests._support.identity_rows import apply_identity_rows
 from riskquant.utils.dates import date_to_ord32
 from riskquant.valuation.engine import run_valuation
 
@@ -325,13 +325,17 @@ def _scenario_levels(matrix, rf_id, shift_id, base):
     gen = HistoricalGenerator(matrix=matrix, horizon=1)
     chunks = []
     for batch in gen.iter_batches(
-        required_shift_type_id=np.array([shift_id], np.int8),
-        source_factor_ids=np.array([rf_id], np.int32),
-        shock_scale=np.ones(1, np.float32),
+        chart_ids=np.array([shift_id], np.int8),
+        driver_rf_ids=np.array([rf_id], np.int32),
         batch_size=8,
     ):
         out = np.empty((1, batch.shocks.shape[0]))
-        apply_shocks_to_base_levels(base_levels=np.array([base]), batch=batch, out=out)
+        apply_identity_rows(
+            base_levels=np.array([base]),
+            chart_ids=np.array([shift_id], np.int8),
+            shocks=batch.shocks,
+            out=out,
+        )
         chunks.append(out)
     return np.sort(np.concatenate(chunks, axis=1)[0])
 

@@ -69,9 +69,8 @@ def _rf_matrix(t=12):
 def _drive(gen, batch_size=4):
     chunks = []
     for b in gen.iter_batches(
-        required_shift_type_id=np.array([SHIFT_LOG_RETURN_ID] * _K, np.int8),
-        source_factor_ids=np.arange(_K, dtype=np.int32),
-        shock_scale=np.ones(_K, np.float32),
+        chart_ids=np.array([SHIFT_LOG_RETURN_ID] * _K, np.int8),
+        driver_rf_ids=np.arange(_K, dtype=np.int32),
         batch_size=batch_size,
     ):
         chunks.append(np.array(b.shocks, copy=True))

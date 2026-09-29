@@ -160,9 +160,8 @@ def _shocks(data: ParametricRiskData) -> np.ndarray:
     out = [
         np.array(b.shocks, copy=True)
         for b in gen.iter_batches(
-            required_shift_type_id=np.array([1, 1], dtype=np.int8),
-            source_factor_ids=data.factor_ids,
-            shock_scale=np.ones(2, dtype=np.float32),
+            chart_ids=np.array([1, 1], dtype=np.int8),
+            driver_rf_ids=data.factor_ids,
             batch_size=16,
         )
     ]

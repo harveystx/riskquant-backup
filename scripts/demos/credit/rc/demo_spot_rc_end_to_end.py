@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import pandas as pd
 
-from riskquant.config.proxy_config.compile import compile_proxy_topology_from_df
 from riskquant.config.static_config.compile import (
     compile_risk_static_config_from_dict_of_dfs,
 )
@@ -35,9 +34,6 @@ from riskquant.config.static_config.rf_resolution import (
     build_risk_factor_name_mapping_for_as_of_date,
 )
 from riskquant.ingest_fixtures.as_of import CANONICAL_AS_OF_DATE
-from riskquant.ingest_fixtures.config.risk_proxy_config.canonical_risk_proxy_config import (
-    CANONICAL_RISK_PROXY_CONFIG_DF,
-)
 from riskquant.ingest_fixtures.config.risk_static_config.canonical_risk_static_config import (
     CANONICAL_RISK_STATIC_CONFIG_DICT_OF_DFS,
 )
@@ -78,7 +74,6 @@ from riskquant.valuation.engine import run_valuation
 
 _AS_OF_DATE = CANONICAL_AS_OF_DATE
 _RISK_STATIC_CONFIG_DICT_OF_DFS = CANONICAL_RISK_STATIC_CONFIG_DICT_OF_DFS
-_PROXY_CONFIG_DF = CANONICAL_RISK_PROXY_CONFIG_DF
 _PORTFOLIO_DATA = CANONICAL_EXHAUSTIVE_MARKET_RISK_PORTFOLIO_DATA
 _PORTFOLIO_DATA_DF = pd.DataFrame(_PORTFOLIO_DATA)
 _RF_LEVELS_SNAPSHOT = CANONICAL_MARKET_DATA_SNAPSHOT_LEVELS_DICT
@@ -119,13 +114,6 @@ if __name__ == "__main__":
         title="CANONICAL RISK STATIC CONFIGURATION",
     )
 
-    proxy_config_df = _PROXY_CONFIG_DF
-    print_df(
-        proxy_config_df,
-        title="CANONICAL RISK PROXY CONFIGURATION",
-        float_format=">12_.0f",
-    )
-
     # Filter exhaustive trade-data down to the pricer-runnable subset.
     full_trade_df = _PORTFOLIO_DATA_DF
     portfolio_trade_data_df = full_trade_df[
@@ -162,13 +150,6 @@ if __name__ == "__main__":
         risk_static_config.container_name_to_id,
         title="CONTAINER NAME TO CONTAINER ID MAPPING",
     )
-
-    proxy_config = compile_proxy_topology_from_df(
-        df=proxy_config_df,
-        static_config=risk_static_config,
-    )
-    print_subheader(title="COMPILED PROXY CONFIG OBJECT")
-    proxy_config.summary()
 
     # ---- COMPILE RISK FACTORS SNAPSHOT ----
 

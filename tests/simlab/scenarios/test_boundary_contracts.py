@@ -16,7 +16,6 @@ import numpy as np
 import pytest
 
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
-from riskquant.market_data.risk_factors.shift_types import SHIFT_LOG_RETURN_ID
 from riskquant.simlab.scenarios.base import ScenarioSetBatch
 from riskquant.simlab.scenarios.bootstrap_fhs import FilteredBootstrapGenerator
 from riskquant.simlab.scenarios.bootstrap_sbb import StationaryBlockBootstrapGenerator
@@ -180,9 +179,6 @@ def test_float64_matrix_accepted() -> None:
 def _good_batch_kwargs():
     return dict(
         shocks=np.zeros((3, 2), dtype=np.float32, order="F"),
-        required_to_shock_uix=np.array([0, 1], dtype=np.int32),
-        shock_scale=np.ones(2, dtype=np.float32),
-        required_shift_type_id=np.array([SHIFT_LOG_RETURN_ID] * 2, dtype=np.int8),
         scenario_offset=0,
         scenario_count_total=3,
     )
@@ -190,11 +186,6 @@ def _good_batch_kwargs():
 
 def test_batch_valid_construction() -> None:
     ScenarioSetBatch(**_good_batch_kwargs())
-
-
-def test_batch_shock_scale_float64_tolerated() -> None:
-    # apply casts shock_scale to float64; the batch tolerates float32|float64.
-    ScenarioSetBatch(**{**_good_batch_kwargs(), "shock_scale": np.ones(2, np.float64)})
 
 
 def test_batch_scenario_count_none_ok() -> None:
@@ -206,12 +197,8 @@ def test_batch_scenario_count_none_ok() -> None:
     [
         # wrong dtype
         ({"shocks": np.zeros((3, 2), np.float64, order="F")}, TypeError),
-        ({"required_to_shock_uix": np.array([0, 1], np.int64)}, TypeError),
-        ({"required_shift_type_id": np.array([1, 1], np.int16)}, TypeError),
-        ({"shock_scale": np.ones(2, np.int32)}, TypeError),
         # wrong ndim
         ({"shocks": np.zeros(6, np.float32)}, TypeError),
-        ({"required_to_shock_uix": np.zeros((2, 1), np.int32)}, TypeError),
         # wrong layout where required
         ({"shocks": np.zeros((3, 2), np.float32, order="C")}, ValueError),
         # invalid integer scalars
@@ -222,8 +209,6 @@ def test_batch_scenario_count_none_ok() -> None:
         ({"scenario_count_total": True}, TypeError),
         ({"scenario_count_total": 2.0}, TypeError),
         # inconsistent mapping dimensions
-        ({"shock_scale": np.ones(3, np.float32)}, ValueError),
-        ({"required_shift_type_id": np.array([1, 1, 1], np.int8)}, ValueError),
     ],
 )
 def test_batch_malformed_rejected(override, exc) -> None:

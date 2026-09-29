@@ -93,7 +93,6 @@ from riskquant.simlab.scenarios.parametric_data import (
     FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
     ParametricRiskData,
 )
-from riskquant.simlab.scenarios.world_column_stream import iter_world_column_batches
 from riskquant.simlab.shocks.axis_operator import lower_axis_operator
 from riskquant.simlab.shocks.linear_term_apply import apply_linear_terms_to_base_levels
 from riskquant.solutions.scenario_models.world_columns import bind_operator_to_world
@@ -999,9 +998,7 @@ def shocked_levels_for(
     generator = build_scenario_generator(scenario_config, data=data)
     k = world.base_levels.shape[0]
     chunks: list[npt.NDArray[np.float64]] = []
-    for batch in iter_world_column_batches(
-        generator,
-        driver_rf_ids=binding.request_driver_rf_ids,
+    for batch in generator.iter_batches(driver_rf_ids=binding.request_driver_rf_ids,
         chart_ids=binding.request_chart_ids,
         batch_size=batch_size,
     ):

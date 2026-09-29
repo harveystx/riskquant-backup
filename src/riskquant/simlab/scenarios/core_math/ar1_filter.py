@@ -119,8 +119,8 @@ def _ar1_one_col(col_vals, col_res, st: int) -> None:
     elif st == SHIFT_ABSOLUTE_BASE_RETURN_ID:
         r = _ret_absolute_base(curr_val, prev_val)
     else:
-        # Unreachable: NO_SHIFT is handled above and `build_shock_universe`
-        # rejects any id outside {-1, 1, 2, 3, 4}. Guard defensively.
+        # Unreachable: NO_SHIFT is handled above and `build_world_column_plan`
+        # rejects any chart outside {1, 2, 3, 4}. Guard defensively.
         return
 
     col_res[1] = r

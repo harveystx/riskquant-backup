@@ -45,9 +45,8 @@ def _collect_shocks(
     generator: StationaryBlockBootstrapGenerator, batch_size: int
 ) -> np.ndarray:
     batches = generator.iter_batches(
-        required_shift_type_id=MOCK_REQ_SHIFT_TYPES,
-        source_factor_ids=MOCK_REQ_FACTOR_IDS,
-        shock_scale=MOCK_REQ_SHOCK_SCALES,
+        chart_ids=MOCK_REQ_SHIFT_TYPES,
+        driver_rf_ids=MOCK_REQ_FACTOR_IDS,
         batch_size=batch_size,
     )
     return np.concatenate([batch.shocks.copy() for batch in batches], axis=0)

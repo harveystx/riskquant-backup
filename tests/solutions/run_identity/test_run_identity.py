@@ -37,7 +37,6 @@ from riskquant.simlab.scenarios.parametric_data import (
     ParametricRiskData,
 )
 from riskquant.config.proxy_model.compiled import CompiledProxyModel
-from riskquant.simlab.scenarios.world_column_stream import iter_world_column_batches
 from riskquant.simlab.shocks.axis_operator import lower_axis_operator
 from riskquant.simlab.shocks.linear_term_apply import apply_linear_terms_to_base_levels
 from riskquant.solutions.run_identity.api import (
@@ -132,9 +131,7 @@ def _run_risk(inp: dict) -> tuple[float, float, np.ndarray]:
     gen = build_scenario_generator(cfg, data=inp["data"])
     n = inp["base_levels"].shape[0]
     chunks = []
-    for batch in iter_world_column_batches(
-        gen,
-        driver_rf_ids=wb.request_driver_rf_ids,
+    for batch in gen.iter_batches(driver_rf_ids=wb.request_driver_rf_ids,
         chart_ids=wb.request_chart_ids,
         batch_size=inp["batch_size"],
     ):

@@ -5,14 +5,10 @@
 # CANONICAL INPUTS
 # ============================================================
 
-from riskquant.config.proxy_config.compile import compile_proxy_topology_from_df
 from riskquant.config.static_config.compile import (
     compile_risk_static_config_from_dict_of_dfs,
 )
 from riskquant.ingest_fixtures.as_of import CANONICAL_AS_OF_DATE
-from riskquant.ingest_fixtures.config.risk_proxy_config.canonical_risk_proxy_config import (
-    CANONICAL_RISK_PROXY_CONFIG_DF,
-)
 from riskquant.ingest_fixtures.config.risk_static_config.canonical_risk_static_config import (
     CANONICAL_RISK_STATIC_CONFIG_DICT_OF_DFS,
 )
@@ -31,7 +27,6 @@ from riskquant.utils.printer import (
 
 _AS_OF_DATE = CANONICAL_AS_OF_DATE
 _RISK_STATIC_CONFIG_DICT_OF_DFS = CANONICAL_RISK_STATIC_CONFIG_DICT_OF_DFS
-_PROXY_CONFIG_DF = CANONICAL_RISK_PROXY_CONFIG_DF
 _RF_LEVELS_SNAPSHOT = CANONICAL_MARKET_DATA_SNAPSHOT_LEVELS_DICT
 
 
@@ -50,15 +45,6 @@ if __name__ == "__main__":
         risk_static_config.container_name_to_id,
         title="CONTAINER NAME TO CONTAINER ID MAPPING",
     )
-
-    # ---- COMPILE PROXY CONFIG MASTER ----
-
-    proxy_config = compile_proxy_topology_from_df(
-        df=_PROXY_CONFIG_DF,
-        static_config=risk_static_config,
-    )
-    print_subheader(title="COMPILED PROXY CONFIG OBJECT")
-    proxy_config.summary()
 
     # ---- COMPILE RISK FACTORS SNAPSHOT ----
 

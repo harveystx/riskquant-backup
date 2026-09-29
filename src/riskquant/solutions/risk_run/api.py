@@ -75,7 +75,6 @@ from riskquant.scenario_metrics._validate import _validate_confidence_level
 from riskquant.scenario_metrics.api.var_es import compute_var_es
 from riskquant.sensitivity_pnl.grid import PnlGrid, allocate_pnl_grid
 from riskquant.simlab.scenarios.parametric_data import ParametricRiskData
-from riskquant.simlab.scenarios.world_column_stream import iter_world_column_batches
 from riskquant.simlab.shocks.axis_operator import lower_axis_operator
 from riskquant.simlab.shocks.linear_term_apply import apply_linear_terms_to_base_levels
 from riskquant.solutions.risk_run.schemas import (
@@ -1057,8 +1056,7 @@ def run_scenario_var_es(
     # The world streams exactly the bound (d, tau) columns, in request order;
     # the operator's terms index them through world_binding.term_column_uix.
     # Loadings are the compiled float64 betas; nothing else weights a column.
-    for batch in iter_world_column_batches(
-        generator,
+    for batch in generator.iter_batches(
         driver_rf_ids=world_binding.request_driver_rf_ids,
         chart_ids=world_binding.request_chart_ids,
         batch_size=batch_size,

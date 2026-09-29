@@ -43,9 +43,8 @@ def _matrix(k=2, t=16):
 def _drive(gen, batch_size):
     chunks = []
     for b in gen.iter_batches(
-        required_shift_type_id=np.full(_NREQ, SHIFT_LOG_RETURN_ID, np.int8),
-        source_factor_ids=np.arange(_NREQ, dtype=np.int32),
-        shock_scale=np.ones(_NREQ, np.float32),
+        chart_ids=np.full(_NREQ, SHIFT_LOG_RETURN_ID, np.int8),
+        driver_rf_ids=np.arange(_NREQ, dtype=np.int32),
         batch_size=batch_size,
     ):
         chunks.append(np.array(b.shocks, copy=True))

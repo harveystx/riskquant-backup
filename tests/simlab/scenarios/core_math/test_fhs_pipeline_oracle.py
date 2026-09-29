@@ -173,9 +173,8 @@ def test_ewma_vol_ratios_match_oracle(st) -> None:
 def _drive_fhs(gen, st):
     chunks = []
     for b in gen.iter_batches(
-        required_shift_type_id=np.array([st, st], np.int8),
-        source_factor_ids=np.array([0, 1], np.int32),
-        shock_scale=np.ones(2, np.float32),
+        chart_ids=np.array([st, st], np.int8),
+        driver_rf_ids=np.array([0, 1], np.int32),
         batch_size=4,
     ):
         chunks.append(np.array(b.shocks, copy=True))

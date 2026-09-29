@@ -27,7 +27,6 @@ import pandas as pd
 import pytest
 
 from riskquant.config.enums.discounting_modes import DiscountingMode
-from riskquant.config.proxy_config.compile import compile_proxy_topology_from_df
 from riskquant.config.static_config.compile import (
     compile_risk_static_config_from_dict_of_dfs,
 )
@@ -36,9 +35,6 @@ from riskquant.config.static_config.rf_resolution import (
 )
 from riskquant.constants import NO_DATE_ORD32
 from riskquant.ingest_fixtures.as_of import CANONICAL_AS_OF_DATE
-from riskquant.ingest_fixtures.config.risk_proxy_config.canonical_risk_proxy_config import (
-    CANONICAL_RISK_PROXY_CONFIG_DF,
-)
 from riskquant.ingest_fixtures.config.risk_static_config.canonical_risk_static_config import (
     CANONICAL_RISK_STATIC_CONFIG_DICT_OF_DFS,
 )
@@ -61,9 +57,6 @@ from riskquant.portfolio.engine import (
     compile_portfolio_from_ingest_batch,
 )
 from riskquant.portfolio.ingest.pipeline import compile_raw_df_into_ingest_batch
-from riskquant.proxy_resolver.proxy import (
-    resolve_required_factor_ids_to_market_data_factor_ids,
-)
 from riskquant.utils.dates import date_to_ord32
 from riskquant.valuation.engine import run_valuation
 
@@ -241,35 +234,6 @@ def test_different_as_of_keeps_the_pillar_and_moves_the_contract(rsc, name):
 
 
 # --------------------------------------------------------------- Test 4
-@pytest.mark.parametrize(
-    ("required", "available", "expected_level"),
-    [
-        ("WTI_CRUDE_FWD[M+0]", "BRENT_CRUDE_FWD[M+0]", 3),  # container proxy
-        ("HENRY_HUB_GAS_FWD[M+1]", "BRENT_CRUDE_FWD[M+1]", 3),  # container proxy
-        ("USD_LIBOR_3M[10Y]", "USD_SOFR_OIS[10Y]", 2),  # risk-factor proxy
-    ],
-)
-def test_proxy_routes_preserve_pillar_and_contract_identity(
-    rsc, required, available, expected_level
-):
-    topology = compile_proxy_topology_from_df(
-        df=CANONICAL_RISK_PROXY_CONFIG_DF, static_config=rsc
-    )
-    resolution = resolve_required_factor_ids_to_market_data_factor_ids(
-        static_config=rsc,
-        proxy_topology=topology,
-        required_factor_ids=np.array([rsc.rel_name_to_rf_id[required]], np.int32),
-        market_data_factor_ids=np.array([rsc.rel_name_to_rf_id[available]], np.int32),
-    )
-    source = int(resolution.source_factor_ids[0])
-    assert source == int(rsc.rel_name_to_rf_id[available])
-    assert int(resolution.resolution_code[0]) == expected_level
-    for as_of in (A, MONTH_END, NEXT_MONTH):  # same delivery period on both legs
-        req = _production_contract(rsc, rsc.rel_name_to_rf_id[required], as_of)
-        src = _production_contract(rsc, source, as_of)
-        assert req == _oracle_contract(required, as_of)
-        assert src == _oracle_contract(available, as_of)
-        assert req.rsplit("_", 1)[1] == src.rsplit("_", 1)[1]
 
 
 # --------------------------------------------------------------- Test 5

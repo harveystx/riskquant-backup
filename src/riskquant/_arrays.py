@@ -3,7 +3,7 @@
 Cross-cutting NumPy array primitives shared across packages.
 
 Top-level private module (mirrors `_njit.py`) so leaf consumers in
-`proxy_resolver`, `simlab`, `portfolio`, `market_data`, and `credit` can import
+`simlab`, `portfolio`, `market_data`, and `credit` can import
 these without a layering inversion.
 
 No domain imports — pure array algebra; domain sentinels (e.g., `INVALID_UIX`

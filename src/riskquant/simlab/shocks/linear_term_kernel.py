@@ -76,9 +76,9 @@ from riskquant.market_data.risk_factors.shift_types import (
 # Every input is declared read-only: the wrapper passes zero-copy read-only
 # views, so frozen arrays (for example those of a compiled proxy model) and
 # writable caller arrays share one signature, and the kernel cannot write to
-# any input. Two `shocks` layouts are registered for the same reason as in
-# `shock_kernel`: an array with one scenario or one column is both C- and
-# F-contiguous, and Numba resolves that case to 'C'.
+# any input. Two `shocks` layouts are registered because an array with one
+# scenario or one column is both C- and F-contiguous, and Numba resolves that
+# case to 'C'.
 @stable_math_parallel_njit(
     [
         _NB_VOID(

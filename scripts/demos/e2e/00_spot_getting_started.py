@@ -75,7 +75,6 @@ from riskquant.reporting.fx_conversion import (
 )
 from riskquant.scenario_metrics.api.var_es import compute_var_es
 from riskquant.config.proxy_model.compile import compile_proxy_model
-from riskquant.simlab.scenarios.world_column_stream import iter_world_column_batches
 from riskquant.simlab.shocks.axis_operator import lower_axis_operator
 from riskquant.simlab.shocks.linear_term_apply import apply_linear_terms_to_base_levels
 from riskquant.solutions.risk_run.api import derive_run_factor_axis, run_scenario_var_es
@@ -330,9 +329,7 @@ def main() -> None:
     level_chunks: list[np.ndarray] = []
     batch_facts: list[bool] = []
     base_before = base_levels.copy()
-    for batch in iter_world_column_batches(
-        generator,
-        driver_rf_ids=binding.request_driver_rf_ids,
+    for batch in generator.iter_batches(driver_rf_ids=binding.request_driver_rf_ids,
         chart_ids=binding.request_chart_ids,
         batch_size=BATCH_SIZE,
     ):

@@ -31,7 +31,7 @@ from riskquant.market_data.risk_factors.builder_matrix import (
     build_risk_factor_matrix_from_df,
 )
 from riskquant.simlab.scenarios.historical import HistoricalGenerator
-from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
+from riskquant.simlab.shocks.linear_term_apply import apply_linear_terms_to_base_levels
 
 _DATES = pd.to_datetime([
     "2026-12-01",
@@ -75,8 +75,14 @@ def _bind_static_config(rsc):
 
 
 # required = [USDEUR, AAPL, BRENT, WTI]; WTI sources BRENT (col 2) x 0.95.
-_SOURCE_FACTOR_IDS = np.array([0, 1, 2, 2], dtype=np.int32)
-_SHOCK_SCALE = np.array([1.0, 1.0, 1.0, 0.95], dtype=np.float32)
+# World request: the three observed factors, LOG_RETURN columns.
+_WORLD_DRIVERS = np.array([0, 1, 2], dtype=np.int32)
+_WORLD_CHARTS = np.array([1, 1, 1], dtype=np.int8)
+# Proxy V1 operator over the four rows: identity rows for factors 0..2 and
+# WTI (row 3) <- 0.95 * Y(factor 2, LOG_RETURN) (D088).
+_ROW_OFFSETS = np.array([0, 1, 2, 3, 4], dtype=np.int32)
+_TERM_COLUMNS = np.array([0, 1, 2, 2], dtype=np.int32)
+_TERM_LOADINGS = np.array([1.0, 1.0, 1.0, 0.95], dtype=np.float64)
 _SHIFT_LOG_RETURN = np.array([1, 1, 1, 1], dtype=np.int8)
 _BASE_LEVELS = np.array([1.08, 200.0, 82.30, 70.0], dtype=np.float64)
 
@@ -93,9 +99,8 @@ def _shocked_levels(batch_size: int) -> np.ndarray:
     generator = HistoricalGenerator(matrix=_matrix(), horizon=1)
     chunks: list[np.ndarray] = []
     for batch in generator.iter_batches(
-        required_shift_type_id=_SHIFT_LOG_RETURN,
-        source_factor_ids=_SOURCE_FACTOR_IDS,
-        shock_scale=_SHOCK_SCALE,
+        chart_ids=_WORLD_CHARTS,
+        driver_rf_ids=_WORLD_DRIVERS,
         batch_size=batch_size,
     ):
         out = np.empty(
@@ -103,7 +108,15 @@ def _shocked_levels(batch_size: int) -> np.ndarray:
             dtype=np.float64,
             order="C",
         )
-        apply_shocks_to_base_levels(base_levels=_BASE_LEVELS, batch=batch, out=out)
+        apply_linear_terms_to_base_levels(
+            base_levels=_BASE_LEVELS,
+            row_term_offsets=_ROW_OFFSETS,
+            term_column_uix=_TERM_COLUMNS,
+            term_loadings=_TERM_LOADINGS,
+            target_shift_types=_SHIFT_LOG_RETURN,
+            shocks=batch.shocks,
+            out=out,
+        )
         chunks.append(out)
     return np.concatenate(chunks, axis=1)
 
@@ -128,9 +141,8 @@ def test_builder_default_dtype_drives_the_historical_generator() -> None:
 
     batches = list(
         generator.iter_batches(
-            required_shift_type_id=_SHIFT_LOG_RETURN,
-            source_factor_ids=_SOURCE_FACTOR_IDS,
-            shock_scale=_SHOCK_SCALE,
+            chart_ids=_WORLD_CHARTS,
+            driver_rf_ids=_WORLD_DRIVERS,
             batch_size=16,
         )
     )
@@ -225,9 +237,8 @@ def test_canonical_history_fixture_drives_the_generator(
     factor_count = matrix.factor_ids.shape[0]
     batches = list(
         generator.iter_batches(
-            required_shift_type_id=np.ones(factor_count, dtype=np.int8),
-            source_factor_ids=matrix.factor_ids.copy(),
-            shock_scale=np.ones(factor_count, dtype=np.float32),
+            chart_ids=np.ones(factor_count, dtype=np.int8),
+            driver_rf_ids=matrix.factor_ids.copy(),
             batch_size=64,
         )
     )
@@ -366,17 +377,14 @@ def test_shock_dtype_axis_and_routing() -> None:
     batch = next(
         iter(
             generator.iter_batches(
-                required_shift_type_id=_SHIFT_LOG_RETURN,
-                source_factor_ids=_SOURCE_FACTOR_IDS,
-                shock_scale=_SHOCK_SCALE,
+                chart_ids=_WORLD_CHARTS,
+                driver_rf_ids=_WORLD_DRIVERS,
                 batch_size=16,
             )
         )
     )
     assert batch.shocks.dtype == np.float32
     assert batch.shocks.shape == (9, 3)  # 9 scenarios, 3 OBSERVED factors
-    assert batch.required_to_shock_uix.tolist() == [0, 1, 2, 2]
-    np.testing.assert_allclose(batch.shock_scale, [1.0, 1.0, 1.0, 0.95], atol=1e-7)
 
 
 def test_wti_levels_match_an_independent_oracle() -> None:

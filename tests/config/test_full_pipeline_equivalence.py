@@ -5,8 +5,8 @@ Regression test for RQ-AUD-018: full pandas -> Polars migration of the
 
 This proves two things:
 1. The fully-migrated Polars pipeline correctly compiles a real, non-trivial
-   fixture (8 static_config tables + a 6-row proxy_config table) into valid
-   RiskStaticConfig / ProxyTopology objects.
+   fixture (8 static_config tables) into a valid
+   RiskStaticConfig object.
 2. Every Stage-2 cross-table validation path (FK, self-reference, chain-ban)
    still fires correctly against the compiled state.
 
@@ -23,12 +23,8 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from riskquant.config.proxy_config.compile import compile_proxy_topology_from_df
 from riskquant.config.static_config.compile import (
     compile_risk_static_config_from_dict_of_dfs,
-)
-from riskquant.ingest_fixtures.config.risk_proxy_config.canonical_risk_proxy_config import (
-    CANONICAL_RISK_PROXY_CONFIG_DATA,
 )
 from riskquant.ingest_fixtures.config.risk_static_config.canonical_risk_static_config import (
     CANONICAL_RISK_STATIC_CONFIG_DATA,
@@ -65,52 +61,3 @@ def test_holiday_calendar_ordinals_are_int32_and_sorted(compiled_static_config):
         )
 
 
-def test_proxy_topology_compiles_from_polars_dataframe(compiled_static_config):
-    proxy_df = pl.DataFrame(CANONICAL_RISK_PROXY_CONFIG_DATA)
-    topology = compile_proxy_topology_from_df(
-        df=proxy_df, static_config=compiled_static_config
-    )
-    assert topology is not None
-
-
-def test_proxy_fk_violation_still_raises(compiled_static_config):
-    bad_fk = pl.DataFrame(
-        {
-            "proxying_level": ["RISK_FACTOR"],
-            "required_name": ["TOTALLY_UNKNOWN_NAME"],
-            "proxy_name": ["USDEUR"],
-            "vol_scaling_factor": [1.0],
-        }
-    )
-    with pytest.raises(ValueError, match="unknown"):
-        compile_proxy_topology_from_df(df=bad_fk, static_config=compiled_static_config)
-
-
-def test_proxy_self_reference_still_raises(compiled_static_config):
-    bad_self = pl.DataFrame(
-        {
-            "proxying_level": ["RISK_FACTOR"],
-            "required_name": ["USDGBP"],
-            "proxy_name": ["USDGBP"],
-            "vol_scaling_factor": [1.0],
-        }
-    )
-    with pytest.raises(ValueError, match="self-referencing"):
-        compile_proxy_topology_from_df(
-            df=bad_self, static_config=compiled_static_config
-        )
-
-
-def test_proxy_chain_violation_still_raises(compiled_static_config):
-    bad_chain = pl.DataFrame(
-        {
-            "proxying_level": ["RISK_FACTOR", "RISK_FACTOR"],
-            "required_name": ["USDGBP", "EURCHF"],
-            "proxy_name": ["EURCHF", "USDEUR"],
-            "vol_scaling_factor": [1.0, 1.0],
-        }
-    )
-    with pytest.raises(ValueError, match="Chained"):
-        compile_proxy_topology_from_df(
-            df=bad_chain, static_config=compiled_static_config
-        )

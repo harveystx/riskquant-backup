@@ -47,9 +47,8 @@ def _drive(gen, req_fids, batch_size) -> np.ndarray:
     n = len(req_fids)
     chunks = []
     for b in gen.iter_batches(
-        required_shift_type_id=np.full(n, SHIFT_LOG_RETURN_ID, np.int8),
-        source_factor_ids=np.array(req_fids, np.int32),
-        shock_scale=np.ones(n, np.float32),
+        chart_ids=np.full(n, SHIFT_LOG_RETURN_ID, np.int8),
+        driver_rf_ids=np.array(req_fids, np.int32),
         batch_size=batch_size,
     ):
         chunks.append(np.array(b.shocks, copy=True))

@@ -12,7 +12,7 @@ The constitution (`.github/copilot-instructions.md` §3, §13) states:
 
 This test documents the CURRENT state of `riskquant.config`, which is
 NOT pandas-free: `pandas` is imported throughout the `static_config` and
-`proxy_config` ingest/validate/compile pipelines, and `pandas.DataFrame`
+ingest/validate/compile pipelines, and `pandas.DataFrame`
 is never converted to `polars.LazyFrame` anywhere in the package (zero
 `polars` imports exist in `riskquant.config` at all).
 
@@ -37,7 +37,6 @@ CONFIG_ROOT = Path(__file__).resolve().parents[2] / "src" / "riskquant" / "confi
 # violation does not propagate into any production numerical path.
 _ISOLATED_DIAGNOSTIC_FILES = {
     "static_config/audit.py",
-    "proxy_config/audit.py",
 }
 
 
@@ -54,7 +53,7 @@ def _files_importing_pandas() -> dict[str, str]:
 def test_polars_is_now_the_ingest_pipeline_technology():
     """
     UPDATED (RQ-AUD-018 remediation, 2026-09-09): pandas has been fully
-    replaced by polars throughout the static_config and proxy_config
+    replaced by polars throughout the static_config
     loader/validate/compile pipelines. This test previously asserted ZERO
     polars usage (documenting the gap); it now asserts polars is used in
     every one of the 6 files that previously imported pandas, confirming
@@ -68,9 +67,6 @@ def test_polars_is_now_the_ingest_pipeline_technology():
         "static_config/loader.py",
         "static_config/validate.py",
         "static_config/compile.py",
-        "proxy_config/loader.py",
-        "proxy_config/validate.py",
-        "proxy_config/compile.py",
     }
     polars_files = {
         p.relative_to(CONFIG_ROOT).as_posix()
@@ -87,7 +83,7 @@ def test_config_package_is_pandas_free():
     """
     EXPECTED TO FAIL TODAY. The full ingest/validate/compile pipeline
     (`loader.py`, `validate.py`, `compile.py` in both `static_config/` and
-    `proxy_config/`) uses pandas for genuine data processing
+    `static_config/`) uses pandas for genuine data processing
     (`.loc`, `.groupby`, `pd.concat`, `.sort_values`, `pd.to_datetime`),
     not merely as a type annotation -- this is the exact "Prohibited
     internal pattern" named in copilot-instructions.md §13.

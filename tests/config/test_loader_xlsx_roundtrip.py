@@ -12,7 +12,6 @@ from pathlib import Path
 import openpyxl
 import pytest
 
-from riskquant.config.proxy_config.loader import load_proxy_config_xlsx_into_df
 from riskquant.config.static_config.loader import (
     load_risk_static_config_xlsx_into_dict,
 )
@@ -21,63 +20,6 @@ from riskquant.config.static_config.loader import (
 @pytest.fixture()
 def tmp_xlsx_dir(tmp_path: Path) -> Path:
     return tmp_path
-
-
-def _write_proxy_workbook(
-    path: Path, rows: list[tuple], active_col: bool = True
-) -> None:
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "proxy_config"
-    header = ["proxying_level", "required_name", "proxy_name", "vol_scaling_factor"]
-    if active_col:
-        header.append("active")
-    ws.append(header)
-    for row in rows:
-        ws.append(list(row))
-    wb.save(str(path))
-
-
-def test_proxy_loader_filters_inactive_rows(tmp_xlsx_dir):
-    path = tmp_xlsx_dir / "proxy.xlsx"
-    _write_proxy_workbook(
-        path,
-        [
-            ("CONTAINER", "A", "B", 1.5, True),
-            ("RISK_FACTOR", "C", "D", 2.0, False),
-        ],
-    )
-    df = load_proxy_config_xlsx_into_df(path=str(path))
-    assert df.shape[0] == 1
-    assert df["required_name"][0] == "A"
-    assert "active" not in df.columns
-
-
-def test_proxy_loader_defaults_missing_vol_scale_to_one(tmp_xlsx_dir):
-    path = tmp_xlsx_dir / "proxy.xlsx"
-    _write_proxy_workbook(path, [("CONTAINER", " A ", "B", None, True)])
-    df = load_proxy_config_xlsx_into_df(path=str(path))
-    assert df["vol_scaling_factor"][0] == 1.0
-    assert df["required_name"][0] == "A"  # stripped
-
-
-def test_proxy_loader_missing_column_raises(tmp_xlsx_dir):
-    path = tmp_xlsx_dir / "bad.xlsx"
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "sheet1"
-    ws.append(["proxying_level", "required_name"])
-    ws.append(["CONTAINER", "A"])
-    wb.save(str(path))
-    with pytest.raises(ValueError, match="Missing required column"):
-        load_proxy_config_xlsx_into_df(path=str(path))
-
-
-def test_proxy_loader_no_active_column_treats_all_as_active(tmp_xlsx_dir):
-    path = tmp_xlsx_dir / "noactive.xlsx"
-    _write_proxy_workbook(path, [("CONTAINER", "A", "B", 1.0)], active_col=False)
-    df = load_proxy_config_xlsx_into_df(path=str(path))
-    assert df.shape[0] == 1
 
 
 def test_static_config_loader_missing_sheet_raises(tmp_xlsx_dir):

@@ -21,8 +21,8 @@ Pipeline per batch
 
 Implementation
 --------------
-- `build_shock_universe` replaces the previous dict-loop path; gathers
-  Cholesky columns / vols / GMM multipliers via vectorised `searchsorted`.
+- `build_world_column_plan` resolves the world request; Cholesky columns,
+  vols and GMM multipliers are gathered via vectorised `searchsorted`.
 - `work`, `correlated`, and `shocks_buf` are pre-allocated once at
   `batch_size`; the streaming loop only re-slices.
 - Shocks always emitted as float32.
@@ -36,7 +36,7 @@ from typing import Literal
 
 import numpy as np
 
-from riskquant.simlab.builder.shock_universe import build_shock_universe
+from riskquant.simlab.shock_plan.plan import build_world_column_plan
 from riskquant.simlab.scenarios.base import (
     ScenarioGenerator,
     ScenarioSetBatch,
@@ -350,20 +350,18 @@ class ParametricGenerator(ScenarioGenerator):
     def iter_batches(
         self,
         *,
-        required_shift_type_id: np.ndarray,
-        source_factor_ids: np.ndarray,
-        shock_scale: np.ndarray,
+        driver_rf_ids: np.ndarray,
+        chart_ids: np.ndarray,
         batch_size: int,
     ) -> Iterator[ScenarioSetBatch]:
         if batch_size <= 0:
             raise ValueError("batch_size must be positive")
 
-        shock_universe = build_shock_universe(
-            required_shift_type_id=required_shift_type_id,
-            source_factor_ids=source_factor_ids,
-            available_factor_ids=self.available_factor_ids,
+        plan = build_world_column_plan(
+            driver_rf_ids=driver_rf_ids,
+            chart_ids=chart_ids,
+            factor_ids=self.available_factor_ids,
         )
-        plan = shock_universe.compute_plan
         k_req = plan.cols_sorted.shape[0]
         k_total = self.cholesky_matrix.shape[0]
 
@@ -447,9 +445,6 @@ class ParametricGenerator(ScenarioGenerator):
 
             yield ScenarioSetBatch(
                 shocks=shocks_out,
-                required_to_shock_uix=shock_universe.required_to_shock_uix,
-                shock_scale=shock_scale,
-                required_shift_type_id=required_shift_type_id,
                 scenario_offset=scenario_offset,
                 scenario_count_total=self.total_scenarios,
             )

@@ -52,7 +52,7 @@ from riskquant.market_data.risk_factors.shift_types import (
     SHIFT_SIMPLE_RETURN_ID,
 )
 from riskquant.simlab.builder.shift_domain import validate_shift_domain
-from riskquant.simlab.builder.shock_universe import build_shock_universe
+from riskquant.simlab.shock_plan.plan import build_world_column_plan
 from riskquant.simlab.scenarios.base import (
     ScenarioGenerator,
     ScenarioSetBatch,
@@ -226,20 +226,18 @@ class StationaryBlockBootstrapGenerator(ScenarioGenerator):
     def iter_batches(
         self,
         *,
-        required_shift_type_id: np.ndarray,
-        source_factor_ids: np.ndarray,
-        shock_scale: np.ndarray,
+        driver_rf_ids: np.ndarray,
+        chart_ids: np.ndarray,
         batch_size: int,
     ) -> Iterator[ScenarioSetBatch]:
         t_max = self.matrix.values.shape[0]
         h = int(self.horizon)
 
-        shock_universe = build_shock_universe(
-            required_shift_type_id=required_shift_type_id,
-            source_factor_ids=source_factor_ids,
-            available_factor_ids=self.matrix.factor_ids,
+        plan = build_world_column_plan(
+            driver_rf_ids=driver_rf_ids,
+            chart_ids=chart_ids,
+            factor_ids=self.matrix.factor_ids,
         )
-        plan = shock_universe.compute_plan
         validate_shift_domain(
             values=self.matrix.values,
             cols_sorted=plan.cols_sorted,
@@ -290,9 +288,6 @@ class StationaryBlockBootstrapGenerator(ScenarioGenerator):
 
             yield ScenarioSetBatch(
                 shocks=kernel_out,
-                required_to_shock_uix=shock_universe.required_to_shock_uix,
-                shock_scale=shock_scale,
-                required_shift_type_id=required_shift_type_id,
                 scenario_offset=scenario_offset,
                 scenario_count_total=self.total_scenarios,
             )

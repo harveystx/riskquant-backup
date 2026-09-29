@@ -36,7 +36,7 @@ from riskquant.simlab.scenarios.parametric_data import (
     FORECAST_PERIOD_UNIT_BUSINESS_DAY_ID,
     ParametricRiskData,
 )
-from riskquant.simlab.shocks.apply import apply_shocks_to_base_levels
+from tests._support.identity_rows import apply_identity_rows
 from riskquant.solutions.scenario_models.api import (
     build_scenario_generator,
     parse_scenario_model_config,
@@ -117,14 +117,18 @@ def _run(model: str, batch_size: int) -> dict[str, object]:
     )
     shocks, levels, pnl = [], [], []
     for batch in gen.iter_batches(
-        required_shift_type_id=np.array([SHIFT_LOG_RETURN_ID] * _K, np.int8),
-        source_factor_ids=np.arange(_K, dtype=np.int32),
-        shock_scale=np.ones(_K, np.float32),
+        chart_ids=np.array([SHIFT_LOG_RETURN_ID] * _K, np.int8),
+        driver_rf_ids=np.arange(_K, dtype=np.int32),
         batch_size=batch_size,
     ):
         b = batch.shocks.shape[0]
         out = np.empty((_K, b), dtype=np.float64, order="C")
-        apply_shocks_to_base_levels(base_levels=base_levels, batch=batch, out=out)
+        apply_identity_rows(
+            base_levels=base_levels,
+            chart_ids=np.array([SHIFT_LOG_RETURN_ID] * _K, np.int8),
+            shocks=batch.shocks,
+            out=out,
+        )
         shocks.append(np.array(batch.shocks, copy=True))
         levels.append(out.copy())
         # order-fixed reduction: scenario-major, factor loop in index order
@@ -180,9 +184,8 @@ def test_matrix_layout_does_not_change_the_result() -> None:
     )
     cfg = parse_scenario_model_config(_CONFIGS["sbb"])
     args = dict(
-        required_shift_type_id=np.array([SHIFT_LOG_RETURN_ID] * _K, np.int8),
-        source_factor_ids=np.arange(_K, dtype=np.int32),
-        shock_scale=np.ones(_K, np.float32),
+        chart_ids=np.array([SHIFT_LOG_RETURN_ID] * _K, np.int8),
+        driver_rf_ids=np.arange(_K, dtype=np.int32),
         batch_size=8,
     )
 

@@ -230,13 +230,18 @@ def test_missing_driver_chart_fails_before_generation_and_manifest(monkeypatch) 
 def _request_spy(monkeypatch) -> list[list[tuple[int, int]]]:
     """Record the (driver, driver chart) world request the run streams."""
     seen: list[list[tuple[int, int]]] = []
-    real = api.iter_world_column_batches
+    real = api.build_scenario_generator
 
-    def spy(generator, **kw: Any):
-        seen.append(list(zip(kw["driver_rf_ids"].tolist(), kw["chart_ids"].tolist(), strict=True)))
-        return real(generator, **kw)
+    class Recording:
+        def __init__(self, g: Any) -> None:
+            self._g = g
+            self.total_scenarios = g.total_scenarios
 
-    monkeypatch.setattr(api, "iter_world_column_batches", spy)
+        def iter_batches(self, **kw: Any):
+            seen.append(list(zip(kw["driver_rf_ids"].tolist(), kw["chart_ids"].tolist(), strict=True)))
+            return self._g.iter_batches(**kw)
+
+    monkeypatch.setattr(api, "build_scenario_generator", lambda *a, **k: Recording(real(*a, **k)))
     return seen
 
 
@@ -389,33 +394,32 @@ def test_closed_form_oracles_through_the_production_run(capture, kappa, terms, e
 # ---- the D013 path is off the production execution path -------------------------------------------
 
 
-def test_the_run_has_no_d013_inputs_or_calls(monkeypatch) -> None:
+def test_the_run_has_no_d013_inputs_or_calls() -> None:
+    """Stage E: the D013 architecture does not exist. The run has no D013
+    inputs, and none of the D013 modules can be imported."""
+    import importlib
+
     params = inspect.signature(run_scenario_var_es).parameters
     assert "proxy_terms" in params
     assert not {"source_factor_ids", "shock_scale"} & set(params)
     for name in ("apply_shocks_to_base_levels", "_require_shock_sources"):
         assert not hasattr(api, name)
-
-    def boom(*a: Any, **k: Any) -> None:
-        raise AssertionError("D013 path reached")
-
-    import riskquant.config.proxy_config.compile as legacy_topology
-    import riskquant.proxy_resolver.proxy as legacy_resolver
-    import riskquant.simlab.shocks.apply as legacy_apply
-    import riskquant.simlab.shocks.shock_kernel as legacy_kernel
-
-    monkeypatch.setattr(legacy_apply, "apply_shocks_to_base_levels", boom)
-    monkeypatch.setattr(legacy_apply, "validate_apply_shocks_buffers", boom)
-    monkeypatch.setattr(legacy_kernel, "_kernel_apply_shocks", boom)
-    monkeypatch.setattr(
-        legacy_resolver, "resolve_required_factor_ids_to_market_data_factor_ids", boom
-    )
-    monkeypatch.setattr(legacy_topology, "compile_proxy_topology_from_df", boom)
-    monkeypatch.setattr(legacy_topology, "compile_proxy_topology_from_xlsx", boom)
-    kw = _world().inputs()
-    kw["proxy_terms"] = (_term("EQ_USD", "USDEUR", DIFF, 0.5),)  # an authored proxy too
-    run = run_scenario_var_es(**kw)
+    for module in (
+        "riskquant.proxy_resolver",
+        "riskquant.proxy_resolver.proxy",
+        "riskquant.config.proxy_config",
+        "riskquant.config.proxy_config.compile",
+        "riskquant.simlab.shocks.apply",
+        "riskquant.simlab.shocks.shock_kernel",
+        "riskquant.simlab.builder.shock_universe",
+        "riskquant.simlab.scenarios.world_column_stream",
+        "riskquant.ingest_fixtures.config.risk_proxy_config",
+    ):
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(module)
+    run = run_scenario_var_es(**_world().inputs())
     assert np.isfinite(run.var).all()
+
 
 
 # ---- D089 / D090 horizon equality at the production run --------------------------------------------
@@ -557,29 +561,3 @@ def test_one_run_mixes_v1_prefix_v1_suffix_and_native_suffix_rows(capture, monke
         for i in range(fx.shape[0])
     ) == ["USDCHF", "USDEUR", "USDJPY"]
 
-
-# ---- shock_scale has no semantic role on the production path ----------------------------------------
-
-
-def test_the_generator_shock_scale_payload_cannot_act_as_a_loading(monkeypatch) -> None:
-    """Poison every batch's legacy `shock_scale` payload with NaN: VaR and ES
-    stay bitwise identical, so nothing on the D088 path reads it as beta."""
-    w = _world()
-    kw = w.inputs()
-    kw["proxy_terms"] = (_term("EQ_USD", "USDEUR", DIFF, 0.5),)
-    clean = run_scenario_var_es(**kw)
-    real = api.build_scenario_generator
-
-    class Poisoned:
-        def __init__(self, g):
-            self._g = g
-            self.total_scenarios = g.total_scenarios
-
-        def iter_batches(self, **k: Any):
-            for b in self._g.iter_batches(**k):
-                yield dataclasses.replace(b, shock_scale=np.full_like(b.shock_scale, np.nan))
-
-    monkeypatch.setattr(api, "build_scenario_generator", lambda *a, **k: Poisoned(real(*a, **k)))
-    poisoned = run_scenario_var_es(**kw)
-    assert poisoned.var.tobytes() == clean.var.tobytes()
-    assert poisoned.es.tobytes() == clean.es.tobytes()

@@ -83,9 +83,8 @@ def test_historical_math_h1(math_audit_data):
 
     batch = next(
         generator.iter_batches(
-            required_shift_type_id=req_shifts,
-            source_factor_ids=factor_ids,
-            shock_scale=req_scales,
+            chart_ids=req_shifts,
+            driver_rf_ids=factor_ids,
             batch_size=10,
         )
     )
@@ -120,9 +119,8 @@ def test_historical_math_h2_path_aggregation(math_audit_data):
 
     batch = next(
         generator.iter_batches(
-            required_shift_type_id=req_shifts,
-            source_factor_ids=factor_ids,
-            shock_scale=req_scales,
+            chart_ids=req_shifts,
+            driver_rf_ids=factor_ids,
             batch_size=10,
         )
     )

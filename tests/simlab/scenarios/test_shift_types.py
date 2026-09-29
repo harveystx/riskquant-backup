@@ -2,14 +2,16 @@
 """
 R1 shift-taxonomy correctness.
 
-Covers the completed shift taxonomy end to end:
+Covers the completed shift taxonomy:
   * enum / constant / registry / valid-set,
-  * `build_shock_universe` explicit valid-set membership (0 invalid, -1 valid),
-  * ABSOLUTE_BASE_RETURN forward return and forward->inverse round trip against
-    a definition-derived scalar oracle (incl. negative-base cases),
-  * NO_SHIFT semantics (shock 0 / level unchanged), including the filtered
-    short-circuit,
-  * shift-specific level-domain fail-fast.
+  * ABSOLUTE_BASE_RETURN forward return against a definition-derived scalar
+    oracle (incl. negative-base cases), and its historical and SBB generator
+    endpoints,
+  * shift-specific level-domain fail-fast, including NO_SHIFT (no domain check).
+
+A world request never carries NO_SHIFT (D088 §13.4); `build_world_column_plan`
+refuses it (tests/simlab/shock_plan). Level reconstruction for every chart is
+tested with the Slice 2 kernel (tests/simlab/shocks).
 
 Oracles are written from the mathematical definition, never by calling the
 production kernel under test.
@@ -34,7 +36,6 @@ from riskquant.market_data.risk_factors.shift_types import (
     ShiftType,
 )
 from riskquant.simlab.builder.shift_domain import validate_shift_domain
-from riskquant.simlab.builder.shock_universe import build_shock_universe
 from riskquant.simlab.scenarios.bootstrap_fhs import FilteredBootstrapGenerator
 from riskquant.simlab.scenarios.bootstrap_sbb import (
     StationaryBlockBootstrapGenerator,
@@ -42,7 +43,6 @@ from riskquant.simlab.scenarios.bootstrap_sbb import (
 )
 from riskquant.simlab.scenarios.historical import HistoricalGenerator
 from riskquant.simlab.scenarios.historical_fhs import FilteredHistoricalGenerator
-from riskquant.simlab.shocks.shock_kernel import _kernel_apply_shocks
 
 # --------------------------------------------------------------------- taxonomy
 
@@ -69,42 +69,6 @@ def test_taxonomy_values_and_registry() -> None:
 # ------------------------------------------------------------- universe guard
 
 
-@pytest.mark.parametrize(
-    "ids,should_raise",
-    [
-        ([-1], False),   # NO_SHIFT valid
-        ([1, 2, 3, 4], False),
-        ([-1, 1, 2, 3, 4], False),
-        ([0], True),     # 0 intentionally invalid
-        ([5], True),
-        ([99], True),
-        ([1, 0], True),  # one bad id fails the whole batch
-    ],
-)
-def test_shock_universe_valid_set_membership(ids, should_raise) -> None:
-    n = len(ids)
-    kwargs = dict(
-        required_shift_type_id=np.array(ids, dtype=np.int8),
-        source_factor_ids=np.arange(n, dtype=np.int32),
-        available_factor_ids=np.arange(n, dtype=np.int32),
-    )
-    if should_raise:
-        with pytest.raises(ValueError):
-            build_shock_universe(**kwargs)
-    else:
-        build_shock_universe(**kwargs)
-
-
-def test_no_shift_bitpack_round_trips_through_universe() -> None:
-    """NO_SHIFT (-1) survives the low-8-bit dedup key (-1 & 0xFF = 255 -> -1)."""
-    u = build_shock_universe(
-        required_shift_type_id=np.array([SHIFT_NO_SHIFT_ID], dtype=np.int8),
-        source_factor_ids=np.array([7], dtype=np.int32),
-        available_factor_ids=np.array([7], dtype=np.int32),
-    )
-    assert int(u.shock_shift_type_ids[0]) == -1
-
-
 # ----------------------------------------------- ABSOLUTE_BASE_RETURN oracle
 
 
@@ -128,17 +92,6 @@ def _reconstruct(base: float, shock: float, scale: float, st: int) -> float:
     raise AssertionError(st)
 
 
-def _apply_one(base: float, shock: float, st: int, scale: float = 1.0) -> float:
-    base_levels = np.array([base], dtype=np.float64)
-    shocks = np.asfortranarray(np.array([[shock]], dtype=np.float32))
-    req_to_uix = np.array([0], dtype=np.int32)
-    shock_scale = np.array([scale], dtype=np.float64)
-    shift = np.array([st], dtype=np.int8)
-    out = np.empty((1, 1), dtype=np.float64, order="C")
-    _kernel_apply_shocks(base_levels, shocks, req_to_uix, shock_scale, shift, out)
-    return float(out[0, 0])
-
-
 @pytest.mark.parametrize(
     "base,shocked,expected_r",
     [
@@ -152,34 +105,7 @@ def test_absolute_base_return_forward(base, shocked, expected_r) -> None:
     assert _forward_absolute_base(base, shocked) == pytest.approx(expected_r, abs=1e-12)
 
 
-@pytest.mark.parametrize(
-    "base,shocked",
-    [(-100.0, -90.0), (-100.0, -110.0), (100.0, 110.0), (50.0, 45.0), (-3.5, -4.0)],
-)
-def test_absolute_base_return_round_trip(base, shocked) -> None:
-    """base -> forward shock (definition) -> apply-kernel reconstruction must
-    recover the target level. float32 shock -> tolerance scales with |shocked|."""
-    r = _forward_absolute_base(base, shocked)
-    recon = _apply_one(base, np.float32(r), int(SHIFT_ABSOLUTE_BASE_RETURN_ID))
-    assert recon == pytest.approx(shocked, rel=1e-6, abs=1e-4)
-
-
-@pytest.mark.parametrize("st", [1, 2, 3, 4])
-def test_apply_reconstruction_matches_scalar_oracle(st) -> None:
-    for base in (-100.0, -3.5, 12.0, 250.0):
-        for shock in (-0.03, 0.0, 0.02, 0.15):
-            got = _apply_one(base, np.float32(shock), st, scale=0.95)
-            exp = _reconstruct(base, float(np.float32(shock)), 0.95, st)
-            assert got == pytest.approx(exp, rel=1e-6, abs=1e-9)
-
-
 # ----------------------------------------------------------------- NO_SHIFT
-
-
-@pytest.mark.parametrize("base", [-100.0, 200.0, 0.0, -3.5])
-def test_no_shift_apply_holds_base(base) -> None:
-    for shock in (-0.9, 0.0, 0.4):
-        assert _apply_one(base, np.float32(shock), int(SHIFT_NO_SHIFT_ID)) == base
 
 
 def _matrix(levels_by_col: list[list[float]]) -> RiskFactorMatrix:
@@ -193,45 +119,17 @@ def _matrix(levels_by_col: list[list[float]]) -> RiskFactorMatrix:
 
 
 def _drive(gen, factor_ids, shift_ids, batch_size=4) -> np.ndarray:
-    n = len(factor_ids)
     # The generator reuses a single streaming `shocks` buffer, so each batch
     # must be copied before the next is drawn (a later batch can alias earlier
     # rows). Copy inside the loop, not via collect-then-concatenate.
     out = []
     for b in gen.iter_batches(
-        required_shift_type_id=np.asarray(shift_ids, dtype=np.int8),
-        source_factor_ids=np.asarray(factor_ids, dtype=np.int32),
-        shock_scale=np.ones(n, dtype=np.float32),
+        chart_ids=np.asarray(shift_ids, dtype=np.int8),
+        driver_rf_ids=np.asarray(factor_ids, dtype=np.int32),
         batch_size=batch_size,
     ):
         out.append(np.array(b.shocks, copy=True))
     return np.concatenate(out, axis=0)
-
-
-def test_no_shift_historical_generator_emits_zero() -> None:
-    m = _matrix([[100.0 + i for i in range(8)], [80.0 + 0.5 * i for i in range(8)]])
-    shocks = _drive(
-        HistoricalGenerator(matrix=m, horizon=1),
-        [0, 1],
-        [SHIFT_NO_SHIFT_ID, SHIFT_LOG_RETURN_ID],
-    )
-    # column 0 is NO_SHIFT -> exactly zero for every scenario.
-    assert np.all(shocks[:, 0] == np.float32(0.0))
-    assert np.any(shocks[:, 1] != 0.0)
-
-
-def test_no_shift_filtered_generator_short_circuits_even_with_dirty_levels() -> None:
-    """A held-fixed factor with pathological levels (that would break AR1/EWMA)
-    still yields exactly zero and no NaN — the fused kernel short-circuits."""
-    dirty = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]  # zero-variance -> AR1 degenerate
-    m = _matrix([dirty, [100.0 + i for i in range(8)]])
-    shocks = _drive(
-        FilteredHistoricalGenerator(matrix=m, horizon=1),
-        [0, 1],
-        [SHIFT_NO_SHIFT_ID, SHIFT_LOG_RETURN_ID],
-    )
-    assert np.all(shocks[:, 0] == np.float32(0.0))
-    assert np.isfinite(shocks).all()
 
 
 def _pos_matrix() -> RiskFactorMatrix:

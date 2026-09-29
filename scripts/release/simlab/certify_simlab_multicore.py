@@ -170,7 +170,6 @@ _FIXTURE = textwrap.dedent(
     from riskquant.config.proxy_model.compile import compile_proxy_model
     from riskquant.config.proxy_model.schema_objects import NodeProxyTerm
     from riskquant.market_data.risk_factors.shift_types import ShiftType
-    from riskquant.simlab.scenarios.world_column_stream import iter_world_column_batches
     from riskquant.simlab.shocks.axis_operator import lower_axis_operator
     from riskquant.simlab.shocks.linear_term_apply import apply_linear_terms_to_base_levels
     from riskquant.solutions.scenario_models.world_columns import bind_operator_to_world
@@ -258,8 +257,7 @@ _FIXTURE = textwrap.dedent(
         binding = bind_operator_to_world(operator, inp["scenario_config"], inp["data"])
         gen = build_scenario_generator(inp["scenario_config"], data=inp["data"])
         shocks, chunks = [], []
-        for b in iter_world_column_batches(
-                gen, driver_rf_ids=binding.request_driver_rf_ids,
+        for b in gen.iter_batches(driver_rf_ids=binding.request_driver_rf_ids,
                 chart_ids=binding.request_chart_ids, batch_size=batch_size):
             out = np.empty((k_run, b.shocks.shape[0]), dtype=np.float64, order="C")
             apply_linear_terms_to_base_levels(

@@ -8,10 +8,10 @@
 | Proxy version | V1 |
 | Revision | V01 with closure pass of 2026-09-28: identity domains, D088 §13, Slice 2 numerical contract, NO_SHIFT rule, binary64 wording, legacy status. |
 | Design status | Frozen. D088 is recorded as "LOCKED" with "contract and design FROZEN 2026-09-25". D088 §12 adds five precision clarifications and states "no semantic change". |
-| Implementation status (as recorded in D088) | D088 states "Implementation status: NOT IMPLEMENTED" and "Production code still executes the D013 mechanism". This document does not change that wording. |
+| Implementation status (as recorded in D088, 2026-09-29) | "D088 STAGE D COMPLETE" and "D088 STAGE E COMPLETE": production executes Proxy V1 over the full run axis; `ShockIdentity` is `proxy_model_digest`; D013 is removed from the repository. The authoring file format remains OPEN (§13.2). Status rows and statements elsewhere in this document that say "not implemented", "Slice 3" or "Slice 4" describe the 2026-09-28 snapshot and are superseded by this row. |
 | Slice 1 (semantic compilation and identity) | Closed. The compiler, canonical representation and digest function exist in the current snapshot, and their tests pass (Section 36). |
 | Slice 2 (numerical seam and binding function) | Implemented and independently validated; not wired into the production run. `src/riskquant/simlab/shocks/{linear_term_kernel,linear_term_apply,column_binding}.py` implement the closed contract (D088 §13.4 to §13.6; Section 26). |
-| Slice 3 and later | Not started. No world-side production of $(d,\tau,h)$ columns, generator change, parametric representation, production-run integration, certification or atomic switch exists in the current snapshot. |
+| Slice 3 and later | Implemented 2026-09-29: world-side `(d, τ, h)` columns (`bind_operator_to_world`, `build_world_column_plan`), the production run (`run_scenario_var_es`), the §13.3 manifest rule (v5), and the removal of D013 (Stage E). |
 | Production proxy behaviour today | The legacy D013 input contract of `run_scenario_var_es` (`required_shift_type_id`, `source_factor_ids`, `shock_scale`). The legacy resolver still exists but has no caller under `src/`. `SimlabRunner` has been removed from the code base (`DECISIONS.md` update notes, 2026-09-28). |
 | Authoritative decisions | D088 including §12 and §13; D089 (parametric two-sided horizon contract). D088 supersedes D013 and amends, by recorded status notes, D026 F7, D034, D036, D040 (`ShockIdentity`), D082 clause 11, D085 clause 8 and D087 clause 2. D025, D041, D060, D067, D069, D070, D075, D078.4, D081 and D085 are referenced and remain in force. |
 | Nature of this document | Normative and explanatory. Content labelled DECISION and the rules in Section 41 restate D088. All other content explains D088, the repository and their consequences. If this document and D088 differ, D088 governs. |
@@ -620,7 +620,7 @@ Neither record carries a target chart or a horizon.
 
 ### 13.2 File format
 
-**OPEN.** No authoring file format exists. D088 §12.3: "The authoring file format is a separate edge concern." No loader exists in the current snapshot. The legacy loader (`src/riskquant/config/proxy_config/loader.py`) reads the legacy table and cannot express $\tau$.
+**OPEN.** No authoring file format exists. D088 §12.3: "The authoring file format is a separate edge concern." No loader and no canonical Proxy V1 ingest fixture exist. The legacy D013 loader and its canonical ingest fixture were removed in Stage E (2026-09-29); they could not express $\tau$.
 
 ### 13.3 Illustrative example
 
@@ -858,7 +858,7 @@ $ID_{\text{run}}=$ `RunManifest.identity()` is the identity that must change whe
 | `scenario_config` (manifest) | World law, seed, count; horizon for matrix-backed worlds | No | Yes for matrix-backed worlds; no for parametric today | No (law only) |
 | `DataIdentity` | World data | No | No | Yes |
 | `ShockIdentity` (today) | Legacy mapping: shift types, sources, scales | Yes, per row | No | No |
-| `ShockIdentity` (D088, not implemented) | Proxy operator only: `proxy_model_digest` | As `proxy_model_digest` | No | No |
+| `ShockIdentity` (D088, implemented: manifest v5) | Proxy operator only: `proxy_model_digest` | As `proxy_model_digest` | No | No |
 | `RunContextIdentity.as_of_ord32` | Run as-of | No | No | No |
 | `PnlIdentity.base_levels_digest` | Run-bound base levels $A_0$ | No | No | No |
 | `RunManifest.identity()` | Complete run | Through the constituent identities | Through the world identity | Through the world identity |
@@ -920,7 +920,7 @@ This split is intended. $\kappa_A$ must not be added to every proxy row.
 
 **DECISION (D088 §13.3, Slice 4 requirement).** A manifest whose `ShockIdentity` carries `proxy_model_digest` must carry `RunContextIdentity`. A manifest without it must be refused. Without this rule, two composition-less V1 manifests that differ only in $\kappa_A$ of an authored row would have the same identity.
 
-The schema change belongs to Slice 4 and is not implemented.
+The schema change is implemented (manifest schema v5, 2026-09-29): `proxy_model_digest` is a lowercase SHA-256 hex digest, and a v5 manifest without `RunContextIdentity` is refused.
 
 ### 19.7 Relationship between proxy identity and executable run identity
 
@@ -1168,7 +1168,7 @@ Each invariant is **DECISION** unless marked otherwise. The final column gives t
 | 19 | EXACT uses coordinates, not tokens. | D088 §8 | Tested (mutation-killed) |
 | 20 | Exact zero is the only zero-elimination criterion. | D088 §6 | Tested (inexact residue kept; mutation-killed) |
 | 21 | `proxy_model_digest` identifies the operator only; it is not $ID_{\text{run}}$. | D088 §13.1 | Identity table (Section 19.3); manifest not yet migrated |
-| 22 | A V1 manifest carrying the proxy digest carries `RunContextIdentity`. | D088 §13.3 | Not implemented (Slice 4) |
+| 22 | A V1 manifest carrying the proxy digest carries `RunContextIdentity`. | D088 §13.3 | Implemented (manifest v5, 2026-09-29) |
 | 23 | The term sum follows ascending canonical order in float64 without reassociation. | D088 §13.5 | Numerical seam (Slice 2, tested) |
 | 24 | A NO_SHIFT row outputs $A_0$ and requires no world column. | D088 §13.4 | Numerical seam and binding (Slice 2, tested) |
 
@@ -1534,7 +1534,7 @@ The D034 and D087 status notes require parametric columns keyed $(d,\tau,h)$, a 
 
 **RATIONALE.** A currency effect in a proxy must be an explicit term with an explicit sign. If it were hidden in a source choice or a scale, the sign and the base condition could not be checked or identified.
 
-**OPEN (before Slice 4; D088 §13.8(a)).** Are reporting-only FX suffix rows rows of the proxy compiler axis?
+**CLOSED (D088 §13.8(a), LOCKED 2026-09-29).** Reporting-only FX suffix rows are rows of the proxy compiler axis on the same terms as valuation-prefix rows; ABSOLUTE_BASE_RETURN and NO_SHIFT suffix nodes keep their native path; "reporting FX" in §9 is the reporting conversion. The analysis below records the question as it stood before the decision.
 
 * D088 §1 defines the V1 universe as the run-axis nodes with a V1 chart. D085 decision 4 places the reporting-only FX rows on the run axis. D088 §9 says reporting FX is outside the proxy model.
 * If they are included: totality gives them identity rows, authors may write terms for them, and `proxy_model_digest` depends on the reporting currency.

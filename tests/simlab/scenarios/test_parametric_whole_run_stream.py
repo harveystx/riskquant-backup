@@ -73,9 +73,8 @@ def _stream(
     out = [
         np.array(b.shocks, copy=True)
         for b in gen.iter_batches(
-            required_shift_type_id=np.ones(n, dtype=np.int8),
-            source_factor_ids=required,
-            shock_scale=np.ones(n, dtype=np.float32),
+            chart_ids=np.ones(n, dtype=np.int8),
+            driver_rf_ids=required,
             batch_size=batch_size,
         )
     ]

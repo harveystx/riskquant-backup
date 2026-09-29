@@ -449,7 +449,7 @@ def test_canonical_demo_uses_the_production_risk_run_api() -> None:
     source = inspect.getsource(_DEMO._run_canonical)
     assert "run_scenario_var_es(" in source
     for forbidden in (
-        "apply_shocks_to_base_levels(",
+        "apply_linear_terms_to_base_levels(",
         "convert_scenario_pnl_to_reporting_currency(",
         "compute_var_es(",
         "build_scenario_generator(",

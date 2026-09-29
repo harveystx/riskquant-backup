@@ -11,7 +11,7 @@ pytest resolves a fixture argument by name in the requesting conftest scope.
 from __future__ import annotations
 
 from tests._support.spot_scenario import (
-    proxy_topology,
+    proxy_terms,
     raw_shocks,
     resolved,
 )
@@ -33,7 +33,7 @@ __all__ = [
     "level_snapshot",
     "portfolio_mapper_market",
     "position_uids",
-    "proxy_topology",
+    "proxy_terms",
     "raw_positions",
     "raw_shocks",
     "resolved",

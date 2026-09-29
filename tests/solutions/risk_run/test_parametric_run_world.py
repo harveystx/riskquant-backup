@@ -80,9 +80,6 @@ def _hostile(mode: str):
             batches = [
                 type(b)(
                     shocks=np.array(b.shocks, copy=True, order="F"),
-                    required_to_shock_uix=b.required_to_shock_uix,
-                    shock_scale=b.shock_scale,
-                    required_shift_type_id=b.required_shift_type_id,
                     scenario_offset=b.scenario_offset,
                     scenario_count_total=b.scenario_count_total,
                 )

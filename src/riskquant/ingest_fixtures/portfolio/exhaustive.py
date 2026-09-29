@@ -18,13 +18,12 @@ filter by instrument without re-reading the source files. Total rows:
 Coverage of resolution paths (against the canonical static + proxy
 config fixtures):
 
-  - DIRECT lookup (node + curve point underlyings)
-  - RF-LEVEL PROXY      (USDGBP -> USDEUR, EURCHF -> USDEUR,
-                          USD_LIBOR_3M[10Y] -> USD_SOFR_OIS[10Y])
-  - CONTAINER PROXY     (WTI_CRUDE_FWD -> BRENT_CRUDE_FWD,
-                          HENRY_HUB_GAS_FWD -> BRENT_CRUDE_FWD)
+  - Node and curve-point underlyings
+  - Underlyings that a market history may not carry (USDGBP, EURCHF,
+    USD_LIBOR_3M[10Y], WTI_CRUDE_FWD, HENRY_HUB_GAS_FWD): a scenario run
+    needs a world column or an authored Proxy V1 term for each (D088)
   - FX paths            (direct USDEUR; inverse settle currency;
-                          RF-proxied USDGBP/EURCHF underlyings)
+                          USDGBP/EURCHF underlyings)
   - Discount basis      (OIS default vs explicit IBOR override)
   - Cross-curve discount (USD_SOFR_OIS / EUR_ESTR_OIS; USD_SOFR_OIS /
                           GBP_SONIA_OIS)
@@ -32,13 +31,6 @@ config fixtures):
   - Option payoff sign  (calls and puts both present)
   - Date semantics      (expiry + delivery + settlement combinations)
 
-Registered-but-not-exercised proxy (documented gap):
-  POWER_CH_BASELOAD_HY -> CO2_EUA_ANNUAL_FWD
-    Container proxy across mismatched x_axis_kinds (OFFSET_HY -> OFFSET_Y).
-    The current resolver requires same-kind axes; resolving across kinds
-    is a separate work item. The proxy is registered in the canonical
-    proxy_config fixture as a *catalogue entry*, but no ingest row here
-    consumes it — doing so would raise PrettyKeyError at resolution time.
 """
 
 from __future__ import annotations

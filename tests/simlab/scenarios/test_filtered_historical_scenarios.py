@@ -200,9 +200,8 @@ def test_fhs_generator_all_batches_f_contiguous(total_scenarios, batch_size) -> 
     assert gen.total_scenarios == total_scenarios
     batches = list(
         gen.iter_batches(
-            required_shift_type_id=_SHIFT_TYPES,
-            source_factor_ids=_FACTOR_IDS,
-            shock_scale=_SHOCK_SCALES,
+            chart_ids=_SHIFT_TYPES,
+            driver_rf_ids=_FACTOR_IDS,
             batch_size=batch_size,
         )
     )
@@ -218,17 +217,15 @@ def test_fhs_single_scenario_final_batch_matches_full_batch_value() -> None:
 
     partial = list(
         FilteredHistoricalGenerator(matrix=matrix, horizon=1).iter_batches(
-            required_shift_type_id=_SHIFT_TYPES,
-            source_factor_ids=_FACTOR_IDS,
-            shock_scale=_SHOCK_SCALES,
+            chart_ids=_SHIFT_TYPES,
+            driver_rf_ids=_FACTOR_IDS,
             batch_size=3,  # 3,3,3,1 -> ambiguous single-row final batch
         )
     )
     full = list(
         FilteredHistoricalGenerator(matrix=matrix, horizon=1).iter_batches(
-            required_shift_type_id=_SHIFT_TYPES,
-            source_factor_ids=_FACTOR_IDS,
-            shock_scale=_SHOCK_SCALES,
+            chart_ids=_SHIFT_TYPES,
+            driver_rf_ids=_FACTOR_IDS,
             batch_size=10,  # single full batch, no partial-batch path
         )
     )
@@ -253,9 +250,8 @@ def _drive(gen, req_factor_ids: np.ndarray, batch_size: int) -> np.ndarray:
     n = int(req_factor_ids.shape[0])
     batches = list(
         gen.iter_batches(
-            required_shift_type_id=np.full(n, SHIFT_LOG_RETURN_ID, dtype=np.int8),
-            source_factor_ids=req_factor_ids,
-            shock_scale=np.ones(n, dtype=np.float32),
+            chart_ids=np.full(n, SHIFT_LOG_RETURN_ID, dtype=np.int8),
+            driver_rf_ids=req_factor_ids,
             batch_size=batch_size,
         )
     )
