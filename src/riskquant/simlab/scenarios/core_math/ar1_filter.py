@@ -255,6 +255,15 @@ def _ar1_one_col(col_vals, col_res, st: int) -> None:
             _I8_1D_C,  # shift_types       (1,)
             _F64_2D_C,  # out_residuals     (T, 1)   C-contig
         ),
+        # Single-factor MATRIX, several charts of that factor (D088 world column
+        # (d, tau, h) per chart): values (T, 1) is 'C', out_residuals
+        # (T, K_req >= 2) is genuine F.
+        _NB_VOID(
+            _F64_2D_C,  # values            (T, 1) C-contig
+            _I32_1D_C,  # cols              (K_req,)
+            _I8_1D_C,  # shift_types       (K_req,)
+            _F64_2D_F,  # out_residuals     (T, K_req) F-contig
+        ),
     ]
 )
 def kernel_ar1_residuals(

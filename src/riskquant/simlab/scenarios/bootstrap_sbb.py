@@ -95,6 +95,18 @@ from riskquant.simlab.scenarios.core_math.sbb_block_generator import (
         _NB_INT64,  # B
         _F32_2D_C,  # out               (B, 1) C-contig
     ),
+    # Single-factor matrix, several charts of that factor (D088 world column
+    # (d, tau, h) per chart): values (T, 1) resolves to 'C', out is genuine F.
+    _NB_VOID(
+        _F64_2D_C,  # values            (T, 1) C-contig — single-column (T,1)
+        _I32_1D_C,  # cols              (K_req,)
+        _I8_1D_C,  # shift_types       (K_req,)
+        _I32_1D_C,  # inv_perm          (K_req,)
+        _I32_2D_C,  # random_t_indices  (B, h) C-contig
+        _NB_INT64,  # h
+        _NB_INT64,  # B
+        _F32_2D_F,  # out               (B, K_req) F-contig
+    ),
 ])
 def _kernel_fused_sbb_h_day_shock(
     values,
