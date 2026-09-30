@@ -4741,6 +4741,22 @@ Closed-form, prior to implementation: identity default (`80 → 82` gives `82`);
 
 ---
 
+## D093 — Proxy V1 tabular authoring edge (proposed closure of D088 §13.2 for the frame representation)
+
+**Status:** PROPOSED (2026-09-30). Requires owner approval. Until approval, D088 §13.2 remains OPEN.
+
+**Context.** D088 §12.3 fixes the compiler's authored input contract: node terms (target, driver, τ, β) and container terms (target container, driver container, τ, β). The authoring file format is a separate edge concern (§13.2, OPEN). Stage E removed the D013 proxy-configuration edge and its canonical ingest fixture. RiskQuant configuration inputs enter through Polars frames with a canonical ingest fixture under `riskquant.ingest_fixtures.config` (the static configuration convention). Proxy V1 had no such edge, so a Proxy V1 model could be authored only as Python objects.
+
+**Decision (proposed).**
+
+1. **Frame.** One row per authored term. Columns, exactly: `term_kind` (Utf8, `"NODE"` or `"CONTAINER"`), `target_name` (Utf8), `driver_name` (Utf8), `driver_chart` (Utf8, `"LOG_RETURN"`, `"SIMPLE_RETURN"` or `"DIFFERENCE"`), `loading` (Float64, finite). `NODE` rows carry factor-node names (relative or absolute, resolved at the run as-of); `CONTAINER` rows carry curve or surface names.
+2. **Not authored.** The target chart κ (owned by the static configuration), the horizon (owned by the world), an identity marker (a V1 target without terms receives its identity row at compile time), weights normalisation and any D013 field.
+3. **Ownership.** The edge (`riskquant.config.proxy_model.ingest.proxy_terms_from_df`) checks structure only: column set, dtypes, nulls, blank names, the two vocabularies and finite loadings, and maps rows to `NodeProxyTerm` / `ContainerProxyTerm` in row order without resolution, merging, dropping or sorting. Resolution, admissibility, canonicalisation and identity remain with `compile_proxy_model` (D088 §6, §12.3). Row order does not affect `proxy_model_digest`.
+4. **Canonical fixture.** `riskquant.ingest_fixtures.config.risk_proxy_model.canonical_risk_proxy_model` (schema `RiskProxyModelTermData`). Its compiled rows against the canonical static configuration at `CANONICAL_AS_OF_DATE` and its `proxy_model_digest` are pinned by tests.
+5. **Not decided.** File loaders (xlsx, csv or other) remain OPEN; they would read into this frame.
+
+**Consequences.** No change to D088 semantics, canonicalisation or identity. The D013 frame schema `RiskProxyConfigData` is removed.
+
 ## D089 — Parametric two-sided horizon contract
 
 **Status:** LOCKED (owner instruction, 2026-09-28).

@@ -620,7 +620,7 @@ Neither record carries a target chart or a horizon.
 
 ### 13.2 File format
 
-**OPEN.** No authoring file format exists. D088 §12.3: "The authoring file format is a separate edge concern." No loader and no canonical Proxy V1 ingest fixture exist. The legacy D013 loader and its canonical ingest fixture were removed in Stage E (2026-09-29); they could not express $\tau$.
+**OPEN, closure PROPOSED by D093 (2026-09-30).** D088 §12.3: "The authoring file format is a separate edge concern." D093 proposes a tabular edge: one Polars row per authored term (`term_kind`, `target_name`, `driver_name`, `driver_chart`, `loading`), mapped by `riskquant.config.proxy_model.ingest.proxy_terms_from_df`, with the canonical fixture `riskquant.ingest_fixtures.config.risk_proxy_model`. File loaders (xlsx, csv) remain OPEN. The legacy D013 loader and its canonical ingest fixture were removed in Stage E (2026-09-29); they could not express $\tau$.
 
 ### 13.3 Illustrative example
 

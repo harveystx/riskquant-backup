@@ -561,3 +561,48 @@ def test_one_run_mixes_v1_prefix_v1_suffix_and_native_suffix_rows(capture, monke
         for i in range(fx.shape[0])
     ) == ["USDCHF", "USDEUR", "USDJPY"]
 
+
+# ---- container terms and factor-state admissibility on the production run ---------------------
+
+
+def test_a_container_term_runs_end_to_end_and_equals_its_node_expansion(capture) -> None:
+    """ContainerProxyTerm BRENT_FWD <- 0.5 * Y(BRENT_FWD pillar, DIFFERENCE),
+    EXACT pairing (each pillar with itself). kappa LOG != tau DIFF:
+    A_s = A_0 e^(0.5 * dY). The container form does not survive compilation:
+    its digest equals the digest of the explicit node terms."""
+    from riskquant.config.proxy_model.schema_objects import ContainerProxyTerm
+
+    rows = [spot(1, "BRENT_FWD[M+0]", "USD", 1.0), spot(2, "BRENT_FWD[M+1]", "USD", 1.0)]
+    base = {"BRENT_FWD[M+0]": 80.0, "BRENT_FWD[M+1]": 81.0}
+    hist = {"BRENT_FWD[M+0]": [80.0, 82.0], "BRENT_FWD[M+1]": [81.0, 80.5]}
+    w = World(rows, "USD", base, hist)
+    kw = w.inputs()
+    kw["proxy_terms"] = (ContainerProxyTerm(
+        target_container_name="BRENT_FWD", driver_container_name="BRENT_FWD",
+        driver_chart=ShiftType.DIFFERENCE, loading=0.5),)
+    run = run_scenario_var_es(**kw)
+    s = _shocked(capture)
+    for name, (v0, v1) in hist.items():
+        y = float(np.float32(v1 - v0))
+        np.testing.assert_allclose(s[w.row(name), 0], base[name] * math.exp(0.5 * y), rtol=RTOL, atol=ATOL)
+    nodes = tuple(_term(n, n, DIFF, 0.5) for n in ("BRENT_FWD[M+0]", "BRENT_FWD[M+1]"))
+    assert run.manifest.shocks.proxy_model_digest == hash_proxy_model(_compile(w, nodes))
+
+
+@pytest.mark.parametrize(("beta", "admissible"), [(1.0, False), (0.25, True)])
+def test_chart_reconstruction_is_checked_by_the_factor_state_guard(beta, admissible) -> None:
+    """USDEUR (valuation prefix, kappa SIMPLE, A_0 = 1) <- beta * Y(EQ_USD, DIFF)
+    with dY = -2. beta = 1: SIMPLE reconstruction gives 1 * (1 - 2) = -1, which
+    the market-data factor-state guard rejects for an FX node. beta = 0.25 gives
+    0.5 and runs. The kernel reconstructs; admissibility is not its concern."""
+    rows = [spot(1, "EQ_USD", "USD", 1.0), spot(2, "EQ_USD", "EUR", 1.0)]
+    w = _world(rows=rows, base={"EQ_USD": 100.0, "USDEUR": 1.0},
+               hist={"EQ_USD": [100.0, 98.0], "USDEUR": [1.0, 1.0]}, rsc=_rsc(USDEUR=SIMPLE))
+    assert w.axis.reporting_factor_ids.size == 0  # USDEUR is a valuation factor
+    kw = w.inputs()
+    kw["proxy_terms"] = (_term("USDEUR", "EQ_USD", DIFF, beta),)
+    if admissible:
+        assert np.isfinite(run_scenario_var_es(**kw).var).all()
+    else:
+        with pytest.raises(ValueError):
+            run_scenario_var_es(**kw)

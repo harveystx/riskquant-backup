@@ -147,16 +147,24 @@ class RiskStaticConfigData(TypedDict):
 # END OF RISK STATIC CONFIG SCHEMAS #
 #####################################
 
-#####################
-# RISK PROXY CONFIG #
-#####################
+####################
+# RISK PROXY MODEL #
+####################
 
 
-class RiskProxyConfigData(TypedDict):
-    proxying_level: Sequence[str]  # "CONTAINER" | "RISK_FACTOR"
-    required_name: Sequence[str]
-    proxy_name: Sequence[str]
-    vol_scaling_factor: Sequence[float]
+class RiskProxyModelTermData(TypedDict):
+    """One row per authored Proxy V1 term (D088 §12.3, D093).
+
+    `term_kind` "NODE" -> `NodeProxyTerm` (target/driver are factor-node
+    names); "CONTAINER" -> `ContainerProxyTerm` (target/driver are curve or
+    surface names). No target chart and no horizon are authored.
+    """
+
+    term_kind: Sequence[str]  # "NODE" | "CONTAINER"
+    target_name: Sequence[str]
+    driver_name: Sequence[str]
+    driver_chart: Sequence[str]  # "LOG_RETURN" | "SIMPLE_RETURN" | "DIFFERENCE"
+    loading: Sequence[float]
 
 
 # ============================================================

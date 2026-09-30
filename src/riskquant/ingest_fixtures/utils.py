@@ -13,7 +13,7 @@ from riskquant.ingest_fixtures.schemas import (
     MarketRiskIngestData,
     NettingSetMasterIngestData,
     ObligorCreditIngestData,
-    RiskProxyConfigData,
+    RiskProxyModelTermData,
     RiskStaticConfigCcy,
     RiskStaticConfigCurveMeta,
     RiskStaticConfigCurvePointMeta,
@@ -46,8 +46,8 @@ _DATA = (
     | RiskStaticConfigCurvePointMeta
     | RiskStaticConfigSurfaceMeta
     | RiskStaticConfigSurfacePointMeta
-    # Risk Proxy Config
-    | RiskProxyConfigData
+    # Risk Proxy Model
+    | RiskProxyModelTermData
 )
 
 

@@ -48,6 +48,9 @@ _D013_NAMES = frozenset({
     "resolve_required_factor_ids_to_market_data_factor_ids",
     "compile_proxy_topology_from_df",
     "compile_proxy_topology_from_xlsx",
+    "RiskProxyConfigData",
+    "proxying_level",
+    "vol_scaling_factor",
 })
 
 
