@@ -632,3 +632,42 @@ def test_frame_authoring_equals_typed_authoring_through_the_production_run(captu
     assert a.identity == b.identity and a.manifest.to_json() == b.manifest.to_json()
     assert sa.tobytes() == sb.tobytes()
     assert a.var.tobytes() == b.var.tobytes() and a.es.tobytes() == b.es.tobytes()
+
+
+# ---- ScenarioSetBatch lifetime: the run keeps no view of a batch --------------------------
+
+
+def test_the_run_consumes_each_batch_before_requesting_the_next(monkeypatch) -> None:
+    """Every batch is handed out in private storage that is overwritten with NaN
+    as soon as the next batch is requested (and after the stream ends). A run
+    that kept a view of `shocks` past its iteration would change or fail; the
+    run is bitwise identical to the undisturbed run."""
+    w = _world(hist={"EQ_USD": [100.0, 101.0, 99.5, 102.0, 100.5, 103.0],
+                     "USDEUR": [0.90, 0.91, 0.905, 0.92, 0.915, 0.93]})
+    kw = w.inputs()
+    kw["proxy_terms"] = (_term("EQ_USD", "USDEUR", DIFF, 0.5),)
+    kw["batch_size"] = 1  # five scenarios, five batches
+    clean = run_scenario_var_es(**kw)
+    assert clean.var.size and np.isfinite(clean.var).all()
+    real = api.build_scenario_generator
+
+    class Poisoning:
+        def __init__(self, g: Any) -> None:
+            self._g = g
+            self.total_scenarios = g.total_scenarios
+
+        def iter_batches(self, **k: Any):
+            previous = None
+            for b in self._g.iter_batches(**k):
+                if previous is not None:
+                    previous.fill(np.nan)
+                private = np.asfortranarray(np.array(b.shocks, copy=True))
+                previous = private
+                yield dataclasses.replace(b, shocks=private)
+            if previous is not None:
+                previous.fill(np.nan)
+
+    monkeypatch.setattr(api, "build_scenario_generator", lambda *a, **k: Poisoning(real(*a, **k)))
+    poisoned = run_scenario_var_es(**kw)
+    assert poisoned.var.tobytes() == clean.var.tobytes()
+    assert poisoned.es.tobytes() == clean.es.tobytes()

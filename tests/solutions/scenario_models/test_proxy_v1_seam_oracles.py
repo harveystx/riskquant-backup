@@ -166,17 +166,26 @@ def test_level_domain_is_an_obligation_only_of_used_level_backed_columns() -> No
 
 
 def test_regime_switching_covariance_equals_the_d091_formula(monkeypatch) -> None:
-    """Recover the generator's two linear maps Y = A_c z (calm c = 0, crisis
-    c = 1) from its realised stream and its recorded draws (crisis iff u < p,
-    D091), then evaluate
-    Cov = (1 - p) A_0 A_0' + p A_1 A_1' analytically and compare with
-    D_sigma [(1 - p) R + p D_m R D_m] D_sigma and Var_i = sigma_i^2 [(1 - p) + p m_i^2].
-    No moment is estimated. Tolerance 1e-5 relative: the stream is stored as
-    float32 (2^-24 relative per value) and the maps are recovered by a
-    well-conditioned least-squares solve over 400 draws."""
-    corr = np.array([[1.0, 0.6, -0.3], [0.6, 1.0, 0.2], [-0.3, 0.2, 1.0]])
-    chol = np.ascontiguousarray(np.linalg.cholesky(corr))
+    """D091 regime covariance against an independently specified R.
+
+    The test states R, sigma, m and p as literals. The generator receives only
+    the factor L = chol(R) (its data contract). The test records the realised
+    normals z and regime uniforms u, recovers the generator's two linear maps
+    Y = A_c z (c = 0 calm, c = 1 crisis iff u < p) by least squares, and
+    compares the implemented covariances A_c A_c' with the formulas written in
+    R, never in L:
+        calm    D_s R D_s
+        crisis  D_s D_m R D_m D_s
+        mixture D_s [(1 - p) R + p D_m R D_m] D_s,  Var_i = s_i^2 [(1 - p) + p m_i^2].
+    No moment is estimated. Tolerance rtol 1e-5: the stream is stored as
+    float32 (2^-24 relative per value) and the 3-parameter solve per column
+    over about 120 and 280 draws is well conditioned.
+    """
+    r = np.array([[1.0, 0.6, -0.3], [0.6, 1.0, 0.2], [-0.3, 0.2, 1.0]])  # independent R
     sigma, m, p, seed, s_total = np.array([0.01, 0.02, 0.03]), np.array([2.0, 1.5, 3.0]), 0.3, 11, 400
+    chol = np.ascontiguousarray(np.linalg.cholesky(r))  # the generator's input only
+    assert np.all(np.diag(r) == 1.0)
+    assert np.max(np.abs(np.sum(chol * chol, axis=1) - 1.0)) <= 1e-9  # D091: R_ii = 1 within 1e-9
     ids = np.array([60, 61, 62], np.int32)
     data = ParametricRiskData(
         factor_ids=ids, cholesky_matrix=chol, volatilities=sigma, effective_period_count=1,
@@ -188,8 +197,6 @@ def test_regime_switching_covariance_equals_the_d091_formula(monkeypatch) -> Non
         "total_scenarios": s_total, "seed": seed,
         "distribution": {"kind": "regime_switching_gmm", "prob_crisis": p, "crisis_vol_multipliers": "per_factor"},
     })
-    # Record the realised random inputs the generator draws (the normals and the
-    # regime uniforms); the check below then uses no RNG convention at all.
     real_rng, drawn = np.random.default_rng, {"z": [], "u": []}
 
     class _Recording:
@@ -215,11 +222,16 @@ def test_regime_switching_covariance_equals_the_d091_formula(monkeypatch) -> Non
     z = drawn["z"][0].reshape(s_total, 3)
     crisis = drawn["u"][0].reshape(s_total) < p
     assert 0 < crisis.sum() < s_total
-    a = [np.linalg.lstsq(z[mask], y[mask], rcond=None)[0].T for mask in (~crisis, crisis)]
-    np.testing.assert_allclose(a[0], np.diag(sigma) @ chol, rtol=1e-5, atol=1e-9)
-    np.testing.assert_allclose(a[1], np.diag(m * sigma) @ chol, rtol=1e-5, atol=1e-9)
-    cov_impl = (1 - p) * a[0] @ a[0].T + p * a[1] @ a[1].T
-    r = chol @ chol.T
-    cov_formula = np.diag(sigma) @ ((1 - p) * r + p * np.diag(m) @ r @ np.diag(m)) @ np.diag(sigma)
-    np.testing.assert_allclose(cov_impl, cov_formula, rtol=1e-5, atol=1e-12)
-    np.testing.assert_allclose(np.diag(cov_impl), sigma**2 * ((1 - p) + p * m**2), rtol=1e-5)
+    a_calm, a_crisis = (np.linalg.lstsq(z[mask], y[mask], rcond=None)[0].T for mask in (~crisis, crisis))
+
+    d_s, d_m = np.diag(sigma), np.diag(m)
+    calm = d_s @ r @ d_s
+    crisis_cov = d_s @ d_m @ r @ d_m @ d_s
+    mixture = d_s @ ((1 - p) * r + p * d_m @ r @ d_m) @ d_s
+    np.testing.assert_allclose(a_calm @ a_calm.T, calm, rtol=1e-5, atol=1e-12)
+    np.testing.assert_allclose(a_crisis @ a_crisis.T, crisis_cov, rtol=1e-5, atol=1e-12)
+    implemented = (1 - p) * a_calm @ a_calm.T + p * a_crisis @ a_crisis.T
+    np.testing.assert_allclose(implemented, mixture, rtol=1e-5, atol=1e-12)
+    np.testing.assert_allclose(np.diag(implemented), sigma**2 * ((1 - p) + p * m**2), rtol=1e-5)
+    # The two regimes are distinguishable, so a scaling or weighting error cannot hide.
+    assert np.max(np.abs(crisis_cov - calm) / np.abs(calm)) > 1.0
