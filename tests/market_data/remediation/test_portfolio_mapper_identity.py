@@ -22,6 +22,7 @@ import hostile_fixture as hf
 import md_oracle as oracle
 import numpy as np
 import pandas as pd
+import polars as pl
 import pytest
 
 from riskquant.config.enums.discounting_modes import DiscountingMode
@@ -61,7 +62,9 @@ def _book(*rows):
 
 
 def _batch(rsc, book):
-    return compile_raw_df_into_ingest_batch(raw_df=book, static_config=rsc, copy=True)
+    return compile_raw_df_into_ingest_batch(
+        raw_df=pl.from_pandas(book), static_config=rsc
+    )
 
 
 def _market(rsc, batch, levels):
@@ -202,15 +205,17 @@ def test_missing_date_in_a_foreign_mapper_is_rejected(rsc):
         strike_discount_curve="USD_OIS",
     )
     batch_a = compile_raw_df_into_ingest_batch(
-        raw_df=pd.DataFrame([dict(fwd, delivery_date=date(2027, 2, 15))]),
+        raw_df=pl.from_pandas(
+            pd.DataFrame([dict(fwd, delivery_date=date(2027, 2, 15))])
+        ),
         static_config=rsc,
-        copy=True,
         as_of_date=hf.AS_OF,
     )
     batch_b = compile_raw_df_into_ingest_batch(
-        raw_df=pd.DataFrame([dict(fwd, delivery_date=date(2027, 2, 20))]),
+        raw_df=pl.from_pandas(
+            pd.DataFrame([dict(fwd, delivery_date=date(2027, 2, 20))])
+        ),
         static_config=rsc,
-        copy=True,
         as_of_date=hf.AS_OF,
     )
     mapper_b = build_uix_mapper([batch_b])

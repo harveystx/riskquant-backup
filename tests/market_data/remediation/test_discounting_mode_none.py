@@ -18,6 +18,7 @@ from datetime import date
 import hostile_fixture as hf
 import numpy as np
 import pandas as pd
+import polars as pl
 import pytest
 from scipy.stats import norm
 
@@ -103,7 +104,7 @@ def _option(**overrides) -> pd.DataFrame:
 
 def _run(rsc, frame, levels, mode=DiscountingMode.NONE, as_of=AS_OF):
     batch = compile_raw_df_into_ingest_batch(
-        raw_df=frame, static_config=rsc, copy=True, as_of_date=as_of
+        raw_df=pl.from_pandas(frame), static_config=rsc, as_of_date=as_of
     )
     mapper = build_uix_mapper([batch])
     portfolio = compile_portfolio_from_ingest_batch(
@@ -240,7 +241,7 @@ def test_pre_as_of_date_is_rejected_at_the_producer(rsc):
     import dataclasses
 
     batch = compile_raw_df_into_ingest_batch(
-        raw_df=_forward(), static_config=rsc, copy=True, as_of_date=AS_OF
+        raw_df=pl.from_pandas(_forward()), static_config=rsc, as_of_date=AS_OF
     )
     mapper = build_uix_mapper([batch])
     stale = np.sort(
@@ -332,7 +333,7 @@ def test_none_mode_does_not_rescue_a_missing_curve_identity(rsc):
     import dataclasses
 
     batch = compile_raw_df_into_ingest_batch(
-        raw_df=_forward(), static_config=rsc, copy=True, as_of_date=AS_OF
+        raw_df=pl.from_pandas(_forward()), static_config=rsc, as_of_date=AS_OF
     )
     stripped = dataclasses.replace(
         batch,
@@ -347,16 +348,14 @@ def test_none_mode_does_not_rescue_a_missing_curve_identity(rsc):
 def test_none_mode_keeps_the_d062_and_d066_linkage_requirements(rsc):
     with pytest.raises(ValueError, match="Missing required columns"):
         compile_raw_df_into_ingest_batch(
-            raw_df=_forward().drop(columns=["under_discount_curve"]),
+            raw_df=pl.from_pandas(_forward().drop(columns=["under_discount_curve"])),
             static_config=rsc,
-            copy=True,
             as_of_date=AS_OF,
         )
     with pytest.raises(Exception, match="curve currency must equal leg"):
         compile_raw_df_into_ingest_batch(
-            raw_df=_forward(strike_ccy="EUR"),
+            raw_df=pl.from_pandas(_forward(strike_ccy="EUR")),
             static_config=rsc,
-            copy=True,
             as_of_date=AS_OF,
         )
 
@@ -375,7 +374,7 @@ def test_discount_curve_levels_are_not_even_required_under_none(rsc):
     unused.
     """
     batch = compile_raw_df_into_ingest_batch(
-        raw_df=_forward(), static_config=rsc, copy=True, as_of_date=AS_OF
+        raw_df=pl.from_pandas(_forward()), static_config=rsc, as_of_date=AS_OF
     )
     mapper = build_uix_mapper([batch])
     um = build_universe_mapping(

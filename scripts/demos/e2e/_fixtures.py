@@ -411,7 +411,7 @@ def _run_portfolio(
         print_df(_POSITIONS_DF, title="Positions (edge representation)")
 
     ingest_batch = compile_raw_df_into_ingest_batch(
-        raw_df=_POSITIONS_DF,
+        raw_df=pl.from_pandas(_POSITIONS_DF),
         static_config=rsc,
     )
     uix_mapper = build_uix_mapper(

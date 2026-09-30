@@ -137,7 +137,7 @@ def build_world(frame: pd.DataFrame, *, rf=None, uids=None) -> SimpleNamespace:
     sh = _shared(rf)
     uids = tuple(int(u) for u in frame["uid"]) if uids is None else uids
     batch = FX.compile_raw_df_into_ingest_batch(
-        raw_df=frame.copy(), static_config=sh.rsc
+        raw_df=pl.from_pandas(frame), static_config=sh.rsc
     )
     mapper = FX.build_uix_mapper([batch], as_of_ord32=sh.as_of)
     portfolio = FX.compile_portfolio_from_ingest_batch(
@@ -148,7 +148,7 @@ def build_world(frame: pd.DataFrame, *, rf=None, uids=None) -> SimpleNamespace:
         static_config=sh.rsc,
         uix_mapper=mapper,
     )
-    su = FX._run_axis_inputs(
+    su = FX._run_shock_universe(
         rsc=sh.rsc,
         proxy_terms=sh.terms,
         run_axis=derive_run_factor_axis(

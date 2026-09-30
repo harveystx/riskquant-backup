@@ -1,0 +1,151 @@
+{
+  "source": "pre-migration pandas pipeline (afbfec8 ingest on cce2ee4), canonical static config, as_of 2026-01-15; identical under pandas 2.2.3 and 3.0.2",
+  "size": 2,
+  "as_of_ord32": 20468,
+  "fields": {
+    "instrument_ids": {
+      "dtype": "int32",
+      "sha256": "f5bd7cea475f5b00862f9725fe5d6fffe54dc86724895171eac28345106ef72f",
+      "values": [
+        3,
+        1
+      ]
+    },
+    "uids": {
+      "dtype": "int64",
+      "sha256": "0c730b69905c5ef7a4ca5269f72365400bde2dd2c04eaf9bbb3d1c4a265a0131",
+      "values": [
+        1,
+        2
+      ]
+    },
+    "qty": {
+      "dtype": "float64",
+      "sha256": "094aea271a878f1252f203bac462c832b3130d15e56cf45d0e468cb2c056a25e",
+      "values": [
+        1000.0,
+        1000.0
+      ]
+    },
+    "strike_price": {
+      "dtype": "float64",
+      "sha256": "7ab45e279bf9c1cf9c7b51592fd87a1b13bd4cba1081720af902df0ab0cf2422",
+      "values": [
+        70.0,
+        70.0
+      ]
+    },
+    "cp_mult": {
+      "dtype": "int8",
+      "sha256": "47dc540c94ceb704a23875c11273e16bb0b8a87aed84de911f2133568115f254",
+      "values": [
+        1,
+        0
+      ]
+    },
+    "settle_ord": {
+      "dtype": "int32",
+      "sha256": "d52f6e99420b51622bb74a5c43df127aafa418faf128d9e3214ff6bce8419391",
+      "values": [
+        20504,
+        20501
+      ]
+    },
+    "delivery_ord": {
+      "dtype": "int32",
+      "sha256": "6b014e2533c48c40b3ee93ce568216b21611b27781fe2ab527ae8f5990743b09",
+      "values": [
+        -99999,
+        20499
+      ]
+    },
+    "expiry_ord": {
+      "dtype": "int32",
+      "sha256": "63f4f35d0c337a59dbcb793bba78b9f84f52a2df6a89d500f3bf4e9bfe1a20f1",
+      "values": [
+        20502,
+        -99999
+      ]
+    },
+    "underlying_ids": {
+      "dtype": "int32",
+      "sha256": "ab53d49b3f241acca8b4fa9a97113756409273d88e2658d3295352d9a63c9788",
+      "values": [
+        9000,
+        9000
+      ]
+    },
+    "volatility_ids": {
+      "dtype": "int32",
+      "sha256": "0fe33d802dd886adf55c64fafc533061bee212d91c4e00f5c55d7a57175adfce",
+      "values": [
+        9,
+        -999999
+      ]
+    },
+    "fx_u2s_ids": {
+      "dtype": "int32",
+      "sha256": "12a3ae445661ce5dee78d0650d33362dec29c4f82af05e7e57fb595bbbacf0ca",
+      "values": [
+        -1,
+        -1
+      ]
+    },
+    "fx_u2s_inv": {
+      "dtype": "int8",
+      "sha256": "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7",
+      "values": [
+        0,
+        0
+      ]
+    },
+    "fx_k2s_ids": {
+      "dtype": "int32",
+      "sha256": "12a3ae445661ce5dee78d0650d33362dec29c4f82af05e7e57fb595bbbacf0ca",
+      "values": [
+        -1,
+        -1
+      ]
+    },
+    "fx_k2s_inv": {
+      "dtype": "int8",
+      "sha256": "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7",
+      "values": [
+        0,
+        0
+      ]
+    },
+    "under_discount_curve_ids": {
+      "dtype": "int32",
+      "sha256": "4caf7b8631a55fb4ab8e10d718126b316f85d79cc18203aa6577a16f3cc82087",
+      "values": [
+        250000000,
+        250000000
+      ]
+    },
+    "strike_discount_curve_ids": {
+      "dtype": "int32",
+      "sha256": "4caf7b8631a55fb4ab8e10d718126b316f85d79cc18203aa6577a16f3cc82087",
+      "values": [
+        250000000,
+        250000000
+      ]
+    },
+    "vol_surface_y_axis_type_ids": {
+      "dtype": "int8",
+      "sha256": "b358fd19da03aacb8acccba06864c26e4ee9412e4f7e7ca6c6bd911a27f4fb0d",
+      "values": [
+        -99,
+        -99
+      ]
+    },
+    "netting_set_id": {
+      "dtype": "int64",
+      "sha256": "d128b71197038c81785950f0fd6175e9f269891c934d369c72f7f6310ecda567",
+      "values": [
+        -999999,
+        -999999
+      ]
+    }
+  }
+}

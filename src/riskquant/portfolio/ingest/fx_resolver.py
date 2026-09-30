@@ -15,17 +15,39 @@ source of truth for FX-pair resolution.
 The output `fx_invert` array is int8 (project convention for flags), not
 int32. The flag carries a per-row "1 / fx_rate vs fx_rate" decision that
 the pricer can apply branchlessly via `r * (1 - invert) + (1/r) * invert`.
+
+Pandas migration note
+---------------------
+The prior ``pd.Series(arr).map(ccy_name_to_id)`` calls are replaced with
+numpy dict lookups using a -1 sentinel. Valid ccy_ids are non-negative.
 """
 
 from __future__ import annotations
 
 import numpy as np
 import numpy.typing as npt
-import pandas as pd
 
 from riskquant.config.static_config.static_config import RiskStaticConfig
 from riskquant.constants import NO_FX_RF_REQUIRED
 from riskquant.exceptions import PrettyKeyError
+
+_MISS = np.int32(-1)
+
+
+def _detect_unknown_ccys(
+    raw: npt.NDArray[np.str_],
+    unknown: npt.NDArray[np.bool_],
+    *,
+    ctx: str,
+) -> None:
+    """Raise if any currency string failed to map to a ccy_id."""
+    if not unknown.any():
+        return
+    bad = sorted({str(v) for v in raw[unknown]})[:10]
+    raise PrettyKeyError(
+        f"{ctx}: {int(unknown.sum())} currency name(s) not in static_config "
+        f"ccy_name_to_id.\nUnresolved currencies:\n{bad}"
+    )
 
 
 def resolve_fx_rf_ids_inplace(
@@ -85,23 +107,25 @@ def resolve_fx_rf_ids_inplace(
     if not needs_fx.any():
         return
 
-    # ---- Currency NAME -> ID ----
-    # One vectorized hash join per side; no per-row Python iteration.
+    # ---- Currency NAME -> ID (numpy dict lookup; no pandas) ----
+    # Sentinel -1 is safe: valid ccy_ids are non-negative.
     ccy_name_to_id = static_config.ccy_name_to_id
 
     base_sub = base_ccy[needs_fx]
     settle_sub = settlement_ccy[needs_fx]
 
-    base_mapped = pd.Series(base_sub).map(ccy_name_to_id)
-    settle_mapped = pd.Series(settle_sub).map(ccy_name_to_id)
+    base_ids_raw = np.array(
+        [ccy_name_to_id.get(n, _MISS) for n in base_sub], dtype=np.int32
+    )
+    settle_ids_raw = np.array(
+        [ccy_name_to_id.get(n, _MISS) for n in settle_sub], dtype=np.int32
+    )
 
-    _detect_unknown_ccys(base_sub, base_mapped, ctx="base_ccy")
-    _detect_unknown_ccys(settle_sub, settle_mapped, ctx="settlement_ccy")
+    _detect_unknown_ccys(base_sub, base_ids_raw == _MISS, ctx="base_ccy")
+    _detect_unknown_ccys(settle_sub, settle_ids_raw == _MISS, ctx="settlement_ccy")
 
-    # Narrow to int (small currency universe; the static_config validator
-    # caps max_ccy_id well within int16 range, so int32 is plenty).
-    base_ids = base_mapped.to_numpy(dtype=np.int32, copy=False)
-    quote_ids = settle_mapped.to_numpy(dtype=np.int32, copy=False)
+    base_ids = base_ids_raw
+    quote_ids = settle_ids_raw
 
     # ---- Two-gather lookup into the dense FX matrix ----
     fx_matrix = static_config.fx_spot_matrix
@@ -131,20 +155,3 @@ def resolve_fx_rf_ids_inplace(
 
     out_fx_rf_ids[needs_fx] = final_ids
     out_fx_invert[needs_fx] = final_inv
-
-
-def _detect_unknown_ccys(
-    raw: npt.NDArray[np.str_],
-    mapped: pd.Series,
-    *,
-    ctx: str,
-) -> None:
-    """Raise if any currency string failed to map to a ccy_id."""
-    unknown = mapped.isna().to_numpy(copy=False)
-    if not unknown.any():
-        return
-    bad = sorted({str(v) for v in raw[unknown]})[:10]
-    raise PrettyKeyError(
-        f"{ctx}: {int(unknown.sum())} currency name(s) not in static_config "
-        f"ccy_name_to_id.\nUnresolved currencies:\n{bad}"
-    )

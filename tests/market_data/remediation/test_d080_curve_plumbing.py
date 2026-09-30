@@ -19,7 +19,6 @@ import pathlib
 
 import d080_oracle as oracle
 import numpy as np
-import pandas as pd
 import polars as pl
 import pytest
 
@@ -81,27 +80,25 @@ def _curve(rsc, name=CURVE):
     return {c.curve_name: c for c in rsc.curve_meta_dict.values()}[name]
 
 
-def _forward_book() -> pd.DataFrame:
-    return pd.DataFrame([
-        dict(
-            uid=1,
-            instrument="VANILLA_FORWARD_NODE",
-            quantity=1_000.0,
-            underlying="BRENT_CRUDE_FWD[M+0]",
-            settlement_ccy="USD",
-            strike_price=70.0,
-            strike_ccy="USD",
-            delivery_date=dt.date(2026, 2, 15),
-            settlement_date=dt.date(2026, 2, 17),
-            under_discount_curve=CURVE,
-            strike_discount_curve=CURVE,
-        )
-    ])
+def _forward_book() -> pl.DataFrame:
+    return pl.from_dict({
+        "uid": [1],
+        "instrument": ["VANILLA_FORWARD_NODE"],
+        "quantity": [1_000.0],
+        "underlying": ["BRENT_CRUDE_FWD[M+0]"],
+        "settlement_ccy": ["USD"],
+        "strike_price": [70.0],
+        "strike_ccy": ["USD"],
+        "delivery_date": [dt.date(2026, 2, 15)],
+        "settlement_date": [dt.date(2026, 2, 17)],
+        "under_discount_curve": [CURVE],
+        "strike_discount_curve": [CURVE],
+    })
 
 
 def _mapper(rsc, as_of=A):
     batch = compile_raw_df_into_ingest_batch(
-        raw_df=_forward_book(), static_config=rsc, copy=True, as_of_date=as_of
+        raw_df=_forward_book(), static_config=rsc, as_of_date=as_of
     )
     return build_uix_mapper([batch])
 

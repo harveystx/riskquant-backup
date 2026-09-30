@@ -47,6 +47,7 @@ from pathlib import Path
 
 import _spot_world as sw
 import numpy as np
+import polars as pl
 
 from riskquant.config.enums.discounting_modes import DiscountingMode
 from riskquant.market_data.assemble import (
@@ -136,7 +137,9 @@ def main() -> None:
     sw.step("2", "Build the valuation context")
     # Names die here: ingest resolves every name to an rf_id. Ingest mutates
     # its input frame in place unless told otherwise, so it receives a copy.
-    ingest_batch = compile_raw_df_into_ingest_batch(raw_df=positions.copy(), static_config=rsc)
+    ingest_batch = compile_raw_df_into_ingest_batch(
+        raw_df=pl.from_pandas(positions), static_config=rsc
+    )
     as_of_ord = int(date_to_ord32(as_of))
     uix_mapper = build_uix_mapper([ingest_batch], as_of_ord32=as_of_ord)
     context = ValuationContext(
@@ -227,7 +230,9 @@ def main() -> None:
         """
     )
     d_frame = positions.loc[positions["uid"].isin(derived_uids)].reset_index(drop=True)
-    d_batch = compile_raw_df_into_ingest_batch(raw_df=d_frame, static_config=rsc)
+    d_batch = compile_raw_df_into_ingest_batch(
+        raw_df=pl.from_pandas(d_frame), static_config=rsc
+    )
     d_mapper = build_uix_mapper([d_batch], as_of_ord32=as_of_ord)
     d_portfolio = compile_portfolio_from_ingest_batch(ingest_batch=d_batch, uix_mapper=d_mapper)
     d_market = build_market_data_matrix_from_snapshot(

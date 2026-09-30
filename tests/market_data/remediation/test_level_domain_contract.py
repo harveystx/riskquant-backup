@@ -120,7 +120,9 @@ def universe(rsc):
             settlement_ccy="USD",
         ),
     ])
-    batch = compile_raw_df_into_ingest_batch(raw_df=book, static_config=rsc, copy=True)
+    batch = compile_raw_df_into_ingest_batch(
+        raw_df=pl.from_pandas(book), static_config=rsc
+    )
     vol = batch.volatility_ids.copy()
     vol[0] = rsc.rel_name_to_rf_id["VOL_EQ_USD"]
     vol[1] = rsc.rel_name_to_rf_id["SPRD_EUR"]

@@ -18,7 +18,7 @@ import datetime as dt
 from typing import Any
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.config.enums.discounting_modes import DiscountingMode
 from riskquant.config.static_config.compile import (
@@ -62,7 +62,7 @@ def inputs(**over: Any) -> dict[str, Any]:
     rsc = compile_risk_static_config_from_dict_of_dfs(
         dict(CANONICAL_RISK_STATIC_CONFIG_DICT_OF_DFS)
     )
-    raw = pd.DataFrame({
+    raw = pl.from_dict({
         "uid": UIDS.tolist(),
         "instrument": ["SPOT", "SPOT"],
         "quantity": [100.0, -40.0],

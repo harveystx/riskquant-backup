@@ -1,5 +1,4 @@
 # src/riskquant/portfolio/ingest/rf_resolver.py
-
 """
 Vectorized resolution of human-facing risk-factor name strings into the int32
 Universe Indices (UIX) consumed by the compiled blocks and JIT kernels.
@@ -10,26 +9,26 @@ factors). Together they are the layer where "strings die early" — every name
 column is collapsed to a flat C-contiguous np.int32 array before any data
 leaves the ingest edge.
 
-All resolution is performed through pandas `Series.map` (a C-level hash join).
-There are no Python row loops, no `.apply`, and no regex matching.
+Pandas migration note
+---------------------
+The prior ``pd.Series(names).map(mapping)`` calls are replaced with numpy
+dict lookups using a unique sentinel object. This preserves the failure-mode
+contract: populated-but-unmapped names HARD-FAIL before any narrowing.
 
 Failure-mode contract
 ---------------------
 Both `resolve_required_ids` and `resolve_optional_ids` HARD-FAIL on
 populated-but-unmapped names. The optional path used to swallow these
-silently via `.astype(np.float64)[...].astype(np.int32)` (NaN -> platform
-MIN_INT32), corrupting the int32 ids array on typos. That silent path is
-gone: `_detect_unmapped` now runs before any narrowing for both helpers.
+silently via NaN -> platform-MIN_INT32 coercion, corrupting the int32 ids
+array on typos. That silent path is gone.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import cast
 
 import numpy as np
 import numpy.typing as npt
-import pandas as pd
 
 from riskquant.exceptions import PrettyKeyError
 
@@ -37,16 +36,20 @@ from riskquant.exceptions import PrettyKeyError
 # (canonicalize.py maps NA -> "" on extraction). "" is never a valid RF name.
 _BLANK: str = ""
 
+# Unique sentinel object for "name not in mapping". Using object() avoids
+# any accidental match against valid integer mapping values.
+_MISS = object()
+
 
 def _detect_unmapped(
     names: npt.NDArray[np.str_],
-    mapped: pd.Series,
+    mapped_null: npt.NDArray[np.bool_],
     blank_mask: npt.NDArray[np.bool_],
     *,
     ctx: str,
 ) -> None:
     """Raise on names that are populated but absent from the lookup table."""
-    unmapped = mapped.isna().to_numpy(copy=False) & ~blank_mask
+    unmapped = mapped_null & ~blank_mask
     if not unmapped.any():
         return
 
@@ -76,15 +79,21 @@ def resolve_required_ids(
         Human-readable column label for diagnostics.
     """
     blank_mask = names == _BLANK
-    mapped = pd.Series(names).map(mapping)
-    _detect_unmapped(names, mapped, blank_mask, ctx=ctx)
+
+    raw_mapped = [mapping.get(n, _MISS) for n in names]
+    mapped_null = np.array([v is _MISS for v in raw_mapped], dtype=bool)
+
+    _detect_unmapped(names, mapped_null, blank_mask, ctx=ctx)
 
     if blank_mask.any():
         bad = np.flatnonzero(blank_mask)[:10].tolist()
         raise PrettyKeyError(f"{ctx}: required name missing at rows {bad}.")
-    # No NaNs survive past the guards above -> direct int32 narrowing is safe.
-    arr = np.ascontiguousarray(mapped.to_numpy(dtype=np.int32))
-    return cast(npt.NDArray[np.int32], arr)
+
+    # No misses survive past the guards above -> direct int64 → int32 is safe.
+    arr = np.ascontiguousarray(
+        np.array([v for v in raw_mapped], dtype=np.int64).astype(np.int32)
+    )
+    return arr
 
 
 def resolve_optional_ids(
@@ -113,33 +122,28 @@ def resolve_optional_ids(
 
     Notes
     -----
-    The detection-before-narrowing ordering matters: `mapped.to_numpy(
-    dtype=np.float64)[populated].astype(np.int32)` on a NaN element returns
-    `MIN_INT32` rather than raising — that path used to silently corrupt
-    optional id columns on typos. Detection now runs unconditionally
-    before any narrowing.
+    Detection runs before narrowing. The prior pandas path converted
+    NaN to platform-MIN_INT32 silently on typos (``mapped.astype(np.float64)
+    [populated].astype(np.int32)`` produced garbage). This path is gone.
     """
     n = names.shape[0]
     blank_mask = names == _BLANK
-    mapped = pd.Series(names).map(mapping)
 
-    # Detect populated-but-unmapped BEFORE narrowing. After this gate the
-    # only NaN-bearing rows in `mapped` are the blank ones, and those are
-    # masked out of the scatter below.
-    _detect_unmapped(names, mapped, blank_mask, ctx=ctx)
+    raw_mapped = [mapping.get(n, _MISS) for n in names]
+    mapped_null = np.array([v is _MISS for v in raw_mapped], dtype=bool)
 
-    # Edge allocation; downstream kernels never touch this array directly.
+    # Detect populated-but-unmapped BEFORE narrowing.
+    _detect_unmapped(names, mapped_null, blank_mask, ctx=ctx)
+
     out = np.empty(n, dtype=np.int32)
     out.fill(np.int32(sentinel))
 
     populated = ~blank_mask
     if populated.any():
-        # Safe int64 narrowing: `_detect_unmapped` guarantees no NaNs in
-        # the populated subset. The float64 intermediate is gone — we go
-        # straight through int64 to int32 to keep platform behaviour on
-        # NaN coercion irrelevant.
-        out[populated] = (
-            mapped[populated].to_numpy(dtype=np.int64, copy=False).astype(np.int32)
-        )
+        pop_idx = np.flatnonzero(populated)
+        # All populated entries are valid (guards above): extract directly.
+        out[pop_idx] = np.array(
+            [raw_mapped[i] for i in pop_idx], dtype=np.int64
+        ).astype(np.int32)
 
     return out  # np.empty is already C-contiguous

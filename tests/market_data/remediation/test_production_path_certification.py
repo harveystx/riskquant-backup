@@ -18,6 +18,7 @@ import hostile_fixture as hf
 import md_oracle as oracle
 import numpy as np
 import pandas as pd
+import polars as pl
 import pytest
 
 from riskquant.config.enums.discounting_modes import DiscountingMode
@@ -239,7 +240,7 @@ def test_container_underlying_cannot_reach_the_fold_even_when_ingest_is_bypassed
     import dataclasses
 
     batch = compile_raw_df_into_ingest_batch(
-        raw_df=hf.SPOT_BOOK.iloc[[0]], static_config=rsc, copy=True
+        raw_df=pl.from_pandas(hf.SPOT_BOOK.iloc[[0]]), static_config=rsc
     )
     und = batch.underlying_ids.copy()
     und[0] = rsc.container_name_to_id["USD_OIS"]
@@ -267,14 +268,16 @@ def test_container_underlying_is_rejected_at_ingest(rsc):
 
     with pytest.raises(PrettyKeyError):
         compile_raw_df_into_ingest_batch(
-            raw_df=pd.DataFrame([
-                dict(
-                    uid=1,
-                    instrument="SPOT",
-                    quantity=1.0,
-                    underlying="USD_OIS",
-                    settlement_ccy="USD",
-                )
-            ]),
+            raw_df=pl.from_pandas(
+                pd.DataFrame([
+                    dict(
+                        uid=1,
+                        instrument="SPOT",
+                        quantity=1.0,
+                        underlying="USD_OIS",
+                        settlement_ccy="USD",
+                    )
+                ])
+            ),
             static_config=rsc,
         )

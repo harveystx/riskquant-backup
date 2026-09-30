@@ -38,6 +38,7 @@ from types import ModuleType
 
 import numpy as np
 import pandas as pd
+import polars as pl
 import pytest
 
 
@@ -97,7 +98,7 @@ def portfolio_and_mapper(
 ) -> tuple[CompiledPortfolio, UixMapper]:
     """Compile the fixture's own three-trade positions frame once per module."""
     ingest_batch = compile_raw_df_into_ingest_batch(
-        raw_df=_FIXTURES._POSITIONS_DF, static_config=rsc
+        raw_df=pl.from_pandas(_FIXTURES._POSITIONS_DF), static_config=rsc
     )
     mapper = build_uix_mapper(
         [ingest_batch],
@@ -233,7 +234,9 @@ def test_unregistered_instrument_fails_loud_not_silent() -> None:
         "strike_discount_curve": ["USD_SOFR_OIS"],
     })
 
-    ingest_batch = compile_raw_df_into_ingest_batch(raw_df=raw, static_config=rsc)
+    ingest_batch = compile_raw_df_into_ingest_batch(
+        raw_df=pl.from_pandas(raw), static_config=rsc
+    )
     mapper = build_uix_mapper([ingest_batch])
 
     with pytest.raises(RuntimeError, match="No compiler registered"):

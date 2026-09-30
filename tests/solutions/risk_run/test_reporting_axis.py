@@ -25,6 +25,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import polars as pl
 import pytest
 
 _REMEDIATION = Path(__file__).resolve().parents[2] / "market_data" / "remediation"
@@ -112,7 +113,7 @@ class World:
         self.book = pd.DataFrame(rows)
         self.qty = dict(zip(self.book.uid, self.book.quantity, strict=True))
         self.batch = compile_raw_df_into_ingest_batch(
-            raw_df=self.book, static_config=RSC, copy=True
+            raw_df=pl.from_pandas(self.book), static_config=RSC
         )
         self.mapper = build_uix_mapper([self.batch], as_of_ord32=AS_OF)
         self.context = ValuationContext(
@@ -172,7 +173,9 @@ class World:
         k_val = self.axis.num_valuation_factors
         axis_ids = self.axis.factor_ids[:k_val] if axis_ids is None else axis_ids
         sub = self.book[self.book.uid.isin(derived)].reset_index(drop=True)
-        b = compile_raw_df_into_ingest_batch(raw_df=sub, static_config=RSC, copy=True)
+        b = compile_raw_df_into_ingest_batch(
+            raw_df=pl.from_pandas(sub), static_config=RSC
+        )
         m = build_uix_mapper([b], as_of_ord32=AS_OF)
         p = compile_portfolio_from_ingest_batch(ingest_batch=b, uix_mapper=m)
         layout = build_universe_mapping(

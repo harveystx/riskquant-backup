@@ -15,6 +15,7 @@ from datetime import date, timedelta
 import hostile_fixture as hf
 import numpy as np
 import pandas as pd
+import polars as pl
 import pytest
 
 from riskquant.config.enums.discounting_modes import DiscountingMode
@@ -91,7 +92,7 @@ def _opt(uid, **kw):
 
 def _ingest(rsc, rows, as_of=hf.AS_OF):
     return compile_raw_df_into_ingest_batch(
-        raw_df=pd.DataFrame(rows), static_config=rsc, copy=True, as_of_date=as_of
+        raw_df=pl.from_pandas(pd.DataFrame(rows)), static_config=rsc, as_of_date=as_of
     )
 
 

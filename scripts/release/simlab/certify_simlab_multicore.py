@@ -223,7 +223,7 @@ _FIXTURE = textwrap.dedent(
     def reporting_route(inp):
         # D085: settlement currencies from the RAW positions frame (U order);
         # FX routes by name from every configured FX pair on the run axis.
-        settle = dict(zip(POSITIONS["uid"].tolist(), POSITIONS["settlement_ccy"].tolist()))
+        settle = dict(zip(POSITIONS["uid"].to_list(), POSITIONS["settlement_ccy"].to_list()))
         pairs = np.asarray(RSC.fx_spot_matrix)
         fx_ids = np.unique(pairs[pairs != int(NO_FX_RF_REQUIRED)])
         axis_ids = np.asarray(inp["required_factor_ids"])

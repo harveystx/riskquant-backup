@@ -24,6 +24,7 @@ from datetime import date
 
 import numpy as np
 import pandas as pd
+import polars as pl
 import pytest
 
 from riskquant.config.enums.discounting_modes import DiscountingMode
@@ -115,7 +116,7 @@ def _book(*rows):
 
 def _run(rsc, book, *, as_of, levels, ingest_as_of=None, portfolio=None):
     batch = compile_raw_df_into_ingest_batch(
-        raw_df=book, static_config=rsc, copy=True, as_of_date=ingest_as_of
+        raw_df=pl.from_pandas(book), static_config=rsc, as_of_date=ingest_as_of
     )
     mapper = build_uix_mapper([batch], as_of_ord32=int(date_to_ord32(as_of)))
     portfolio = portfolio or compile_portfolio_from_ingest_batch(
@@ -170,7 +171,7 @@ def test_valid_relative_spot_resolves_to_its_pillar_and_dated_contract(
 @pytest.mark.parametrize("name", DATED_PILLARS)
 def test_missing_run_as_of_fails_before_market_data_state(rsc, name):
     batch = compile_raw_df_into_ingest_batch(
-        raw_df=_book((name, 1.0)), static_config=rsc, copy=True
+        raw_df=pl.from_pandas(_book((name, 1.0))), static_config=rsc
     )
     assert int(batch.as_of_ord32) == int(NO_DATE_ORD32)
     mapper = build_uix_mapper([batch])
@@ -223,9 +224,8 @@ def test_different_as_of_keeps_the_pillar_and_moves_the_contract(rsc, name):
         build_uix_mapper(
             [
                 compile_raw_df_into_ingest_batch(
-                    raw_df=_book((name, 1.0)),
+                    raw_df=pl.from_pandas(_book((name, 1.0))),
                     static_config=rsc,
-                    copy=True,
                     as_of_date=MONTH_END,
                 )
             ],
@@ -239,16 +239,15 @@ def test_different_as_of_keeps_the_pillar_and_moves_the_contract(rsc, name):
 # --------------------------------------------------------------- Test 5
 def test_the_no_date_sentinel_is_never_a_run_as_of(rsc):
     batch = compile_raw_df_into_ingest_batch(
-        raw_df=_book(("BRENT_CRUDE_FWD[M+0]", 1.0)), static_config=rsc, copy=True
+        raw_df=pl.from_pandas(_book(("BRENT_CRUDE_FWD[M+0]", 1.0))), static_config=rsc
     )
     with pytest.raises(ValueError, match="NO_DATE_ORD32 sentinel"):
         build_uix_mapper([batch], as_of_ord32=int(NO_DATE_ORD32))
     assert int(date_to_ord32(SENTINEL_DATE)) == int(NO_DATE_ORD32)
     with pytest.raises(ValueError, match="NO_DATE_ORD32 sentinel"):
         compile_raw_df_into_ingest_batch(
-            raw_df=_book(("BRENT_CRUDE_FWD[M+0]", 1.0)),
+            raw_df=pl.from_pandas(_book(("BRENT_CRUDE_FWD[M+0]", 1.0))),
             static_config=rsc,
-            copy=True,
             as_of_date=SENTINEL_DATE,
         )
 
@@ -288,7 +287,7 @@ def test_canonical_relative_spot_rows_resolve_at_the_canonical_as_of(rsc):
     assert rate_rows.uid.tolist() == [11]
     with pytest.raises(Exception, match="D063"):
         compile_raw_df_into_ingest_batch(
-            raw_df=rate_rows[cols], static_config=rsc, copy=True, as_of_date=A
+            raw_df=pl.from_pandas(rate_rows[cols]), static_config=rsc, as_of_date=A
         )
 
     priced = spot[spot.underlying != "USD_LIBOR_3M[10Y]"][cols].reset_index(drop=True)
@@ -296,7 +295,7 @@ def test_canonical_relative_spot_rows_resolve_at_the_canonical_as_of(rsc):
 
     def resolve():
         batch = compile_raw_df_into_ingest_batch(
-            raw_df=priced, static_config=rsc, copy=True, as_of_date=A
+            raw_df=pl.from_pandas(priced), static_config=rsc, as_of_date=A
         )
         mapper = build_uix_mapper([batch])
         portfolio = compile_portfolio_from_ingest_batch(

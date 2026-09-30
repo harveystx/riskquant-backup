@@ -22,6 +22,7 @@ from datetime import date
 
 import numpy as np
 import pandas as pd
+import polars as pl
 import pytest
 
 from riskquant.config.enums.discounting_modes import DiscountingMode
@@ -98,7 +99,7 @@ def _forward(**overrides) -> pd.DataFrame:
 
 def _ingest_and_compile(rsc, frame, as_of=A):
     batch = compile_raw_df_into_ingest_batch(
-        raw_df=frame, static_config=rsc, copy=True, as_of_date=as_of
+        raw_df=pl.from_pandas(frame), static_config=rsc, as_of_date=as_of
     )
     mapper = build_uix_mapper([batch])
     portfolio = compile_portfolio_from_ingest_batch(
@@ -161,27 +162,28 @@ def test_option_economics_do_not_change_when_delivery_metadata_is_supplied(rsc):
 def test_node_forward_still_requires_delivery_and_its_contract_period(rsc):
     with pytest.raises(ValueError, match=r"Missing required columns"):
         compile_raw_df_into_ingest_batch(
-            raw_df=_forward().drop(columns=["delivery_date"]),  # column absent
+            raw_df=pl.from_pandas(
+                _forward().drop(columns=["delivery_date"])
+            ),  # column absent
             static_config=rsc,
-            copy=True,
             as_of_date=A,
         )
     # a null delivery on a present column is rejected too
     with pytest.raises(ValueError, match=r"Forward missing 'delivery_date'"):
         compile_raw_df_into_ingest_batch(
-            raw_df=_forward(delivery_date=None),
+            raw_df=pl.from_pandas(_forward(delivery_date=None)),
             static_config=rsc,
-            copy=True,
             as_of_date=A,
         )
     # the D065 period check is untouched for forwards
     with pytest.raises(Exception, match="is the 202602 contract"):
         compile_raw_df_into_ingest_batch(
-            raw_df=_forward(
-                delivery_date=date(2026, 3, 15), settlement_date=date(2026, 3, 17)
+            raw_df=pl.from_pandas(
+                _forward(
+                    delivery_date=date(2026, 3, 15), settlement_date=date(2026, 3, 17)
+                )
             ),
             static_config=rsc,
-            copy=True,
             as_of_date=A,
         )
     # and a well-formed forward still ingests and compiles
@@ -193,7 +195,7 @@ def test_forward_and_option_still_require_the_run_as_of(rsc):
     for frame in (_forward(), _option()):
         with pytest.raises(ValueError, match="require the run as-of date"):
             compile_raw_df_into_ingest_batch(
-                raw_df=frame, static_config=rsc, copy=True, as_of_date=None
+                raw_df=pl.from_pandas(frame), static_config=rsc, as_of_date=None
             )
 
 
