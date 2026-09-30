@@ -269,7 +269,7 @@ def _pv(rsc, snap):
             settlement_ccy="USD",
         ),
     ])
-    batch = compile_raw_df_into_ingest_batch(raw_df=book, static_config=rsc, copy=True)
+    batch = compile_raw_df_into_ingest_batch(raw_df=pl.from_pandas(book), static_config=rsc)
     mapper = build_uix_mapper([batch], as_of_ord32=int(date_to_ord32(hf.AS_OF)))
     portfolio = compile_portfolio_from_ingest_batch(
         ingest_batch=batch, uix_mapper=mapper

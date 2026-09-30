@@ -296,7 +296,7 @@ def run_spot_book(
     from riskquant.valuation.engine import run_valuation
 
     batch = compile_raw_df_into_ingest_batch(
-        raw_df=book, static_config=static_config, copy=True
+        raw_df=pl.from_pandas(book), static_config=static_config
     )
     mapper = build_uix_mapper([batch], as_of_ord32=int(date_to_ord32(AS_OF)))
     portfolio = compile_portfolio_from_ingest_batch(

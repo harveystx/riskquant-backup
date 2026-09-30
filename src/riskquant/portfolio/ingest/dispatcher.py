@@ -1,5 +1,4 @@
 # src/riskquant/portfolio/ingest/dispatcher.py
-
 """
 Instrument routing for the ingest edge.
 
@@ -27,7 +26,7 @@ from typing import Final, TypeAlias, cast
 
 import numpy as np
 import numpy.typing as npt
-import pandas as pd
+import polars as pl
 
 from riskquant.portfolio.ingest.validate import (
     validate_forward_family,
@@ -43,7 +42,7 @@ from riskquant.portfolio.instruments import (
 )
 
 # A masked validator consumes the frame plus a boolean row selector.
-ValidatorFn: TypeAlias = Callable[[pd.DataFrame, npt.NDArray[np.bool_]], None]
+ValidatorFn: TypeAlias = Callable[[pl.DataFrame, npt.NDArray[np.bool_]], None]
 
 # ==============================================================================
 # DISPATCH TABLES (DENSE, INTEGER-KEYED)
@@ -73,26 +72,30 @@ _FAMILY_LUT: Final[npt.NDArray[np.int8]] = np.asarray(
 # ==============================================================================
 
 
-def resolve_instrument_ids(df: pd.DataFrame) -> npt.NDArray[np.int32]:
+def resolve_instrument_ids(df: pl.DataFrame) -> npt.NDArray[np.int32]:
     """
-    Map the `instrument` name column to int32 instrument ids.
+    Map the ``instrument`` name column to int32 instrument ids.
 
-    The strings die here: every downstream stage routes on the integer id.
+    Strings die here: every downstream stage routes on the integer id.
+
+    Sentinel -1 is used for lookup misses. Valid instrument IDs are non-negative
+    (they are dense enum values starting at 0).
     """
-    mapped = df["instrument"].map(INSTRUMENT_NAME_TO_ID_REGISTRY)
+    names = df["instrument"].to_numpy()  # object array of Python str
 
-    invalid = mapped.isna().to_numpy(copy=False)
+    _MISS = -1
+    ids = np.array(
+        [INSTRUMENT_NAME_TO_ID_REGISTRY.get(n, _MISS) for n in names],
+        dtype=np.int32,
+    )
+    invalid = ids == _MISS
+
     if invalid.any():
-        names = df["instrument"]
-        rows = names.index[invalid].tolist()[:10]
-        bad = sorted(names[invalid].dropna().unique().tolist())
+        rows = np.flatnonzero(invalid)[:10].tolist()
+        bad = sorted({str(n) for n in names[invalid]})[:10]
         raise ValueError(f"Unknown instrument(s):\n{bad}\nRows: {rows}")
 
-    # Generate the contiguous array
-    arr = np.ascontiguousarray(mapped.to_numpy(dtype=np.int32))
-
-    # Cast the return value to satisfy the type checker
-    return cast(npt.NDArray[np.int32], arr)
+    return cast(npt.NDArray[np.int32], np.ascontiguousarray(ids))
 
 
 # ==============================================================================
@@ -100,24 +103,24 @@ def resolve_instrument_ids(df: pd.DataFrame) -> npt.NDArray[np.int32]:
 # ==============================================================================
 
 
-def dispatch_ingest_validation(df: pd.DataFrame) -> npt.NDArray[np.int32]:
+def dispatch_ingest_validation(df: pl.DataFrame) -> npt.NDArray[np.int32]:
     """
     Validate a materialized ingest frame via table-driven routing.
 
     Runs global checks, then routes every row through its family validator and
     any instrument-level refinement validator. The resolved instrument-id array
     is returned so the downstream compiler can reuse it without re-mapping the
-    `instrument` strings.
+    ``instrument`` strings.
 
     Parameters
     ----------
     df
-        Canonicalized + materialized ingest frame.
+        Canonicalized + materialized ingest frame (``pl.DataFrame``).
 
     Returns
     -------
     npt.NDArray[np.int32]
-        Per-row instrument ids, aligned to `df`.
+        Per-row instrument ids, aligned to ``df``.
     """
     # ---- global invariants -------------------------------------------------
     validate_unique_uids(df)

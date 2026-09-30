@@ -2,10 +2,10 @@
 """
 DataFrame -> Struct-of-Arrays compiler.
 
-This is the final hop of the ingest edge: a validated, materialized DataFrame
-is collapsed into `CompiledIngestArrays`, a flat homogeneous SoA payload with
-no strings and no Python objects. `IngestBatch.from_compiled` wraps the result
-for the engine.
+This is the final hop of the ingest edge: a validated, materialized Polars
+DataFrame is collapsed into ``CompiledIngestSoA``, a flat homogeneous SoA
+payload with no strings and no Python objects. ``IngestBatch.from_compiled``
+wraps the result for the engine.
 
 Refactor history
 ----------------
@@ -16,18 +16,22 @@ Refactor history
 - Underlying currency resolution optimized to occur concurrently with ID mapping.
 - Real volatility-container resolution: the `volatility_container_name` schema
   column is mapped to int32 container ids and to the per-trade int8 y-axis-type
-  id. Both fields land on `CompiledIngestSoA`; `IngestBatch.from_compiled` is
+  id. Both fields land on ``CompiledIngestSoA``; ``IngestBatch.from_compiled`` is
   a pure copy with no synthetic sentinels.
+- Pandas removal: pd.DataFrame -> pl.DataFrame. All pd.Index / pd.Series /
+  pd.Series.map helpers are replaced with direct numpy dict lookups and Polars
+  Series extraction. No pandas at import time.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date
 
 import numpy as np
 import numpy.typing as npt
-import pandas as pd
+import polars as pl
 
 from riskquant.config.static_config.static_config import RiskStaticConfig
 from riskquant.constants import (
@@ -48,6 +52,7 @@ from riskquant.portfolio.ingest.parser import (
 )
 from riskquant.portfolio.ingest.rf_resolver import resolve_optional_ids
 from riskquant.utils.dates import date_to_ord32
+
 
 # ==============================================================================
 # OUTPUT STRUCTURE
@@ -138,33 +143,33 @@ class CompiledIngestSoA:
             "net_set_id",
         ]
 
-        data = np.column_stack([
-            self.uids[:n],
-            self.instrument_ids[:n],
-            self.qty[:n],
-            self.strike[:n],
-            self.cp_mult[:n],
-            self.settle_ord[:n],
-            self.delivery_ord[:n],
-            self.expiry_ord[:n],
-            self.underlying_ids[:n],
-            self.volatility_ids[:n],
-            self.vol_surface_y_axis_type_ids[:n],
-            self.fx_u2s_ids[:n],
-            self.fx_u2s_inv[:n],
-            self.fx_k2s_ids[:n],
-            self.fx_k2s_inv[:n],
-            self.under_discount_curve_ids[:n],
-            self.strike_discount_curve_ids[:n],
-            self.netting_set_id[:n],
-        ])
+        data = np.column_stack(
+            [
+                self.uids[:n],
+                self.instrument_ids[:n],
+                self.qty[:n],
+                self.strike[:n],
+                self.cp_mult[:n],
+                self.settle_ord[:n],
+                self.delivery_ord[:n],
+                self.expiry_ord[:n],
+                self.underlying_ids[:n],
+                self.volatility_ids[:n],
+                self.vol_surface_y_axis_type_ids[:n],
+                self.fx_u2s_ids[:n],
+                self.fx_u2s_inv[:n],
+                self.fx_k2s_ids[:n],
+                self.fx_k2s_inv[:n],
+                self.under_discount_curve_ids[:n],
+                self.strike_discount_curve_ids[:n],
+                self.netting_set_id[:n],
+            ]
+        )
 
         fmts = [int_fmt] * len(headers)
         fmts[2] = fmts[3] = float_fmt  # qty, strike
 
         # Parse field width from format spec (e.g. ">16_.5f" -> 16)
-        import re
-
         def _fmt_width(fmt: str) -> int:
             m = re.match(r"[<>^]?(\d+)", fmt)
             return int(m.group(1)) if m else len(fmt)
@@ -187,35 +192,56 @@ class CompiledIngestSoA:
 # ==============================================================================
 
 
-def _zero_series(index: pd.Index) -> pd.Series:
-    """Float64 zero-fill series for absent numeric columns."""
-    return pd.Series(0.0, index=index, dtype=np.float64)
+def _get_f64_col(df: pl.DataFrame, col: str, n: int) -> npt.NDArray[np.float64]:
+    """
+    Extract C-contiguous float64 numpy array.
+
+    Absent column -> zeros. Null values -> 0.0.
+    Replaces the prior ``_to_f64(df.get(col, _zero_series(index)))`` pattern.
+    """
+    if col not in df.columns:
+        return np.zeros(n, dtype=np.float64)
+    return np.ascontiguousarray(df[col].fill_null(0.0).to_numpy().astype(np.float64))
 
 
-def _blank_series(index: pd.Index) -> pd.Series:
-    """NA-filled string series for absent string columns."""
-    return pd.Series(pd.NA, index=index, dtype="string")
+def _get_str_col(df: pl.DataFrame, col: str, n: int) -> npt.NDArray[np.str_]:
+    """
+    Extract C-contiguous str numpy array.
+
+    Absent column -> empty strings. Null values -> "".
+    Replaces the prior ``_to_numpy_str(df.get(col, _blank_series(index)))`` pattern.
+    """
+    if col not in df.columns:
+        return np.full(n, "", dtype=object).astype(str)
+    return np.ascontiguousarray(
+        df[col].cast(pl.Utf8).fill_null("").to_numpy().astype(str)
+    )
 
 
-def _to_numpy_str(ser: pd.Series) -> npt.NDArray[np.str_]:
-    """Extract a C-contiguous str array; NA collapses to the empty string."""
-    return np.ascontiguousarray(ser.fillna("").to_numpy(dtype=str, copy=False))
+def _get_date_col(df: pl.DataFrame, col: str, n: int) -> pl.Series:
+    """
+    Return date column as pl.Series, or an all-null Utf8 series if absent.
 
-
-def _to_f64(ser: pd.Series) -> npt.NDArray[np.float64]:
-    """Extract a C-contiguous float64 array; NA collapses to 0.0."""
-    return np.ascontiguousarray(ser.fillna(0.0).to_numpy(dtype=np.float64))
+    parse_optional_date_series_to_ord32 treats all-null Utf8 as sentinel-fill.
+    """
+    if col not in df.columns:
+        return pl.Series([None] * n, dtype=pl.Utf8)
+    return df[col]
 
 
 def _compile_option_multiplier(
-    df: pd.DataFrame,
+    df: pl.DataFrame,
     n: int,
 ) -> npt.NDArray[np.int8]:
     """
-    Pack `is_call` into the branchless int8 multiplier.
+    Pack ``is_call`` into the branchless int8 multiplier.
 
     +1 call, -1 put, 0 not-an-option. The encoding lets the pricer form the
     payoff sign by multiplication instead of branching.
+
+    ``is_call`` is materialized to pl.Float64 (null for absent rows).
+    Polars extracts null-Float64 as NaN in numpy, preserving identical null
+    detection semantics to the prior pandas path.
     """
     cp_mult = np.empty(n, dtype=np.int8)
     cp_mult.fill(NOT_OPTION_MULT)
@@ -223,9 +249,9 @@ def _compile_option_multiplier(
     if "is_call" not in df.columns:
         return cp_mult
 
-    # is_call is materialized to nullable float64 (1.0 / 0.0 / NaN).
-    raw = df["is_call"].to_numpy(copy=False)
-    present = pd.notna(raw)
+    # pl.Float64 with nulls -> numpy float64 with NaN for nulls
+    raw = df["is_call"].to_numpy()
+    present = ~np.isnan(raw)
     flags = np.where(present, raw, 0.0).astype(np.int8)
 
     cp_mult[present & (flags == 1)] = CALL_OPTION_MULT
@@ -234,20 +260,29 @@ def _compile_option_multiplier(
 
 
 def _compile_netting_set_id(
-    df: pd.DataFrame,
+    df: pl.DataFrame,
     n: int,
 ) -> npt.NDArray[np.int64]:
     """
     Compile the effective-netting-set linkage into a flat int64 array.
-    Absent column or NA row -> `NO_NETTING_SET_ID`.
+
+    Absent column or null row -> ``NO_ID`` sentinel.
+
+    pl.Int64 preserves nulls natively; ``fill_null`` replaces them with the
+    sentinel before narrowing to numpy. This avoids the pandas 3.0
+    ``IntCastingNaNError`` that the prior pandas path encountered when
+    nullable float64 columns were narrowed to np.int64.
     """
     out = np.empty(n, dtype=np.int64)
     if "netting_set_id" not in df.columns:
         out.fill(np.int64(NO_ID))
         return out
 
-    filled = df["netting_set_id"].fillna(np.int64(NO_ID))
-    return np.ascontiguousarray(filled.to_numpy(dtype=np.int64))
+    filled = df["netting_set_id"].fill_null(np.int64(NO_ID))
+    return np.ascontiguousarray(filled.to_numpy().astype(np.int64))
+
+
+_MISS = object()  # sentinel for "name not in dict"; unique object, never == int
 
 
 def _resolve_underlying(
@@ -256,20 +291,28 @@ def _resolve_underlying(
     n: int,
 ) -> tuple[npt.NDArray[np.int32], npt.NDArray[np.int8]]:
     """
-    Classify each underlying name as a risk factor or a container and return
-    a single collapsed semantic underlying_ids array, alongside the ccy_id.
+    Classify each underlying name as a risk factor or a container.
 
-    Vectorized: one pd.Series.map per universe, boolean-mask scatter.
+    Returns a collapsed ``underlying_ids`` array and the per-row ``ccy_id``
+    (int8), both length n.
+
+    Replaces the prior ``pd.Series(names).map(dict)`` dual-lookup with numpy
+    dict comprehensions. Sentinel -1 is safe: valid RF/container IDs are
+    non-negative.
     """
     name_to_rf = static_config.rel_name_to_rf_id
     name_to_container = static_config.container_name_to_id
 
-    und_ser = pd.Series(underlying_names)
-    rf_hits = und_ser.map(name_to_rf)
-    container_hits = und_ser.map(name_to_container)
+    rf_hits = np.array(
+        [name_to_rf.get(n_str, _MISS) for n_str in underlying_names], dtype=object
+    )
+    cont_hits = np.array(
+        [name_to_container.get(n_str, _MISS) for n_str in underlying_names],
+        dtype=object,
+    )
 
-    is_rf = rf_hits.notna().to_numpy(copy=False)
-    is_container = container_hits.notna().to_numpy(copy=False)
+    is_rf = np.array([v is not _MISS for v in rf_hits], dtype=bool)
+    is_container = np.array([v is not _MISS for v in cont_hits], dtype=bool)
 
     both = is_rf & is_container
     if both.any():
@@ -289,18 +332,18 @@ def _resolve_underlying(
             f"  blank/empty values: {blanks}"
         )
 
-    # Dense semantic ID array
     underlying_ids = np.full(n, NO_ID, dtype=np.int32)
-    # Currency ID array
     ccy_ids = np.full(n, -1, dtype=np.int8)
 
     if is_rf.any():
-        rf_int32 = rf_hits[is_rf].to_numpy(dtype=np.int32, copy=False)
+        rf_int32 = np.array([rf_hits[i] for i in np.flatnonzero(is_rf)], dtype=np.int32)
         underlying_ids[is_rf] = rf_int32
         ccy_ids[is_rf] = static_config.rf_id_to_ccy_id[rf_int32]
 
     if is_container.any():
-        cont_int32 = container_hits[is_container].to_numpy(dtype=np.int32, copy=False)
+        cont_int32 = np.array(
+            [cont_hits[i] for i in np.flatnonzero(is_container)], dtype=np.int32
+        )
         underlying_ids[is_container] = cont_int32
         cont_slots = static_config.container_slots(
             cont_int32.astype(np.int32, copy=False)
@@ -317,7 +360,9 @@ def _resolve_underlying_ccy_strings(
 ) -> npt.NDArray[np.str_]:
     """
     Derive the underlying's quote currency NAME per row.
+
     Maps the ccy_ids derived during underlying resolution back to strings.
+    Rows where ccy_id < 0 (underlying is absent) fall back to settlement ccy.
     """
     n = ccy_ids.shape[0]
     ccy_id_to_name = static_config.ccy_id_to_name  # list[str], indexed by ccy_id
@@ -343,38 +388,27 @@ def _resolve_volatility_ids(
     static_config: RiskStaticConfig,
 ) -> npt.NDArray[np.int32]:
     """
-    Resolve the `volatility_container_name` column to int32 semantic ids.
+    Resolve the ``volatility_container_name`` column to int32 semantic ids.
 
-    A volatility name addresses ONE of two universes, exactly like
-    `underlying`:
-      - a vol-NODE rf-id (e.g. ``AAPL_ATM_VOL``), read by the option-NODE
-        kernel as ``vol_nodes[v_uix]`` — lives in ``rel_name_to_rf_id``;
-      - a vol-SURFACE container id (e.g. ``AAPL_VOL_SURF``), interpolated
-        by the option-CURVE kernel — lives in ``container_name_to_id``.
-
-    Resolving against only ``container_name_to_id`` (the prior behaviour)
-    made every node-typed ATM vol structurally unresolvable and hard-failed
-    the ingest. We mirror `_resolve_underlying`: map BOTH universes, scatter
-    into one collapsed id array, guard the namespace collision, and let
-    blank rows (non-option trades) collapse to ``NO_ID``.
-
-    Downstream is already node-aware: the resolved id flows into
-    ``IngestBatch.volatility_ids`` -> ``market_id_universe`` (node-ids and
-    container-ids coexist in that sorted-unique space), and
-    ``_resolve_vol_surface_y_axis_type_ids`` returns
-    ``NOT_IMPLEMENTED_SENTINEL`` for any id that is not a surface (the
-    option-NODE kernel never reads y-axis type). So this is the only site
-    that needed the dual lookup.
+    Mirrors ``_resolve_underlying``: maps both the RF universe
+    (``rel_name_to_rf_id``) and the container universe
+    (``container_name_to_id``). Blank rows (non-option trades) collapse to
+    ``NO_ID``.
     """
     n = names.shape[0]
     blank_mask = names == ""
 
-    ser = pd.Series(names)
-    rf_hits = ser.map(static_config.rel_name_to_rf_id)
-    container_hits = ser.map(static_config.container_name_to_id)
+    rf_hits = np.array(
+        [static_config.rel_name_to_rf_id.get(n_str, _MISS) for n_str in names],
+        dtype=object,
+    )
+    cont_hits = np.array(
+        [static_config.container_name_to_id.get(n_str, _MISS) for n_str in names],
+        dtype=object,
+    )
 
-    is_rf = rf_hits.notna().to_numpy(copy=False)
-    is_container = container_hits.notna().to_numpy(copy=False)
+    is_rf = np.array([v is not _MISS for v in rf_hits], dtype=bool)
+    is_container = np.array([v is not _MISS for v in cont_hits], dtype=bool)
 
     both = is_rf & is_container
     if both.any():
@@ -397,12 +431,15 @@ def _resolve_volatility_ids(
 
     out = np.empty(n, dtype=np.int32)
     out.fill(np.int32(NO_ID))
+
     if is_rf.any():
-        out[is_rf] = rf_hits[is_rf].to_numpy(dtype=np.int32, copy=False)
+        idx_rf = np.flatnonzero(is_rf)
+        out[idx_rf] = np.array([rf_hits[i] for i in idx_rf], dtype=np.int32)
+
     if is_container.any():
-        out[is_container] = container_hits[is_container].to_numpy(
-            dtype=np.int32, copy=False
-        )
+        idx_cont = np.flatnonzero(is_container)
+        out[idx_cont] = np.array([cont_hits[i] for i in idx_cont], dtype=np.int32)
+
     return out
 
 
@@ -411,7 +448,7 @@ def _resolve_vol_surface_y_axis_type_ids(
     static_config: RiskStaticConfig,
 ) -> npt.NDArray[np.int8]:
     """
-    Map each non-sentinel `volatility_id` to its surface y-axis-type id (int8).
+    Map each non-sentinel ``volatility_id`` to its surface y-axis-type id (int8).
 
     The kernel's per-trade y-axis dispatch (STRIKE / LOG_STRIKE / MONEYNESS
     / LOG_MONEYNESS) reads from this column. Resolving here keeps the
@@ -421,15 +458,15 @@ def _resolve_vol_surface_y_axis_type_ids(
     Post-calibration values
     -----------------------
     DELTA-quoted surfaces are calibrated to MONEYNESS_FWD at builder
-    time (see `market_data.calibrate.delta_to_moneyness`). The helper
-    `surface_y_axis_kind_for_kernel` translates the static-config kind
+    time (see ``market_data.calibrate.delta_to_moneyness``). The helper
+    ``surface_y_axis_kind_for_kernel`` translates the static-config kind
     string to the post-calibration int8 id, keeping the per-trade view
     here in lockstep with the per-surface view consumed by the runtime
     builder.
 
-    Sentinel rows (`vol_id == NO_ID`) and rows whose `vol_id` is NOT a
+    Sentinel rows (``vol_id == NO_ID``) and rows whose ``vol_id`` is NOT a
     surface (e.g. an ATM-vol NODE container) collapse to
-    `NOT_IMPLEMENTED_SENTINEL`. The option-curve pricer's pre-flight
+    ``NOT_IMPLEMENTED_SENTINEL``. The option-curve pricer's pre-flight
     check refuses the sentinel — that's the contract; option-NODE rows
     never reach that pricer.
 
@@ -445,8 +482,8 @@ def _resolve_vol_surface_y_axis_type_ids(
 
     surface_meta_dict = static_config.surface_meta_dict
     # Per-container cache: identical surface ids (the common case) only
-    # hit the helper lookup once. Cached `NOT_IMPLEMENTED_SENTINEL`
-    # records non-surface containers so we don't re-probe `.get`.
+    # hit the helper lookup once. Cached ``NOT_IMPLEMENTED_SENTINEL``
+    # records non-surface containers so we don't re-probe ``.get``.
     sid_to_y_axis_id: dict[int, np.int8] = {}
 
     for i in range(n):
@@ -489,7 +526,7 @@ def _resolve_vol_surface_y_axis_type_ids(
 
 def compile_ingest_soa_payload_from_df(
     *,
-    df: pd.DataFrame,
+    df: pl.DataFrame,
     instrument_ids: npt.NDArray[np.int32],
     static_config: RiskStaticConfig,
     as_of_date: date | None = None,
@@ -500,9 +537,9 @@ def compile_ingest_soa_payload_from_df(
     Parameters
     ----------
     df
-        Canonicalized, materialized, validated ingest frame (index 0..n-1).
+        Canonicalized, materialized, validated ingest frame (``pl.DataFrame``).
     instrument_ids
-        Per-row int32 instrument ids from `dispatch_ingest_validation`.
+        Per-row int32 instrument ids from ``dispatch_ingest_validation``.
     static_config
         Compiled RiskStaticConfig. Single source of truth for every name
         lookup, ccy translation, and FX-pair resolution.
@@ -528,31 +565,31 @@ def compile_ingest_soa_payload_from_df(
                 "NO_DATE_ORD32 sentinel; it cannot be a run as-of (D067)."
             )
 
-    index = df.index
-
     # --------------------------------------------------------------------------
     # CORE ECONOMICS
     # --------------------------------------------------------------------------
-    uids = np.ascontiguousarray(df["uid"].to_numpy(dtype=np.int64, copy=False))
-    qty = _to_f64(df.get("quantity", _zero_series(index)))
-    strike = _to_f64(df.get("strike_price", _zero_series(index)))
+    uids = np.ascontiguousarray(df["uid"].to_numpy().astype(np.int64))
+    qty = _get_f64_col(df, "quantity", n)
+    strike = _get_f64_col(df, "strike_price", n)
     cp_mult = _compile_option_multiplier(df, n)
 
     # --------------------------------------------------------------------------
     # DATES -> ORDINAL32 (NO UIX LOGIC)
     # --------------------------------------------------------------------------
+    # _get_date_col returns an all-null Utf8 series for absent columns, which
+    # parse_optional_date_series_to_ord32 treats as sentinel-fill.
     settle_ord = parse_optional_date_series_to_ord32(
-        df.get("settlement_date", _blank_series(index)),
+        _get_date_col(df, "settlement_date", n),
         col_name="settlement_date",
         sentinel=NO_DATE_ORD32,
     )
     delivery_ord = parse_optional_date_series_to_ord32(
-        df.get("delivery_date", _blank_series(index)),
+        _get_date_col(df, "delivery_date", n),
         col_name="delivery_date",
         sentinel=NO_DATE_ORD32,
     )
     expiry_ord = parse_optional_date_series_to_ord32(
-        df.get("expiry_date", _blank_series(index)),
+        _get_date_col(df, "expiry_date", n),
         col_name="expiry_date",
         sentinel=NO_DATE_ORD32,
     )
@@ -562,7 +599,7 @@ def compile_ingest_soa_payload_from_df(
     # --------------------------------------------------------------------------
 
     # --- RESOLVE UNDERLYING ---
-    underlying_names = _to_numpy_str(df.get("underlying", _blank_series(index)))
+    underlying_names = _get_str_col(df, "underlying", n)
     underlying_ids, under_ccy_ids = _resolve_underlying(
         underlying_names, static_config, n
     )
@@ -571,22 +608,20 @@ def compile_ingest_soa_payload_from_df(
     container_name_to_container_id = static_config.container_name_to_id
 
     under_df_curve_ids = resolve_optional_ids(
-        _to_numpy_str(df.get("under_discount_curve", _blank_series(index))),
+        _get_str_col(df, "under_discount_curve", n),
         container_name_to_container_id,
         sentinel=NO_ID,
         ctx="under_discount_curve",
     )
     strike_df_curve_ids = resolve_optional_ids(
-        _to_numpy_str(df.get("strike_discount_curve", _blank_series(index))),
+        _get_str_col(df, "strike_discount_curve", n),
         container_name_to_container_id,
         sentinel=NO_ID,
         ctx="strike_discount_curve",
     )
 
     # --- RESOLVE VOL CONTAINERS + SURFACE Y-AXIS TYPE ---
-    volatility_names = _to_numpy_str(
-        df.get("volatility_container_name", _blank_series(index))
-    )
+    volatility_names = _get_str_col(df, "volatility_container_name", n)
     volatility_ids = _resolve_volatility_ids(volatility_names, static_config)
     vol_surface_y_axis_type_ids = _resolve_vol_surface_y_axis_type_ids(
         volatility_ids, static_config
@@ -595,7 +630,7 @@ def compile_ingest_soa_payload_from_df(
     # --------------------------------------------------------------------------
     # FX RESOLUTION (underlying / strike -> settlement)
     # --------------------------------------------------------------------------
-    settle_ccy = _to_numpy_str(df.get("settlement_ccy", _blank_series(index)))
+    settle_ccy = _get_str_col(df, "settlement_ccy", n)
 
     # Derive the underlying CCY string
     under_ccy = _resolve_underlying_ccy_strings(
@@ -604,13 +639,14 @@ def compile_ingest_soa_payload_from_df(
         fallback_ccy=settle_ccy,
     )
 
-    # Strike ccy defaults to underlying ccy when blank.
+    # Strike ccy defaults to underlying ccy where blank (null in Polars).
     if "strike_ccy" in df.columns:
-        strike_ccy = np.ascontiguousarray(
-            df["strike_ccy"]
-            .fillna(pd.Series(under_ccy, index=index))
-            .to_numpy(dtype=str)
-        )
+        # Fill nulls with corresponding under_ccy elements.
+        # Cannot use pl.Series.fill_null(another_pl.Series); use numpy.
+        sc_raw = df["strike_ccy"].fill_null("").to_numpy().astype(str)
+        blank_sc = sc_raw == ""
+        sc_raw[blank_sc] = under_ccy[blank_sc]
+        strike_ccy = np.ascontiguousarray(sc_raw)
     else:
         strike_ccy = under_ccy
 

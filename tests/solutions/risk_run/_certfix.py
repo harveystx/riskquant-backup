@@ -117,7 +117,7 @@ _UID_POOL = np.sort(
 
 _ORDER = _r.permutation(M)
 
-POSITIONS = pd.DataFrame({
+POSITIONS = pl.from_dict({
     "uid": _UID_POOL[_ORDER].tolist(),
     "instrument": ["SPOT"] * M,
     "quantity": _r.normal(0, 100, M).round(2)[_ORDER].tolist(),
@@ -128,7 +128,7 @@ POSITIONS = pd.DataFrame({
 UIDS = np.sort(_UID_POOL)  # U is ascending; the frame is not
 
 _BATCH = FX.compile_raw_df_into_ingest_batch(
-    raw_df=POSITIONS.copy(),
+    raw_df=POSITIONS,
     static_config=RSC,
 )
 

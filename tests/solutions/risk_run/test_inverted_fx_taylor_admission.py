@@ -31,6 +31,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import polars as pl
 import pytest
 
 _REMEDIATION = Path(__file__).resolve().parents[2] / "market_data" / "remediation"
@@ -81,7 +82,7 @@ from riskquant.utils.dates import date_to_ord32
 from riskquant.valuation.engine import run_valuation
 
 INVERTED, DIRECT_FX, NO_FX = 201, 202, 203
-BOOK = pd.DataFrame({
+BOOK = pl.from_dict({
     "uid": [INVERTED, DIRECT_FX, NO_FX],
     "instrument": ["SPOT"] * 3,
     "quantity": [-250.0, 100.0, 40.0],
@@ -96,7 +97,7 @@ _HISTORY_DAYS = 80
 def world() -> SimpleNamespace:
     rsc = compile_risk_static_config_from_dict_of_dfs(hf.static_config_dfs())
     as_of = int(date_to_ord32(hf.AS_OF))
-    batch = compile_raw_df_into_ingest_batch(raw_df=BOOK, static_config=rsc, copy=True)
+    batch = compile_raw_df_into_ingest_batch(raw_df=BOOK, static_config=rsc)
     mapper = build_uix_mapper([batch], as_of_ord32=as_of)
     context = ValuationContext(
         static_config=rsc, ingest_batch=batch, uix_mapper=mapper, discounting_mode=_NONE
@@ -136,9 +137,8 @@ def world() -> SimpleNamespace:
 def _sub_portfolio(w: SimpleNamespace, uids: list[int]) -> SimpleNamespace:
     """The production objects of a U_D subset, at the run's base levels."""
     batch = compile_raw_df_into_ingest_batch(
-        raw_df=BOOK[BOOK["uid"].isin(uids)].reset_index(drop=True),
+        raw_df=BOOK.filter(pl.col("uid").is_in(uids)),
         static_config=w.rsc,
-        copy=True,
     )
     mapper = build_uix_mapper([batch], as_of_ord32=w.as_of)
     portfolio = compile_portfolio_from_ingest_batch(
@@ -209,7 +209,7 @@ def _fabricated_inverted_block(w: SimpleNamespace) -> TaylorBlock:
     the effective rate 1/X mislabelled on the quoted factor X. It is complete
     for SECOND_ORDER_FULL and bound to the correct base, so P1-A certifies it.
     """
-    q = float(BOOK.loc[BOOK["uid"] == INVERTED, "quantity"].iloc[0])
+    q = float(BOOK.filter(pl.col("uid") == INVERTED)["quantity"][0])
     at = {int(f): i for i, f in enumerate(w.fids)}
     spot_id, fx_id = w.rf["EQ_GBP"], w.rf["EURGBP"]
     s0, x0 = w.base[at[spot_id]], w.base[at[fx_id]]

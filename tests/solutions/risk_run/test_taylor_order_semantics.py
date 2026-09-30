@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import polars as pl
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -105,7 +106,7 @@ def _quanto_world() -> World:
 def _sensitivities(w: World, uids: list[int]):
     """Production sensitizer output for `uids` at the world's base, and V_0."""
     sub = w.book[w.book.uid.isin(uids)].reset_index(drop=True)
-    b = compile_raw_df_into_ingest_batch(raw_df=sub, static_config=RSC, copy=True)
+    b = compile_raw_df_into_ingest_batch(raw_df=pl.from_pandas(sub), static_config=RSC)
     m = build_uix_mapper([b], as_of_ord32=AS_OF)
     p = compile_portfolio_from_ingest_batch(ingest_batch=b, uix_mapper=m)
     layout = build_universe_mapping(
@@ -172,7 +173,7 @@ def certified(w: World, uids: list[int], order: TaylorOrder, sens=None) -> Taylo
         ),
     )
     spec = build_sensitivity_book_spec(
-        sensitivities=s, required_factor_ids=np.array(w.axis.factor_ids[:k], copy=True)
+        sensitivities=s, required_factor_ids=np.array(w.axis.factor_ids[:k])
     )
     spec = dataclasses.replace(
         spec,
@@ -413,7 +414,7 @@ def test_reporting_suffix_poison_never_reaches_taylor(monkeypatch, order) -> Non
                 kw["out"][k:, :] = poison
 
         def conv(**kw: Any):
-            seen["dv"] = np.array(kw["settlement_pnl"], copy=True)
+            seen["dv"] = np.array(kw["settlement_pnl"])
             return real_conv(**kw)
 
         monkeypatch.setattr(api, "apply_linear_terms_to_base_levels", apply)

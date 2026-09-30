@@ -223,7 +223,7 @@ def test_declaring_a_curve_input_type_does_not_make_curve_discounting_reachable(
         )
     ])
     batch = compile_raw_df_into_ingest_batch(
-        raw_df=frame, static_config=rsc, copy=True, as_of_date=as_of
+        raw_df=pl.from_pandas(frame), static_config=rsc, as_of_date=as_of
     )
     mapper = build_uix_mapper([batch])
     # Declaring a CurveInputType alone does not make a curve constructible; the

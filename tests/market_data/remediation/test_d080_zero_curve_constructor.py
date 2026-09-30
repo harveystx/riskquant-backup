@@ -17,6 +17,7 @@ import math
 import d080_oracle as oracle
 import numpy as np
 import pandas as pd
+import polars as pl
 import pytest
 
 from riskquant.config.enums.discounting_modes import DiscountingMode
@@ -110,7 +111,7 @@ def _book(dates: list[dt.date]) -> pd.DataFrame:
 
 def _plan(rsc, dates, as_of=A):
     batch = compile_raw_df_into_ingest_batch(
-        raw_df=_book(dates), static_config=rsc, copy=True, as_of_date=as_of
+        raw_df=pl.from_pandas(_book(dates)), static_config=rsc, as_of_date=as_of
     )
     mapper = build_uix_mapper([batch])
     um = build_universe_mapping(
@@ -425,9 +426,8 @@ def test_unsupported_curves_in_the_same_run_fail_the_whole_run(rsc):
     )
     annual = compile_risk_static_config_from_dict_of_dfs(dfs)
     batch = compile_raw_df_into_ingest_batch(
-        raw_df=_book([dt.date(2026, 3, 2)]),
+        raw_df=pl.from_pandas(_book([dt.date(2026, 3, 2)])),
         static_config=annual,
-        copy=True,
         as_of_date=A,
     )
     mapper = build_uix_mapper([batch])
@@ -516,9 +516,8 @@ def test_fixture_true_spot_and_eom_are_what_the_constructor_sees(rsc, us_holiday
 def test_node_forward_prices_with_constructed_discount_factors(rsc, oracle_curve):
     delivery, settlement = dt.date(2026, 2, 15), dt.date(2026, 2, 17)
     batch = compile_raw_df_into_ingest_batch(
-        raw_df=_book([settlement]).assign(quantity=1_000.0, strike_price=75.0),
+        raw_df=pl.from_pandas(_book([settlement]).assign(quantity=1_000.0, strike_price=75.0)),
         static_config=rsc,
-        copy=True,
         as_of_date=A,
     )
     mapper = build_uix_mapper([batch])
@@ -553,7 +552,7 @@ def test_node_forward_prices_with_constructed_discount_factors(rsc, oracle_curve
 
 def test_none_mode_is_untouched_by_the_live_constructor(rsc):
     batch = compile_raw_df_into_ingest_batch(
-        raw_df=_book([dt.date(2026, 3, 2)]), static_config=rsc, copy=True, as_of_date=A
+        raw_df=pl.from_pandas(_book([dt.date(2026, 3, 2)])), static_config=rsc, as_of_date=A
     )
     mapper = build_uix_mapper([batch])
     um = build_universe_mapping(
@@ -629,7 +628,7 @@ def test_syntactically_complete_metadata_on_another_curve_does_not_construct(rsc
         strike_ccy="EUR", strike_discount_curve="EUR_ESTR_OIS"
     )
     batch = compile_raw_df_into_ingest_batch(
-        raw_df=fwd, static_config=declared, copy=True, as_of_date=A
+        raw_df=pl.from_pandas(fwd), static_config=declared, as_of_date=A
     )
     mapper = build_uix_mapper([batch])
     with pytest.raises(
@@ -666,7 +665,7 @@ def test_node_option_prices_with_constructed_discount_factors(rsc, oracle_curve)
         strike_discount_curve=CURVE,
     )
     batch = compile_raw_df_into_ingest_batch(
-        raw_df=pd.DataFrame([row]), static_config=rsc, copy=True, as_of_date=A
+        raw_df=pl.from_pandas(pd.DataFrame([row])), static_config=rsc, as_of_date=A
     )
     mapper = build_uix_mapper([batch])
     portfolio = compile_portfolio_from_ingest_batch(

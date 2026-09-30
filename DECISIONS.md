@@ -4836,6 +4836,75 @@ Closed-form, prior to implementation: identity default (`80 → 82` gives `82`);
 
 ---
 
+## D094  ingest entry type change
+
+**Status:** LOCKED
+**Domain:** `riskquant.portfolio.ingest`
+
+`compile_raw_df_into_ingest_batch` accepts `pl.DataFrame` only. It previously accepted `pd.DataFrame`. The signature change is strictly necessary to remove pandas from the `portfolio/ingest` package.
+
+Callers that build fixture frames from Python dicts use `pl.from_dict`. Callers that receive pandas frames from upstream workflows add a one-time `pl.from_pandas()` conversion at the call boundary. This is not a compatibility layer inside the pipeline; it is data intake at the boundary.
+
+---
+
+## D095  copy parameter removed
+
+**Status:** LOCKED
+**Domain:** `riskquant.portfolio.ingest`
+
+The `copy` parameter is removed from `compile_raw_df_into_ingest_batch`. Polars DataFrames are immutable. Copying before mutation is meaningless. All pipeline stages return new frames; the caller's frame is never mutated.
+
+Callers that passed `copy=True` or `copy=False` must remove the argument.
+
+---
+
+## D096  IngestBatch debug helpers retained
+
+**Status:** LOCKED
+**Domain:** `riskquant.portfolio.ingest.batch`
+
+`IngestBatch.to_df()` and the `.df` property retain their local `from pandas import DataFrame` import inside the method body. These are debug-only utilities with zero production callers. They do not cause a pandas import at module load time and are not part of the ingest hot path.
+
+---
+
+## D097  validate_materialized_ingest_df deleted
+
+**Status:** LOCKED
+**Domain:** `riskquant.portfolio.ingest.validate`
+
+`validate_materialized_ingest_df` is deleted. It was dead code: the only reference was a comment in `dispatcher.py` ("it supersedes the hand-wired sequence previously inlined in `validate.validate_materialized_ingest_df`"). The `validate_string_cols` import from `riskquant.utils.dataframes` is also removed from `validate.py`; it was only called by this dead function.
+
+---
+
+## D098  nullable int uses native Polars nulls
+
+**Status:** LOCKED
+**Domain:** `riskquant.portfolio.ingest.materialize`
+
+Nullable integer columns (schema `NULLABLE_INT_COLS`, currently `netting_set_id`) are materialized to `pl.Int64` with native Polars nulls. The prior pandas implementation cast `float64` (with NaN) to `np.int64`, which raised `IntCastingNaNError` under pandas 3.0. That pre-existing defect is resolved naturally by this decision.
+
+Downstream compilation uses `pl.Series.fill_null(NO_ID)` before extracting to numpy, preserving identical sentinel semantics.
+
+---
+
+## D099  error row indices are 0-based positional
+
+**Status:** LOCKED
+**Domain:** `riskquant.portfolio.ingest`
+
+Row indices in ingest validation error messages are 0-based positional integers. The prior pandas implementation reported caller-supplied index labels (which `reset_index` normalised to 0-based anyway). Polars has no index concept. Error messages now always report positional row numbers 0..n-1.
+
+---
+
+## D100  canonical date dtype is pl.Date
+
+**Status:** LOCKED
+**Domain:** `riskquant.portfolio.ingest`
+
+Date columns are materialized to `pl.Date` (not `datetime64[ns]`). `parse_optional_date_series_to_ord32` accepts `pl.Series` and uses `np.isnat` for null detection on the `datetime64[D]` numpy array that Polars extracts from `pl.Date` columns. Ordinal encoding is unchanged: the `datetime64D_to_ord32` kernel is not modified.
+
+---
+
 # Decision Record for `riskquant.credit`
 
 ## D-C01 — `obligor_uids_target` ordering (credit / exposure→JTD bridge)
