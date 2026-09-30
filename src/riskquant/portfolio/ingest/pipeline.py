@@ -79,6 +79,15 @@ def compile_raw_df_into_ingest_batch(
     ``copy`` is removed. Polars DataFrames are immutable; all stages return new
     frames. The caller's frame is never mutated.
     """
+    # D094: the entry type is a contract. Refuse other frame types before any
+    # stage runs; without this guard a pandas frame failed later with an
+    # unrelated AttributeError (pandas ``rename(dict)`` renames the index).
+    if not isinstance(raw_df, pl.DataFrame):
+        kind = f"{type(raw_df).__module__}.{type(raw_df).__qualname__}"
+        raise TypeError(
+            f"raw_df must be a polars.DataFrame; got {kind}. Convert at the "
+            "call boundary, for example pl.from_pandas(frame) (D094)."
+        )
     df = canonicalize_raw_ingest_df(raw_df)
     df = materialize_canonicalized_ingest_df(df)
 

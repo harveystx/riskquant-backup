@@ -106,6 +106,16 @@ def _canonicalize_column_names(df: pl.DataFrame) -> pl.DataFrame:
     - lowercase
     """
     mapping = {c: c.strip().lower() for c in df.columns}
+    # Detect collisions BEFORE rename: Polars ``rename`` raises its own
+    # DuplicateError, which would replace the PrettyKeyError contract.
+    seen: set[str] = set()
+    dupes: list[str] = []
+    for canonical in mapping.values():
+        if canonical in seen:
+            dupes.append(canonical)
+        seen.add(canonical)
+    if dupes:
+        raise PrettyKeyError(f"Duplicate ingest columns detected:\n{dupes}")
     return df.rename(mapping)
 
 
@@ -124,8 +134,13 @@ def _canonicalize_string_columns(df: pl.DataFrame) -> pl.DataFrame:
     for col in STRING_COLS:
         if col not in df.columns:
             continue
-        if df[col].dtype != pl.Utf8:
-            raise TypeError(f"String column '{col}' has invalid dtype={df[col].dtype}.")
+        dtype = df[col].dtype
+        if dtype == pl.Null or isinstance(dtype, (pl.Categorical, pl.Enum)):
+            # All-null columns (pl.from_dict gives pl.Null) and dictionary-
+            # encoded text are strings. pandas astype("string") accepted them.
+            df = df.with_columns(pl.col(col).cast(pl.Utf8))
+        elif dtype != pl.Utf8:
+            raise TypeError(f"String column '{col}' has invalid dtype={dtype}.")
         norm = (
             pl.col(col).str.strip_chars().str.replace_all(r"\s+", " ").str.strip_chars()
         )

@@ -285,7 +285,7 @@ def test_fixture_leg_orientations(world: SimpleNamespace) -> None:
 
 
 def test_t1_sensitizer_refuses_an_inverted_fx_spot_leg(world: SimpleNamespace) -> None:
-    sub = _sub_portfolio(world, BOOK["uid"].tolist())
+    sub = _sub_portfolio(world, BOOK["uid"].to_list())
     with pytest.raises(NotImplementedError, match=r"Inverted FX-effective.*invert=1"):
         run_sensitivities(
             portfolio=sub.portfolio, uix_mapper=sub.mapper, market_data=sub.matrix

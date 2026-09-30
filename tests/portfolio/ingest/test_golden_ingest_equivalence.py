@@ -33,11 +33,15 @@ _DIR = Path(__file__).parent
 _ORACLE_PATH = _DIR / "_pandas_era_oracle.json"
 
 # hostile_fixture lives under tests/market_data/remediation/
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "market_data" / "remediation"))
+sys.path.insert(
+    0, str(Path(__file__).parent.parent.parent / "market_data" / "remediation")
+)
 
 import hostile_fixture as HF  # noqa: E402  (sys.path manipulation above)
 
-from riskquant.config.static_config.compile import compile_risk_static_config_from_dict_of_dfs
+from riskquant.config.static_config.compile import (
+    compile_risk_static_config_from_dict_of_dfs,
+)
 from riskquant.portfolio.ingest.pipeline import compile_raw_df_into_ingest_batch
 
 
@@ -146,14 +150,16 @@ class TestNullableNettingSetId:
     def test_null_netting_set_id_becomes_sentinel(self, static_config):
         from riskquant.constants import NO_ID
 
-        spot_with_null_netting = pl.from_dict({
-            "uid": [101, 102],
-            "instrument": ["SPOT", "SPOT"],
-            "quantity": [100.0, -250.0],
-            "underlying": ["EQ_USD", "EQ_GBP"],
-            "settlement_ccy": ["EUR", "EUR"],
-            "netting_set_id": [None, None],  # all null
-        })
+        spot_with_null_netting = pl.from_dict(
+            {
+                "uid": [101, 102],
+                "instrument": ["SPOT", "SPOT"],
+                "quantity": [100.0, -250.0],
+                "underlying": ["EQ_USD", "EQ_GBP"],
+                "settlement_ccy": ["EUR", "EUR"],
+                "netting_set_id": [None, None],  # all null
+            }
+        )
 
         batch = compile_raw_df_into_ingest_batch(
             raw_df=spot_with_null_netting,
@@ -165,14 +171,16 @@ class TestNullableNettingSetId:
     def test_mixed_null_netting_set_id(self, static_config):
         from riskquant.constants import NO_ID
 
-        spot_mixed = pl.from_dict({
-            "uid": [101, 102],
-            "instrument": ["SPOT", "SPOT"],
-            "quantity": [100.0, -250.0],
-            "underlying": ["EQ_USD", "EQ_GBP"],
-            "settlement_ccy": ["EUR", "EUR"],
-            "netting_set_id": [42, None],
-        })
+        spot_mixed = pl.from_dict(
+            {
+                "uid": [101, 102],
+                "instrument": ["SPOT", "SPOT"],
+                "quantity": [100.0, -250.0],
+                "underlying": ["EQ_USD", "EQ_GBP"],
+                "settlement_ccy": ["EUR", "EUR"],
+                "netting_set_id": [42, None],
+            }
+        )
 
         batch = compile_raw_df_into_ingest_batch(
             raw_df=spot_mixed,

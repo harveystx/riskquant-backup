@@ -1,134 +1,103 @@
 # tests/portfolio/test_pandas_free_boundary.py
 """
-Architecture enforcement test: ``riskquant.portfolio.ingest`` must be pandas-free.
+Pandas boundary of ``riskquant.portfolio.ingest`` (D094, D096).
 
-Scope
------
-Every ``.py`` module under ``src/riskquant/portfolio/ingest/`` must contain
-zero ``import pandas`` statements.
-
-Exemptions
-----------
-None. The entire package was migrated in sprint D-INGEST-01. ``batch.py``
-retains a lazy ``from pandas import DataFrame`` inside a method body for the
-debug-only ``to_df()`` / ``.df`` property. This is an in-method import that
-does not appear as a top-level ``import pandas`` or ``from pandas`` statement
-and is explicitly exempted below.
-
-Rationale
----------
-The ``portfolio/ingest`` package is an Edge-tier module. The approved edge
-technology is Polars. Pandas at the edge is permitted ONLY at an unavoidable
-external interoperability boundary (e.g. legacy consumer contracts).
-``batch.py``'s debug helpers do not constitute a production interoperability
-boundary.
+What this file proves, and what it does not
+-------------------------------------------
+1. No module in ``portfolio/ingest`` imports pandas, at any indentation,
+   except the two ``batch.py`` lines that D096 keeps: the TYPE_CHECKING
+   import and the local import inside the debug-only ``IngestBatch.to_df``.
+2. The public entry annotation resolves to ``polars.DataFrame``.
+3. ``copy`` is not a parameter (D095).
+4. The package is NOT importable without pandas today. ``riskquant.utils.dates``
+   imports pandas at module level, and ``parser``, ``compile`` and ``batch``
+   import that module. That dependency is outside the migration scope. The
+   strict xfail below records it: it turns into a failure when the dependency
+   is removed, so the marker cannot outlive the defect.
 """
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
+from typing import get_type_hints
+
+import polars as pl
+import pytest
 
 INGEST_ROOT = (
-    Path(__file__).resolve().parents[2]
-    / "src"
-    / "riskquant"
-    / "portfolio"
-    / "ingest"
+    Path(__file__).resolve().parents[2] / "src" / "riskquant" / "portfolio" / "ingest"
 )
 
-# ``batch.py`` retains a lazy ``from pandas import DataFrame`` inside the
-# ``to_df`` / ``df`` method body only. It does NOT appear at module level and
-# does NOT cause a pandas import on module load. The structural check below
-# requires that the only exempted occurrence is inside a function/method body
-# (indented), not at module level (column 0).
-_EXEMPTED_FILE = "batch.py"
+# Any pandas import statement, at any indentation.
+_PANDAS_IMPORT_RE = re.compile(r"^\s*(?:import\s+pandas\b|from\s+pandas\b)")
 
-# Regex for top-level pandas imports (column 0, no leading whitespace)
-_TOPLEVEL_IMPORT_RE = re.compile(
-    r"^(?:import pandas|from pandas\s+import)", re.MULTILINE
+# D096: the only permitted occurrences (file, stripped line).
+_ALLOWED: frozenset[tuple[str, str]] = frozenset(
+    {("batch.py", "from pandas import DataFrame")}
 )
+_ALLOWED_COUNT = {"batch.py": 2}  # TYPE_CHECKING import + to_df local import
 
 
-def _collect_violations() -> dict[str, list[int]]:
-    """Return {rel_path: [line_numbers]} for every top-level pandas import found."""
-    violations: dict[str, list[int]] = {}
-
+def _pandas_import_lines() -> dict[str, list[tuple[int, str]]]:
+    found: dict[str, list[tuple[int, str]]] = {}
     for path in sorted(INGEST_ROOT.rglob("*.py")):
         rel = path.relative_to(INGEST_ROOT).as_posix()
-        source = path.read_text(encoding="utf-8", errors="replace")
-
-        offending_lines: list[int] = []
-        for i, line in enumerate(source.splitlines(), start=1):
-            if _TOPLEVEL_IMPORT_RE.match(line):
-                # For the exempted file, flag only if the import is at
-                # module level (not indented).
-                if rel == _EXEMPTED_FILE and line.startswith(" "):
-                    continue
-                if rel == _EXEMPTED_FILE:
-                    # Module-level pandas import in batch.py is NOT expected.
-                    offending_lines.append(i)
-                else:
-                    offending_lines.append(i)
-
-        if offending_lines:
-            violations[rel] = offending_lines
-
-    return violations
+        for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if _PANDAS_IMPORT_RE.match(line):
+                found.setdefault(rel, []).append((i, line.strip()))
+    return found
 
 
-def test_portfolio_ingest_is_pandas_free() -> None:
-    """
-    Every file under ``portfolio/ingest/`` must have zero top-level pandas imports.
-    """
-    violations = _collect_violations()
-    if not violations:
-        return
-
-    lines = [
-        "portfolio/ingest is NOT pandas-free. Top-level pandas imports found:",
-        "",
-    ]
-    for rel, linenos in violations.items():
-        lines.append(f"  {rel}: lines {linenos}")
-
-    raise AssertionError("\n".join(lines))
+def test_portfolio_ingest_has_no_pandas_import_except_d096() -> None:
+    found = _pandas_import_lines()
+    bad = {
+        rel: hits
+        for rel, hits in found.items()
+        if any((rel, text) not in _ALLOWED for _, text in hits)
+        or len(hits) > _ALLOWED_COUNT.get(rel, 0)
+    }
+    assert not bad, f"pandas imports outside D096 allowance: {bad}"
 
 
-def test_pipeline_entry_accepts_polars_dataframe() -> None:
-    """
-    ``compile_raw_df_into_ingest_batch`` must accept ``pl.DataFrame``.
-
-    Verifies the public type signature without running the full pipeline.
-    """
-    import inspect
-    import polars as pl
-
+def test_pipeline_entry_annotation_is_polars_dataframe() -> None:
     from riskquant.portfolio.ingest.pipeline import compile_raw_df_into_ingest_batch
 
-    sig = inspect.signature(compile_raw_df_into_ingest_batch)
-    ann = sig.parameters["raw_df"].annotation
-
-    # annotation is "pl.DataFrame" string (from __future__ annotations) or the type itself
-    ann_str = str(ann)
-    assert "pl" in ann_str or "polars" in ann_str or ann is pl.DataFrame, (
-        f"raw_df annotation is {ann_str!r}; expected pl.DataFrame"
-    )
+    hints = get_type_hints(compile_raw_df_into_ingest_batch)
+    assert hints["raw_df"] is pl.DataFrame
 
 
 def test_copy_parameter_removed() -> None:
-    """
-    The ``copy`` parameter must not exist on ``compile_raw_df_into_ingest_batch``.
-
-    Polars DataFrames are immutable. The ``copy`` parameter was a pandas-era
-    artifact and is no longer meaningful.
-    """
     import inspect
 
     from riskquant.portfolio.ingest.pipeline import compile_raw_df_into_ingest_batch
 
-    sig = inspect.signature(compile_raw_df_into_ingest_batch)
-    assert "copy" not in sig.parameters, (
-        "compile_raw_df_into_ingest_batch must not have a 'copy' parameter "
-        "(Polars DataFrames are immutable; copy is always a no-op)."
+    assert "copy" not in inspect.signature(compile_raw_df_into_ingest_batch).parameters
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "riskquant/utils/dates.py imports pandas at module level; parser.py, "
+        "compile.py and batch.py import it. Outside the ingest migration scope."
+    ),
+)
+def test_ingest_pipeline_imports_without_pandas(tmp_path: Path) -> None:
+    blocker = tmp_path / "pandas"
+    blocker.mkdir()
+    (blocker / "__init__.py").write_text('raise ImportError("pandas blocked")\n')
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join([str(tmp_path), *sys.path])
+    code = textwrap.dedent(
+        """
+        import riskquant.portfolio.ingest.pipeline  # noqa: F401
+        """
     )
+    proc = subprocess.run(
+        [sys.executable, "-c", code], env=env, capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]

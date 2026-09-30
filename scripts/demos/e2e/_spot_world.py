@@ -672,7 +672,7 @@ def build_world(
     """
     as_of_ord = int(date_to_ord32(as_of))
     ingest_batch = compile_raw_df_into_ingest_batch(
-        raw_df=positions.copy(), static_config=rsc
+        raw_df=pl.from_pandas(positions), static_config=rsc
     )
     uix_mapper = build_uix_mapper([ingest_batch], as_of_ord32=as_of_ord)
     portfolio = compile_portfolio_from_ingest_batch(
@@ -875,7 +875,9 @@ def sensitivities_for(
     """
     keep = world.positions["uid"].isin([int(u) for u in uids])
     rows = world.positions.loc[keep].reset_index(drop=True)
-    batch = compile_raw_df_into_ingest_batch(raw_df=rows, static_config=world.rsc)
+    batch = compile_raw_df_into_ingest_batch(
+        raw_df=pl.from_pandas(rows), static_config=world.rsc
+    )
     mapper = build_uix_mapper(
         [batch], as_of_ord32=int(world.uix_mapper.as_of_ord32)
     )

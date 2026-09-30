@@ -173,7 +173,7 @@ def certified(w: World, uids: list[int], order: TaylorOrder, sens=None) -> Taylo
         ),
     )
     spec = build_sensitivity_book_spec(
-        sensitivities=s, required_factor_ids=np.array(w.axis.factor_ids[:k])
+        sensitivities=s, required_factor_ids=np.array(w.axis.factor_ids[:k], copy=True)
     )
     spec = dataclasses.replace(
         spec,
@@ -414,7 +414,7 @@ def test_reporting_suffix_poison_never_reaches_taylor(monkeypatch, order) -> Non
                 kw["out"][k:, :] = poison
 
         def conv(**kw: Any):
-            seen["dv"] = np.array(kw["settlement_pnl"])
+            seen["dv"] = np.array(kw["settlement_pnl"], copy=True)
             return real_conv(**kw)
 
         monkeypatch.setattr(api, "apply_linear_terms_to_base_levels", apply)

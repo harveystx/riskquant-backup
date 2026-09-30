@@ -26,6 +26,7 @@ them requires the vol-resolution work item to land first.
 from __future__ import annotations
 
 import pandas as pd
+import polars as pl
 
 from riskquant.config.static_config.compile import (
     compile_risk_static_config_from_dict_of_dfs,
@@ -201,9 +202,8 @@ if __name__ == "__main__":
     print_header(title="SECTION: BUILD INGEST BATCHES")
 
     ingest_batch = compile_raw_df_into_ingest_batch(
-        raw_df=portfolio_trade_data_df,
+        raw_df=pl.from_pandas(portfolio_trade_data_df),
         static_config=risk_static_config,
-        copy=False,
     )
     print_text(
         f"COMPILED INGEST BATCH (DENSE SOA) (TOTAL TRADES = {ingest_batch.size})"

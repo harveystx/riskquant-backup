@@ -66,9 +66,17 @@ def _materialize_string_col(df: pl.DataFrame, col: str) -> pl.DataFrame:
 
 
 def _materialize_float_col(df: pl.DataFrame, col: str) -> pl.DataFrame:
-    """Materialize float column into deterministic Float64 dtype."""
+    """
+    Materialize float column into deterministic Float64 dtype.
+
+    NaN becomes null. Polars keeps NaN distinct from null, but every
+    downstream check (``is_null`` in validate, ``fill_null`` in compile)
+    reads null only. The pandas pipeline treated NaN as missing (``isna``);
+    without this step a NaN quantity or strike passed validation into the
+    SoA.
+    """
     try:
-        return df.with_columns(pl.col(col).cast(pl.Float64))
+        return df.with_columns(pl.col(col).cast(pl.Float64).fill_nan(None))
     except Exception as e:
         raise TypeError(f"Failed to materialize float column '{col}': {e}") from e
 
@@ -205,7 +213,7 @@ def _materialize_flag_col(df: pl.DataFrame, col: str) -> pl.DataFrame:
 
     # NUMERIC COERCION
     try:
-        as_float = ser.cast(pl.Float64)
+        as_float = ser.cast(pl.Float64).fill_nan(None)  # NaN is absent, as in pandas
     except Exception as e:
         raise TypeError(f"Failed to materialize flag column '{col}': {e}") from e
 

@@ -26,7 +26,6 @@ array on typos. That silent path is gone.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import cast
 
 import numpy as np
 import numpy.typing as npt
@@ -94,7 +93,7 @@ def resolve_required_ids(
     arr = np.ascontiguousarray(
         np.array([v for v in raw_mapped], dtype=np.int64).astype(np.int32)
     )
-    return cast(npt.NDArray[np.int32], arr)
+    return arr
 
 
 def resolve_optional_ids(

@@ -52,6 +52,7 @@ import time
 
 import _spot_world as sw
 import numpy as np
+import polars as pl
 
 from riskquant.config.enums.discounting_modes import DiscountingMode
 from riskquant.market_data.assemble import (
@@ -210,7 +211,7 @@ def main() -> None:
         """
     )
     ingest_batch = compile_raw_df_into_ingest_batch(
-        raw_df=positions.copy(), static_config=rsc
+        raw_df=pl.from_pandas(positions), static_config=rsc
     )
     uix_mapper = build_uix_mapper(
         [ingest_batch], as_of_ord32=int(date_to_ord32(sw.TINY_AS_OF))
