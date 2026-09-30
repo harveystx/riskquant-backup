@@ -4660,6 +4660,8 @@ PR-06 asked whether the parametric generator's whole-run `(total_scenarios, K_to
 
 **Implementation status, Stage E (2026-09-29):** D088 STAGE E COMPLETE. Proxy V1 is the exclusive production proxy architecture. D013 production semantics, implementation and ingest/configuration are removed: `proxy_resolver`, `config/proxy_config` and its canonical ingest fixture, `simlab/shocks/apply.py`, `shock_kernel.py`, `simlab/builder/shock_universe.py` and the transitional world-column stream no longer exist. Generators take a unique `(d, τ)` world request (`iter_batches(driver_rf_ids, chart_ids, batch_size)`, validated by `build_world_column_plan`) and return the columns in request order; `shock_scale`, `source_factor_ids` and `required_to_shock_uix` no longer exist. The Proxy V1 authoring/file format and its ingest edge remain OPEN (§12.3; specification §13.2); no canonical Proxy V1 ingest fixture exists yet.
 
+**Stage E certification correction (2026-09-30).** The Stage E certification (2026-09-29) did not detect the D013 frame schema `RiskProxyConfigData` (`proxying_level`, `required_name`, `proxy_name`, `vol_scaling_factor`) in `src/riskquant/ingest_fixtures/schemas.py` and its reference in `src/riskquant/ingest_fixtures/utils.py`: the structural test matched exact D013 identifiers only. A later repository-wide audit found it. It was removed and replaced by the D093 schema `RiskProxyModelTermData`. `tests/test_proxy_v1_exclusivity.py` now also refuses `RiskProxyConfigData`, `proxying_level`, `vol_scaling_factor`, `_kernel_apply_shocks` and string references to removed modules (dynamic imports). Corrected Stage E state: no D013 code, schema or frame vocabulary remains in `src/` or `scripts/`.
+
 ### 1. Scope
 
 The V1 proxy-model universe is the set of run-axis factor-nodes whose configured `shift_type` is a V1 reconstruction chart, `κ_A ∈ {LOG_RETURN, SIMPLE_RETURN, DIFFERENCE}`. A node whose configured `shift_type` is `ABSOLUTE_BASE_RETURN` or `NO_SHIFT` is outside the V1 target universe and keeps its D025 behaviour: ABSOLUTE_BASE has no V1 target reconstruction contract and no V1 column contract; NO_SHIFT is a configured shift type and an execution behaviour (a zero column, skipped by `validate_shift_domain`, reconstructed to the base) — it is not a chart and not a node status. The V1 driver-chart catalogue is `τ ∈ {LOG_RETURN, SIMPLE_RETURN, DIFFERENCE}`.
@@ -4741,21 +4743,6 @@ Closed-form, prior to implementation: identity default (`80 → 82` gives `82`);
 
 ---
 
-## D093 — Proxy V1 tabular authoring edge (proposed closure of D088 §13.2 for the frame representation)
-
-**Status:** PROPOSED (2026-09-30). Requires owner approval. Until approval, D088 §13.2 remains OPEN.
-
-**Context.** D088 §12.3 fixes the compiler's authored input contract: node terms (target, driver, τ, β) and container terms (target container, driver container, τ, β). The authoring file format is a separate edge concern (§13.2, OPEN). Stage E removed the D013 proxy-configuration edge and its canonical ingest fixture. RiskQuant configuration inputs enter through Polars frames with a canonical ingest fixture under `riskquant.ingest_fixtures.config` (the static configuration convention). Proxy V1 had no such edge, so a Proxy V1 model could be authored only as Python objects.
-
-**Decision (proposed).**
-
-1. **Frame.** One row per authored term. Columns, exactly: `term_kind` (Utf8, `"NODE"` or `"CONTAINER"`), `target_name` (Utf8), `driver_name` (Utf8), `driver_chart` (Utf8, `"LOG_RETURN"`, `"SIMPLE_RETURN"` or `"DIFFERENCE"`), `loading` (Float64, finite). `NODE` rows carry factor-node names (relative or absolute, resolved at the run as-of); `CONTAINER` rows carry curve or surface names.
-2. **Not authored.** The target chart κ (owned by the static configuration), the horizon (owned by the world), an identity marker (a V1 target without terms receives its identity row at compile time), weights normalisation and any D013 field.
-3. **Ownership.** The edge (`riskquant.config.proxy_model.ingest.proxy_terms_from_df`) checks structure only: column set, dtypes, nulls, blank names, the two vocabularies and finite loadings, and maps rows to `NodeProxyTerm` / `ContainerProxyTerm` in row order without resolution, merging, dropping or sorting. Resolution, admissibility, canonicalisation and identity remain with `compile_proxy_model` (D088 §6, §12.3). Row order does not affect `proxy_model_digest`.
-4. **Canonical fixture.** `riskquant.ingest_fixtures.config.risk_proxy_model.canonical_risk_proxy_model` (schema `RiskProxyModelTermData`). Its compiled rows against the canonical static configuration at `CANONICAL_AS_OF_DATE` and its `proxy_model_digest` are pinned by tests.
-5. **Not decided.** File loaders (xlsx, csv or other) remain OPEN; they would read into this frame.
-
-**Consequences.** No change to D088 semantics, canonicalisation or identity. The D013 frame schema `RiskProxyConfigData` is removed.
 
 ## D089 — Parametric two-sided horizon contract
 
@@ -4825,6 +4812,27 @@ Closed-form, prior to implementation: identity default (`80 → 82` gives `82`);
 5. **Identity.** When present, the heterogeneous vector enters `hash_parametric_risk_data` as the named float64 array `crisis_vol_multipliers`; its presence or absence changes the data digest. `prob_crisis`, the scalar multiplier and the `"per_factor"` declaration enter through `scenario_config`. `proxy_model_digest` is unchanged. A scalar and an equal uniform data vector represent the same stochastic law but are distinct artifacts.
 6. **Horizon.** `p`, the scalar and the per-factor multipliers describe the law at `H_W` (D089). The per-factor values are part of the data producer's assertion (D090); `p` and the scalar are asserted by the configuration's author.
 7. **Generator.** The stochastic law and its numerical application are unchanged. The generator continues to consume either a scalar or a positional array; the composition layer establishes that array position is canonical `factor_ids` position before the generator receives it.
+
+---
+
+
+## D093 — Proxy V1 tabular authoring edge (proposed closure of D088 §13.2 for the frame representation)
+
+**Status:** PROPOSED (2026-09-30). Requires owner approval. Until approval, D088 §13.2 remains OPEN.
+
+**Context.** D088 §12.3 fixes the compiler's authored input contract: node terms (target, driver, τ, β) and container terms (target container, driver container, τ, β). The authoring file format is a separate edge concern (§13.2, OPEN). Stage E removed the D013 proxy-configuration edge and its canonical ingest fixture. RiskQuant configuration inputs enter through Polars frames with a canonical ingest fixture under `riskquant.ingest_fixtures.config` (the static configuration convention). Proxy V1 had no such edge, so a Proxy V1 model could be authored only as Python objects.
+
+**Decision (proposed).**
+
+1. **Frame.** A `polars.DataFrame` with exactly five columns, identified by name; physical column order is not semantic. Dtypes, compared exactly and never cast: `term_kind`, `target_name`, `driver_name`, `driver_chart` are `pl.String` (`pl.Utf8` is the same dtype); `loading` is `pl.Float64`. Any other dtype is refused, including Int64, Float32, Decimal, String or Object loadings and Categorical or Enum text columns. A frame with zero rows is valid and authors no terms.
+2. **Values.** No null in any column. `target_name` and `driver_name` are non-empty and not whitespace-only; they are passed verbatim (no trimming, case change, resolution or existence check). `term_kind` is exactly `"NODE"` or `"CONTAINER"`; `driver_chart` is exactly `"LOG_RETURN"`, `"SIMPLE_RETURN"` or `"DIFFERENCE"`; matching is case-sensitive, with no aliases and no whitespace normalisation. `loading` is finite (NaN, +inf and −inf are refused); `0.0`, `−0.0` and negative values are admissible and are preserved bit-exactly.
+3. **Mapping and preservation.** Each row maps to exactly one `NodeProxyTerm` (`NODE`: factor-node names) or `ContainerProxyTerm` (`CONTAINER`: curve or surface names), in input row order. The edge preserves row count, row order, duplicate rows and duplicate `(target, driver, chart)` terms, zero loadings with their sign, negative loadings, mixed kinds and several charts of one driver. It does not resolve names, read an as-of or the static configuration, infer `κ` or the horizon, create identity rows, expand containers, merge, drop, sort or canonicalise.
+4. **Compiler ownership.** Name resolution at the run as-of, container expansion (`EXACT`), admissibility, identity rows, canonicalisation (D088 §6, including the grouping of duplicate terms and exact-zero elimination) and the digest belong to `compile_proxy_model`. Consequences: `proxy_model_digest` is invariant under row permutation; a frame and the equivalent typed terms compile to identical canonical arrays and digest and give identical run results.
+5. **Not authored.** The target chart `κ` (owned by the static configuration), the horizon (owned by the world), an identity marker (a V1 target without terms receives its identity row at compile time), weights normalisation and any D013 field.
+6. **Canonical fixture.** `riskquant.ingest_fixtures.config.risk_proxy_model.canonical_risk_proxy_model` (schema `RiskProxyModelTermData`). Tests pin its compiled rows (derived by hand) against the canonical static configuration at `CANONICAL_AS_OF_DATE` and its `proxy_model_digest`, and re-derive that digest from the hand-derived rows without the production hashing code.
+7. **Not decided.** File loaders (xlsx, csv or other) remain OPEN; they would read into this frame. The production API stays typed (`run_scenario_var_es(proxy_terms=...)`); the frame is an authoring adapter to it.
+
+**Consequences.** No change to D088 semantics, canonicalisation or identity. The D013 frame schema `RiskProxyConfigData` is removed.
 
 ---
 

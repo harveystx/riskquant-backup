@@ -203,3 +203,146 @@ def _mutated(**changes) -> pl.DataFrame:
 def test_the_edge_rejects_malformed_frames(df) -> None:
     with pytest.raises(ConfigurationError):
         proxy_terms_from_df(df)
+
+
+# ---- independent digest derivation (no production hashing code) ----------------------------
+
+
+def _independent_digest(named: list[tuple[str, np.ndarray]]) -> str:
+    """D088 §7 encoding re-derived: per array sha256(dtype.str | shape | LE
+    C-order bytes), bundled as name=hex; in declaration order."""
+    import hashlib
+
+    bundle = hashlib.sha256()
+    for name, arr in named:
+        a = np.ascontiguousarray(arr.astype(arr.dtype.newbyteorder("<"), copy=False))
+        h = hashlib.sha256()
+        h.update(a.dtype.str.encode() + b"|" + str(a.shape).encode() + b"|" + a.tobytes())
+        bundle.update(name.encode() + b"=" + h.hexdigest().encode() + b";")
+    return bundle.hexdigest()
+
+
+def test_golden_digest_is_reproduced_from_the_hand_derived_rows(cfg) -> None:
+    rf = {n: int(cfg.get_rf_id(n)) for n in (*AXIS_NAMES, "BRENT_CRUDE_FWD[M+0]", "BRENT_CRUDE_FWD[M+1]")}
+    rows = [
+        (rf["USDEUR"], [(rf["USDEUR"], LOG, 1.0)]),
+        (rf["USDCHF"], [(rf["USDCHF"], LOG, 1.0)]),
+        (rf["USDGBP"], [(rf["USDGBP"], LOG, 1.0)]),
+        (rf["EURCHF"], sorted([(rf["USDCHF"], LOG, 1.0), (rf["USDEUR"], LOG, -1.0)])),
+        (rf["AAPL_EQ"], [(rf["USDEUR"], DIFF, 0.5)]),
+        (rf["WTI_CRUDE_FWD[M+0]"], [(rf["BRENT_CRUDE_FWD[M+0]"], LOG, 0.95)]),
+        (rf["WTI_CRUDE_FWD[M+1]"], [(rf["BRENT_CRUDE_FWD[M+1]"], LOG, 0.95)]),
+    ]
+    terms = [t for _, ts in rows for t in ts]
+    offsets = np.cumsum([0] + [len(ts) for _, ts in rows])
+    named = [
+        ("row_target_rf_ids", np.array([r for r, _ in rows], np.int32)),
+        ("row_term_offsets", np.array(offsets, np.int32)),
+        ("term_driver_rf_ids", np.array([t[0] for t in terms], np.int32)),
+        ("term_chart_ids", np.array([t[1] for t in terms], np.int8)),
+        ("term_loadings", np.array([t[2] for t in terms], np.float64)),
+    ]
+    assert _independent_digest(named) == GOLDEN_DIGEST
+
+
+# ---- the edge contract (D093): exact dtypes, verbatim values, full preservation -------------
+
+
+def _frame(rows, **schema_over) -> pl.DataFrame:
+    schema = {**PROXY_MODEL_TERM_SCHEMA, **schema_over}
+    return pl.DataFrame({k: [r[i] for r in rows] for i, k in enumerate(PROXY_MODEL_TERM_SCHEMA)}, schema=schema)
+
+
+_ROWS = [("NODE", "AAPL_EQ", "USDEUR", "DIFFERENCE", 0.25)]
+
+
+@pytest.mark.parametrize(
+    "df",
+    [
+        pl.DataFrame({"term_kind": ["NODE"], "target_name": ["AAPL_EQ"], "driver_name": ["USDEUR"],
+                      "driver_chart": ["DIFFERENCE"], "loading": [1]}),  # Int64 loading
+        pl.DataFrame({"term_kind": ["NODE"], "target_name": ["AAPL_EQ"], "driver_name": ["USDEUR"],
+                      "driver_chart": ["DIFFERENCE"], "loading": ["0.25"]}),  # String loading
+        _frame(_ROWS).with_columns(pl.col("loading").cast(pl.Decimal(10, 4))),
+        _frame(_ROWS).with_columns(pl.col("driver_chart").cast(pl.Categorical)),
+        _frame(_ROWS).with_columns(pl.col("term_kind").cast(pl.Enum(["NODE", "CONTAINER"]))),
+        _frame(_ROWS).with_columns(pl.col("target_name").cast(pl.Categorical)),
+    ],
+    ids=["int_loading", "string_loading", "decimal_loading", "categorical_chart", "enum_kind", "categorical_name"],
+)
+def test_the_edge_does_not_coerce_dtypes(df) -> None:
+    with pytest.raises(ConfigurationError, match="dtype"):
+        proxy_terms_from_df(df)
+
+
+@pytest.mark.parametrize("column", list(PROXY_MODEL_TERM_SCHEMA))
+def test_a_null_in_any_column_is_rejected(column) -> None:
+    df = _frame(_ROWS * 2).with_columns(
+        pl.when(pl.int_range(pl.len()) == 1).then(None).otherwise(pl.col(column)).alias(column)
+    )
+    with pytest.raises(ConfigurationError, match=f"row 1, column '{column}'"):
+        proxy_terms_from_df(df)
+
+
+@pytest.mark.parametrize("name", ["", " ", "\t", "  \n "])
+def test_empty_and_whitespace_only_names_are_rejected(name) -> None:
+    with pytest.raises(ConfigurationError, match="blank name"):
+        proxy_terms_from_df(_frame([("NODE", name, "USDEUR", "DIFFERENCE", 0.25)]))
+
+
+def test_names_are_passed_verbatim_and_resolved_only_by_the_compiler(cfg) -> None:
+    """The edge does not trim, resolve or check existence; the compiler refuses
+    a name that does not resolve at the as-of."""
+    (term,) = proxy_terms_from_df(_frame([("NODE", " AAPL_EQ", "NOT_A_FACTOR", "DIFFERENCE", 0.25)]))
+    assert (term.target_name, term.driver_name) == (" AAPL_EQ", "NOT_A_FACTOR")
+    with pytest.raises(ConfigurationError):
+        _compile(cfg, _frame([("NODE", "AAPL_EQ", "NOT_A_FACTOR", "DIFFERENCE", 0.25)]))
+
+
+def test_the_edge_preserves_every_row_exactly() -> None:
+    """Row count, order, duplicates, +0.0 and -0.0, negative loadings, mixed
+    kinds and several charts of one driver: nothing is merged, dropped,
+    reordered or expanded."""
+    rows = [
+        ("NODE", "AAPL_EQ", "USDEUR", "LOG_RETURN", 0.2),
+        ("CONTAINER", "WTI_CRUDE_FWD", "BRENT_CRUDE_FWD", "LOG_RETURN", 0.95),
+        ("NODE", "AAPL_EQ", "USDEUR", "LOG_RETURN", 0.3),
+        ("NODE", "AAPL_EQ", "USDEUR", "SIMPLE_RETURN", -1.5),
+        ("NODE", "AAPL_EQ", "USDEUR", "DIFFERENCE", 0.0),
+        ("NODE", "AAPL_EQ", "USDEUR", "DIFFERENCE", -0.0),
+        ("NODE", "AAPL_EQ", "USDEUR", "LOG_RETURN", 0.2),
+    ]
+    terms = proxy_terms_from_df(_frame(rows))
+    assert len(terms) == len(rows)
+    for (kind, target, driver, chart, beta), t in zip(rows, terms, strict=True):
+        assert isinstance(t, NodeProxyTerm if kind == "NODE" else ContainerProxyTerm)
+        names = (t.target_name, t.driver_name) if kind == "NODE" else (t.target_container_name, t.driver_container_name)
+        assert names == (target, driver) and t.driver_chart.name == chart
+        assert _bits(t.loading) == _bits(beta)  # the sign of zero is preserved
+
+
+def test_physical_column_order_is_not_semantic() -> None:
+    reordered = CANONICAL_RISK_PROXY_MODEL_DF.select(list(reversed(CANONICAL_RISK_PROXY_MODEL_DF.columns)))
+    assert proxy_terms_from_df(reordered) == proxy_terms_from_df(CANONICAL_RISK_PROXY_MODEL_DF)
+
+
+def test_an_empty_frame_authors_no_terms_and_compiles_to_identity_rows(cfg) -> None:
+    empty = CANONICAL_RISK_PROXY_MODEL_DF.clear()
+    assert proxy_terms_from_df(empty) == ()
+    m = _compile(cfg, empty)
+    assert m.term_loadings.tolist() == [1.0] * len(AXIS_NAMES)
+    assert m.term_driver_rf_ids.tolist() == m.row_target_rf_ids.tolist()
+
+
+def test_a_container_row_equals_the_typed_container_term(cfg) -> None:
+    """The edge does not expand containers; frame and typed authoring compile
+    to the same canonical arrays and digest."""
+    frame = _frame([("CONTAINER", "WTI_CRUDE_FWD", "BRENT_CRUDE_FWD", "LOG_RETURN", 0.95)])
+    typed = (ContainerProxyTerm(target_container_name="WTI_CRUDE_FWD", driver_container_name="BRENT_CRUDE_FWD",
+                                driver_chart=ShiftType.LOG_RETURN, loading=0.95),)
+    axis = np.array([int(cfg.get_rf_id(n)) for n in AXIS_NAMES], dtype=np.int32)
+    a = _compile(cfg, frame)
+    b = compile_proxy_model(authored_terms=typed, static_config=cfg, as_of_date=CANONICAL_AS_OF_DATE, run_axis_rf_ids=axis)
+    assert hash_proxy_model(a) == hash_proxy_model(b)
+    for f in ("row_target_rf_ids", "row_term_offsets", "term_driver_rf_ids", "term_chart_ids", "term_loadings"):
+        assert getattr(a, f).tobytes() == getattr(b, f).tobytes()

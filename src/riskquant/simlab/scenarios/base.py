@@ -38,6 +38,10 @@ class ScenarioSetBatch:
     F-contiguous `(B, K)` so consumers read down the scenario axis with unit
     stride.
 
+    Lifetime: a generator may reuse one output buffer for every batch of a
+    stream, so `shocks` is valid only until the iterator yields the next
+    batch. A consumer that keeps a batch must copy it.
+
     Canonical contract (validated at construction; O(1), no data scans):
       - `shocks`                 : 2-D float32, F-contiguous, shape (B, K).
       - `scenario_offset`        : int >= 0 (not bool).

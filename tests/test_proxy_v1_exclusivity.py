@@ -45,6 +45,7 @@ _D013_NAMES = frozenset({
     "build_shock_universe",
     "ShockUniverse",
     "apply_shocks_to_base_levels",
+    "_kernel_apply_shocks",
     "resolve_required_factor_ids_to_market_data_factor_ids",
     "compile_proxy_topology_from_df",
     "compile_proxy_topology_from_xlsx",
@@ -92,4 +93,15 @@ def test_no_code_names_a_d013_protocol_concept() -> None:
             )
             if found in _D013_NAMES:
                 offenders.append(f"{f.relative_to(_ROOT)}:{node.lineno}: {found}")
+    assert offenders == []
+
+
+def test_no_code_names_a_d013_module_in_a_string() -> None:
+    """Dynamic imports (importlib, __import__) take module paths as strings."""
+    offenders = []
+    for f in _python_files():
+        for node in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if any(node.value == m or node.value.startswith(m + ".") for m in _REMOVED_MODULES):
+                    offenders.append(f"{f.relative_to(_ROOT)}:{node.lineno}: {node.value}")
     assert offenders == []

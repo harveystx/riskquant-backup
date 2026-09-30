@@ -606,3 +606,29 @@ def test_chart_reconstruction_is_checked_by_the_factor_state_guard(beta, admissi
     else:
         with pytest.raises(ValueError):
             run_scenario_var_es(**kw)
+
+
+# ---- D093: frame authoring is a lossless adapter into the typed production path -------------
+
+
+def test_frame_authoring_equals_typed_authoring_through_the_production_run(capture) -> None:
+    from riskquant.config.proxy_model.ingest import PROXY_MODEL_TERM_SCHEMA, proxy_terms_from_df
+
+    typed = (_term("EQ_USD", "USDEUR", DIFF, 0.3), _term("EQ_USD", "USDEUR", DIFF, 0.2),
+             _term("EQ_USD", "USDEUR", LOG, -0.1))
+    frame = pl.DataFrame({
+        "term_kind": ["NODE"] * 3, "target_name": ["EQ_USD"] * 3, "driver_name": ["USDEUR"] * 3,
+        "driver_chart": ["LOG_RETURN", "DIFFERENCE", "DIFFERENCE"], "loading": [-0.1, 0.2, 0.3],
+    }, schema=PROXY_MODEL_TERM_SCHEMA)  # the same terms, authored in another row order
+    results = []
+    for terms in (typed, proxy_terms_from_df(frame)):
+        capture["shocked"].clear()
+        kw = _world().inputs()
+        kw["proxy_terms"] = terms
+        run = run_scenario_var_es(**kw)
+        results.append((run, _shocked(capture).copy()))
+    (a, sa), (b, sb) = results
+    assert a.manifest.shocks.proxy_model_digest == b.manifest.shocks.proxy_model_digest
+    assert a.identity == b.identity and a.manifest.to_json() == b.manifest.to_json()
+    assert sa.tobytes() == sb.tobytes()
+    assert a.var.tobytes() == b.var.tobytes() and a.es.tobytes() == b.es.tobytes()
