@@ -465,7 +465,7 @@ def canonical_risk_run():
     """The demo's own fixture, driven through the production entry point
     with the same model/horizon/confidence level the canonical demo uses."""
     fixture = _FIXTURES.build_fixture(verbose=False)
-    su = fixture.shock_universe
+    su = fixture.run_axis_inputs
     run = run_scenario_var_es(
         scenario_config=HistoricalGeneratorConfig(model="historical", horizon=1),
         data=fixture.historical_matrix,
@@ -515,7 +515,7 @@ def _independent_reporting_pnl(fixture) -> np.ndarray:
     # float32 (the world's shock representation); every axis factor with its
     # own column reconstructs as x0 * exp(y); WTI_CRUDE, which has none, as
     # x0 * exp(0.95 * y_BRENT) (its authored D019 term).
-    su = fixture.shock_universe
+    su = fixture.run_axis_inputs
     rsc = fixture.valuation_context.static_config
     hist = fixture.historical_matrix
     values = np.asarray(hist.values, dtype=np.float64)

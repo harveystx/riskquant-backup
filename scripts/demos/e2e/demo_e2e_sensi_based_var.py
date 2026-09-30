@@ -103,7 +103,7 @@ _VALIDATION_CONFIDENCE_LEVEL: float = 2.0 / 3.0
 def _run_validation(fixture: fx.DemoFixture) -> bool:
     """Hand-verify proxy/shock/P&L/reporting-currency/VaR-ES wiring.
 
-    Uses `fixture.shock_universe` (the run axis and the authored Proxy V1
+    Uses `fixture.run_axis_inputs` (the run axis and the authored Proxy V1
     terms shared with the canonical call below) to reconstruct scenario
     levels for the deterministic 3-scenario shock set through the D088
     building blocks, then checks the result against economic identities
@@ -118,7 +118,7 @@ def _run_validation(fixture: fx.DemoFixture) -> bool:
     """
     print_header("VALIDATION: Hand-Verifiable Scenario/Proxy/FX/VaR Wiring")
 
-    su = fixture.shock_universe
+    su = fixture.run_axis_inputs
     rsc = fixture.rsc
 
     raw_shocks = np.asfortranarray(np.array(_VALIDATION_SHOCKS, dtype=np.float32))
@@ -363,7 +363,7 @@ def _run_canonical(fixture: fx.DemoFixture) -> tuple[RiskRun, bool]:
     )
     print("---")
 
-    su = fixture.shock_universe
+    su = fixture.run_axis_inputs
 
     print_header("riskquant.solutions.risk_run.api.run_scenario_var_es")
     run_a = run_scenario_var_es(

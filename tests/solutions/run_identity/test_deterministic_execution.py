@@ -106,7 +106,7 @@ _CONFIGS = {
 
 
 def _run(model: str, batch_size: int) -> dict[str, object]:
-    """Official pieces: generator -> apply_shocks_to_base_levels -> P&L -> VaR/ES."""
+    """Official pieces: generator -> Proxy V1 identity rows (Slice 2 kernel) -> P&L -> VaR/ES."""
     data = _parametric_data() if model == "parametric" else _matrix()
     matrix = _matrix()
     base_levels = np.ascontiguousarray(np.asarray(matrix.values)[-1].astype(np.float64))

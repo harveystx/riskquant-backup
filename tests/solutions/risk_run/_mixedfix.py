@@ -148,7 +148,7 @@ def build_world(frame: pd.DataFrame, *, rf=None, uids=None) -> SimpleNamespace:
         static_config=sh.rsc,
         uix_mapper=mapper,
     )
-    su = FX._run_shock_universe(
+    su = FX._run_axis_inputs(
         rsc=sh.rsc,
         proxy_terms=sh.terms,
         run_axis=derive_run_factor_axis(

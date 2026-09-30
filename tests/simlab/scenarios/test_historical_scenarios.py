@@ -3,19 +3,21 @@
 Historical-scenario integration tests.
 
 Covers the seam this increment introduced -- hand-authored observations ->
-`RiskFactorMatrix` -> `HistoricalGenerator` -> proxy routing -> shocked
-levels -- plus explicit regressions for two production defects found while
-wiring it:
+`RiskFactorMatrix` -> `HistoricalGenerator` -> Proxy V1 operator (identity
+rows plus one authored term) -> shocked levels -- plus explicit regressions
+for two production defects found while wiring it:
 
   1. `build_risk_factor_matrix_from_df` defaulted to float32, but the
      historical-shock kernel is dtype-pinned to float64 `values`, so the
      canonical builder's default output could not drive the canonical
      historical generator at all.
 
-  2. `_kernel_apply_shocks` carried a single F-contiguous `shocks` signature.
-     A trailing batch of exactly one scenario is reported by numpy as both C-
-     and F-contiguous and Numba resolves that to 'C', so the strict
-     signature failed to match (RQ-AUD-017, consumer side).
+  2. The shock-application kernel carried a single F-contiguous `shocks`
+     signature. A trailing batch of exactly one scenario is reported by numpy
+     as both C- and F-contiguous and Numba resolves that to 'C', so the strict
+     signature failed to match (RQ-AUD-017, consumer side). The Slice 2
+     kernel registers both layouts; the one-scenario batch test keeps the
+     regression.
 
 The shock mathematics itself is already covered by
 `tests/simlab/scenarios/test_historical_math.py` and is not duplicated.
@@ -346,7 +348,7 @@ def test_canonical_history_surface_names_use_the_bare_y_label(
 
 
 @pytest.mark.parametrize("batch_size", [1, 2, 4, 5, 8, 9, 16])
-def test_apply_shocks_accepts_every_batch_geometry(batch_size: int) -> None:
+def test_shock_application_accepts_every_batch_geometry(batch_size: int) -> None:
     """
     9 scenarios across assorted batch sizes forces trailing batches of
     several widths, including exactly ONE scenario (batch_size=4 and 8),
@@ -369,11 +371,11 @@ def test_batch_size_does_not_change_historical_scenarios() -> None:
 
 
 # =============================================================================
-# Historical shocks, proxy routing, and economics
+# Historical shocks, the Proxy V1 operator, and economics
 # =============================================================================
 
 
-def test_shock_dtype_axis_and_routing() -> None:
+def test_shock_dtype_and_world_column_axis() -> None:
     generator = HistoricalGenerator(matrix=_matrix(), horizon=1)
     batch = next(
         iter(

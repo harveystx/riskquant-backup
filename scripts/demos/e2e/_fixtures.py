@@ -612,7 +612,7 @@ _SCENARIO_SOURCE_NAMES: tuple[str, ...] = ("USDEUR", "AAPL_EQ", "BRENT_CRUDE")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ShockUniverseAxis:
+class RunAxisInputs:
     """The canonical run axis, on the same order for every array below.
 
     The first `num_valuation_factors` rows are the valuation universe (also
@@ -626,14 +626,14 @@ class ShockUniverseAxis:
     proxy_terms: tuple[NodeProxyTerm, ...]
 
 
-def _run_shock_universe(
+def _run_axis_inputs(
     *,
     rsc: RiskStaticConfig,
     proxy_terms: tuple[NodeProxyTerm, ...],
     run_axis: RunFactorAxis,
     snapshot: RiskFactorLevelSnapshot,
     verbose: bool = True,
-) -> ShockUniverseAxis:
+) -> RunAxisInputs:
     """Bind the run inputs to the canonical run axis.
 
         derive_run_factor_axis        : the run-owned axis (valuation
@@ -676,7 +676,7 @@ def _run_shock_universe(
         )
         print("---")
 
-    return ShockUniverseAxis(
+    return RunAxisInputs(
         num_valuation_factors=run_axis.num_valuation_factors,
         required_factor_ids=required_factor_ids,
         required_shift_type_id=np.array(run_axis.shift_type_ids, copy=True),
@@ -902,7 +902,7 @@ class DemoFixture:
     market_data: MarketDataMatrix
     pricing: ValuationResult
     calculator: SensitivityPnlCalculator
-    shock_universe: ShockUniverseAxis
+    run_axis_inputs: RunAxisInputs
     historical_matrix: RiskFactorMatrix
     parametric_data: ParametricRiskData
     reporting: ReportingSpec
@@ -946,7 +946,7 @@ def build_fixture(*, verbose: bool = True) -> DemoFixture:
     valuation_context = _build_valuation_context(
         rsc=rsc, ingest_batch=ingest_batch, uix_mapper=uix_mapper
     )
-    shock_universe = _run_shock_universe(
+    run_axis_inputs = _run_axis_inputs(
         rsc=rsc,
         proxy_terms=proxy_terms,
         run_axis=derive_run_factor_axis(
@@ -955,7 +955,7 @@ def build_fixture(*, verbose: bool = True) -> DemoFixture:
         snapshot=snapshot,
         verbose=verbose,
     )
-    k_val = shock_universe.num_valuation_factors
+    k_val = run_axis_inputs.num_valuation_factors
     # P1-A: the risk run consumes a CERTIFIED TAYLOR/DERIVED book bound to the
     # shock universe's base levels and the pricing pass's V_0.
     calculator = _certify_sensitivities(
@@ -964,8 +964,8 @@ def build_fixture(*, verbose: bool = True) -> DemoFixture:
         uix_mapper=uix_mapper,
         market_data=market_data,
         pricing=pricing,
-        required_factor_ids=shock_universe.required_factor_ids[:k_val],
-        base_levels=shock_universe.base_levels[:k_val],
+        required_factor_ids=run_axis_inputs.required_factor_ids[:k_val],
+        base_levels=run_axis_inputs.base_levels[:k_val],
     )
     historical_matrix = _build_historical_matrix(rsc)
     parametric_data = _build_parametric_data(rsc)
@@ -981,7 +981,7 @@ def build_fixture(*, verbose: bool = True) -> DemoFixture:
         market_data=market_data,
         pricing=pricing,
         calculator=calculator,
-        shock_universe=shock_universe,
+        run_axis_inputs=run_axis_inputs,
         historical_matrix=historical_matrix,
         parametric_data=parametric_data,
         reporting=reporting,
