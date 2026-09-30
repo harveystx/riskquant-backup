@@ -1,8 +1,8 @@
 {
-  "classification": "FAIL",
+  "classification": "PASS",
   "multi_core_hardware_available": true,
   "numba_multi_thread_execution_verified": true,
-  "multi_core_determinism_certified": false,
+  "multi_core_determinism_certified": true,
   "hardware": {
     "effective_cpus": 12,
     "cpu_source": "cpu_count",
@@ -43,39 +43,284 @@
       "detail": ">= 2 distinct worker ids inside a real prange"
     },
     {
-      "check": "historical baseline",
-      "passed": false,
-      "detail": "Traceback (most recent call last):\n  File \"<string>\", line 155, in <module>\n  File \"<string>\", line 119, in capture\n  File \"<string>\", line "
+      "check": "historical: inspection reproduces the RiskRun on the canonical run axis",
+      "passed": true,
+      "detail": "K_val=140 K_rep=0 K_run=140; reporting route rebuilt from the trade record (D085)"
     },
     {
-      "check": "filtered_historical baseline",
-      "passed": false,
-      "detail": "Traceback (most recent call last):\n  File \"<string>\", line 155, in <module>\n  File \"<string>\", line 119, in capture\n  File \"<string>\", line "
+      "check": "historical: threads 1 vs 2 identical",
+      "passed": true,
+      "detail": ""
     },
     {
-      "check": "sbb baseline",
-      "passed": false,
-      "detail": "Traceback (most recent call last):\n  File \"<string>\", line 155, in <module>\n  File \"<string>\", line 119, in capture\n  File \"<string>\", line "
+      "check": "historical: threads 1 vs 4 identical",
+      "passed": true,
+      "detail": ""
     },
     {
-      "check": "filtered_bootstrap baseline",
-      "passed": false,
-      "detail": "Traceback (most recent call last):\n  File \"<string>\", line 155, in <module>\n  File \"<string>\", line 119, in capture\n  File \"<string>\", line "
+      "check": "historical: threads 1 vs 8 identical",
+      "passed": true,
+      "detail": ""
     },
     {
-      "check": "parametric baseline",
-      "passed": false,
-      "detail": "Traceback (most recent call last):\n  File \"<string>\", line 155, in <module>\n  File \"<string>\", line 119, in capture\n  File \"<string>\", line "
+      "check": "filtered_historical: inspection reproduces the RiskRun on the canonical run axis",
+      "passed": true,
+      "detail": "K_val=140 K_rep=0 K_run=140; reporting route rebuilt from the trade record (D085)"
     },
     {
-      "check": "parametric BLAS baseline",
-      "passed": false,
-      "detail": "Traceback (most recent call last):\n  File \"<string>\", line 155, in <module>\n  File \"<string>\", line 119, in capture\n  File \"<string>\", line "
+      "check": "filtered_historical: threads 1 vs 2 identical",
+      "passed": true,
+      "detail": ""
     },
     {
-      "check": "fresh-process reproduction",
-      "passed": false,
-      "detail": "child failed"
+      "check": "filtered_historical: threads 1 vs 4 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_historical: threads 1 vs 8 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "sbb: inspection reproduces the RiskRun on the canonical run axis",
+      "passed": true,
+      "detail": "K_val=140 K_rep=0 K_run=140; reporting route rebuilt from the trade record (D085)"
+    },
+    {
+      "check": "sbb: threads 1 vs 2 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "sbb: threads 1 vs 4 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "sbb: threads 1 vs 8 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_bootstrap: inspection reproduces the RiskRun on the canonical run axis",
+      "passed": true,
+      "detail": "K_val=140 K_rep=0 K_run=140; reporting route rebuilt from the trade record (D085)"
+    },
+    {
+      "check": "filtered_bootstrap: threads 1 vs 2 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_bootstrap: threads 1 vs 4 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_bootstrap: threads 1 vs 8 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric: inspection reproduces the RiskRun on the canonical run axis",
+      "passed": true,
+      "detail": "K_val=140 K_rep=0 K_run=140; reporting route rebuilt from the trade record (D085)"
+    },
+    {
+      "check": "parametric: threads 1 vs 2 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric: threads 1 vs 4 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric: threads 1 vs 8 identical",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "historical: batch_size 1 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "historical: batch_size 3 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "historical: batch_size 7 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "historical: batch_size 64 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "historical: batch_size S identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "historical: batch_size S+1 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_historical: batch_size 1 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_historical: batch_size 3 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_historical: batch_size 7 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_historical: batch_size 64 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_historical: batch_size S identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_historical: batch_size S+1 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "sbb: batch_size 1 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "sbb: batch_size 3 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "sbb: batch_size 7 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "sbb: batch_size 64 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "sbb: batch_size S identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "sbb: batch_size S+1 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_bootstrap: batch_size 1 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_bootstrap: batch_size 3 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_bootstrap: batch_size 7 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_bootstrap: batch_size 64 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_bootstrap: batch_size S identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "filtered_bootstrap: batch_size S+1 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric: batch_size 1 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric: batch_size 3 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric: batch_size 7 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric: batch_size 64 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric: batch_size S identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric: batch_size S+1 identical @ 8 threads",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric identical under OMP_NUM_THREADS=1",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric identical under OMP_NUM_THREADS=8",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric identical under OPENBLAS_NUM_THREADS=1",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric identical under OPENBLAS_NUM_THREADS=8",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "parametric identical under MKL_NUM_THREADS=1",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "two fresh processes identical @ 8 threads",
+      "passed": true,
+      "detail": ""
     },
     {
       "check": "Environment gate",
@@ -163,12 +408,179 @@
         "numba": "0.66.0"
       }
     },
-    "matrix": {},
+    "run_axis": {
+      "K_val": 140,
+      "K_rep": 0,
+      "K_run": 140,
+      "bound": true
+    },
+    "matrix": {
+      "historical:threads2": "identical",
+      "historical:threads4": "identical",
+      "historical:threads8": "identical",
+      "filtered_historical:threads2": "identical",
+      "filtered_historical:threads4": "identical",
+      "filtered_historical:threads8": "identical",
+      "sbb:threads2": "identical",
+      "sbb:threads4": "identical",
+      "sbb:threads8": "identical",
+      "filtered_bootstrap:threads2": "identical",
+      "filtered_bootstrap:threads4": "identical",
+      "filtered_bootstrap:threads8": "identical",
+      "parametric:threads2": "identical",
+      "parametric:threads4": "identical",
+      "parametric:threads8": "identical",
+      "historical:bs1": "identical",
+      "historical:bs3": "identical",
+      "historical:bs7": "identical",
+      "historical:bs64": "identical",
+      "historical:bsS": "identical",
+      "historical:bsS+1": "identical",
+      "filtered_historical:bs1": "identical",
+      "filtered_historical:bs3": "identical",
+      "filtered_historical:bs7": "identical",
+      "filtered_historical:bs64": "identical",
+      "filtered_historical:bsS": "identical",
+      "filtered_historical:bsS+1": "identical",
+      "sbb:bs1": "identical",
+      "sbb:bs3": "identical",
+      "sbb:bs7": "identical",
+      "sbb:bs64": "identical",
+      "sbb:bsS": "identical",
+      "sbb:bsS+1": "identical",
+      "filtered_bootstrap:bs1": "identical",
+      "filtered_bootstrap:bs3": "identical",
+      "filtered_bootstrap:bs7": "identical",
+      "filtered_bootstrap:bs64": "identical",
+      "filtered_bootstrap:bsS": "identical",
+      "filtered_bootstrap:bsS+1": "identical",
+      "parametric:bs1": "identical",
+      "parametric:bs3": "identical",
+      "parametric:bs7": "identical",
+      "parametric:bs64": "identical",
+      "parametric:bsS": "identical",
+      "parametric:bsS+1": "identical"
+    },
     "parametric_blas_fixture": {
       "digest": "68379a215de642e5105822b1b7dde3dbfebfb5d6ef0b3c8f2dde43a74c58c7dd",
       "frozen_under": {
         "NUMBA_NUM_THREADS": "8"
       }
+    },
+    "parametric_blas": {
+      "OMP_NUM_THREADS=1": "identical",
+      "OMP_NUM_THREADS=8": "identical",
+      "OPENBLAS_NUM_THREADS=1": "identical",
+      "OPENBLAS_NUM_THREADS=8": "identical",
+      "MKL_NUM_THREADS=1": "identical"
+    },
+    "parametric_blas_records": {
+      "baseline": {
+        "fixture_digest": "68379a215de642e5105822b1b7dde3dbfebfb5d6ef0b3c8f2dde43a74c58c7dd",
+        "scenario_stream": "28ea9042e78ba700d653b5f53cc54f31e8f3e0c4f010b04b64a08600140333ef",
+        "shocked_levels": "426340b8ede612c8ed24e92713bb05842a861eaccb73167c2d2fcde38c88f479",
+        "trade_pnl": "459c78c6f9456de2b4a1d26a0f23717d170a42ed36ac3e55e03eab406ed9e2c4",
+        "portfolio_pnl": "3bfb300100f7b593e44270b26ed7142daa569692d4c092e6e3ba05a5ddc4be58",
+        "var_digest": "bc1c99b6d84fb0ebe0f8a2ab6ac8332dcc861a8c67446c8049efe6ccd694ce70",
+        "es_digest": "3a9b92164061a04cfa528d1ede9436a22befb24d7d4af16dce9fad2cc2418035",
+        "portfolio_var": "-0x1.13a8bf2d53e65p+13",
+        "portfolio_es": "-0x1.7ff2d921059dep+13",
+        "manifest_identity": "3449215ce246d4ede4a447f5faa47b6638557bf8e62f864f8adee985e4ee8449",
+        "riskrun_identity": "3449215ce246d4ede4a447f5faa47b6638557bf8e62f864f8adee985e4ee8449",
+        "blas_threads": [
+          "openblas:12",
+          "openblas:12"
+        ]
+      },
+      "OMP_NUM_THREADS=1": {
+        "fixture_digest": "68379a215de642e5105822b1b7dde3dbfebfb5d6ef0b3c8f2dde43a74c58c7dd",
+        "scenario_stream": "28ea9042e78ba700d653b5f53cc54f31e8f3e0c4f010b04b64a08600140333ef",
+        "shocked_levels": "426340b8ede612c8ed24e92713bb05842a861eaccb73167c2d2fcde38c88f479",
+        "trade_pnl": "459c78c6f9456de2b4a1d26a0f23717d170a42ed36ac3e55e03eab406ed9e2c4",
+        "portfolio_pnl": "3bfb300100f7b593e44270b26ed7142daa569692d4c092e6e3ba05a5ddc4be58",
+        "var_digest": "bc1c99b6d84fb0ebe0f8a2ab6ac8332dcc861a8c67446c8049efe6ccd694ce70",
+        "es_digest": "3a9b92164061a04cfa528d1ede9436a22befb24d7d4af16dce9fad2cc2418035",
+        "portfolio_var": "-0x1.13a8bf2d53e65p+13",
+        "portfolio_es": "-0x1.7ff2d921059dep+13",
+        "manifest_identity": "3449215ce246d4ede4a447f5faa47b6638557bf8e62f864f8adee985e4ee8449",
+        "riskrun_identity": "3449215ce246d4ede4a447f5faa47b6638557bf8e62f864f8adee985e4ee8449",
+        "blas_threads": [
+          "openblas:1",
+          "openblas:1"
+        ]
+      },
+      "OMP_NUM_THREADS=8": {
+        "fixture_digest": "68379a215de642e5105822b1b7dde3dbfebfb5d6ef0b3c8f2dde43a74c58c7dd",
+        "scenario_stream": "28ea9042e78ba700d653b5f53cc54f31e8f3e0c4f010b04b64a08600140333ef",
+        "shocked_levels": "426340b8ede612c8ed24e92713bb05842a861eaccb73167c2d2fcde38c88f479",
+        "trade_pnl": "459c78c6f9456de2b4a1d26a0f23717d170a42ed36ac3e55e03eab406ed9e2c4",
+        "portfolio_pnl": "3bfb300100f7b593e44270b26ed7142daa569692d4c092e6e3ba05a5ddc4be58",
+        "var_digest": "bc1c99b6d84fb0ebe0f8a2ab6ac8332dcc861a8c67446c8049efe6ccd694ce70",
+        "es_digest": "3a9b92164061a04cfa528d1ede9436a22befb24d7d4af16dce9fad2cc2418035",
+        "portfolio_var": "-0x1.13a8bf2d53e65p+13",
+        "portfolio_es": "-0x1.7ff2d921059dep+13",
+        "manifest_identity": "3449215ce246d4ede4a447f5faa47b6638557bf8e62f864f8adee985e4ee8449",
+        "riskrun_identity": "3449215ce246d4ede4a447f5faa47b6638557bf8e62f864f8adee985e4ee8449",
+        "blas_threads": [
+          "openblas:8",
+          "openblas:8"
+        ]
+      },
+      "OPENBLAS_NUM_THREADS=1": {
+        "fixture_digest": "68379a215de642e5105822b1b7dde3dbfebfb5d6ef0b3c8f2dde43a74c58c7dd",
+        "scenario_stream": "28ea9042e78ba700d653b5f53cc54f31e8f3e0c4f010b04b64a08600140333ef",
+        "shocked_levels": "426340b8ede612c8ed24e92713bb05842a861eaccb73167c2d2fcde38c88f479",
+        "trade_pnl": "459c78c6f9456de2b4a1d26a0f23717d170a42ed36ac3e55e03eab406ed9e2c4",
+        "portfolio_pnl": "3bfb300100f7b593e44270b26ed7142daa569692d4c092e6e3ba05a5ddc4be58",
+        "var_digest": "bc1c99b6d84fb0ebe0f8a2ab6ac8332dcc861a8c67446c8049efe6ccd694ce70",
+        "es_digest": "3a9b92164061a04cfa528d1ede9436a22befb24d7d4af16dce9fad2cc2418035",
+        "portfolio_var": "-0x1.13a8bf2d53e65p+13",
+        "portfolio_es": "-0x1.7ff2d921059dep+13",
+        "manifest_identity": "3449215ce246d4ede4a447f5faa47b6638557bf8e62f864f8adee985e4ee8449",
+        "riskrun_identity": "3449215ce246d4ede4a447f5faa47b6638557bf8e62f864f8adee985e4ee8449",
+        "blas_threads": [
+          "openblas:1",
+          "openblas:1"
+        ]
+      },
+      "OPENBLAS_NUM_THREADS=8": {
+        "fixture_digest": "68379a215de642e5105822b1b7dde3dbfebfb5d6ef0b3c8f2dde43a74c58c7dd",
+        "scenario_stream": "28ea9042e78ba700d653b5f53cc54f31e8f3e0c4f010b04b64a08600140333ef",
+        "shocked_levels": "426340b8ede612c8ed24e92713bb05842a861eaccb73167c2d2fcde38c88f479",
+        "trade_pnl": "459c78c6f9456de2b4a1d26a0f23717d170a42ed36ac3e55e03eab406ed9e2c4",
+        "portfolio_pnl": "3bfb300100f7b593e44270b26ed7142daa569692d4c092e6e3ba05a5ddc4be58",
+        "var_digest": "bc1c99b6d84fb0ebe0f8a2ab6ac8332dcc861a8c67446c8049efe6ccd694ce70",
+        "es_digest": "3a9b92164061a04cfa528d1ede9436a22befb24d7d4af16dce9fad2cc2418035",
+        "portfolio_var": "-0x1.13a8bf2d53e65p+13",
+        "portfolio_es": "-0x1.7ff2d921059dep+13",
+        "manifest_identity": "3449215ce246d4ede4a447f5faa47b6638557bf8e62f864f8adee985e4ee8449",
+        "riskrun_identity": "3449215ce246d4ede4a447f5faa47b6638557bf8e62f864f8adee985e4ee8449",
+        "blas_threads": [
+          "openblas:8",
+          "openblas:8"
+        ]
+      },
+      "MKL_NUM_THREADS=1": {
+        "fixture_digest": "68379a215de642e5105822b1b7dde3dbfebfb5d6ef0b3c8f2dde43a74c58c7dd",
+        "scenario_stream": "28ea9042e78ba700d653b5f53cc54f31e8f3e0c4f010b04b64a08600140333ef",
+        "shocked_levels": "426340b8ede612c8ed24e92713bb05842a861eaccb73167c2d2fcde38c88f479",
+        "trade_pnl": "459c78c6f9456de2b4a1d26a0f23717d170a42ed36ac3e55e03eab406ed9e2c4",
+        "portfolio_pnl": "3bfb300100f7b593e44270b26ed7142daa569692d4c092e6e3ba05a5ddc4be58",
+        "var_digest": "bc1c99b6d84fb0ebe0f8a2ab6ac8332dcc861a8c67446c8049efe6ccd694ce70",
+        "es_digest": "3a9b92164061a04cfa528d1ede9436a22befb24d7d4af16dce9fad2cc2418035",
+        "portfolio_var": "-0x1.13a8bf2d53e65p+13",
+        "portfolio_es": "-0x1.7ff2d921059dep+13",
+        "manifest_identity": "3449215ce246d4ede4a447f5faa47b6638557bf8e62f864f8adee985e4ee8449",
+        "riskrun_identity": "3449215ce246d4ede4a447f5faa47b6638557bf8e62f864f8adee985e4ee8449",
+        "blas_threads": [
+          "openblas:12",
+          "openblas:12"
+        ]
+      }
+    },
+    "fresh_process": {
+      "divergence": "none",
+      "threads": 8
     },
     "contracts": {
       "var_es_producers": [
@@ -239,39 +651,39 @@
   "performance": [
     {
       "threads": 1,
-      "runtime_s": 0.03766510001150891,
-      "verify_s": 0.050754500000039116,
-      "serialize_s": 0.0002820999943651259,
-      "peak_mb": 23.931784,
+      "runtime_s": 0.040350800001760945,
+      "verify_s": 0.043302999998559244,
+      "serialize_s": 0.0003175999881932512,
+      "peak_mb": 23.931902,
       "artifact_kb": 12.827,
-      "scen_per_s": 53099.55368202612
+      "scen_per_s": 49565.31220973855
     },
     {
       "threads": 2,
-      "runtime_s": 0.03641600000264589,
-      "verify_s": 0.0363632999942638,
-      "serialize_s": 0.0002894999925047159,
-      "peak_mb": 23.931776,
+      "runtime_s": 0.042554600004223175,
+      "verify_s": 0.05189230000542011,
+      "serialize_s": 0.00041649999911896884,
+      "peak_mb": 23.931784,
       "artifact_kb": 12.827,
-      "scen_per_s": 54920.913880016626
+      "scen_per_s": 46998.444346827775
     },
     {
       "threads": 4,
-      "runtime_s": 0.04753009999694768,
-      "verify_s": 0.04589300000225194,
-      "serialize_s": 0.0003209999995306134,
-      "peak_mb": 23.931843,
+      "runtime_s": 0.05324929999187589,
+      "verify_s": 0.054474299991852604,
+      "serialize_s": 0.0004317999992053956,
+      "peak_mb": 23.931835,
       "artifact_kb": 12.827,
-      "scen_per_s": 42078.598617053976
+      "scen_per_s": 37559.179187428475
     },
     {
       "threads": 8,
-      "runtime_s": 0.050413699995260686,
-      "verify_s": 0.05548779999662656,
-      "serialize_s": 0.0005200999876251444,
-      "peak_mb": 23.931902,
+      "runtime_s": 0.07595850000507198,
+      "verify_s": 0.0819846999947913,
+      "serialize_s": 0.0007906999962870032,
+      "peak_mb": 23.931784,
       "artifact_kb": 12.827,
-      "scen_per_s": 39671.755895481125
+      "scen_per_s": 26330.167128977715
     }
   ],
   "threads_executed": [
