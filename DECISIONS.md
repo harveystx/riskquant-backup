@@ -4816,13 +4816,13 @@ Closed-form, prior to implementation: identity default (`80 → 82` gives `82`);
 ---
 
 
-## D093 — Proxy V1 tabular authoring edge (proposed closure of D088 §13.2 for the frame representation)
+## D093 — Proxy V1 tabular authoring edge (closes D088 §13.2 for the frame representation)
 
-**Status:** PROPOSED (2026-09-30). Requires owner approval. Until approval, D088 §13.2 remains OPEN.
+**Status:** LOCKED (2026-09-30, owner approval). Closes D088 §13.2 for the frame representation; file loaders remain OPEN (clause 7).
 
 **Context.** D088 §12.3 fixes the compiler's authored input contract: node terms (target, driver, τ, β) and container terms (target container, driver container, τ, β). The authoring file format is a separate edge concern (§13.2, OPEN). Stage E removed the D013 proxy-configuration edge and its canonical ingest fixture. RiskQuant configuration inputs enter through Polars frames with a canonical ingest fixture under `riskquant.ingest_fixtures.config` (the static configuration convention). Proxy V1 had no such edge, so a Proxy V1 model could be authored only as Python objects.
 
-**Decision (proposed).**
+**Decision.**
 
 1. **Frame.** A `polars.DataFrame` with exactly five columns, identified by name; physical column order is not semantic. Dtypes, compared exactly and never cast: `term_kind`, `target_name`, `driver_name`, `driver_chart` are `pl.String` (`pl.Utf8` is the same dtype); `loading` is `pl.Float64`. Any other dtype is refused, including Int64, Float32, Decimal, String or Object loadings and Categorical or Enum text columns. A frame with zero rows is valid and authors no terms.
 2. **Values.** No null in any column. `target_name` and `driver_name` are non-empty and not whitespace-only; they are passed verbatim (no trimming, case change, resolution or existence check). `term_kind` is exactly `"NODE"` or `"CONTAINER"`; `driver_chart` is exactly `"LOG_RETURN"`, `"SIMPLE_RETURN"` or `"DIFFERENCE"`; matching is case-sensitive, with no aliases and no whitespace normalisation. `loading` is finite (NaN, +inf and −inf are refused); `0.0`, `−0.0` and negative values are admissible and are preserved bit-exactly.

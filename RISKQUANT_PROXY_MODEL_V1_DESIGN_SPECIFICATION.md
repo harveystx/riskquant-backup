@@ -620,7 +620,7 @@ Neither record carries a target chart or a horizon.
 
 ### 13.2 File format
 
-**OPEN, closure PROPOSED by D093 (2026-09-30).** D088 §12.3: "The authoring file format is a separate edge concern." D093 proposes a tabular edge: one Polars row per authored term (`term_kind`, `target_name`, `driver_name`, `driver_chart`, `loading`), mapped by `riskquant.config.proxy_model.ingest.proxy_terms_from_df`, with the canonical fixture `riskquant.ingest_fixtures.config.risk_proxy_model`. File loaders (xlsx, csv) remain OPEN. The legacy D013 loader and its canonical ingest fixture were removed in Stage E (2026-09-29); they could not express $\tau$.
+**CLOSED for the frame representation by D093 (LOCKED 2026-09-30).** D088 §12.3: "The authoring file format is a separate edge concern." D093 fixes a tabular edge: one Polars row per authored term (`term_kind`, `target_name`, `driver_name`, `driver_chart`, `loading`), mapped by `riskquant.config.proxy_model.ingest.proxy_terms_from_df`, with the canonical fixture `riskquant.ingest_fixtures.config.risk_proxy_model`. File loaders (xlsx, csv) remain OPEN. The legacy D013 loader and its canonical ingest fixture were removed in Stage E (2026-09-29); they could not express $\tau$.
 
 ### 13.3 Illustrative example
 
@@ -1179,7 +1179,7 @@ Each invariant is **DECISION** unless marked otherwise. The final column gives t
 | Concern | Owner | Evidence |
 |---|---|---|
 | Authoring (semantic content) | Proxy configuration layer: `NodeProxyTerm`, `ContainerProxyTerm` | `schema_objects.py`; D088 §12.3 |
-| Authoring file format | Edge. **OPEN.** | D088 §12.3 |
+| Authoring file format | Edge. Frame representation: D093 (LOCKED 2026-09-30). File loaders: **OPEN**. | D088 §12.3; D093 |
 | Alias resolution | Static as-of resolution: `build_risk_factor_name_mapping_for_as_of_date`, called by the compiler | `rf_resolution.py`; `compile.py` |
 | EXACT coordinate matching | Proxy compiler | `compile.py` (`_expand_container_term`) |
 | Admissibility | Proxy compiler | `compile.py` |
@@ -1593,7 +1593,7 @@ The detected defects included:
 | Component | Status | Evidence |
 |---|---|---|
 | Authored semantic records | Implemented | `schema_objects.py` |
-| Authoring file format and loader | Not implemented. **OPEN.** | D088 §12.3; no loader in the snapshot |
+| Authoring file format and loader | Frame edge implemented (`proxy_terms_from_df`, D093 LOCKED). File loaders: **OPEN**. | D088 §12.3; D093 |
 | Canonical compiler | Implemented | `compile.py`, `canonical.py`, `compiled.py`; 61 tests |
 | Digest function | Implemented | `hashing.py::hash_proxy_model`; 11 tests |
 | Digest in the run manifest (`ShockIdentity`) | Not implemented | `run_identity/schemas.py` keeps the three legacy fields |
