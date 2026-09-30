@@ -98,27 +98,28 @@ rsc = compile_risk_static_config_from_dict_of_dfs(
 pillar = "BRENT_CRUDE_FWD[M+0]"
 frame = pl.from_dict(
     {
-        "uid": [1, 2],
-        "instrument": ["VANILLA_EUROPEAN_OPTION_NODE", "VANILLA_FORWARD_NODE"],
-        "quantity": ["1000", "1000"],
-        "underlying": [pillar, pillar],
-        "settlement_ccy": ["USD", "USD"],
-        "strike_price": [70.0, 70.0],
-        "strike_ccy": ["USD", "USD"],
-        "is_call": [1.0, None],
-        "expiry_date": ["2026-02-18", None],
-        "settlement_date": ["2026-02-20", "2026-02-17"],
-        "delivery_date": [None, "2026-02-15"],
-        "volatility_container_name": ["BRENT_CRUDE_ATM_VOL", None],
-        "under_discount_curve": ["USD_SOFR_OIS", "USD_SOFR_OIS"],
-        "strike_discount_curve": ["USD_SOFR_OIS", "USD_SOFR_OIS"],
-        "netting_set_id": [7, None],
+        "uid": [1, 2, 3],
+        "instrument": ["SPOT", "VANILLA_EUROPEAN_OPTION_NODE", "VANILLA_FORWARD_NODE"],
+        "quantity": [" 100 ", "1000", "1000"],
+        "underlying": ["AAPL_EQ", pillar, pillar],
+        "settlement_ccy": ["usd", "USD", "USD"],
+        "strike_price": [None, 70.0, 70.0],
+        "strike_ccy": [None, "USD", "USD"],
+        "is_call": [None, 1.0, None],
+        "expiry_date": [None, "2026-02-18", None],
+        "settlement_date": [None, "2026-02-20", "2026-2-17"],
+        "delivery_date": [None, None, "2026-02-15"],
+        "volatility_container_name": [None, "BRENT_CRUDE_ATM_VOL", None],
+        "under_discount_curve": [None, "USD_SOFR_OIS", "USD_SOFR_OIS"],
+        "strike_discount_curve": [None, "USD_SOFR_OIS", "USD_SOFR_OIS"],
+        "netting_set_id": [7, None, 9],
     }
 )
 batch = compile_raw_df_into_ingest_batch(
     raw_df=frame, static_config=rsc, as_of_date=dt.date(2026, 1, 15)
 )
-assert batch.size == 2
+assert batch.size == 3
+assert batch.netting_set_id.tolist() == [7, -999_999, 9]
 assert "pandas" not in sys.modules or sys.modules["pandas"] is None
 try:
     batch.to_df()

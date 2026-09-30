@@ -34,7 +34,7 @@ from riskquant.config.static_config.compile import (
     compile_risk_static_config_from_dict_of_dfs,
 )
 from riskquant.config.static_config.static_config import RiskStaticConfig
-from riskquant.constants import NOT_OPTION_MULT
+from riskquant.constants import NO_DATE_ORD32, NOT_OPTION_MULT
 from riskquant.exceptions import PrettyKeyError
 from riskquant.ingest_fixtures.config.risk_static_config import (
     canonical_risk_static_config as _canonical,
@@ -246,3 +246,14 @@ def test_netting_set_id_refuses_non_integer_and_out_of_range(
     frame = pl.from_dict(_node_book(netting_set_id=[1.0, bad]))
     with pytest.raises(TypeError, match=r"(?i)nullable-int column 'netting_set_id'"):
         _ingest(rsc, frame)
+
+
+def test_all_null_optional_date_column_is_missing(rsc: RiskStaticConfig) -> None:
+    """``pl.from_dict`` gives an all-None date column the ``pl.Null`` dtype."""
+    forward = {k: v[1:] for k, v in _node_book().items()}
+    frame = pl.from_dict(forward)
+    assert frame["expiry_date"].dtype == pl.Null
+    assert frame["is_call"].dtype == pl.Null
+    batch = _ingest(rsc, frame)
+    assert batch.size == 1
+    assert batch.expiry_ord.tolist() == [int(NO_DATE_ORD32)]

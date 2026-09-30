@@ -267,6 +267,10 @@ def _materialize_date_col(df: pl.DataFrame, col: str) -> pl.DataFrame:
     """
     dtype = df[col].dtype
 
+    if dtype == pl.Null:
+        # All-null column (``pl.from_dict`` of all None): every row is missing.
+        return df.with_columns(pl.col(col).cast(pl.Date))
+
     if dtype == pl.Date:
         return df
 

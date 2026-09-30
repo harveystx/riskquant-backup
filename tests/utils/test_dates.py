@@ -80,3 +80,22 @@ def test_as_of_timestamp_contract_is_unchanged() -> None:
     assert isinstance(ts, pd.Timestamp)
     assert ts == pd.Timestamp("2026-01-02 23:59:59.999999999")
     assert coerce_as_of_date_to_pd_timestamp("2026-01-02") == pd.Timestamp("2026-01-02")
+
+
+@pytest.mark.parametrize(
+    ("days", "day"),
+    [
+        (106752, dt.date(2262, 4, 12)),
+        (-106752, dt.date(1677, 9, 21)),
+        (2932896, dt.date(9999, 12, 31)),
+        (-719162, dt.date(1, 1, 1)),
+    ],
+)
+def test_ordinal_range_is_the_python_date_range(days: int, day: dt.date) -> None:
+    assert ordinal32_to_date(days) == day
+
+
+@pytest.mark.parametrize("days", [2932897, -719163])
+def test_ordinal_outside_the_python_date_range_is_refused(days: int) -> None:
+    with pytest.raises(OverflowError):
+        ordinal32_to_date(days)
