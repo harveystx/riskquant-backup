@@ -1,4 +1,4 @@
-# RiskQuant Proxy V1: Design Specification
+# RiskQuant Proxy Model V1: Design Specification
 
 ## 0. Document status
 
