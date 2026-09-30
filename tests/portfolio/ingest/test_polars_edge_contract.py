@@ -133,13 +133,9 @@ def test_native_nan_flag_on_non_option_row_is_absent(rsc: RiskStaticConfig) -> N
 
 
 def test_all_null_optional_string_column_is_accepted(rsc: RiskStaticConfig) -> None:
-    frame = pl.from_dict(
-        {
-            k: v[1:]
-            for k, v in _node_book().items()
-            if k not in ("is_call", "expiry_date")
-        }
-    )
+    frame = pl.from_dict({
+        k: v[1:] for k, v in _node_book().items() if k not in ("is_call", "expiry_date")
+    })
     assert frame["volatility_container_name"].dtype == pl.Null
     batch = _ingest(rsc, frame)
     assert batch.size == 1
@@ -185,3 +181,68 @@ def test_node_book_matches_pandas_era_oracle(rsc: RiskStaticConfig) -> None:
         assert arr.flags.c_contiguous, field
         got = hashlib.sha256(arr.tobytes()).hexdigest()
         assert got == want["sha256"], (field, arr.tolist(), want["values"])
+
+
+# ---- numeric and date text (pre-migration runtime; pandas 2.2 == 3.0) -------
+
+_ISO = {
+    "expiry_date": ["2026-02-18", None],
+    "settlement_date": ["2026-02-20", "2026-02-17"],
+    "delivery_date": [None, "2026-02-15"],
+}
+
+
+def test_padded_numeric_text_is_a_number(rsc: RiskStaticConfig) -> None:
+    frame = pl.from_dict(_node_book(quantity=[" 1000 ", "\t1000\n"]))
+    batch = _ingest(rsc, frame)
+    assert batch.qty.tolist() == [1000.0, 1000.0]
+
+
+def test_empty_numeric_text_is_missing(rsc: RiskStaticConfig) -> None:
+    frame = pl.from_dict(_node_book(quantity=["1000", ""]))
+    with pytest.raises(ValueError, match=r"missing 'quantity' at rows: \[1\]"):
+        _ingest(rsc, frame)
+
+
+def test_whitespace_only_numeric_text_is_refused(rsc: RiskStaticConfig) -> None:
+    frame = pl.from_dict(_node_book(quantity=["1000", "   "]))
+    with pytest.raises(TypeError, match=r"Failed to materialize float column"):
+        _ingest(rsc, frame)
+
+
+def test_iso_and_unpadded_date_text_match_typed_dates(rsc: RiskStaticConfig) -> None:
+    typed = _ingest(rsc, pl.from_dict(_node_book()))
+    text = _ingest(rsc, pl.from_dict(_node_book(**_ISO)))
+    unpadded = _ingest(
+        rsc, pl.from_dict(_node_book(**{**_ISO, "expiry_date": ["2026-2-18", None]}))
+    )
+    for batch in (text, unpadded):
+        for field in ("settle_ord", "delivery_ord", "expiry_ord"):
+            assert getattr(batch, field).tolist() == getattr(typed, field).tolist()
+
+
+@pytest.mark.parametrize(
+    "bad", [" 2026-02-18", "2026-02-18 ", "+2026-02-18", "20260218", "2026-02-18T00:00"]
+)
+def test_date_text_must_be_exactly_iso(rsc: RiskStaticConfig, bad: str) -> None:
+    frame = pl.from_dict(_node_book(**{**_ISO, "expiry_date": [bad, None]}))
+    with pytest.raises(ValueError, match=r"Dates must be exactly 'YYYY-MM-DD'"):
+        _ingest(rsc, frame)
+
+
+def test_empty_date_text_is_missing(rsc: RiskStaticConfig) -> None:
+    frame = pl.from_dict(_node_book(**{**_ISO, "expiry_date": ["", None]}))
+    with pytest.raises(ValueError, match=r"missing 'expiry_date' at rows: \[0\]"):
+        _ingest(rsc, frame)
+
+
+# ---- D098: netting_set_id corrections --------------------------------------
+
+
+@pytest.mark.parametrize("bad", [1.5, float("inf"), 1e19])
+def test_netting_set_id_refuses_non_integer_and_out_of_range(
+    rsc: RiskStaticConfig, bad: float
+) -> None:
+    frame = pl.from_dict(_node_book(netting_set_id=[1.0, bad]))
+    with pytest.raises(TypeError, match=r"(?i)nullable-int column 'netting_set_id'"):
+        _ingest(rsc, frame)

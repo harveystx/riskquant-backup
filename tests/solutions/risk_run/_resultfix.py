@@ -18,7 +18,6 @@ import datetime as dt
 from typing import Any
 
 import numpy as np
-import pandas as pd
 import polars as pl
 
 from riskquant.config.enums.discounting_modes import DiscountingMode

@@ -137,12 +137,12 @@ def _extract_instrument_id_array(
     # Polars Utf8 → numpy object array (Python strings, None for null)
     names = df["instrument"].to_numpy()
 
-    _MISS = -1
+    _miss = -1
     id_arr = np.array(
-        [INSTRUMENT_NAME_TO_ID_REGISTRY.get(n, _MISS) for n in names],
+        [INSTRUMENT_NAME_TO_ID_REGISTRY.get(n, _miss) for n in names],
         dtype=np.int32,
     )
-    invalid = id_arr == _MISS
+    invalid = id_arr == _miss
 
     if invalid.any():
         idx = np.flatnonzero(invalid)[:10].tolist()

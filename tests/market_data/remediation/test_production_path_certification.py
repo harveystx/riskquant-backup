@@ -268,14 +268,16 @@ def test_container_underlying_is_rejected_at_ingest(rsc):
 
     with pytest.raises(PrettyKeyError):
         compile_raw_df_into_ingest_batch(
-            raw_df=pl.from_pandas(pd.DataFrame([
-                dict(
-                    uid=1,
-                    instrument="SPOT",
-                    quantity=1.0,
-                    underlying="USD_OIS",
-                    settlement_ccy="USD",
-                )
-            ])),
+            raw_df=pl.from_pandas(
+                pd.DataFrame([
+                    dict(
+                        uid=1,
+                        instrument="SPOT",
+                        quantity=1.0,
+                        underlying="USD_OIS",
+                        settlement_ccy="USD",
+                    )
+                ])
+            ),
             static_config=rsc,
         )

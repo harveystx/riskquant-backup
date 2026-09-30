@@ -171,7 +171,9 @@ def level_snapshot(rsc, as_of_date, golden_levels):
 
 @pytest.fixture(scope="session")
 def portfolio_mapper_market(rsc, raw_positions, as_of_date, level_snapshot):
-    batch = compile_raw_df_into_ingest_batch(raw_df=pl.from_pandas(raw_positions), static_config=rsc)
+    batch = compile_raw_df_into_ingest_batch(
+        raw_df=pl.from_pandas(raw_positions), static_config=rsc
+    )
     mapper = build_uix_mapper([batch], as_of_ord32=int(date_to_ord32(as_of_date)))
     portfolio = compile_portfolio_from_ingest_batch(
         ingest_batch=batch, uix_mapper=mapper

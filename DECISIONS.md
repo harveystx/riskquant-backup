@@ -4836,76 +4836,51 @@ Closed-form, prior to implementation: identity default (`80 → 82` gives `82`);
 
 ---
 
-## D094  ingest entry type change
+## D094 — Portfolio ingest accepts `polars.DataFrame` only
+**Status:** PROPOSED. Implemented and tested 2026-09-30. Owner approval is not recorded, so this decision is not LOCKED.
+**Decision:** `compile_raw_df_into_ingest_batch(*, raw_df: pl.DataFrame, static_config, as_of_date=None)` is the only ingest entry. Any other input type, including `pandas.DataFrame` and `polars.LazyFrame`, raises `TypeError` before any stage runs. The caller owns conversion: `pl.from_dict` for literals, `pl.from_pandas` at the call boundary for pandas producers. No pandas conversion exists inside `portfolio/ingest`.
+**Reason:** D006. Polars is the edge technology; pandas must not be a dependency of the ingest production path.
+**Materialization contract (library-independent):** NaN is missing, for float and flag fields. Numeric text: surrounding whitespace is ignored, empty text is missing, whitespace-only text is refused. String fields accept `pl.Utf8`, `pl.Null`, `pl.Categorical` and `pl.Enum`; other dtypes raise `TypeError`. Column names that collide after strip + lowercase raise `PrettyKeyError`.
+**Recorded runtime differences:** (1) Mixed-type object columns now fail in the caller's `pl.from_pandas` (pyarrow error) before ingest runs. (2) Text "nan" in a numeric field is missing (`ValueError`); the pandas runtime raised `TypeError` (unparseable). (3) A numeric column in a string field raises `TypeError` at canonicalization; the pandas runtime cast it to text and refused it later.
+**Implementation:** `portfolio/ingest/pipeline.py` (type guard), `canonicalize.py`, `materialize.py`. 58 repository call sites in 28 files pass Polars frames.
+**Tests:** `tests/portfolio/ingest/test_polars_edge_contract.py`, `tests/portfolio/test_pandas_free_boundary.py`.
 
-**Status:** LOCKED
-**Domain:** `riskquant.portfolio.ingest`
+## D095 — No `copy` parameter; the caller's frame is never mutated
+**Status:** PROPOSED. Implemented and tested 2026-09-30. Owner approval is not recorded.
+**Decision:** the `copy` parameter is removed. Every ingest stage returns a new frame; the caller's frame is not changed.
+**Reason:** Polars frames are immutable. The pandas entry defaulted to `copy=False` and changed the caller's frame in place (measured in 113 of 113 behavioural probe cases).
+**Tests:** `test_copy_parameter_removed`, `test_caller_frame_is_not_mutated`.
 
-`compile_raw_df_into_ingest_batch` accepts `pl.DataFrame` only. It previously accepted `pd.DataFrame`. The signature change is strictly necessary to remove pandas from the `portfolio/ingest` package.
+## D096 — `IngestBatch.to_df()` and `.df` are an optional pandas output adapter
+**Status:** PROPOSED. Implemented and tested 2026-09-30. Owner approval is not recorded.
+**Decision:** retained as an isolated legacy pandas output adapter. It is not part of the ingest production path. `batch.py` imports pandas only under `TYPE_CHECKING` and inside `to_df`. These are the only pandas imports in `portfolio/ingest`.
+**Callers:** `scripts/demos/credit/rc/demo_spot_rc_end_to_end.py` reads `.df` (debug print). No production caller.
+**Tests:** in a process where `import pandas` fails, the pipeline imports and executes, and `to_df()` raises `ImportError` (`tests/portfolio/test_pandas_free_boundary.py`).
 
-Callers that build fixture frames from Python dicts use `pl.from_dict`. Callers that receive pandas frames from upstream workflows add a one-time `pl.from_pandas()` conversion at the call boundary. This is not a compatibility layer inside the pipeline; it is data intake at the boundary.
+## D097 — `validate_materialized_ingest_df` is deleted
+**Status:** PROPOSED. Implemented 2026-09-30. Owner approval is not recorded.
+**Decision:** deleted. `dispatcher.dispatch_ingest_validation` supersedes it.
+**Evidence:** no repository caller, import or export; package `__init__.py` files are empty (D002). Only comments name it.
+**Implications:** `riskquant.utils.dataframes.validate_string_cols` now has no caller. It is not removed (outside the migration scope).
 
----
+## D098 — Nullable `netting_set_id`: null is `NO_ID`; invalid values are refused
+**Status:** PROPOSED. Behaviour correction, implemented and tested 2026-09-30. Owner approval is not recorded.
+**Decision:** a null `netting_set_id` (None, NaN, pandas NA) means "no netting linkage" and compiles to `NO_ID` in the int64 SoA. Non-integer, boolean, infinite and out-of-int64-range values raise `TypeError`.
+**Reason:** the pre-migration materializer and compiler docstrings, and the canonical SPOT fixture ("None -> no netting linkage"), define null as absent linkage. The pre-migration runtime contradicted them.
+**Corrected pre-migration behaviour (pandas 2.2.3 and 3.0.2):** any null raised `IntCastingNaNError`; the canonical SPOT fixture could not ingest. A float above the int64 range wrapped silently to `INT64_MIN`. `inf` now raises `TypeError` (was `IntCastingNaNError`).
+**Tests:** `TestNullableNettingSetId`, `test_netting_set_id_refuses_non_integer_and_out_of_range`.
 
-## D095  copy parameter removed
+## D099 — Error row numbers are 0-based positions in the caller's frame
+**Status:** PROPOSED. Verified 2026-09-30. Owner approval is not recorded.
+**Decision:** row k in an ingest error is the k-th row (0-based) of the frame passed to the entry, whatever index the producer used.
+**Evidence:** no observable change. The pandas pipeline reset the index before validation; four non-default-index probe cases report identical rows before and after the migration.
 
-**Status:** LOCKED
-**Domain:** `riskquant.portfolio.ingest`
-
-The `copy` parameter is removed from `compile_raw_df_into_ingest_batch`. Polars DataFrames are immutable. Copying before mutation is meaningless. All pipeline stages return new frames; the caller's frame is never mutated.
-
-Callers that passed `copy=True` or `copy=False` must remove the argument.
-
----
-
-## D096  IngestBatch debug helpers retained
-
-**Status:** LOCKED
-**Domain:** `riskquant.portfolio.ingest.batch`
-
-`IngestBatch.to_df()` and the `.df` property retain their local `from pandas import DataFrame` import inside the method body. These are debug-only utilities with zero production callers. They do not cause a pandas import at module load time and are not part of the ingest hot path.
-
----
-
-## D097  validate_materialized_ingest_df deleted
-
-**Status:** LOCKED
-**Domain:** `riskquant.portfolio.ingest.validate`
-
-`validate_materialized_ingest_df` is deleted. It was dead code: the only reference was a comment in `dispatcher.py` ("it supersedes the hand-wired sequence previously inlined in `validate.validate_materialized_ingest_df`"). The `validate_string_cols` import from `riskquant.utils.dataframes` is also removed from `validate.py`; it was only called by this dead function.
-
----
-
-## D098  nullable int uses native Polars nulls
-
-**Status:** LOCKED
-**Domain:** `riskquant.portfolio.ingest.materialize`
-
-Nullable integer columns (schema `NULLABLE_INT_COLS`, currently `netting_set_id`) are materialized to `pl.Int64` with native Polars nulls. The prior pandas implementation cast `float64` (with NaN) to `np.int64`, which raised `IntCastingNaNError` under pandas 3.0. That pre-existing defect is resolved naturally by this decision.
-
-Downstream compilation uses `pl.Series.fill_null(NO_ID)` before extracting to numpy, preserving identical sentinel semantics.
-
----
-
-## D099  error row indices are 0-based positional
-
-**Status:** LOCKED
-**Domain:** `riskquant.portfolio.ingest`
-
-Row indices in ingest validation error messages are 0-based positional integers. The prior pandas implementation reported caller-supplied index labels (which `reset_index` normalised to 0-based anyway). Polars has no index concept. Error messages now always report positional row numbers 0..n-1.
-
----
-
-## D100  canonical date dtype is pl.Date
-
-**Status:** LOCKED
-**Domain:** `riskquant.portfolio.ingest`
-
-Date columns are materialized to `pl.Date` (not `datetime64[ns]`). `parse_optional_date_series_to_ord32` accepts `pl.Series` and uses `np.isnat` for null detection on the `datetime64[D]` numpy array that Polars extracts from `pl.Date` columns. Ordinal encoding is unchanged: the `datetime64D_to_ord32` kernel is not modified.
-
----
-
-# Decision Record for `riskquant.credit`
+## D100 — Date fields: representation, accepted input and range
+**Status:** PROPOSED. Implemented and tested 2026-09-30. Owner approval is not recorded.
+**Decision:** after materialization a date field is `pl.Date`; the SoA ordinal encoding (`datetime64D_to_ord32`) is unchanged. Accepted input: `pl.Date`; tz-naive `pl.Datetime` (the time is dropped); text of the form `YYYY-M-D` (4-digit year, 1- or 2-digit month and day) that is a valid calendar date; empty text is missing. Refused with `ValueError`: whitespace, sign, time suffix, compact form, invalid calendar dates. Refused with `TypeError`: tz-aware datetimes.
+**Range:** any valid calendar date representable as `pl.Date`. The pandas runtime was version-dependent: pandas 2.2.3 refused dates outside 1677-09-21..2262-04-11, pandas 3.0.2 accepted them. This decision keeps the pandas 3.0.2 range. `riskquant.utils.dates.is_date_str_valid` accepts years 0001 to 9999 (Python `datetime.date`).
+**Known pre-existing hazard (not changed):** `NO_DATE_ORD32` is the ordinal of 1696-03-18. A date field of 1696-03-18 is indistinguishable from "no date".
+**Tests:** `test_iso_and_unpadded_date_text_match_typed_dates`, `test_date_text_must_be_exactly_iso`, `test_empty_date_text_is_missing`, `tests/utils/test_dates.py`, the node-book oracle.
 
 ## D-C01 — `obligor_uids_target` ordering (credit / exposure→JTD bridge)
 

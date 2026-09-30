@@ -162,7 +162,9 @@ def test_option_economics_do_not_change_when_delivery_metadata_is_supplied(rsc):
 def test_node_forward_still_requires_delivery_and_its_contract_period(rsc):
     with pytest.raises(ValueError, match=r"Missing required columns"):
         compile_raw_df_into_ingest_batch(
-            raw_df=pl.from_pandas(_forward().drop(columns=["delivery_date"])),  # column absent
+            raw_df=pl.from_pandas(
+                _forward().drop(columns=["delivery_date"])
+            ),  # column absent
             static_config=rsc,
             as_of_date=A,
         )
@@ -176,9 +178,11 @@ def test_node_forward_still_requires_delivery_and_its_contract_period(rsc):
     # the D065 period check is untouched for forwards
     with pytest.raises(Exception, match="is the 202602 contract"):
         compile_raw_df_into_ingest_batch(
-            raw_df=pl.from_pandas(_forward(
-                delivery_date=date(2026, 3, 15), settlement_date=date(2026, 3, 17)
-            )),
+            raw_df=pl.from_pandas(
+                _forward(
+                    delivery_date=date(2026, 3, 15), settlement_date=date(2026, 3, 17)
+                )
+            ),
             static_config=rsc,
             as_of_date=A,
         )

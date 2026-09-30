@@ -53,7 +53,6 @@ from riskquant.portfolio.ingest.parser import (
 from riskquant.portfolio.ingest.rf_resolver import resolve_optional_ids
 from riskquant.utils.dates import date_to_ord32
 
-
 # ==============================================================================
 # OUTPUT STRUCTURE
 # ==============================================================================
@@ -143,28 +142,26 @@ class CompiledIngestSoA:
             "net_set_id",
         ]
 
-        data = np.column_stack(
-            [
-                self.uids[:n],
-                self.instrument_ids[:n],
-                self.qty[:n],
-                self.strike[:n],
-                self.cp_mult[:n],
-                self.settle_ord[:n],
-                self.delivery_ord[:n],
-                self.expiry_ord[:n],
-                self.underlying_ids[:n],
-                self.volatility_ids[:n],
-                self.vol_surface_y_axis_type_ids[:n],
-                self.fx_u2s_ids[:n],
-                self.fx_u2s_inv[:n],
-                self.fx_k2s_ids[:n],
-                self.fx_k2s_inv[:n],
-                self.under_discount_curve_ids[:n],
-                self.strike_discount_curve_ids[:n],
-                self.netting_set_id[:n],
-            ]
-        )
+        data = np.column_stack([
+            self.uids[:n],
+            self.instrument_ids[:n],
+            self.qty[:n],
+            self.strike[:n],
+            self.cp_mult[:n],
+            self.settle_ord[:n],
+            self.delivery_ord[:n],
+            self.expiry_ord[:n],
+            self.underlying_ids[:n],
+            self.volatility_ids[:n],
+            self.vol_surface_y_axis_type_ids[:n],
+            self.fx_u2s_ids[:n],
+            self.fx_u2s_inv[:n],
+            self.fx_k2s_ids[:n],
+            self.fx_k2s_inv[:n],
+            self.under_discount_curve_ids[:n],
+            self.strike_discount_curve_ids[:n],
+            self.netting_set_id[:n],
+        ])
 
         fmts = [int_fmt] * len(headers)
         fmts[2] = fmts[3] = float_fmt  # qty, strike

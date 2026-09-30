@@ -50,6 +50,9 @@ from riskquant.portfolio.ingest.schema import (
     STRING_COLS,
 )
 
+# Year: four digits. Month and day: one or two digits (pandas "%m"/"%d" parity).
+_DATE_TEXT_RE: str = r"^[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}$"
+
 # ==============================================================================
 # INTERNAL HELPERS
 # ==============================================================================
@@ -65,6 +68,23 @@ def _materialize_string_col(df: pl.DataFrame, col: str) -> pl.DataFrame:
         raise TypeError(f"Failed to materialize string column '{col}': {e}") from e
 
 
+def _normalize_numeric_text(df: pl.DataFrame, col: str) -> pl.DataFrame:
+    """
+    Apply the numeric-text rule to a Utf8 numeric column; no-op otherwise.
+
+    Contract (the pre-migration runtime, identical under pandas 2.2 and 3.0):
+    an empty string is missing; surrounding whitespace around a number is
+    ignored; whitespace-only text is not a number and fails the strict cast.
+    Polars ``cast`` alone rejects padded numbers and treats "" as an error.
+    """
+    if df[col].dtype != pl.Utf8:
+        return df
+    text = pl.col(col)
+    return df.with_columns(
+        pl.when(text == "").then(None).otherwise(text.str.strip_chars()).alias(col)
+    )
+
+
 def _materialize_float_col(df: pl.DataFrame, col: str) -> pl.DataFrame:
     """
     Materialize float column into deterministic Float64 dtype.
@@ -75,6 +95,7 @@ def _materialize_float_col(df: pl.DataFrame, col: str) -> pl.DataFrame:
     without this step a NaN quantity or strike passed validation into the
     SoA.
     """
+    df = _normalize_numeric_text(df, col)
     try:
         return df.with_columns(pl.col(col).cast(pl.Float64).fill_nan(None))
     except Exception as e:
@@ -89,6 +110,7 @@ def _materialize_int_col(df: pl.DataFrame, col: str) -> pl.DataFrame:
     - non-nullable
     - exact integers only (no fractional part)
     """
+    df = _normalize_numeric_text(df, col)
     ser = df[col]
 
     # NULL VALIDATION
@@ -132,6 +154,7 @@ def _materialize_nullable_int_col(df: pl.DataFrame, col: str) -> pl.DataFrame:
     (the pandas 3.0 IntCastingNaNError, or the silent platform-min-int wrapping
     on older NumPy) do not apply here.
     """
+    df = _normalize_numeric_text(df, col)
     ser = df[col]
 
     # Boolean leakage rejection: a pl.Boolean column is never a valid integer.
@@ -196,6 +219,7 @@ def _materialize_flag_col(df: pl.DataFrame, col: str) -> pl.DataFrame:
     extracted numpy array.  A null Float64 maps to NaN in numpy, preserving
     the same branchless flow as the pandas predecessor.
     """
+    df = _normalize_numeric_text(df, col)
     ser = df[col]
 
     # BOOLEAN LEAKAGE REJECTION
@@ -254,6 +278,20 @@ def _materialize_date_col(df: pl.DataFrame, col: str) -> pl.DataFrame:
         return df.with_columns(pl.col(col).cast(pl.Date))
 
     if dtype == pl.Utf8:
+        # Pre-migration contract (identical under pandas 2.2 and 3.0): "" is
+        # missing; any other text must be exactly Y-M-D digits with no sign or
+        # whitespace. Polars ``to_date`` alone accepts " 2026-02-18" and
+        # "+2026-02-18", so the syntax is checked first.
+        text = pl.col(col)
+        df = df.with_columns(pl.when(text == "").then(None).otherwise(text).alias(col))
+        bad = df[col].is_not_null() & ~df[col].str.contains(_DATE_TEXT_RE)
+        if bad.any():
+            rows = bad.arg_true().head(10).to_list()
+            raise ValueError(
+                f"Failed to materialize date column '{col}'. "
+                f"Dates must be exactly 'YYYY-MM-DD'. "
+                f"Invalid text at rows: {rows}"
+            )
         try:
             return df.with_columns(
                 pl.col(col).str.to_date(format="%Y-%m-%d", strict=True)

@@ -173,7 +173,9 @@ class World:
         k_val = self.axis.num_valuation_factors
         axis_ids = self.axis.factor_ids[:k_val] if axis_ids is None else axis_ids
         sub = self.book[self.book.uid.isin(derived)].reset_index(drop=True)
-        b = compile_raw_df_into_ingest_batch(raw_df=pl.from_pandas(sub), static_config=RSC)
+        b = compile_raw_df_into_ingest_batch(
+            raw_df=pl.from_pandas(sub), static_config=RSC
+        )
         m = build_uix_mapper([b], as_of_ord32=AS_OF)
         p = compile_portfolio_from_ingest_batch(ingest_batch=b, uix_mapper=m)
         layout = build_universe_mapping(

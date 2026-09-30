@@ -147,7 +147,8 @@ def _canonicalize_string_columns(df: pl.DataFrame) -> pl.DataFrame:
         # Null empty-string results, then uppercase surviving values.
         # pl.when/then/otherwise is the vectorised branchless path.
         exprs.append(
-            pl.when(norm.is_null() | (norm == ""))
+            pl
+            .when(norm.is_null() | (norm == ""))
             .then(pl.lit(None, dtype=pl.Utf8))
             .otherwise(norm.str.to_uppercase())
             .alias(col)

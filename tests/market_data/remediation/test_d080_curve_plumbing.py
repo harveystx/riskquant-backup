@@ -19,7 +19,6 @@ import pathlib
 
 import d080_oracle as oracle
 import numpy as np
-import pandas as pd
 import polars as pl
 import pytest
 

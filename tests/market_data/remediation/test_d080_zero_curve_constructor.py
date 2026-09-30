@@ -516,7 +516,9 @@ def test_fixture_true_spot_and_eom_are_what_the_constructor_sees(rsc, us_holiday
 def test_node_forward_prices_with_constructed_discount_factors(rsc, oracle_curve):
     delivery, settlement = dt.date(2026, 2, 15), dt.date(2026, 2, 17)
     batch = compile_raw_df_into_ingest_batch(
-        raw_df=pl.from_pandas(_book([settlement]).assign(quantity=1_000.0, strike_price=75.0)),
+        raw_df=pl.from_pandas(
+            _book([settlement]).assign(quantity=1_000.0, strike_price=75.0)
+        ),
         static_config=rsc,
         as_of_date=A,
     )
@@ -552,7 +554,9 @@ def test_node_forward_prices_with_constructed_discount_factors(rsc, oracle_curve
 
 def test_none_mode_is_untouched_by_the_live_constructor(rsc):
     batch = compile_raw_df_into_ingest_batch(
-        raw_df=pl.from_pandas(_book([dt.date(2026, 3, 2)])), static_config=rsc, as_of_date=A
+        raw_df=pl.from_pandas(_book([dt.date(2026, 3, 2)])),
+        static_config=rsc,
+        as_of_date=A,
     )
     mapper = build_uix_mapper([batch])
     um = build_universe_mapping(

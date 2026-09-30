@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Iterable
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 import numpy as np
-import pandas as pd
 
 from riskquant.constants import DATE_EPOCH
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 DATE_EPOCH_AS_DATETIME64D: Final[np.datetime64] = np.datetime64(
     DATE_EPOCH.isoformat(),
@@ -22,7 +24,13 @@ def coerce_as_of_date_to_pd_timestamp(
     """
     Accepts: pd.Timestamp | datetime.datetime | datetime.date | str
     Returns: pd.Timestamp (tz-naive)
+
+    The return type is a pandas object, so pandas is imported here, not at
+    module level: ``riskquant.utils.dates`` sits on the pandas-free ingest
+    import path (D094).
     """
+    import pandas as pd
+
     # If str, validate format.
     if isinstance(as_of_date, str):
         assert_date_str_is_iso_format(as_of_date)
@@ -52,7 +60,9 @@ def is_date_str_valid(date_str: str) -> bool:
         return False
 
     try:
-        pd.to_datetime(date_str, format="%Y-%m-%d", errors="raise")
+        # Calendar validity (month 1-12, day in month, year >= 1). The shape
+        # checks above already fix the 'YYYY-MM-DD' form.
+        dt.date.fromisoformat(date_str)
     except ValueError:
         return False
 
@@ -68,7 +78,7 @@ def assert_date_str_is_iso_format(date_str: str) -> None:
 def date_str_to_date(date_str: str) -> dt.date:
     """Convert a date string in 'YYYY-MM-DD' format to a datetime.date object."""
     assert_date_str_is_iso_format(date_str)
-    return pd.to_datetime(date_str, format="%Y-%m-%d", errors="raise").date()
+    return dt.date.fromisoformat(date_str)
 
 
 def date_to_ord32(d: dt.date) -> np.int32:
@@ -76,7 +86,7 @@ def date_to_ord32(d: dt.date) -> np.int32:
 
 
 def ordinal32_to_date(days: int) -> dt.date:
-    return DATE_EPOCH + pd.Timedelta(days=int(days))  # or datetime.timedelta
+    return DATE_EPOCH + dt.timedelta(days=int(days))
 
 
 def datetime64D_to_ord32(dts: np.ndarray) -> np.ndarray:
@@ -193,6 +203,10 @@ def get_previous_business_date_as_iso_str(
         holiday_dates = list(holiday_dates)
     if not isinstance(holiday_dates, list):
         raise TypeError("holiday_dates must be a list!")
+
+    # pandas CustomBusinessDay defines the calendar semantics here; import it
+    # locally so the module stays importable without pandas.
+    import pandas as pd
 
     # Create a custom business day with the holidays.
     custom_business_day = pd.offsets.CustomBusinessDay(holidays=holiday_dates)
