@@ -10,7 +10,7 @@ Locked contract:
 * a RELATIVE (OFFSET) NODE forward's `delivery_date` IS required: it is the
   asset leg's discount date and must fall in the resolved contract period
   (D065). An EXACT (LABEL) NODE forward may omit it; its asset leg is then
-  discounted at settlement (D101, OPEN: owner approval required);
+  discounted at settlement (D101);
 * a relative name plus the RUN as-of resolves to exactly one rf id. An option's
   expiry MUST NOT re-resolve it (D067 / D064 unchanged).
 
