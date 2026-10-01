@@ -207,15 +207,12 @@ def validate_forward_family(
     if not np.any(mask):
         return
 
-    # D062 (amended, ws/vanilla-forward-node):
-    #   delivery_date is INTENTIONALLY ABSENT from this mandatory list.
-    #   For exact (non-CALENDAR_PERIOD) NODE forwards delivery is optional;
-    #   the asset leg falls back to settlement_date when it is absent.
-    #   For relative (CALENDAR_PERIOD) NODE forwards delivery is required, but
-    #   that requirement is enforced per-rf in identity._validate_contract_identity,
-    #   which has access to the parent curve's x_axis_kind and roll_method.
-    #   Requiring delivery universally here would block the authorised exact-NODE
-    #   no-delivery path (owner confirmation, ws/vanilla-forward-node prompt §6).
+    # D062 as amended by D101: `delivery_date` is not a FAMILY requirement.
+    # Its requirement depends on the source mechanism, so it is owned by the
+    # layer that knows that mechanism:
+    #   NODE forward, exact (LABEL)      optional  identity._validate_contract_identity
+    #   NODE forward, relative (OFFSET)  required  identity._validate_contract_identity
+    #   CURVE forward                    required  validate_forward_curve_instrument
     cols = (
         "quantity",
         "underlying",
@@ -234,6 +231,25 @@ def validate_forward_family(
     _validate_ccy_series(df, "settlement_ccy", mask, "Forward")
     _validate_ccy_series(df, "strike_ccy", mask, "Forward")
     _validate_non_zero_quantity(df, mask, "Forward")
+
+
+def validate_forward_curve_instrument(
+    df: pl.DataFrame,
+    mask: npt.NDArray[np.bool_],
+) -> None:
+    """
+    VANILLA_FORWARD_CURVE refinement (D065, D101).
+
+    A curve-sourced forward level is obtained from the curve at the delivery
+    date, so `delivery_date` is a pricing coordinate for every CURVE row. This
+    requirement holds whether or not a CURVE compiler is registered (D050).
+    """
+    if not np.any(mask):
+        return
+
+    cols = ("delivery_date",)
+    _require_cols(df, cols)
+    _validate_non_null_masked(df, mask, cols, "Forward")
 
 
 def validate_option_family(

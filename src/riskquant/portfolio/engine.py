@@ -568,12 +568,11 @@ def build_uix_mapper(
 
     # A forward's underlying leg matures at DELIVERY; an option's strike-ccy
     # forward is taken at EXPIRY. One pooled date column, chosen per row.
-    # For exact (non-CALENDAR_PERIOD) NODE forwards with absent delivery, use
-    # settlement_date so the EFP quad is registered and the compiler can look it
-    # up (D062/D077.7 amended, ws/vanilla-forward-node). By the time we reach
-    # here, the identity gate has already rejected missing delivery for
-    # CALENDAR_PERIOD (relative) rows, so NO_DATE_ORD32 values in fwd_mask rows
-    # are authorised exact-NODE no-delivery trades.
+    # A NODE forward with absent delivery discounts its asset leg at
+    # settlement (D101). Ingest admits absent delivery only for EXACT (LABEL)
+    # underlyings (identity._validate_contract_identity), so every
+    # NO_DATE_ORD32 delivery in a fwd_mask row is an exact-NODE trade. The
+    # compiler applies the same date rule when it looks the quad up.
     delivery_ord = np.concatenate(tuple(b.delivery_ord for b in ingest_batches))
     expiry_ord = np.concatenate(tuple(b.expiry_ord for b in ingest_batches))
     settle_ord = np.concatenate(tuple(b.settle_ord for b in ingest_batches))

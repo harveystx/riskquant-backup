@@ -29,6 +29,7 @@ import numpy.typing as npt
 import polars as pl
 
 from riskquant.portfolio.ingest.validate import (
+    validate_forward_curve_instrument,
     validate_forward_family,
     validate_option_family,
     validate_spot_family,
@@ -38,6 +39,7 @@ from riskquant.portfolio.instruments import (
     INSTRUMENT_NAME_TO_ID_REGISTRY,
     INSTRUMENT_TYPE_TO_FAMILY_ARRAY,
     NUM_INSTRUMENTS,
+    VANILLA_FORWARD_CURVE_ID,
     InstrumentTypeFamily,
 )
 
@@ -59,6 +61,7 @@ FAMILY_VALIDATORS[InstrumentTypeFamily.OPTION] = validate_option_family
 # Instrument id -> refinement validator. Most slots stay None: only instruments
 # carrying constraints beyond their family contract register here.
 INSTRUMENT_VALIDATORS: Final[list[ValidatorFn | None]] = [None] * NUM_INSTRUMENTS
+INSTRUMENT_VALIDATORS[VANILLA_FORWARD_CURVE_ID] = validate_forward_curve_instrument
 
 # Instrument id -> family id, narrowed to int8 and frozen as an ndarray so the
 # id->family hop is a single advanced-indexing op rather than a Python lookup.

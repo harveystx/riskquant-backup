@@ -14,7 +14,7 @@ own curve and converted at its own spot FX, so for a long quantity `Q`:
     PV(0) = Q * [ F_a(0,T) DF_a(0,T_a) FX_spot(a -> settle)
                   - K      DF_k(0,T_k) FX_spot(k -> settle) ]
 
-Asset-leg discount date T_a (D062/D077.7 amended, ws/vanilla-forward-node):
+Asset-leg discount date T_a (D101):
     T_a = delivery_date  when delivery is supplied
     T_a = settlement_date when delivery is absent (exact NODE only)
 
@@ -122,13 +122,11 @@ def compile_vanilla_forward_block(
         batch.under_discount_curve_ids[start:end]
     )
 
-    # D062/D077.7 (amended, ws/vanilla-forward-node):
-    # For exact (non-CALENDAR_PERIOD) NODE forwards, delivery_date is optional.
-    # When absent (NO_DATE_ORD32), use settlement_date as the asset-leg discount
-    # date. The identity gate has already rejected missing delivery for relative
-    # (CALENDAR_PERIOD) NODEs, so every NO_DATE_ORD32 here is an authorised
-    # exact-NODE no-delivery trade. build_uix_mapper applies the same substitution
-    # when registering EFP quads, so the resulting date_uix will find a valid row.
+    # D101: the asset leg is discounted at delivery when supplied and at
+    # settlement when absent. Ingest admits absent delivery only for EXACT
+    # (LABEL) underlyings (identity._validate_contract_identity), so every
+    # NO_DATE_ORD32 here is an exact-NODE trade. build_uix_mapper registers
+    # the EFP quad with the same date, so the lookup resolves.
     raw_delivery = batch.delivery_ord[start:end]
     no_delivery = raw_delivery == int(NO_DATE_ORD32)
     if bool(no_delivery.any()):
