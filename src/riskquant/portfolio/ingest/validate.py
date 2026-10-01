@@ -35,6 +35,7 @@ from riskquant.portfolio.instruments import (
     INSTRUMENT_TYPE_TO_FAMILY_ARRAY,
 )
 
+
 # ==============================================================================
 # INTERNAL HELPERS
 # ==============================================================================
@@ -206,16 +207,23 @@ def validate_forward_family(
     if not np.any(mask):
         return
 
+    # D062 (amended, ws/vanilla-forward-node):
+    #   delivery_date is INTENTIONALLY ABSENT from this mandatory list.
+    #   For exact (non-CALENDAR_PERIOD) NODE forwards delivery is optional;
+    #   the asset leg falls back to settlement_date when it is absent.
+    #   For relative (CALENDAR_PERIOD) NODE forwards delivery is required, but
+    #   that requirement is enforced per-rf in identity._validate_contract_identity,
+    #   which has access to the parent curve's x_axis_kind and roll_method.
+    #   Requiring delivery universally here would block the authorised exact-NODE
+    #   no-delivery path (owner confirmation, ws/vanilla-forward-node prompt §6).
     cols = (
         "quantity",
         "underlying",
         "settlement_ccy",
         "strike_price",
         "strike_ccy",
-        # D062: every coordinate a forward block packs into an effective-factor
-        # key is mandatory. A missing one used to pack as a sentinel and alias
-        # another trade's row (MD-03).
-        "delivery_date",
+        # D062: settlement and both discount curves remain mandatory for every
+        # forward; they are always required for the EFP/EDF quad coordinates.
         "settlement_date",
         "under_discount_curve",
         "strike_discount_curve",

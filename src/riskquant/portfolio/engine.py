@@ -568,10 +568,21 @@ def build_uix_mapper(
 
     # A forward's underlying leg matures at DELIVERY; an option's strike-ccy
     # forward is taken at EXPIRY. One pooled date column, chosen per row.
+    # For exact (non-CALENDAR_PERIOD) NODE forwards with absent delivery, use
+    # settlement_date so the EFP quad is registered and the compiler can look it
+    # up (D062/D077.7 amended, ws/vanilla-forward-node). By the time we reach
+    # here, the identity gate has already rejected missing delivery for
+    # CALENDAR_PERIOD (relative) rows, so NO_DATE_ORD32 values in fwd_mask rows
+    # are authorised exact-NODE no-delivery trades.
     delivery_ord = np.concatenate(tuple(b.delivery_ord for b in ingest_batches))
     expiry_ord = np.concatenate(tuple(b.expiry_ord for b in ingest_batches))
     settle_ord = np.concatenate(tuple(b.settle_ord for b in ingest_batches))
-    underlying_date_ord = np.where(opt_mask, expiry_ord, delivery_ord)
+    fwd_asset_date_ord = np.where(
+        fwd_mask & (delivery_ord == int(NO_DATE_ORD32)),
+        settle_ord,
+        delivery_ord,
+    )
+    underlying_date_ord = np.where(opt_mask, expiry_ord, fwd_asset_date_ord)
 
     # The option strike leg needs an effective discount row at BOTH dates: the
     # EXPIRY row denominates the strike-ccy forward, the SETTLEMENT row

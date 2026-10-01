@@ -22,13 +22,15 @@ following contracts:
                             Whether a spot-quoted node may also serve as a
                             forward/option underlying is an open economic
                             question and is NOT settled here.
-    D065  contract identity FORWARDS ONLY: a relative forward point resolves, at
-                            the run as-of, to the contract whose period contains
-                            the trade's delivery date. Forwards need the date
-                            because it is the asset leg's discount date. Options
-                            do not: delivery is absent from the Black-76 value
-                            and never selects the underlying market point, so no
-                            delivery requirement is inherited from forwards.
+    D065  contract identity FORWARDS ONLY: for relative (CALENDAR_PERIOD)
+                            forward points, a trade's delivery_date must fall in
+                            the resolved contract period. Delivery is required
+                            for those rows.
+                            For exact (non-CALENDAR_PERIOD) NODE forwards
+                            delivery_date is optional; when absent the compiler
+                            uses settlement_date as the asset-leg discount date
+                            (D062/D077.7 amended, ws/vanilla-forward-node).
+                            Options never require delivery (D077).
     D066  discount linkage  a linked curve is a discount curve AND its currency
                             equals the currency of the leg it discounts
 
@@ -180,19 +182,30 @@ def _validate_contract_identity(
     as_of_date: date,
     static_config: RiskStaticConfig,
 ) -> None:
+    """
+    Enforce D065 contract-period identity for forward rows.
+
+    Two categories of underlying:
+
+    CALENDAR_PERIOD (relative NODE, e.g. BRENT_CRUDE_FWD[M+0]):
+        delivery_date is REQUIRED (it both identifies the contract period and
+        will be the asset-leg discount date). A missing delivery raises here.
+        The delivery date must fall in the resolved contract's period.
+
+    non-CALENDAR_PERIOD (exact NODE, e.g. a LABEL or absolute price point):
+        delivery_date is OPTIONAL (D062/D077.7 amended, ws/vanilla-forward-node).
+        No period check applies; the exact rf_id is the identity.
+        A missing delivery is valid; the compiler substitutes settlement_date
+        as the asset-leg discount date.
+    """
     if not bool(rows.any()):
         return
-    missing = rows & (delivery_ord == NO_DATE_ORD32)
-    if bool(missing.any()):
-        raise PrettyKeyError(
-            "forward contract identity requires delivery_date (D065). Trade uids "
-            f"{_uids_preview(uids, missing)}."
-        )
-    mapping = build_risk_factor_name_mapping_for_as_of_date(
-        risk_static_config=static_config, as_of_date=as_of_date
-    )
-    rf_to_abs = {int(v): k for k, v in mapping.abs_to_rf_id.items()}
-    months = delivery_ord.astype("datetime64[D]").astype("datetime64[M]")
+
+    # Lazy state: only built when at least one CALENDAR_PERIOD rf is encountered.
+    mapping = None
+    rf_to_abs: dict[int, str] = {}
+    months: npt.NDArray | None = None  # delivery_ord cast to datetime64[M]
+
     for rf_id in np.unique(underlying_ids[rows]).tolist():
         at = rows & (underlying_ids == rf_id)
         parent = int(static_config.rf_id_to_parent_id[int(rf_id)])
@@ -201,13 +214,30 @@ def _validate_contract_identity(
             curve.x_axis_kind,
             str(curve.roll_method),
         ))
+
         if width is None:
+            # Exact (non-CALENDAR_PERIOD) NODE: delivery is optional.
+            # No period check applies for this rf. Continue to the next rf.
+            continue
+
+        # ---- CALENDAR_PERIOD (relative) NODE: delivery is REQUIRED ----
+        missing = at & (delivery_ord == NO_DATE_ORD32)
+        if bool(missing.any()):
             raise PrettyKeyError(
-                f"forward underlying rf {rf_id} on curve {curve.curve_name!r} uses "
-                f"(x_axis_kind={curve.x_axis_kind}, roll_method={curve.roll_method}); "
-                "delivery-period identity is only defined for CALENDAR_PERIOD "
-                f"contracts (D065). Trade uids {_uids_preview(uids, at)}."
+                "forward contract identity requires delivery_date for relative "
+                f"NODE contracts (D065). Trade uids {_uids_preview(uids, missing)}."
             )
+
+        # Build mapping and months only once for the first CALENDAR_PERIOD rf.
+        if mapping is None:
+            mapping = build_risk_factor_name_mapping_for_as_of_date(
+                risk_static_config=static_config, as_of_date=as_of_date
+            )
+            rf_to_abs = {int(v): k for k, v in mapping.abs_to_rf_id.items()}
+            # Safe: all rows in `at` have valid (non-sentinel) delivery_ord
+            # after the missing-check above, so the cast never sees -99999.
+            months = delivery_ord.astype("datetime64[D]").astype("datetime64[M]")
+
         abs_name = rf_to_abs.get(int(rf_id))
         prefix = f"{curve.curve_name}_"
         if abs_name is None or not abs_name.startswith(prefix):
@@ -215,7 +245,8 @@ def _validate_contract_identity(
                 f"forward underlying rf {rf_id} did not resolve to an absolute "
                 f"contract of curve {curve.curve_name!r} at as-of {as_of_date}."
             )
-        label = abs_name[len(prefix) :]
+        label = abs_name[len(prefix):]
+        assert months is not None  # guarded by `mapping is None` branch above
         if width == 6:
             trade_labels = np.char.replace(months[at].astype(str), "-", "")
         else:

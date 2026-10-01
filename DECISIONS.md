@@ -3010,10 +3010,18 @@ The first implementation MAY be a deliberately small construction model. It MUST
 
 **Decision:** `_mixed_radix_key` rejects any column value outside `[0, radix)`.
 The only admissible negative optional coordinate is `INVALID_UIX` in the FX
-column (identity FX). FX invert flags must be 0 or 1. The FORWARD family requires
-`delivery_date`, `settlement_date`, `under_discount_curve` and
-`strike_discount_curve` at ingest. The OPTION family additionally requires
-`settlement_date`, `delivery_date` and both curves.
+column (identity FX). FX invert flags must be 0 or 1.
+
+For exact (non-CALENDAR_PERIOD) NODE forwards `delivery_date` is optional.
+When supplied, the asset leg is discounted to `delivery_date`.
+When absent, the asset leg falls back to `settlement_date`.
+For relative (CALENDAR_PERIOD) NODE forwards `delivery_date` remains mandatory:
+it is required for contract-period identity (D065) and is the asset-leg
+discount date.
+The FORWARD family always requires `settlement_date`, `under_discount_curve`
+and `strike_discount_curve` at ingest.
+The OPTION family requires `settlement_date` and both curves;
+`delivery_date` is not required (D077.7).
 
 **Reason:** a missing settlement or delivery date packed as `INVALID_UIX` in a
 non-leading key column produced a valid key of another trade's curve/date row.
@@ -3519,8 +3527,13 @@ unit scales independently from configured unit semantics.
    an argument of the pricing formula, or an independently justified economic
    property. It is never required because a sibling instrument uses it.
 
-   * **NODE forward:** delivery REQUIRED (asset-leg discount date); settlement
-     REQUIRED.
+   * **NODE forward (exact, non-CALENDAR_PERIOD):** delivery OPTIONAL.
+     When supplied → asset-leg discount date = delivery_date.
+     When absent   → asset-leg discount date = settlement_date.
+     Settlement REQUIRED.
+   * **NODE forward (relative, CALENDAR_PERIOD):** delivery REQUIRED for
+     contract-period identity (D065) and as the asset-leg discount date.
+     Settlement REQUIRED.
    * **NODE option:** expiry REQUIRED; settlement REQUIRED; delivery NOT
      REQUIRED.
 
