@@ -359,28 +359,43 @@ Decisions:
   DIFFERENCE requires finite; NO_SHIFT skipped. NOT a global positive-levels
   rule — DIFFERENCE and ABSOLUTE admit negative levels.
 
-MULTI-DAY AGGREGATION (RESOLVED — canonical). ABSOLUTE_BASE_RETURN is the
-sign-robust SIMPLE_RETURN: `|V_prev|` replaces `V_prev` in the daily/endpoint
-return, `|base|` handles sign in reconstruction, and the aggregation is
-IDENTICAL to SIMPLE at every stage — never additive.
+MULTI-DAY AGGREGATION (RESOLVED, canonical). ABSOLUTE_BASE_RETURN uses `|V_prev|`
+in place of `V_prev` in the daily and endpoint return, and `|base|` in
+reconstruction. Each engine applies the SIMPLE aggregation operator to ABS
+moves. No engine aggregates additively.
   - Historical (endpoint 2-point read): `(V_t - V_{t-h}) / |V_{t-h}|`.
   - SBB / FHS / FilteredBootstrap (daily composition): `prod_j (1 + r_j) - 1`,
-    `r_j = (V_j - V_{j-1}) / |V_{j-1}|` — i.e. the SIMPLE branch fed absolute
-    residuals/ratios.
-Rationale: on strictly positive levels `|V|=V`, so ABSOLUTE is definitionally
-identical to SIMPLE; this must hold for every generator and every horizon.
-SIMPLE aggregates multiplicatively (endpoint-ratio in Historical, product in the
-daily kernels); therefore ABSOLUTE must too. The numerator being a difference
-does NOT imply additive — the `|denominator|` makes it a return, and returns
-compose like SIMPLE, not like DIFFERENCE (only LOG returns and raw DIFFERENCES
-add). Counterexample (h=2, path 100->110->121): SIMPLE=endpoint=multiplicative
-=0.21; additive=0.20 (drops compounding, rejected). At h=1 all conventions
-collapse to the single-period definition. On negative levels the generators
-differ (endpoint vs multiplicative) exactly as they already do for SIMPLE via
-filtering/resampling — inherent, not a defect; Historical endpoint recovers the
-realised level. Superseded the initial additive implementation; SBB/FHS/
-FilteredBootstrap ABSOLUTE branches corrected to multiplicative. Historical and
+    `r_j = (V_j - V_{j-1}) / |V_{j-1}|`; the SIMPLE branch fed ABS daily moves
+    (SBB) or ABS residuals times vol ratios (FHS, FilteredBootstrap).
+Rationale (corrected 2026-10-01; the decision and every engine are unchanged).
+The daily ABS factor is `1 + r_j = V_j / V_{j-1}` if `V_{j-1} > 0` and
+`2 - V_j / V_{j-1}` if `V_{j-1} < 0`. Zero levels fail the domain check.
+(a) If `V_0, ..., V_{h-1} > 0`, the product telescopes to `V_h / V_0`. Daily
+composition then equals the Historical endpoint and SIMPLE, for every generator
+and every horizon. This is why the daily engines compose multiplicatively.
+(b) If some `V_{j-1} < 0`, the product does not telescope. On one contiguous
+path the daily product and the endpoint value differ in general. On a strictly
+negative path `r_j = -s_j`, with `s_j` the daily SIMPLE return. The product is
+`prod_j (1 - s_j) - 1` and the endpoint is `1 - prod_j (1 + s_j)`. They are equal
+if and only if `e_2(s) + e_4(s) + ... = 0` (h = 2: `s_1 s_2 = 0`). Example
+`-10 -> -9 -> -8.1`: endpoint 0.19, product 0.21 (D088 §10). Sign changes also
+differ in general (`-1 -> 1 -> 2`: endpoint 3, product 5).
+(c) Consequence: on negative or sign-changing levels, Historical ABS and an
+unfiltered contiguous SBB block of the same days give different values. The
+cause is the ABS chart, not filtering or resampling. SIMPLE has no such
+difference, because its daily product telescopes for every non-zero path. No
+single h-horizon ABS statistic exists; the engine-specific definitions above
+are the contract. An explicit h-horizon ABS contract is deferred (D088 §10).
+(d) Additive aggregation stays rejected: on `100 -> 110 -> 121`, SIMPLE =
+endpoint = product = 0.21 and additive = 0.20. At h = 1 all conventions are the
+single-period definition. Historical reconstruction from `V_{t-h}` recovers
+`V_t`. This superseded the initial additive implementation. SBB, FHS and
+FilteredBootstrap ABS branches were corrected to multiplicative. Historical and
 apply were already correct and unchanged.
+Correction note (2026-10-01): the earlier rationale said ABS returns "compose
+like SIMPLE" and that the negative-level difference between engines arises as
+for SIMPLE "via filtering/resampling". Both statements were false for
+`V_{j-1} < 0`; (b) and (c) replace them.
 
 Test correction (not a weakening): `test_parametric_scenarios.py` used
 `MOCK_REQ_SHIFT_TYPES = [0,0]` with a comment mislabelling `0` as LOG_RETURN
@@ -417,6 +432,26 @@ float; an int-only policy would reject its own default). It is validated as a
 finite real (int or float) >= 1.0, rejecting bool and non-finite, and persisted
 as float. The discrete int-only policy applies to counts (horizon,
 total_scenarios), not to this rate parameter.
+
+**F3 horizon-domain clarification (2026-10-01; precision only, no behaviour
+change).** `horizon = h` counts steps of the matrix date axis (D090). T is the
+number of level rows.
+- Historical and FilteredHistorical are rolling-window engines. Scenario s reads
+  levels s and s + h (FilteredHistorical: daily moves s+1 .. s+h).
+  `total_scenarios = T - h`. The domain is `1 <= h <= T - 1`; `h >= T` raises
+  `ValueError` at construction. FilteredHistorical also requires `T >= 3`.
+- SBB and FilteredBootstrap are path engines. A path is h daily moves drawn from
+  moves 1 .. T - 1 (SBB: geometric blocks with circular wrap, D030 F10;
+  FilteredBootstrap: i.i.d. days). `total_scenarios` is an independent input.
+  The domain is every `h >= 1` (SBB: `T >= 2` and `h <= 2^31 - 1`, int32 path
+  indices; FilteredBootstrap: `T >= 3`). `h >= T` is accepted. For `h >= T` every
+  path repeats at least one daily move; repetition is possible for every
+  `h >= 2`. The h-day value is the D025 composition of the drawn moves.
+- No generator truncates, rescales or caps h. A restriction of the path-engine
+  domain is a new decision, not a correction.
+Evidence: generator `__post_init__` checks; D031; D032; D035;
+`test_insufficient_history_fails_fast`;
+`tests/simlab/scenarios/test_horizon_history_domain.py`.
 
 F5 — historical matrix dtype boundary (D017). `RiskFactorMatrix` accepts any
 float dtype and silently coerces layout to F, so a float32 matrix previously
