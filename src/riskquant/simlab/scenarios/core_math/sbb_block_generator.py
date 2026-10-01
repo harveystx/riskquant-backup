@@ -33,6 +33,8 @@ from riskquant.jit import (
     parallel_njit,
 )
 
+_INT32_MAX: int = int(np.iinfo(np.int32).max)
+
 
 @parallel_njit(
     _NB_VOID(
@@ -116,6 +118,10 @@ def generate_sbb_path_indices(
         raise ValueError(f"T must be >= 2 for 1-day returns; got T={t_max}")
     if h < 1:
         raise ValueError(f"h must be >= 1; got h={h}")
+    if h > _INT32_MAX:
+        # Path indices and block lengths are int32 (kernel signature), so a
+        # block length of h must be representable.
+        raise ValueError(f"h must be <= {_INT32_MAX} (int32 path contract); got h={h}")
     if total_scenarios < 1:
         raise ValueError(f"B must be >= 1; got B={total_scenarios}")
     if expected_block_size < 1.0:
@@ -132,9 +138,18 @@ def generate_sbb_path_indices(
     if p >= 1.0:
         block_lengths = np.ones(max_possible_blocks, dtype=np.int32)
     else:
-        block_lengths = rng.geometric(p, size=max_possible_blocks).astype(
-            np.int32, copy=False
-        )
+        # rng.geometric returns int64 draws >= 1. Large expected_block_size
+        # gives draws above the int32 range; a bare int32 cast wraps them to
+        # negative lengths (out-of-bounds stitch writes). The kernel already
+        # uses min(b_len, h - step) <= h, so clamping to h BEFORE the cast
+        # leaves every path bitwise unchanged and makes the cast lossless.
+        draws = rng.geometric(p, size=max_possible_blocks)
+        if draws.size and int(draws.min()) < 1:
+            raise RuntimeError(
+                "rng.geometric returned a block length < 1 "
+                f"(p={p!r}); refusing to stitch SBB paths."
+            )
+        block_lengths = np.minimum(draws, h).astype(np.int32, copy=False)
 
     start_indices = rng.integers(
         low=1, high=t_max, size=max_possible_blocks, dtype=np.int32
