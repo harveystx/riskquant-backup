@@ -221,7 +221,7 @@ def _validate_contract_identity(
                 "delivery-period identity is only defined for CALENDAR_PERIOD "
                 f"contracts (D065). Trade uids {_uids_preview(uids, at)}."
             )
-        relative |= at
+        relative |= at & (delivery_ord != NO_DATE_ORD32)
 
     if not bool(relative.any()):
         return
