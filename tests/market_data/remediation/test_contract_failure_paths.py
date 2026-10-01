@@ -164,7 +164,6 @@ def test_packed_coordinate_outside_domain_is_rejected(bad):
 @pytest.mark.parametrize(
     "missing",
     [
-        "delivery_date",
         "settlement_date",
         "under_discount_curve",
         "strike_discount_curve",
@@ -173,6 +172,18 @@ def test_packed_coordinate_outside_domain_is_rejected(bad):
 def test_forward_missing_coordinate_fails_at_ingest(rsc, missing):
     with pytest.raises(ValueError, match=rf"missing '{missing}'"):
         _ingest(rsc, [_fwd(1, **{missing: None}), _fwd(2)])
+
+
+def test_relative_forward_missing_delivery_fails_at_ingest(rsc):
+    """
+    `delivery_date` is not a FORWARD-family coordinate (D101). `BRENT_FWD[M+0]`
+    is a RELATIVE pillar (OFFSET_M + CALENDAR_PERIOD), so the D065 identity
+    gate still refuses the row at ingest, before any key is packed.
+    """
+    with pytest.raises(
+        PrettyKeyError, match=r"requires delivery_date for relative NODE"
+    ):
+        _ingest(rsc, [_fwd(1, delivery_date=None), _fwd(2)])
 
 
 def test_md03_alias_fixture_cannot_reach_the_mapper_even_bypassing_ingest(rsc):

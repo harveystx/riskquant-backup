@@ -35,6 +35,7 @@ from riskquant.portfolio.instruments import (
     INSTRUMENT_TYPE_TO_FAMILY_ARRAY,
 )
 
+
 # ==============================================================================
 # INTERNAL HELPERS
 # ==============================================================================
@@ -206,16 +207,20 @@ def validate_forward_family(
     if not np.any(mask):
         return
 
+    # D062 as amended by D101: `delivery_date` is not a FAMILY requirement.
+    # Its requirement depends on the source mechanism, so it is owned by the
+    # layer that knows that mechanism:
+    #   NODE forward, exact (LABEL)      optional  identity._validate_contract_identity
+    #   NODE forward, relative (OFFSET)  required  identity._validate_contract_identity
+    #   CURVE forward                    required  validate_forward_curve_instrument
     cols = (
         "quantity",
         "underlying",
         "settlement_ccy",
         "strike_price",
         "strike_ccy",
-        # D062: every coordinate a forward block packs into an effective-factor
-        # key is mandatory. A missing one used to pack as a sentinel and alias
-        # another trade's row (MD-03).
-        "delivery_date",
+        # D062: settlement and both discount curves remain mandatory for every
+        # forward; they are always required for the EFP/EDF quad coordinates.
         "settlement_date",
         "under_discount_curve",
         "strike_discount_curve",
@@ -226,6 +231,25 @@ def validate_forward_family(
     _validate_ccy_series(df, "settlement_ccy", mask, "Forward")
     _validate_ccy_series(df, "strike_ccy", mask, "Forward")
     _validate_non_zero_quantity(df, mask, "Forward")
+
+
+def validate_forward_curve_instrument(
+    df: pl.DataFrame,
+    mask: npt.NDArray[np.bool_],
+) -> None:
+    """
+    VANILLA_FORWARD_CURVE refinement (D065, D101).
+
+    A curve-sourced forward level is obtained from the curve at the delivery
+    date, so `delivery_date` is a pricing coordinate for every CURVE row. This
+    requirement holds whether or not a CURVE compiler is registered (D050).
+    """
+    if not np.any(mask):
+        return
+
+    cols = ("delivery_date",)
+    _require_cols(df, cols)
+    _validate_non_null_masked(df, mask, cols, "Forward")
 
 
 def validate_option_family(

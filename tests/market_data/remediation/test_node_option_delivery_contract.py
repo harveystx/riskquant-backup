@@ -7,8 +7,10 @@ Locked contract:
 * a NODE option's value is a function of expiry (forward measure, vol, TTE) and
   settlement (payoff discount). `delivery_date` is NOT part of the option
   contract and MUST NOT be required;
-* a NODE forward's `delivery_date` IS required: it is the asset leg's discount
-  date, and for a relative pillar it must fall in the resolved contract period;
+* a RELATIVE (OFFSET) NODE forward's `delivery_date` IS required: it is the
+  asset leg's discount date and must fall in the resolved contract period
+  (D065). An EXACT (LABEL) NODE forward may omit it; its asset leg is then
+  discounted at settlement (D101);
 * a relative name plus the RUN as-of resolves to exactly one rf id. An option's
   expiry MUST NOT re-resolve it (D067 / D064 unchanged).
 
@@ -159,8 +161,19 @@ def test_option_economics_do_not_change_when_delivery_metadata_is_supplied(rsc):
 
 
 # --------------------------------------------------------------- Test 3
-def test_node_forward_still_requires_delivery_and_its_contract_period(rsc):
-    with pytest.raises(ValueError, match=r"Missing required columns"):
+def test_relative_node_forward_still_requires_delivery_and_its_contract_period(rsc):
+    """
+    BRENT_CRUDE_FWD[M+0] is a CALENDAR_PERIOD (relative) NODE.
+    Delivery remains required for relative NODEs (D065, D062 amended).
+    The error now comes from the identity gate (identity.py), not the family
+    validator (validate.py), because delivery_date is no longer in the family
+    mandatory-column list.
+    """
+    # Column absent: _get_date_col returns all-null → NO_DATE_ORD32 →
+    # identity gate fires for CALENDAR_PERIOD underlying.
+    with pytest.raises(
+        Exception, match=r"forward contract identity requires delivery_date"
+    ):
         compile_raw_df_into_ingest_batch(
             raw_df=pl.from_pandas(
                 _forward().drop(columns=["delivery_date"])
@@ -168,14 +181,16 @@ def test_node_forward_still_requires_delivery_and_its_contract_period(rsc):
             static_config=rsc,
             as_of_date=A,
         )
-    # a null delivery on a present column is rejected too
-    with pytest.raises(ValueError, match=r"Forward missing 'delivery_date'"):
+    # Null delivery on a present column takes the same path.
+    with pytest.raises(
+        Exception, match=r"forward contract identity requires delivery_date"
+    ):
         compile_raw_df_into_ingest_batch(
             raw_df=pl.from_pandas(_forward(delivery_date=None)),
             static_config=rsc,
             as_of_date=A,
         )
-    # the D065 period check is untouched for forwards
+    # The D065 period check is untouched for relative NODEs.
     with pytest.raises(Exception, match="is the 202602 contract"):
         compile_raw_df_into_ingest_batch(
             raw_df=pl.from_pandas(
@@ -186,7 +201,7 @@ def test_node_forward_still_requires_delivery_and_its_contract_period(rsc):
             static_config=rsc,
             as_of_date=A,
         )
-    # and a well-formed forward still ingests and compiles
+    # A well-formed relative-NODE forward still ingests and compiles.
     _, _, portfolio = _ingest_and_compile(rsc, _forward())
     assert portfolio.vanilla_forward is not None
 

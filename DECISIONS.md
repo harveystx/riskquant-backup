@@ -3015,6 +3015,15 @@ column (identity FX). FX invert flags must be 0 or 1. The FORWARD family require
 `strike_discount_curve` at ingest. The OPTION family additionally requires
 `settlement_date`, `delivery_date` and both curves.
 
+**Amended 2026-10-01 by D101:** D101
+amends the FORWARD sentence above. `settlement_date`, `under_discount_curve`
+and `strike_discount_curve` stay required for every forward. `delivery_date`
+stays required for a relative NODE forward (D065) and for a
+`VANILLA_FORWARD_CURVE` forward. It is optional for an exact NODE forward; when
+it is absent, the asset leg is discounted at `settlement_date` (D101.3). D077 §7
+already superseded the OPTION sentence above: a NODE option does not require
+`delivery_date`. The `_mixed_radix_key` domain rule is unchanged.
+
 **Reason:** a missing settlement or delivery date packed as `INVALID_UIX` in a
 non-leading key column produced a valid key of another trade's curve/date row.
 The D051 range check ran after the lookup and accepted it.
@@ -3521,6 +3530,11 @@ unit scales independently from configured unit semantics.
 
    * **NODE forward:** delivery REQUIRED (asset-leg discount date); settlement
      REQUIRED.
+     **Amended 2026-10-01 by D101:**
+     delivery stays REQUIRED for a relative NODE forward (OFFSET x-axis, D065).
+     It is OPTIONAL for an exact NODE forward (LABEL x-axis); when it is
+     absent, the asset-leg discount date is settlement (D101.3). Settlement
+     stays REQUIRED.
    * **NODE option:** expiry REQUIRED; settlement REQUIRED; delivery NOT
      REQUIRED.
 
@@ -4927,6 +4941,28 @@ Closed-form, prior to implementation: identity default (`80 → 82` gives `82`);
 **Known pre-existing hazard (not changed):** `NO_DATE_ORD32` is the ordinal of 1696-03-18. A date field of 1696-03-18 is indistinguishable from "no date".
 **Implementation:** `materialize._materialize_date_col`; `utils/dates.py`.
 **Verification:** `test_all_null_optional_date_column_is_missing`, `test_iso_and_unpadded_date_text_match_typed_dates`, `test_date_text_must_be_exactly_iso`, `test_empty_date_text_is_missing`, `tests/utils/test_dates.py`, the node-book oracle; corpus (4 range cases).
+
+---
+
+## D101 - Exact NODE forward: optional delivery with settlement fallback; identity class is the parent x-axis kind
+**Status:** LOCKED (2026-10-01, owner approval). Implemented 2026-10-01; verification evidence below.
+**Amends:** D062 (FORWARD ingest-date sentence) and D077 §7 (NODE-forward bullet). Each amended passage carries an "Amended 2026-10-01 by D101" note.
+**Unchanged:** D065. Also unchanged: D047, D048, D050, D063, D066, D078, and D077 §1 to §6 and §8 to §9.
+**Owner input:** the owner confirmed the economic rule in D101.3 in the ws/vanilla-forward-node instruction and approved the text of this decision (2026-10-01).
+**Decision:**
+* **D101.1 Terminology.** In D101, "exact" and "relative" name the IDENTITY CLASS of a NODE-forward underlying: the mechanism that ingest uses to identify its rf, as in D065 ("exact NODE identity", "relative forward-point name"). An exact NODE name identifies its rf without the run as-of. A relative NODE name identifies its rf only through resolution at the run as-of (D077.4). After identification, both classes read one `rf_id` directly, with no interpolation (D077.1). That shared property does not make a relative NODE exact in the sense of D101.
+* **D101.2 Identity class.** The identity class is the x-axis kind of the parent curve of the underlying. LABEL is EXACT: the name does not depend on the as-of (`CurveMeta`; `rf_resolution` returns the bare label). OFFSET_M, OFFSET_Y and OFFSET_HY are RELATIVE: the name resolves at the run as-of through a roll method. The roll method does not decide the identity class. A NODE-topology rf stays inadmissible as a forward underlying (D063).
+* **D101.3 Exact NODE forward.** `delivery_date` is optional. It never selects the rf. When `delivery_date` is supplied, the asset (floating) leg is discounted at `delivery_date`. When it is absent, the asset leg is discounted at `settlement_date`. No contract-period check applies.
+* **D101.4 Relative NODE forward.** D065 governs, unchanged. `delivery_date` is required and must fall in the resolved contract period. Only OFFSET_M + CALENDAR_PERIOD and OFFSET_Y + CALENDAR_PERIOD are supported. Every other roll method fails closed, with or without `delivery_date`.
+* **D101.5 CURVE forward.** `VANILLA_FORWARD_CURVE` requires `delivery_date` at ingest. This requirement holds whether or not a CURVE compiler is registered (D050).
+* **D101.6 Every forward.** `settlement_date`, `under_discount_curve` and `strike_discount_curve` are required at ingest. The strike leg is discounted at `settlement_date`. D047 and D048 are unchanged.
+
+**Reason:** an unmarked edit of D062 and D077 §7 defined "exact" as "non-CALENDAR_PERIOD". That definition admitted relative ROLL_ON_MMDD and HALF_YEAR_* points with any delivery or none and without a period check: the MD-06 failure that D065 closed. The same edit removed `delivery_date` from the FORWARD family with no CURVE replacement. D101 replaces that edit with the identity rule of the configuration model and records the amendment explicitly.
+**Implementation:** `portfolio/ingest/identity._validate_contract_identity` (D101.2 to D101.4). `portfolio/ingest/validate.validate_forward_curve_instrument`, registered in `dispatcher.INSTRUMENT_VALIDATORS` (D101.5). The settlement fallback is in `engine.build_uix_mapper` and `block_compilers/vanilla_forward.compile_vanilla_forward_block`. Ingest admits an absent delivery only for a LABEL underlying, so the fallback receives exact-NODE rows only.
+**Evidence:** `tests/market_data/remediation/test_exact_node_forward_delivery.py`; `tests/market_data/remediation/test_contract_failure_paths.py::test_relative_forward_missing_delivery_fails_at_ingest`. Owner certification run (certificate schema `D101-v2`; Windows 10.0.26200, Python 3.11.9, numpy 2.4.6, numba 0.66.0, polars 1.42.1, pytest 9.1.1, ruff 0.15.21, mypy 2.2.0; base `5f3381f`): focused suite 172 passed. MU1 to MU8, each a mutation of production source, were all KILLED by their declared detectors; every mutated file was restored byte for byte and verified against HEAD. `tests/market_data` 269, `tests/portfolio` 53 and `tests/valuation` 220 passed. Full suite: HEAD 5592 passed, 36 skipped; base 15 failed, 5575 passed, 36 skipped; 0 new failures. The 15 resolved failures are the 14 tests of the deleted `tests/valuation/oracle/test_node_forward_optional_delivery.py` and `test_contract_failure_paths.py::test_forward_missing_coordinate_fails_at_ingest[delivery_date]`. Static checks (ruff check, ruff format --check, mypy --strict on the 10 changed files, against base): 0 new findings; 1 mypy error resolved.
+**Evidence limits:** HEAD moved from `1d255fa` to `622892c` during the run (before the run, the runner script was the only changed file). The run's tree-integrity gate therefore failed, and the run's overall verdict was NOT CERTIFIED. The mutated production files matched HEAD before and after the run. The output of `git diff --name-only 1d255fa 622892c` is not recorded here. The runner applied MU1 to MU8 in place in the developer checkout; do not re-run it in that form.
+
+---
 
 ## D-C01 — `obligor_uids_target` ordering (credit / exposure→JTD bridge)
 

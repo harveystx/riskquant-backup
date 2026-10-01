@@ -350,7 +350,7 @@ These are **not automatic permissions**:
 * adding enforcement tooling;
 * rewriting tests wholesale;
 * migrating dependencies;
-* packaging files;
+* packaging files, except the delivery archive defined in Section 10;
 * creating handoffs or continuation documents;
 * resolving unrelated repository defects.
 
@@ -366,3 +366,42 @@ When a discovered issue is outside the task, report it and leave it unchanged.
 The goal is not to maximise code changed.
 
 The goal is the **smallest correct, evidenced change within the user's scope**.
+
+---
+
+## 10. Delivery of changed files
+
+This section applies only in claude.ai chat, where Claude cannot write to the repository.
+Do not apply it in Claude Code or in any session with direct repository write access.
+
+**Trigger.** Deliver one zip archive when the response creates or modifies repository files.
+Include every changed file: `.py` files, tests, `pyproject.toml`, and others.
+Do not create an archive in audit, review, or analysis mode.
+Do not create an archive for illustrative snippets.
+
+**Build rules.**
+
+* Write each changed file once, in full, to a new staging directory.
+* Use the repository-relative path for each file.
+* The path must match the first-line `# <repo-relative-path>` header of each `.py` module.
+* The archive root is the repository root. Do not add a wrapper folder.
+* Include only created and modified files. Do not include unchanged files.
+* Do not add manifests, notes, or other extra files to the archive.
+* Include `DECISIONS.md` only when the user authorised a change to it.
+* If the task changes more than one repository, create one archive per repository.
+* Never retype a file for the archive. The archive and the response must use the same file content.
+
+**Archive name.** Use `<repo>_update_<UTC timestamp>.zip`.
+Example: `riskquant_update_20261001T143000Z.zip`.
+Save it in `/mnt/user-data/outputs/`. Share it with `present_files`.
+
+**Verification.** After creation, list the archive contents.
+Compare the list with the intended file list. Report the result.
+Do not state that the archive exists unless the listing was executed.
+
+**Response body.** List each file path with `created` or `modified`.
+List deleted and renamed files separately. A zip cannot delete files.
+Do not repeat full file contents in the chat.
+
+**Fallback.** If file creation or code execution is unavailable, state this.
+Return the complete files inline. Do not claim that an archive exists.

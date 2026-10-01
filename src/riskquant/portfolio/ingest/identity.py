@@ -22,13 +22,20 @@ following contracts:
                             Whether a spot-quoted node may also serve as a
                             forward/option underlying is an open economic
                             question and is NOT settled here.
-    D065  contract identity FORWARDS ONLY: a relative forward point resolves, at
-                            the run as-of, to the contract whose period contains
-                            the trade's delivery date. Forwards need the date
-                            because it is the asset leg's discount date. Options
-                            do not: delivery is absent from the Black-76 value
-                            and never selects the underlying market point, so no
-                            delivery requirement is inherited from forwards.
+    D065  contract identity FORWARDS ONLY. The parent curve's x-axis kind
+                            decides the identity class (D101):
+                            RELATIVE  OFFSET_* axis: the name resolves at the
+                                      run as-of through a roll method.
+                                      delivery_date is required and must fall
+                                      in the resolved contract period. Only
+                                      CALENDAR_PERIOD contracts are supported;
+                                      every other roll method fails closed.
+                            EXACT     LABEL axis: the name does not depend on
+                                      the as-of, so the rf IS the contract.
+                                      delivery_date is optional and selects
+                                      nothing; it only sets the asset-leg
+                                      discount date (settlement when absent).
+                            Options never require delivery (D077).
     D066  discount linkage  a linked curve is a discount curve AND its currency
                             equals the currency of the leg it discounts
 
@@ -44,6 +51,7 @@ import numpy as np
 import numpy.typing as npt
 
 from riskquant.config.enums.container_topology import ContainerTopologyType
+from riskquant.config.enums.x_axis_kinds import XAxisKind
 from riskquant.config.static_config.rf_resolution import (
     build_risk_factor_name_mapping_for_as_of_date,
 )
@@ -180,34 +188,59 @@ def _validate_contract_identity(
     as_of_date: date,
     static_config: RiskStaticConfig,
 ) -> None:
+    """
+    Enforce D065 contract identity for NODE-forward rows (D101 classification).
+
+    The identity class of a forward point is a property of its parent curve's
+    x-axis kind, not of its roll method. `CurveMeta` and `rf_resolution` define
+    a LABEL point as as-of independent (the bare label is the absolute name)
+    and an OFFSET_* point as resolved at the run as-of through a roll method.
+
+    EXACT (LABEL): no delivery check and no period check. Delivery never
+    selects the rf; the compiler discounts the asset leg at settlement when
+    delivery is absent.
+
+    RELATIVE (OFFSET_*): the (x_axis_kind, roll_method) pair must have a
+    period definition owned here (CALENDAR_PERIOD only), or the row fails
+    closed. Delivery is then required and must fall in the resolved period.
+    """
     if not bool(rows.any()):
         return
-    missing = rows & (delivery_ord == NO_DATE_ORD32)
-    if bool(missing.any()):
-        raise PrettyKeyError(
-            "forward contract identity requires delivery_date (D065). Trade uids "
-            f"{_uids_preview(uids, missing)}."
-        )
-    mapping = build_risk_factor_name_mapping_for_as_of_date(
-        risk_static_config=static_config, as_of_date=as_of_date
-    )
-    rf_to_abs = {int(v): k for k, v in mapping.abs_to_rf_id.items()}
-    months = delivery_ord.astype("datetime64[D]").astype("datetime64[M]")
+
+    relative = np.zeros_like(rows)
     for rf_id in np.unique(underlying_ids[rows]).tolist():
-        at = rows & (underlying_ids == rf_id)
         parent = int(static_config.rf_id_to_parent_id[int(rf_id)])
         curve = static_config.curve_meta_dict[parent]
-        width = _SUPPORTED_PERIOD_LABELS.get((
-            curve.x_axis_kind,
-            str(curve.roll_method),
-        ))
-        if width is None:
+        if curve.x_axis_kind == XAxisKind.LABEL.name:
+            continue
+        at = rows & (underlying_ids == rf_id)
+        if (curve.x_axis_kind, str(curve.roll_method)) not in _SUPPORTED_PERIOD_LABELS:
             raise PrettyKeyError(
                 f"forward underlying rf {rf_id} on curve {curve.curve_name!r} uses "
                 f"(x_axis_kind={curve.x_axis_kind}, roll_method={curve.roll_method}); "
                 "delivery-period identity is only defined for CALENDAR_PERIOD "
                 f"contracts (D065). Trade uids {_uids_preview(uids, at)}."
             )
+        relative |= at
+
+    if not bool(relative.any()):
+        return
+    missing = relative & (delivery_ord == NO_DATE_ORD32)
+    if bool(missing.any()):
+        raise PrettyKeyError(
+            "forward contract identity requires delivery_date for relative NODE "
+            f"contracts (D065). Trade uids {_uids_preview(uids, missing)}."
+        )
+    mapping = build_risk_factor_name_mapping_for_as_of_date(
+        risk_static_config=static_config, as_of_date=as_of_date
+    )
+    rf_to_abs = {int(v): k for k, v in mapping.abs_to_rf_id.items()}
+    months = delivery_ord.astype("datetime64[D]").astype("datetime64[M]")
+    for rf_id in np.unique(underlying_ids[relative]).tolist():
+        at = relative & (underlying_ids == rf_id)
+        parent = int(static_config.rf_id_to_parent_id[int(rf_id)])
+        curve = static_config.curve_meta_dict[parent]
+        width = _SUPPORTED_PERIOD_LABELS[(curve.x_axis_kind, str(curve.roll_method))]
         abs_name = rf_to_abs.get(int(rf_id))
         prefix = f"{curve.curve_name}_"
         if abs_name is None or not abs_name.startswith(prefix):

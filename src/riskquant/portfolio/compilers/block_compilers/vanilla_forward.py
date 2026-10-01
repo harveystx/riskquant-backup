@@ -11,8 +11,12 @@ A PHYSICALLY SETTLED forward: at delivery the holder receives one unit of the
 asset and pays `strike` in the strike currency. Each leg is discounted on its
 own curve and converted at its own spot FX, so for a long quantity `Q`:
 
-    PV(0) = Q * [ F_a(0,T) DF_a(0,T) FX_spot(a -> settle)
-                  - K      DF_k(0,T) FX_spot(k -> settle) ]
+    PV(0) = Q * [ F_a(0,T) DF_a(0,T_a) FX_spot(a -> settle)
+                  - K      DF_k(0,T_k) FX_spot(k -> settle) ]
+
+Asset-leg discount date T_a (D101):
+    T_a = delivery_date  when delivery is supplied
+    T_a = settlement_date when delivery is absent (exact NODE only)
 
 This degenerates EXACTLY to the single-currency form `Q (F - K) DF` when both
 legs share a curve and a currency, which is also the cash-settled value in that
@@ -35,7 +39,8 @@ UIX translation
 ---------------
     underlying_ids               -> price_uix   (market_id_universe)
     under_discount_curve_ids     -> curve_uix   (discount_curve_id_universe)
-    delivery_ord                 -> date_uix    (date_ord32_universe)
+    delivery_ord or settle_ord   -> date_uix    (date_ord32_universe)
+        (settle_ord used when delivery_ord == NO_DATE_ORD32)
     (fx_u2s_ids, fx_u2s_inv)     -> fx_eff_uix  (fx_spots_effective row)
     the four above               -> effective_forward_price_uix
 
@@ -63,6 +68,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from riskquant.constants import NO_DATE_ORD32
 from riskquant.portfolio.ingest.batch import IngestBatch
 from riskquant.valuation.blocks.vanilla_forward_block import VanillaForwardBlock
 
@@ -115,7 +121,21 @@ def compile_vanilla_forward_block(
     under_curve_uix = uix_mapper.map_discount_ids_to_uix(
         batch.under_discount_curve_ids[start:end]
     )
-    delivery_uix = uix_mapper.map_dates_to_uix(batch.delivery_ord[start:end])
+
+    # D101: the asset leg is discounted at delivery when supplied and at
+    # settlement when absent. Ingest admits absent delivery only for EXACT
+    # (LABEL) underlyings (identity._validate_contract_identity), so every
+    # NO_DATE_ORD32 here is an exact-NODE trade. build_uix_mapper registers
+    # the EFP quad with the same date, so the lookup resolves.
+    raw_delivery = batch.delivery_ord[start:end]
+    no_delivery = raw_delivery == int(NO_DATE_ORD32)
+    if bool(no_delivery.any()):
+        asset_date_ord = raw_delivery.copy()
+        asset_date_ord[no_delivery] = batch.settle_ord[start:end][no_delivery]
+    else:
+        asset_date_ord = raw_delivery
+
+    delivery_uix = uix_mapper.map_dates_to_uix(asset_date_ord)
     fx_u2s_eff_uix = uix_mapper.map_fx_legs_to_effective_uix(
         raw_fx_ids=batch.fx_u2s_ids[start:end],
         raw_fx_inv=batch.fx_u2s_inv[start:end],
