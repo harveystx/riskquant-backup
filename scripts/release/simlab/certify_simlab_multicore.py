@@ -39,6 +39,7 @@ import argparse
 import hashlib
 import json
 import os
+import pathlib
 import platform
 import subprocess
 import sys
@@ -994,7 +995,21 @@ def measure_performance(threads: list[int], dims: dict[str, int]) -> list[dict]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--json-out", default="simlab_multicore_certificate.json")
+
+    parser.add_argument(
+        "--json-out",
+        default=str(
+            pathlib
+            .Path(__file__)
+            .resolve()
+            .with_name("simlab_multicore_certificate.json")
+        ),
+        help=(
+            "Path for the machine-readable certification JSON. "
+            "Defaults to simlab_multicore_certificate.json "
+            "beside this script."
+        ),
+    )
     parser.add_argument("--factors", type=int, default=250)
     parser.add_argument("--observations", type=int, default=600)
     parser.add_argument("--scenarios", type=int, default=2000)

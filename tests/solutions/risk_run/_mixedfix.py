@@ -148,7 +148,7 @@ def build_world(frame: pd.DataFrame, *, rf=None, uids=None) -> SimpleNamespace:
         static_config=sh.rsc,
         uix_mapper=mapper,
     )
-    su = FX._run_shock_universe(
+    su = FX._run_axis_inputs(
         rsc=sh.rsc,
         proxy_terms=sh.terms,
         run_axis=derive_run_factor_axis(
@@ -363,7 +363,8 @@ def shocked_levels(data=None, *, uids=BASE, rf=None) -> np.ndarray:
     gen = build_scenario_generator(HISTORICAL, data=m)
     k, s = w.su.required_factor_ids.shape[0], gen.total_scenarios
     out = np.empty((k, s), dtype=np.float64)
-    for b in gen.iter_batches(driver_rf_ids=binding.request_driver_rf_ids,
+    for b in gen.iter_batches(
+        driver_rf_ids=binding.request_driver_rf_ids,
         chart_ids=binding.request_chart_ids,
         batch_size=s,
     ):
