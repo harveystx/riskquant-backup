@@ -63,9 +63,11 @@ from riskquant.market_data.compile import assemble_valuation_state
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.portfolio.compiled import CompiledPortfolio
 from riskquant.portfolio.instruments import (
+    INSTRUMENT_TYPE_TO_FAMILY_ARRAY,
     SPOT_ID,
     VANILLA_EUROPEAN_OPTION_NODE_ID,
     VANILLA_FORWARD_NODE_ID,
+    InstrumentTypeFamily,
 )
 from riskquant.reporting.fx_conversion import (
     FxConversionPlan,
@@ -211,6 +213,65 @@ def _require_taylor_capable_spot(
             f"{refused.size} position(s) declared TAYLOR are inverted-FX SPOT legs "
             f"(effective FX invert = 1; first 10: {refused[:10].tolist()}). An "
             "inverted-FX SPOT leg is admitted as FULL_REVAL only (D084)."
+        )
+
+
+#: D102.2: the instrument ids of the FORWARD family. The registry array is
+#: indexed by instrument id, so a position in it IS the id.
+_FORWARD_FAMILY_INSTRUMENT_IDS: npt.NDArray[np.int32] = np.flatnonzero(
+    np.asarray(INSTRUMENT_TYPE_TO_FAMILY_ARRAY) == int(InstrumentTypeFamily.FORWARD)
+).astype(np.int32)
+
+
+def _require_forward_capability(
+    *, context: ValuationContext, methodology: MethodologyDeclaration
+) -> None:
+    """
+    D102: source-specific admission of the UIDs that own a `vanilla_forward` row.
+
+    Block type and rf namespace do not establish the instrument source:
+    `BlockType.VANILLA_FORWARD` is a dispatch key, and `GlobalIdNamespace.NODES`
+    holds node ids and curve-point rf ids alike. The source is read from the
+    ingest rows bound to the UID (D102.2). A UID may own several ingest rows
+    (D055), so every FORWARD-family row of the UID is inspected; no single-row
+    assumption is made. Non-forward rows of the UID are not D102 source rows.
+
+    D102.3 applies to every methodology partition and is checked first, so a
+    source defect is reported as such even when the methodology is also
+    refused. D102.4 then admits a forward UID through FULL_REVAL only, until
+    D103 is LOCKED: a caller-built Taylor book for a forward position would
+    otherwise be certified by P1-A (base, order, completeness) and priced.
+    TAYLOR/SUPPLIED is also refused earlier by P-1 (`_require_block_wiring`);
+    D102.4 covers both Taylor partitions so it does not depend on that order.
+    """
+    block = context.portfolio.vanilla_forward
+    if block is None:
+        return
+    forward_uids = np.unique(np.asarray(block.trade_uids, dtype=np.int64))
+    batch = context.ingest_batch
+    row_uids = np.asarray(batch.uids, dtype=np.int64)
+    instruments = np.asarray(batch.instrument_ids, dtype=np.int32)
+    source_rows = np.isin(row_uids, forward_uids) & np.isin(
+        instruments, _FORWARD_FAMILY_INSTRUMENT_IDS
+    )
+    foreign = source_rows & (instruments != VANILLA_FORWARD_NODE_ID)
+    if bool(foreign.any()):
+        bad = np.unique(row_uids[foreign])
+        raise CompositionContractError(
+            f"D102.3: {bad.size} UID(s) own a vanilla_forward row but have a "
+            "FORWARD-family ingest row whose instrument is not "
+            f"VANILLA_FORWARD_NODE (first 10: {bad[:10].tolist()}; instrument "
+            f"id(s) {np.unique(instruments[foreign]).tolist()}). The forward "
+            "source of the UID is not established; the run fails closed."
+        )
+    _, u_supplied, u_derived = methodology.blocks()
+    refused = np.intersect1d(forward_uids, np.concatenate((u_supplied, u_derived)))
+    if refused.size:
+        raise CompositionContractError(
+            f"D102.4: {refused.size} position(s) declared TAYLOR own a "
+            f"vanilla_forward row (first 10: {refused[:10].tolist()}). A "
+            "VANILLA_FORWARD_NODE position is admitted as FULL_REVAL only "
+            "until D103 is LOCKED."
         )
 
 
@@ -875,6 +936,7 @@ def run_scenario_var_es(
     _require_taylor_capable_spot(
         context=context, taylor_uids=np.concatenate((u_supplied, u_derived))
     )
+    _require_forward_capability(context=context, methodology=methodology)
     aggregation = _row_aggregation(portfolio=context.portfolio, universe=universe)
     universe_positions = _positions(aggregation.economic_uids, universe)
     full_positions = _positions(aggregation.economic_uids, u_full)
