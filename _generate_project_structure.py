@@ -16,6 +16,7 @@ def generate_template_tree(
         "__pycache__",
         ".ruff_cache",
         ".ipynb_checkpoints",
+        "venv",
         ".venv",
         ".env",
         "env",
@@ -26,11 +27,13 @@ def generate_template_tree(
         "_deprecated",
         "_deprecated_v1",
         "_deprecated_v2",
+        ".hypothesis",
     }
     ignore_files = {
         ".DS_Store",
         "_generate_project_structure.py",
         "_create_master_context.py",
+        "_get_imported_packages.py",
         ".gitignore",
         "master_context.txt",
         "project_structure.txt",
@@ -130,6 +133,11 @@ if __name__ == "__main__":
     target_folder = "."
 
     # Define which top-level folders to include. Set to None to include all folders.
-    folders_to_include = ["src", "scripts", "tests"]
+    folders_to_include = [
+        "docs",
+        "scripts",
+        "src",
+        "tests",
+    ]
 
     save_tree_to_file(target_folder, include_top_level=folders_to_include)
