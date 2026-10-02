@@ -12,8 +12,8 @@ Divergence from `pricer_registry`, and why
 `pricer_registry` hard-fails AT IMPORT if any `BlockType` lacks a pricer. That
 is correct there: every block type has a real, authored pricer.
 
-Sensitivity coverage is being built incrementally, and only `SPOT` has an
-authored, validated implementation today. Reproducing the import-time guard
+Sensitivity coverage is being built incrementally: `SPOT` and `VANILLA_FORWARD`
+(D103, WS-C) have authored, validated implementations today. Reproducing the import-time guard
 would force stub sensitizers for forwards, options, and cashflows -- and a
 stub that returns empty or zero sensitivities is far worse than no
 sensitivity at all, because it silently reports a risk-free position for a
@@ -34,6 +34,9 @@ from typing import Any, Final, Protocol, TypeVar, runtime_checkable
 from riskquant.market_data.state import MarketDataMatrix
 from riskquant.sensitivities.result import BlockSensitivities
 from riskquant.sensitivities.sensitizers.spot import sensitize_spot_block
+from riskquant.sensitivities.sensitizers.vanilla_forward import (
+    sensitize_vanilla_forward_block,
+)
 from riskquant.universe import UixMapper
 from riskquant.valuation.blocks._base_block import Block
 from riskquant.valuation.blocks.block_type import (
@@ -86,6 +89,10 @@ def _register_block_sensitizer(block_type_id: int, sensitizer: Sensitizer[Any]) 
 _register_block_sensitizer(
     int(SPOT_BLOCK_TYPE_ID),
     sensitize_spot_block,
+)
+_register_block_sensitizer(
+    int(BlockType.VANILLA_FORWARD),
+    sensitize_vanilla_forward_block,
 )
 
 # Freeze. No mutations after module load.
