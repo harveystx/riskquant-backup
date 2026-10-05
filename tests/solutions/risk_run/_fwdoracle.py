@@ -223,3 +223,53 @@ def ulps_from_decimal_reference(args: np.ndarray, values: np.ndarray, fn: str) -
             unit = Decimal(math.ulp(float(ref)))
             worst = max(worst, float(abs(Decimal(v) - ref) / unit))
     return worst
+
+
+# ---- TAYLOR/DERIVED polynomial (WS-D; section 4, DiscountingMode.NONE) ---------------
+
+
+def forward_taylor_pnl(
+    q: float,
+    k: float,
+    f_name: str,
+    xa_name: str | None,
+    xk_name: str | None,
+    base: dict[str, float],
+    delta: dict[str, np.ndarray],
+    *,
+    cross: bool = True,
+) -> tuple[np.ndarray, np.ndarray]:
+    """(polynomial, sum tau_bar) of one NODE forward row in NONE (DF = 1).
+
+    Coefficients from the contract, by factor NAME: dPV/dF = Q X_a,
+    dPV/dX_a = Q F, dPV/dX_k = -Q K (merged when X_a and X_k are one factor),
+    d2PV/dF dX_a = Q. `cross=False` is the SECOND_ORDER_TRUNCATED polynomial."""
+    terms: dict[str, list[float]] = {}
+
+    def add(name: str, value: float) -> None:
+        term = terms.setdefault(name, [0.0, 0.0])
+        term[0] += value
+        term[1] += abs(value)
+
+    add(f_name, q * (1.0 if xa_name is None else base[xa_name]))
+    if xa_name is not None:
+        add(xa_name, q * base[f_name])
+    if xk_name is not None:
+        add(xk_name, -q * k)
+    value = np.zeros_like(delta[f_name])
+    tau = np.zeros_like(delta[f_name])
+    for name, (d1, a_bar) in terms.items():
+        value = value + d1 * delta[name]
+        tau = tau + a_bar * np.abs(delta[name])
+    if cross and xa_name is not None:
+        if xa_name == f_name:
+            value = value + q * delta[f_name] * delta[f_name]
+            tau = tau + abs(q) * delta[f_name] * delta[f_name]
+        else:
+            value = value + q * delta[f_name] * delta[xa_name]
+            tau = tau + abs(q) * np.abs(delta[f_name] * delta[xa_name])
+    return value, tau
+
+
+def tol_dv_derived(tau: np.ndarray) -> np.ndarray:
+    return (6.0 * U + 2.0**-47) * tau + PHI

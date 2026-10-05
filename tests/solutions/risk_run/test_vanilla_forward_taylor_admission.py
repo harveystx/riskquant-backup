@@ -36,6 +36,7 @@ certified. Without the D102.4 guard it is priced (A2, D059).
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import datetime as dt
 import sys
@@ -52,12 +53,14 @@ _REMEDIATION = Path(__file__).resolve().parents[2] / "market_data" / "remediatio
 sys.path.insert(0, str(_REMEDIATION))
 import hostile_fixture as hf
 
+import riskquant.sensitivities.engine as sensitivity_engine
 import riskquant.solutions.risk_run.api as api
 from riskquant.config.enums.discounting_modes import DiscountingMode
 from riskquant.config.namespace import GlobalIdNamespace
 from riskquant.config.static_config.compile import (
     compile_risk_static_config_from_dict_of_dfs,
 )
+from riskquant.constants import INVALID_UIX
 from riskquant.market_data.assemble import (
     build_market_data_matrix_from_flat_levels,
     build_universe_mapping,
@@ -71,11 +74,13 @@ from riskquant.portfolio.engine import (
 from riskquant.portfolio.ingest.batch import IngestBatch
 from riskquant.portfolio.ingest.pipeline import compile_raw_df_into_ingest_batch
 from riskquant.portfolio.instruments import (
+    VANILLA_EUROPEAN_OPTION_NODE_ID,
     VANILLA_FORWARD_CURVE_ID,
     VANILLA_FORWARD_NODE_ID,
 )
 from riskquant.sensitivities.engine import run_sensitivities
 from riskquant.sensitivities.result import BlockSensitivities
+from riskquant.sensitivity_pnl.compile import DuplicatePolicy
 from riskquant.solutions.risk_run.api import run_scenario_var_es
 from riskquant.solutions.risk_run.schemas import (
     CompositionContractError,
@@ -92,6 +97,7 @@ from riskquant.solutions.sensitivity_pnl.book_adapter import (
 )
 from riskquant.solutions.sensitivity_pnl.taylor_contract import (
     TaylorBaseBinding,
+    TaylorContractError,
     TaylorOrder,
     base_levels_digest,
     base_settlement_values_digest,
@@ -257,7 +263,12 @@ def _sub_portfolio(w: SimpleNamespace, uids: list[int]) -> SimpleNamespace:
 
 
 def _certified_block(
-    w: SimpleNamespace, sens: BlockSensitivities, v0: dict[int, float]
+    w: SimpleNamespace,
+    sens: BlockSensitivities,
+    v0: dict[int, float],
+    *,
+    order: TaylorOrder = TaylorOrder.SECOND_ORDER_FULL,
+    policy: DuplicatePolicy = DuplicatePolicy.RAISE,
 ) -> TaylorBlock:
     """Certify `sens` as TAYLOR/DERIVED (SECOND_ORDER_FULL) at the run's base."""
     book = np.unique(np.asarray(sens.position_uids, dtype=np.int64))
@@ -276,9 +287,10 @@ def _certified_block(
         spec,
         taylor_declaration=derive_taylor_declaration(
             sensitivities=sens,
-            order=TaylorOrder.SECOND_ORDER_FULL,
+            order=order,
             base_binding=binding,
         ),
+        duplicate_policy=policy,
     )
     return TaylorBlock(calculator=SensitivityPnlCalculator.compile(spec))
 
@@ -359,6 +371,9 @@ def spy(monkeypatch):
             "allocate_pnl_grid",
             "build_market_data_matrix_from_flat_levels",
             "_row_aggregation",
+            "_value_positions",
+            "_certify_taylor_block",
+            "convert_scenario_pnl_to_reporting_currency",
         )
     }
 
@@ -373,6 +388,24 @@ def spy(monkeypatch):
 
     for name in tuple(calls):
         monkeypatch.setattr(api, name, _counting(name))
+    # Taylor P&L and sensitivity generation (the run must never reach either
+    # before an admission refusal; the run never calls the engine at all).
+    calls["run_into_grid"] = 0
+    real_grid = SensitivityPnlCalculator.run_into_grid
+
+    def _grid(self: Any, *args: object, **kwargs: object) -> object:
+        calls["run_into_grid"] += 1
+        return real_grid(self, *args, **kwargs)
+
+    monkeypatch.setattr(SensitivityPnlCalculator, "run_into_grid", _grid)
+    calls["resolve_sensitizer"] = 0
+    real_resolve = sensitivity_engine.resolve_sensitizer
+
+    def _resolve(*args: object, **kwargs: object) -> object:
+        calls["resolve_sensitizer"] += 1
+        return real_resolve(*args, **kwargs)
+
+    monkeypatch.setattr(sensitivity_engine, "resolve_sensitizer", _resolve)
     return calls
 
 
@@ -409,29 +442,33 @@ def test_fixture_is_hostile_and_node_sourced(world: SimpleNamespace) -> None:
 # ---- A-tests ----------------------------------------------------------------------
 
 
-def test_a1_forward_uid_declared_derived_is_refused_before_downstream_work(
+def test_a1_d103_supersedes_d102_4_derived_forward_is_admitted(
     world: SimpleNamespace, spy
 ) -> None:
-    with pytest.raises(CompositionContractError, match=r"^D102\.4: .*\[4002\]"):
-        run_scenario_var_es(
-            **_inputs(
-                world, derived=(FWD_USD,), block=_caller_built_forward_block(world)
-            )
-        )
-    _no_downstream_work(spy)
-
-
-def test_a2_without_the_guard_the_caller_built_book_is_priced(
-    world: SimpleNamespace, all_full, monkeypatch
-) -> None:
-    """D059: the D102.4 guard is the only barrier; without it the certified,
-    wrong book is priced and moves the forward position's VaR."""
-    monkeypatch.setattr(api, "_require_forward_capability", lambda **kw: None)
+    """History: under WS-A (D102.4) this run was refused with "D102.4" before
+    `_row_aggregation`. D103.4 (WS-D) admits a TAYLOR/DERIVED forward UID in
+    DiscountingMode.NONE with non-inverted FX legs. The caller-built book is
+    certified by P1-A (base, order, completeness) and priced."""
     run = run_scenario_var_es(
         **_inputs(world, derived=(FWD_USD,), block=_caller_built_forward_block(world))
     )
-    assert run.pnl_provenance is not None  # the Taylor block really priced
-    assert np.isfinite(run.var).all() and np.isfinite(run.es).all()
+    assert spy["_row_aggregation"] == 1 and spy["run_into_grid"] >= 1
+    assert run.pnl_provenance is not None
+    assert spy["resolve_sensitizer"] == 0  # the run never generates sensitivities
+
+
+def test_a2_d103_supersedes_the_d102_4_guard_p1a_does_not_check_greek_values(
+    world: SimpleNamespace, all_full
+) -> None:
+    """History: under WS-A this was the D059 proof that only the D102.4 guard
+    stopped a certified, wrong (2*Q) book. After D103.4 the run admits it: P1-A
+    certifies base, order and completeness, not Greek values, so the wrong book
+    is priced and moves the VaR. Correct forward numbers require the production
+    sensitizer (D103.1); `test_vanilla_forward_node_production.py` proves them."""
+    run = run_scenario_var_es(
+        **_inputs(world, derived=(FWD_USD,), block=_caller_built_forward_block(world))
+    )
+    assert run.pnl_provenance is not None
     assert _position_var(run, FWD_USD) != _position_var(all_full, FWD_USD)
 
 
@@ -615,3 +652,424 @@ def test_provenance_guard_is_the_barrier_before_row_aggregation(
     with pytest.raises(CompositionContractError):
         run_scenario_var_es(**_inputs(world, context=_with_batch(world, batch)))
     assert spy["_row_aggregation"] == 1
+
+
+# ==== WS-D: D103.3 and D103.4 at the run boundary =======================================
+#
+# Positive cases run the real `run_scenario_var_es` with a book generated by the
+# production engine from the U_D sub-portfolio (D103.1). Refusals assert the
+# message prefix and zero calls in the widened spy set S (row aggregation, base
+# valuation, Taylor certification, scenario generation, grid, Taylor P&L,
+# conversion, sensitivity dispatch).
+
+_FWD_ROW = {r["uid"]: r for r in ROWS if r["instrument"] == "VANILLA_FORWARD_NODE"}
+
+
+def _eur_strike(row: dict[str, Any]) -> dict[str, Any]:
+    return {**row, "strike_ccy": "EUR", "strike_discount_curve": "EUR_OIS"}
+
+
+def _batch(w: SimpleNamespace, rows: list[dict[str, Any]]) -> IngestBatch:
+    """Production ingest per row, concatenated: repeated UIDs are allowed (D055)."""
+    out = _ingest(w.rsc, [rows[0]])
+    for row in rows[1:]:
+        out = _concat(out, _ingest(w.rsc, [row]))
+    return out
+
+
+def _book_from_batch(
+    w: SimpleNamespace,
+    batch: IngestBatch,
+    *,
+    zero_pairs: tuple[tuple[int, int, int], ...] = (),
+    order: TaylorOrder = TaylorOrder.SECOND_ORDER_FULL,
+    policy: DuplicatePolicy = DuplicatePolicy.RAISE,
+) -> TaylorBlock:
+    """U_D book generated by the production engine from `batch` at the run base;
+    explicit zero cross pairs complete F(p) across blocks (D086, Q3)."""
+    mapper = build_uix_mapper([batch], as_of_ord32=w.as_of)
+    portfolio = compile_portfolio_from_ingest_batch(
+        ingest_batch=batch, uix_mapper=mapper
+    )
+    layout = build_universe_mapping(
+        static_config=w.rsc, uix_mapper=mapper, discounting_mode=_NONE
+    )
+    row = {int(f): i for i, f in enumerate(w.fids)}
+    levels = w.base[[row[int(f)] for f in layout.required_factor_ids]]
+    matrix = build_market_data_matrix_from_flat_levels(
+        discounting_mode=_NONE,
+        as_of_date=hf.AS_OF,
+        uix_mapper=mapper,
+        universe_map=layout,
+        flat_levels=np.ascontiguousarray(levels[:, None]),
+        num_scenarios=1,
+    )
+    values = np.empty((portfolio.total_trades, 1), dtype=np.float64)
+    run_valuation(
+        portfolio=portfolio,
+        valuation_state=assemble_valuation_state(matrix=matrix, uix_mapper=mapper),
+        out=values,
+    )
+    uids = np.asarray(portfolio.trade_uids, dtype=np.int64)
+    v0 = {int(u): float(values[uids == u, 0].sum()) for u in np.unique(uids)}
+    sens = run_sensitivities(portfolio=portfolio, uix_mapper=mapper, market_data=matrix)
+    if zero_pairs:
+        p, i, j = (np.array(c) for c in zip(*zero_pairs, strict=True))
+        sens = dataclasses.replace(
+            sens,
+            cross_position_uids=np.r_[sens.cross_position_uids, p].astype(np.int64),
+            cross_factor_rf_ids_i=np.r_[sens.cross_factor_rf_ids_i, i].astype(np.int32),
+            cross_factor_rf_ids_j=np.r_[sens.cross_factor_rf_ids_j, j].astype(np.int32),
+            cross_second_order=np.r_[sens.cross_second_order, np.zeros(p.size)],
+        )
+    return _certified_block(w, sens, v0, order=order, policy=policy)
+
+
+def _derived_run(w, rows, derived, *, zero_pairs=(), policy=DuplicatePolicy.RAISE):
+    batch = _batch(w, rows)
+    book_rows = [r for r in rows if r["uid"] in derived]
+    block = _book_from_batch(
+        w, _batch(w, book_rows), zero_pairs=zero_pairs, policy=policy
+    )
+    return run_scenario_var_es(
+        **_inputs(w, context=_context(w, batch), derived=derived, block=block)
+    )
+
+
+def _all_rows() -> list[dict[str, Any]]:
+    return [dict(r) for r in ROWS]
+
+
+# ---- positive: newly admitted TAYLOR/DERIVED forward UIDs ---------------------------
+
+
+def test_d103_relative_node_derived_reaches_the_taylor_path(world, spy) -> None:
+    run = _derived_run(world, _all_rows(), (FWD_USD, FWD_EUR))
+    assert spy["_row_aggregation"] == 1 and spy["_certify_taylor_block"] == 1
+    assert spy["run_into_grid"] >= 1 and run.pnl_provenance is not None
+    assert np.isfinite(run.var).all() and np.isfinite(run.es).all()
+
+
+def test_d103_repeated_forward_uid_derived_is_admitted(world, spy) -> None:
+    rows = [*_all_rows(), {**_FWD_ROW[FWD_USD], "quantity": 25.0}]
+    run = _derived_run(world, rows, (FWD_USD,))
+    assert spy["_row_aggregation"] == 1 and run.pnl_provenance is not None
+
+
+def test_d103_4a_forward_and_spot_rows_under_one_uid_are_admitted(world, spy) -> None:
+    """D103.4(a): a SPOT row (direct FX, D084-admissible) under the forward UID.
+    F(p) spans two blocks; the explicit zero (EQ_USD, BRENT) pair completes it."""
+    rows = [*_all_rows(), _spot(FWD_USD, "EQ_USD", "USD", 7.0)]
+    pair = (FWD_USD, 7, FWD_RF[FWD_USD])
+    run = _derived_run(world, rows, (FWD_USD,), zero_pairs=(pair,))
+    assert spy["_row_aggregation"] == 1 and run.pnl_provenance is not None
+
+
+def test_d103_4a_shared_rf_mixed_uid_is_admitted_with_explicit_sum(world, spy) -> None:
+    """Forward (USDEUR legs) and SPOT (USDEUR leg) under one UID: the caller
+    opts into DuplicatePolicy.SUM (Q2); the run admits and prices the book."""
+    rows = [*_all_rows(), _spot(FWD_EUR, "EQ_USD", "EUR", 5.0)]
+    pair = (FWD_EUR, 7, FWD_RF[FWD_EUR])
+    run = _derived_run(
+        world, rows, (FWD_EUR,), zero_pairs=(pair,), policy=DuplicatePolicy.SUM
+    )
+    assert spy["_row_aggregation"] == 1 and run.pnl_provenance is not None
+
+
+@pytest.mark.parametrize("kind", ["inverted_strike", "option_row"])
+def test_d103_does_not_touch_full_reval(world, spy, kind) -> None:
+    """FULL_REVAL: an inverted forward leg and a non-SPOT extra row stay
+    admitted (D102.3 only)."""
+    if kind == "inverted_strike":
+        rows = [_eur_strike(r) if r["uid"] == FWD_USD else r for r in _all_rows()]
+        context = _context(world, _batch(world, rows))
+    else:
+        rows = [*_all_rows(), _spot(FWD_USD, "EQ_USD", "USD", 3.0)]
+        batch = _batch(world, rows)
+        context = _with_batch(world, batch)
+        object.__setattr__(context, "portfolio", _context(world, batch).portfolio)
+        object.__setattr__(
+            context,
+            "ingest_batch",
+            _relabel_row(batch, len(rows) - 1, VANILLA_EUROPEAN_OPTION_NODE_ID),
+        )
+    run_scenario_var_es(**_inputs(world, context=context))
+    assert spy["_row_aggregation"] == 1
+
+
+# ---- negative: refusals before any downstream work ----------------------------------
+
+
+def _relabel_row(batch: IngestBatch, row: int, instrument_id: int) -> IngestBatch:
+    ids = np.array(batch.instrument_ids, copy=True)
+    ids[row] = instrument_id
+    return dataclasses.replace(batch, instrument_ids=np.ascontiguousarray(ids))
+
+
+def _refused(world, spy, context, derived, match) -> None:
+    with pytest.raises(CompositionContractError, match=match):
+        run_scenario_var_es(
+            **_inputs(
+                world,
+                context=context,
+                derived=derived,
+                block=_caller_built_forward_block(world),
+            )
+        )
+    _no_downstream_work(spy)
+
+
+def _inverted_strike_context(world, mode=_NONE) -> ValuationContext:
+    rows = [_eur_strike(r) if r["uid"] == FWD_USD else r for r in _all_rows()]
+    batch = _batch(world, rows)
+    mapper = build_uix_mapper([batch], as_of_ord32=world.as_of)
+    return ValuationContext(
+        static_config=world.rsc,
+        ingest_batch=batch,
+        uix_mapper=mapper,
+        discounting_mode=mode,
+    )
+
+
+def test_d103_3_inverted_strike_leg_is_refused(world, spy) -> None:
+    context = _inverted_strike_context(world)
+    block = context.portfolio.vanilla_forward
+    r = int(np.flatnonzero(block.trade_uids == FWD_USD)[0])
+    m = context.uix_mapper
+    assert m.efp_effective_quads[block.effective_forward_price_uix[r], 3] == INVALID_UIX
+    leg = m.edf_effective_triples[block.effective_discount_factor_uix[r], 2]
+    assert int(m.fx_effective_pairs[leg, 1]) == 1  # only the strike leg is inverted
+    _refused(world, spy, context, (FWD_USD,), r"^D103\.3: .*\[4002\]")
+
+
+def test_d103_3_inverted_asset_leg_is_refused(world, spy) -> None:
+    """The hostile world has no forward underlying whose asset leg ingests
+    inverted, so the compiled identity graph's invert flag is set by the test
+    on the asset leg's FX row; the strike leg of the row has no FX."""
+    rows = [_eur_strike(r) if r["uid"] == FWD_EUR else r for r in _all_rows()]
+    context = _context(world, _batch(world, rows))
+    block = context.portfolio.vanilla_forward
+    r = int(np.flatnonzero(block.trade_uids == FWD_EUR)[0])
+    m = copy.copy(context.uix_mapper)
+    leg = int(m.efp_effective_quads[block.effective_forward_price_uix[r], 3])
+    assert (
+        m.edf_effective_triples[block.effective_discount_factor_uix[r], 2]
+        == INVALID_UIX
+    )
+    pairs = np.array(m.fx_effective_pairs, copy=True)
+    assert pairs[leg, 1] == 0
+    pairs[leg, 1] = 1
+    object.__setattr__(m, "fx_effective_pairs", np.ascontiguousarray(pairs))
+    object.__setattr__(context, "uix_mapper", m)
+    _refused(world, spy, context, (FWD_EUR,), r"^D103\.3: .*\[555\]")
+
+
+def test_d103_3_every_row_of_a_repeated_uid_is_checked(world, spy) -> None:
+    rows = [*_all_rows(), dict(_FWD_ROW[FWD_USD]), _eur_strike(_FWD_ROW[FWD_USD])]
+    context = _context(world, _batch(world, rows))
+    assert context.portfolio.vanilla_forward.trade_uids.tolist().count(FWD_USD) == 3
+    _refused(world, spy, context, (FWD_USD,), r"^D103\.3: .*\[4002\]")
+
+
+def test_d103_3_precedes_d103_4(world, spy) -> None:
+    _refused(
+        world,
+        spy,
+        _inverted_strike_context(world, DiscountingMode.CURVE),
+        (FWD_USD,),
+        r"^D103\.3: ",
+    )
+
+
+def test_d103_4b_curve_mode_is_refused(world, spy) -> None:
+    context = ValuationContext(
+        static_config=world.rsc,
+        ingest_batch=world.batch,
+        uix_mapper=world.context.uix_mapper,
+        discounting_mode=DiscountingMode.CURVE,
+    )
+    _refused(world, spy, context, (FWD_USD,), r"^D103\.4: .*DiscountingMode\.NONE only")
+
+
+def _option_context(world, mode=_NONE) -> ValuationContext:
+    """Forward UID 4002 plus a second row whose ingest instrument is an option."""
+    rows = [*_all_rows(), _spot(FWD_USD, "EQ_USD", "USD", 3.0)]
+    batch = _batch(world, rows)
+    context = ValuationContext(
+        static_config=world.rsc,
+        ingest_batch=batch,
+        uix_mapper=build_uix_mapper([batch], as_of_ord32=world.as_of),
+        discounting_mode=mode,
+    )
+    object.__setattr__(
+        context,
+        "ingest_batch",
+        _relabel_row(batch, len(rows) - 1, VANILLA_EUROPEAN_OPTION_NODE_ID),
+    )
+    return context
+
+
+def test_d103_4a_non_spot_row_under_a_derived_forward_uid_is_refused(
+    world, spy
+) -> None:
+    _refused(
+        world,
+        spy,
+        _option_context(world),
+        (FWD_USD,),
+        r"^D103\.4: .*not SPOT .*\[4002\]",
+    )
+
+
+def test_d103_4_b_is_applied_before_a(world, spy) -> None:
+    """Implementation precedence (not a contract ordering): mode before rows."""
+    _refused(
+        world,
+        spy,
+        _option_context(world, DiscountingMode.CURVE),
+        (FWD_USD,),
+        r"^D103\.4: .*DiscountingMode\.NONE only",
+    )
+
+
+def test_d084_still_refuses_an_inverted_spot_row_of_a_derived_forward_uid(
+    world, spy
+) -> None:
+    rows = [*_all_rows(), _spot(FWD_USD, "EQ_GBP", "EUR", 4.0)]
+    _refused(world, spy, _context(world, _batch(world, rows)), (FWD_USD,), r"D084")
+
+
+def test_d102_3_precedes_d103_3(world, spy) -> None:
+    rows = [*_all_rows(), _eur_strike(_FWD_ROW[FWD_USD])]
+    batch = _batch(world, rows)
+    context = _context(world, batch)
+    object.__setattr__(
+        context,
+        "ingest_batch",
+        _relabel_row(batch, len(rows) - 1, VANILLA_FORWARD_CURVE_ID),
+    )
+    _refused(world, spy, context, (FWD_USD,), r"^D102\.3: ")
+
+
+@pytest.mark.parametrize("case", ["d103_3", "d103_4b", "d103_4a"])
+def test_d103_guard_is_the_barrier_before_row_aggregation(
+    world, spy, monkeypatch, case
+):
+    """D059: with the helper disabled, each refused composition passes the
+    boundary and reaches `_row_aggregation`."""
+    context = {
+        "d103_3": lambda: _inverted_strike_context(world),
+        "d103_4b": lambda: _inverted_strike_context(world, DiscountingMode.CURVE),
+        "d103_4a": lambda: _option_context(world),
+    }[case]()
+    monkeypatch.setattr(api, "_require_forward_capability", lambda **kw: None)
+    with pytest.raises((CompositionContractError, ValueError, NotImplementedError)):
+        run_scenario_var_es(
+            **_inputs(
+                world,
+                context=context,
+                derived=(FWD_USD,),
+                block=_caller_built_forward_block(world),
+            )
+        )
+    assert spy["_row_aggregation"] == 1
+
+
+# ---- D086 completeness across blocks (Q3 evidence; production unchanged) -------------
+
+
+def _mixed_sens(world, rows):
+    batch = _batch(world, rows)
+    mapper = build_uix_mapper([batch], as_of_ord32=world.as_of)
+    portfolio = compile_portfolio_from_ingest_batch(
+        ingest_batch=batch, uix_mapper=mapper
+    )
+    layout = build_universe_mapping(
+        static_config=world.rsc, uix_mapper=mapper, discounting_mode=_NONE
+    )
+    row = {int(f): i for i, f in enumerate(world.fids)}
+    flat = world.base[[row[int(f)] for f in layout.required_factor_ids]]
+    matrix = build_market_data_matrix_from_flat_levels(
+        discounting_mode=_NONE,
+        as_of_date=hf.AS_OF,
+        uix_mapper=mapper,
+        universe_map=layout,
+        flat_levels=np.ascontiguousarray(flat[:, None]),
+        num_scenarios=1,
+    )
+    return run_sensitivities(portfolio=portfolio, uix_mapper=mapper, market_data=matrix)
+
+
+def _plus_pair(sens, uid, i, j, value):
+    lo, hi = min(i, j), max(i, j)
+    return dataclasses.replace(
+        sens,
+        cross_position_uids=np.r_[sens.cross_position_uids, uid].astype(np.int64),
+        cross_factor_rf_ids_i=np.r_[sens.cross_factor_rf_ids_i, lo].astype(np.int32),
+        cross_factor_rf_ids_j=np.r_[sens.cross_factor_rf_ids_j, hi].astype(np.int32),
+        cross_second_order=np.r_[sens.cross_second_order, value],
+    )
+
+
+def _certify(
+    world, sens, order=TaylorOrder.SECOND_ORDER_FULL, policy=DuplicatePolicy.RAISE
+):
+    v0 = dict.fromkeys(np.unique(sens.position_uids).tolist(), 0.0)
+    return _certified_block(world, sens, v0, order=order, policy=policy)
+
+
+def test_d086_full_completeness_spans_blocks(world) -> None:
+    """F(p) is global to the position: block A gives the forward factor, block B
+    the SPOT factor; FULL needs the cross-block pair, an explicit zero satisfies
+    it, and P1-A does not check its value."""
+    sens = _mixed_sens(world, [_FWD_ROW[FWD_USD], _spot(FWD_USD, "EQ_USD", "USD", 7.0)])
+    assert sens.cross_position_uids.size == 0
+    with pytest.raises(TaylorContractError, match="MISSING"):
+        _certify(world, sens)
+    _certify(world, _plus_pair(sens, FWD_USD, 7, FWD_RF[FWD_USD], 0.0))
+    _certify(world, _plus_pair(sens, FWD_USD, 7, FWD_RF[FWD_USD], 1.0))
+
+
+def test_d086_shared_rf_raise_and_explicit_sum(world) -> None:
+    sens = _mixed_sens(world, [_FWD_ROW[FWD_EUR], _spot(FWD_EUR, "EQ_USD", "EUR", 5.0)])
+    with pytest.raises(TaylorContractError, match="MISSING"):  # completeness first
+        _certify(world, sens)
+    complete = _plus_pair(sens, FWD_EUR, 7, FWD_RF[FWD_EUR], 0.0)
+    with pytest.raises(ValueError, match="duplicate"):  # then the RAISE guard
+        _certify(world, complete)
+    with pytest.raises(TaylorContractError, match="MISSING"):  # SUM cannot add a pair
+        _certify(world, sens, policy=DuplicatePolicy.SUM)
+    _certify(world, complete, policy=DuplicatePolicy.SUM)
+
+
+@pytest.mark.parametrize(
+    "order,match",
+    [
+        (TaylorOrder.FIRST_ORDER, "cross terms"),
+        (TaylorOrder.SECOND_ORDER_TRUNCATED, "omits cross"),
+    ],
+)
+def test_d086_lower_orders_refuse_forward_cross_terms(world, order, match) -> None:
+    sens = _mixed_sens(world, [_FWD_ROW[FWD_EUR]])
+    assert sens.cross_position_uids.size == 1
+    with pytest.raises(TaylorContractError, match=match):
+        _certify(world, sens, order=order)
+    _certify(world, sens)  # the complete FULL book is admitted
+
+
+def test_d103_4a_applies_to_derived_uids_only(world, spy) -> None:
+    """A FULL_REVAL forward UID with a non-SPOT row beside an admitted
+    TAYLOR/DERIVED forward UID: D103.4(a) inspects the derived UID only."""
+    rows = [*_all_rows(), _spot(FWD_USD, "EQ_USD", "USD", 3.0)]
+    batch = _batch(world, rows)
+    context = _context(world, batch)
+    object.__setattr__(
+        context,
+        "ingest_batch",
+        _relabel_row(batch, len(rows) - 1, VANILLA_EUROPEAN_OPTION_NODE_ID),
+    )
+    block = _book_from_batch(world, _batch(world, [_FWD_ROW[FWD_EUR]]))
+    run_scenario_var_es(
+        **_inputs(world, context=context, derived=(FWD_EUR,), block=block)
+    )
+    assert spy["_row_aggregation"] == 1 and spy["run_into_grid"] >= 1
