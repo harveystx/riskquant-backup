@@ -105,7 +105,12 @@ DEMO_SCRIPTS: tuple[DemoScript, ...] = (
 )
 
 #: Entry points of the demo directory that are deliberately NOT regression gates.
-EXCLUDED: dict[str, str] = {}
+EXCLUDED: dict[str, str] = {
+    "bench_spot_scaling.py": (
+        "benchmark, not a regression gate: minutes to hours and up to ~14 GiB; "
+        "run by hand, timings are never asserted"
+    ),
+}
 
 
 def _run(script: DemoScript) -> subprocess.CompletedProcess[str]:
