@@ -317,10 +317,11 @@ def _require_forward_capability(
     refused = np.intersect1d(forward_uids, u_supplied)
     if refused.size:
         raise CompositionContractError(
-            f"D102.4: {refused.size} position(s) declared TAYLOR own a "
-            f"vanilla_forward row (first 10: {refused[:10].tolist()}). A "
-            "VANILLA_FORWARD_NODE position is admitted as FULL_REVAL only "
-            "until D103 is LOCKED."
+            f"D102.4: {refused.size} position(s) declared TAYLOR/SUPPLIED own a "
+            f"vanilla_forward row (first 10: {refused[:10].tolist()}). "
+            "TAYLOR/SUPPLIED is not admitted for VANILLA_FORWARD_NODE (D103.5); "
+            "the admitted routes are FULL_REVAL and TAYLOR/DERIVED under "
+            "D103.3/D103.4."
         )
 
 

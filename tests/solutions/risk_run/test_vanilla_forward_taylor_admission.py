@@ -546,8 +546,11 @@ def test_d102_4_covers_the_supplied_partition_independently_of_p1(
         taylor_supplied_uids=np.array([FWD_EUR], dtype=np.int64),
         taylor_derived_uids=np.empty(0, dtype=np.int64),
     )
-    with pytest.raises(CompositionContractError, match=r"^D102\.4: .*\[555\]"):
+    with pytest.raises(
+        CompositionContractError, match=r"^D102\.4: .*\[555\]\)\. .*\(D103\.5\)"
+    ) as refusal:
         api._require_forward_capability(context=world.context, methodology=methodology)
+    assert "until D103" not in str(refusal.value)  # no future SUPPLIED admission
 
 
 # ---- P-tests: provenance ------------------------------------------------------------
@@ -1266,3 +1269,210 @@ def test_g3_real_option_row_under_a_derived_forward_uid_is_refused(spy) -> None:
     ):
         _canonical_run(context, derived=(777,))
     _no_downstream_work(spy)
+
+
+# ==== Evidence closure: scope detectors for D084, D103.4(a) and D103.4(b) ================
+
+
+def _world_for(w: SimpleNamespace, rows: list[dict[str, Any]]) -> SimpleNamespace:
+    """The `world` construction for another row set: same configuration, as-of,
+    base levels by name and history rule, so the run axis matches the rows."""
+    batch = _batch(w, rows)
+    context = _context(w, batch)
+    layout = build_universe_mapping(
+        static_config=w.rsc, uix_mapper=context.uix_mapper, discounting_mode=_NONE
+    )
+    name = {v: k for k, v in w.rsc.rel_name_to_rf_id.items()}
+    fids = np.asarray(layout.required_factor_ids, dtype=np.int32)
+    base = np.array([_BASE_LEVELS[name[int(f)]] for f in fids], dtype=np.float64)
+    rng = np.random.default_rng(11)
+    values = np.asfortranarray(
+        base
+        * np.exp(np.cumsum(rng.normal(0.0, 0.01, (_HISTORY_DAYS, fids.size)), axis=0))
+    )
+    return SimpleNamespace(
+        rsc=w.rsc,
+        as_of=w.as_of,
+        batch=batch,
+        context=context,
+        layout=layout,
+        fids=fids,
+        base=base,
+        name=name,
+        data=RiskFactorMatrix(
+            dates=w.data.dates.copy(), factor_ids=fids.copy(), values=values
+        ),
+        uids=np.unique(np.asarray(batch.uids, dtype=np.int64)),
+        reporting=w.reporting,
+    )
+
+
+def _base_values(w: SimpleNamespace) -> dict[int, float]:
+    """V_0 per UID on the run's own route: the context's compiled portfolio
+    valued at the base levels, rows summed into their parent UID."""
+    mapper = w.context.uix_mapper
+    matrix = build_market_data_matrix_from_flat_levels(
+        discounting_mode=_NONE,
+        as_of_date=hf.AS_OF,
+        uix_mapper=mapper,
+        universe_map=w.layout,
+        flat_levels=np.ascontiguousarray(w.base[:, None]),
+        num_scenarios=1,
+    )
+    portfolio = w.context.portfolio
+    values = np.empty((portfolio.total_trades, 1), dtype=np.float64)
+    run_valuation(
+        portfolio=portfolio,
+        valuation_state=assemble_valuation_state(matrix=matrix, uix_mapper=mapper),
+        out=values,
+    )
+    uids = np.asarray(portfolio.trade_uids, dtype=np.int64)
+    return {int(u): float(values[uids == u, 0].sum()) for u in np.unique(uids)}
+
+
+#: UID 4002 owns its valid USD forward row and a SPOT row on EQ_EUR settled in
+#: USD (EUR -> USD = 1 / USDEUR: invert = 1). Both rows settle in USD, so no
+#: settlement-currency rule applies: D084 is the only contract the TAYLOR/DERIVED
+#: composition violates.
+_INVERTED_SPOT_ROW = _spot(FWD_USD, "EQ_EUR", "USD", 4.0)
+
+
+def _d084_world(world: SimpleNamespace) -> SimpleNamespace:
+    w = _world_for(world, [*_all_rows(), _INVERTED_SPOT_ROW])
+    spot, m = w.context.portfolio.spot, w.context.uix_mapper
+    r = int(np.flatnonzero(spot.trade_uids == FWD_USD)[0])
+    fx_row = int(m.spot_effective_pairs[spot.effective_spot_price_uix[r], 1])
+    assert fx_row != INVALID_UIX and int(m.fx_effective_pairs[fx_row, 1]) == 1
+    return w
+
+
+def _d084_book(w: SimpleNamespace) -> TaylorBlock:
+    """Certified caller-built FIRST_ORDER book for UID 4002 (forward + inverted
+    SPOT row). P1-A binds base, order and completeness, not Greek values, so
+    only D084 stops this book from pricing the inverted leg."""
+    rf = w.rsc.rel_name_to_rf_id
+    level = {w.name[int(f)]: float(b) for f, b in zip(w.fids, w.base, strict=True)}
+    q, s, x = _INVERTED_SPOT_ROW["quantity"], level["EQ_EUR"], level["USDEUR"]
+    sens = BlockSensitivities(
+        position_uids=np.full(3, FWD_USD, dtype=np.int64),
+        factor_rf_ids=np.array(
+            [FWD_RF[FWD_USD], rf["EQ_EUR"], rf["USDEUR"]], dtype=np.int32
+        ),
+        first_order=np.array([100.0, q / x, -q * s / (x * x)], dtype=np.float64),
+        second_order=np.zeros(3, dtype=np.float64),
+        cross_position_uids=np.empty(0, dtype=np.int64),
+        cross_factor_rf_ids_i=np.empty(0, dtype=np.int32),
+        cross_factor_rf_ids_j=np.empty(0, dtype=np.int32),
+        cross_second_order=np.empty(0, dtype=np.float64),
+    )
+    return _certified_block(w, sens, _base_values(w), order=TaylorOrder.FIRST_ORDER)
+
+
+def test_d084_refuses_an_inverted_spot_row_of_a_derived_forward_uid_same_ccy(
+    world: SimpleNamespace, spy
+) -> None:
+    """M10 detector without a settlement-currency confound. Control: the same
+    rows in FULL_REVAL are admitted. TAYLOR/DERIVED: D084, before any
+    downstream work."""
+    w = _d084_world(world)
+    full = run_scenario_var_es(**_inputs(w))
+    assert spy["_row_aggregation"] == 1
+    assert full.position_uids.tolist() == w.uids.tolist()
+    for name in spy:
+        spy[name] = 0
+    block = _d084_book(w)
+    with pytest.raises(CompositionContractError, match=r"\[4002\]\)\. .*\(D084\)\.$"):
+        run_scenario_var_es(**_inputs(w, derived=(FWD_USD,), block=block))
+    _no_downstream_work(spy)
+
+
+def test_d084_is_the_barrier_for_that_composition(
+    world: SimpleNamespace, spy, monkeypatch
+) -> None:
+    """D059: with the D084 check disabled, the certified book prices the
+    inverted SPOT leg of UID 4002 through TAYLOR/DERIVED and the run completes."""
+    w = _d084_world(world)
+    block = _d084_book(w)
+    monkeypatch.setattr(api, "_require_taylor_capable_spot", lambda **kw: None)
+    run = run_scenario_var_es(**_inputs(w, derived=(FWD_USD,), block=block))
+    assert spy["_certify_taylor_block"] == 1 and spy["run_into_grid"] >= 1
+    assert run.pnl_provenance is not None
+    assert np.isfinite(_position_var(run, FWD_USD))
+
+
+def test_d103_4a_does_not_refuse_a_derived_uid_that_owns_no_forward_row() -> None:
+    """D103.4 scope: the rule applies to TAYLOR/DERIVED UIDs that own a
+    vanilla_forward row; all other contracts apply unchanged (D102 scope).
+    UID 888 owns only a real-ingest option row and sits beside the DERIVED
+    forward UID 777, so D103.4(a) does not refuse it. Its admission is a
+    matter for the global contracts, not for D103."""
+    forward = tv._fwd(
+        777,
+        "BRENT_CRUDE_FWD[M+0]",
+        "USD",
+        60.0,
+        80.0,
+        "USD",
+        "USD",
+        dt.date(2026, 2, 16),
+    )
+    option = {
+        "uid": 888,
+        "instrument": "VANILLA_EUROPEAN_OPTION_NODE",
+        "quantity": 1_000.0,
+        "underlying": "BRENT_CRUDE_FWD[M+0]",
+        "settlement_ccy": "USD",
+        "strike_price": 70.0,
+        "strike_ccy": "USD",
+        "is_call": 1.0,
+        "expiry_date": dt.date(2026, 2, 18),
+        "settlement_date": dt.date(2026, 2, 20),
+        "volatility_container_name": "BRENT_CRUDE_ATM_VOL",
+        "under_discount_curve": "USD_SOFR_OIS",
+        "strike_discount_curve": "USD_SOFR_OIS",
+    }
+    context = _canonical_context([forward, option])
+    assert 888 in context.portfolio.vanilla_european_option.trade_uids.tolist()
+    assert 888 not in context.portfolio.vanilla_forward.trade_uids.tolist()
+    uids = np.array([777, 888], dtype=np.int64)
+    methodology = MethodologyDeclaration(
+        production_position_uids=uids,
+        full_reval_uids=np.empty(0, dtype=np.int64),
+        taylor_supplied_uids=np.empty(0, dtype=np.int64),
+        taylor_derived_uids=uids,
+    )
+    api._require_forward_capability(context=context, methodology=methodology)
+
+
+def test_full_reval_forward_is_admitted_and_valued_in_curve_mode(spy) -> None:
+    """D103.4(b) scope: DiscountingMode.CURVE refuses TAYLOR/DERIVED forward
+    UIDs only. A FULL_REVAL NODE forward on USD_SOFR_OIS (the constructible
+    curve, D080) stays admitted and is valued. Admission evidence only: CURVE
+    valuation numbers are not certified here (OD-1)."""
+    row = tv._fwd(
+        41,
+        "BRENT_CRUDE_FWD[M+0]",
+        "USD",
+        60.0,
+        80.0,
+        "USD",
+        "USD",
+        dt.date(2026, 2, 16),
+    )
+    node = _canonical_context([row])
+    context = ValuationContext(
+        static_config=node.static_config,
+        ingest_batch=node.ingest_batch,
+        uix_mapper=node.uix_mapper,
+        discounting_mode=DiscountingMode.CURVE,
+    )
+    curve_axis = api.derive_run_factor_axis(
+        valuation_context=context, reporting_ccy="USD"
+    )
+    node_axis = api.derive_run_factor_axis(valuation_context=node, reporting_ccy="USD")
+    assert curve_axis.num_valuation_factors > node_axis.num_valuation_factors
+    run = _canonical_run(context)
+    assert run.position_uids.tolist() == [41]
+    assert run.manifest.pnl.composition.context.discounting_mode == "CURVE"
+    assert spy["_row_aggregation"] == 1 and spy["_value_positions"] >= 1
+    assert spy["allocate_pnl_grid"] == 1 and spy["run_into_grid"] == 0
