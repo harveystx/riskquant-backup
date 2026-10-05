@@ -843,9 +843,10 @@ def test_d103_3_inverted_strike_leg_is_refused(world, spy) -> None:
 
 
 def test_d103_3_inverted_asset_leg_is_refused(world, spy) -> None:
-    """The hostile world has no forward underlying whose asset leg ingests
-    inverted, so the compiled identity graph's invert flag is set by the test
-    on the asset leg's FX row; the strike leg of the row has no FX."""
+    """DEFENSIVE coverage of the compiled identity graph: the invert flag is set
+    by the test on the asset leg's FX row (the strike leg has no FX). The
+    real-ingest proof of the same state is
+    `test_g1_real_ingest_asset_leg_inversion_is_refused_in_derived`."""
     rows = [_eur_strike(r) if r["uid"] == FWD_EUR else r for r in _all_rows()]
     context = _context(world, _batch(world, rows))
     block = context.portfolio.vanilla_forward
@@ -912,6 +913,11 @@ def _option_context(world, mode=_NONE) -> ValuationContext:
 def test_d103_4a_non_spot_row_under_a_derived_forward_uid_is_refused(
     world, spy
 ) -> None:
+    """PROVENANCE (adversarial): the ingest row is an option while the compiled
+    portfolio holds no option block for it (the row is relabelled after
+    compilation). Source provenance is the ingest row, so D103.4(a) must refuse
+    whatever the compiled blocks say. The functional real-ingest case is
+    `test_g3_real_option_row_under_a_derived_forward_uid_is_refused`."""
     _refused(
         world,
         spy,
@@ -1073,3 +1079,190 @@ def test_d103_4a_applies_to_derived_uids_only(world, spy) -> None:
         **_inputs(world, context=context, derived=(FWD_EUR,), block=block)
     )
     assert spy["_row_aggregation"] == 1 and spy["run_into_grid"] >= 1
+
+
+# ==== WS-D evidence hardening: real ingest in the canonical world ========================
+#
+# Canonical static configuration plus the WS-C test-owned exact-NODE curves
+# (including the EUR LABEL curve TEST_EXACT_EUR), compiled by production ingest.
+# These states are reachable from valid source data: nothing is set on the
+# compiled identity graph.
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sensitivities"))
+import test_vanilla_forward_sensitizer as tv  # canonical + test-owned curves
+
+
+def _canonical_context(rows: list[dict[str, Any]]) -> ValuationContext:
+    """Production ingest per row (repeated UIDs allowed, D055), concatenated."""
+    batches = [
+        compile_raw_df_into_ingest_batch(
+            raw_df=pl.from_pandas(pd.DataFrame([row])),
+            static_config=tv.RSC,
+            as_of_date=tv.fx.AS_OF,
+        )
+        for row in rows
+    ]
+    batch = batches[0]
+    for other in batches[1:]:
+        batch = _concat(batch, other)
+    mapper = build_uix_mapper([batch], as_of_ord32=int(date_to_ord32(tv.fx.AS_OF)))
+    return ValuationContext(
+        static_config=tv.RSC,
+        ingest_batch=batch,
+        uix_mapper=mapper,
+        discounting_mode=_NONE,
+    )
+
+
+def _canonical_run(context: ValuationContext, *, derived: tuple[int, ...] = ()):
+    """`run_scenario_var_es` on a flat 2-scenario history at the canonical base.
+    A TAYLOR/DERIVED run gets an uncertified one-row book: every case below is
+    refused before `_require_taylor_block` / certification is reached."""
+    axis = api.derive_run_factor_axis(valuation_context=context, reporting_ccy="USD")
+    name = {v: k for k, v in tv.RF.items()}
+    base = np.array([tv.LEVELS.get(name[int(f)], 1.0) for f in axis.factor_ids])
+    ids = np.sort(axis.factor_ids).astype(np.int32)
+    as_of = int(date_to_ord32(tv.fx.AS_OF))
+    data = RiskFactorMatrix(
+        dates=np.arange(as_of - 2, as_of + 1, dtype=np.int32),
+        factor_ids=ids,
+        values=np.asfortranarray(
+            np.column_stack([np.full(3, tv.LEVELS.get(name[int(f)], 1.0)) for f in ids])
+        ),
+    )
+    uids = np.unique(np.asarray(context.ingest_batch.uids, dtype=np.int64))
+    u_d = np.array(sorted(derived), dtype=np.int64)
+    block = None
+    if u_d.size:
+        sens = BlockSensitivities(
+            position_uids=u_d,
+            factor_rf_ids=np.full(u_d.size, int(axis.factor_ids[0]), dtype=np.int32),
+            first_order=np.ones(u_d.size),
+            second_order=np.zeros(u_d.size),
+            cross_position_uids=np.empty(0, dtype=np.int64),
+            cross_factor_rf_ids_i=np.empty(0, dtype=np.int32),
+            cross_factor_rf_ids_j=np.empty(0, dtype=np.int32),
+            cross_second_order=np.empty(0),
+        )
+        prefix = np.asarray(
+            axis.factor_ids[: axis.num_valuation_factors], dtype=np.int32
+        )
+        spec = build_sensitivity_book_spec(
+            sensitivities=sens, required_factor_ids=prefix
+        )
+        block = TaylorBlock(calculator=SensitivityPnlCalculator.compile(spec))
+    return run_scenario_var_es(
+        scenario_config=parse_scenario_model_config({
+            "model": "historical",
+            "horizon": 1,
+        }),
+        data=data,
+        required_factor_ids=axis.factor_ids.copy(),
+        required_shift_type_id=axis.shift_type_ids.copy(),
+        proxy_terms=(),
+        base_levels=base,
+        methodology=MethodologyDeclaration(
+            production_position_uids=uids,
+            full_reval_uids=np.setdiff1d(uids, u_d),
+            taylor_supplied_uids=np.empty(0, dtype=np.int64),
+            taylor_derived_uids=u_d,
+        ),
+        valuation_context=context,
+        reporting=ReportingSpec(reporting_ccy="USD"),
+        confidence_level=0.5,
+        batch_size=2,
+        taylor_derived=block,
+    )
+
+
+#: EUR exact-NODE forward settled in USD with a USD strike: the ASSET leg is
+#: EUR -> USD (USDEUR quotes EUR per USD, so 1 / USDEUR: invert = 1); the
+#: strike leg has no FX.
+_ASSET_INVERTED = tv._fwd(41, "TEST_EXACT_EUR[1M]", "EUR", 10.0, 50.0, "USD", "USD")
+
+
+def _asset_inverted_context() -> ValuationContext:
+    context = _canonical_context([_ASSET_INVERTED])
+    block, m = context.portfolio.vanilla_forward, context.uix_mapper
+    asset = int(m.efp_effective_quads[block.effective_forward_price_uix[0], 3])
+    strike = int(m.edf_effective_triples[block.effective_discount_factor_uix[0], 2])
+    assert asset != INVALID_UIX and int(m.fx_effective_pairs[asset, 1]) == 1
+    assert strike == INVALID_UIX  # only the asset leg carries FX, and it is inverted
+    return context
+
+
+def test_g1_real_ingest_asset_leg_inversion_is_refused_in_derived(spy) -> None:
+    """G-1, case A: D103.3 on a REAL-INGEST inverted asset leg, before any
+    downstream work."""
+    with pytest.raises(CompositionContractError, match=r"^D103\.3: .*\[41\]"):
+        _canonical_run(_asset_inverted_context(), derived=(41,))
+    _no_downstream_work(spy)
+
+
+def test_g1_real_ingest_asset_leg_inversion_is_admitted_in_full_reval(spy) -> None:
+    """G-1, case B: the same row in FULL_REVAL is admitted and valued."""
+    run = _canonical_run(_asset_inverted_context())
+    assert run.position_uids.tolist() == [41]
+    assert spy["_row_aggregation"] == 1 and spy["_value_positions"] >= 1
+    assert spy["build_scenario_generator"] == 1 and spy["allocate_pnl_grid"] == 1
+    assert spy["convert_scenario_pnl_to_reporting_currency"] == 1
+
+
+def test_g2_full_reval_inverted_forward_is_admitted_beside_a_derived_forward(
+    world: SimpleNamespace, spy
+) -> None:
+    """G-2: D103.3 is TAYLOR/DERIVED-only. UID 4002 (FULL_REVAL) has an
+    inverted strike leg (real ingest); UID 555 is an admitted TAYLOR/DERIVED
+    forward, so the D103.3 check executes for this run. 4002 must stay admitted
+    and be valued by full revaluation."""
+    rows = [_eur_strike(r) if r["uid"] == FWD_USD else r for r in _all_rows()]
+    context = _context(world, _batch(world, rows))
+    block, m = context.portfolio.vanilla_forward, context.uix_mapper
+    r = int(np.flatnonzero(block.trade_uids == FWD_USD)[0])
+    leg = int(m.edf_effective_triples[block.effective_discount_factor_uix[r], 2])
+    assert int(m.fx_effective_pairs[leg, 1]) == 1  # 4002 is really inverted
+    book = _book_from_batch(world, _batch(world, [_FWD_ROW[FWD_EUR]]))
+    run = run_scenario_var_es(
+        **_inputs(world, context=context, derived=(FWD_EUR,), block=book)
+    )
+    assert spy["_row_aggregation"] == 1 and spy["run_into_grid"] >= 1
+    assert FWD_USD in run.position_uids.tolist()
+    assert np.isfinite(_position_var(run, FWD_USD))
+
+
+def test_g3_real_option_row_under_a_derived_forward_uid_is_refused(spy) -> None:
+    """G-3 functional: a REAL-INGEST, really compiled NODE option row under the
+    forward UID (compiled into the option block) fails D103.4(a)."""
+    forward = tv._fwd(
+        777,
+        "BRENT_CRUDE_FWD[M+0]",
+        "USD",
+        60.0,
+        80.0,
+        "USD",
+        "USD",
+        dt.date(2026, 2, 16),
+    )
+    option = {
+        "uid": 777,
+        "instrument": "VANILLA_EUROPEAN_OPTION_NODE",
+        "quantity": 1_000.0,
+        "underlying": "BRENT_CRUDE_FWD[M+0]",
+        "settlement_ccy": "USD",
+        "strike_price": 70.0,
+        "strike_ccy": "USD",
+        "is_call": 1.0,
+        "expiry_date": dt.date(2026, 2, 18),
+        "settlement_date": dt.date(2026, 2, 20),
+        "volatility_container_name": "BRENT_CRUDE_ATM_VOL",
+        "under_discount_curve": "USD_SOFR_OIS",
+        "strike_discount_curve": "USD_SOFR_OIS",
+    }
+    context = _canonical_context([forward, option])
+    assert 777 in context.portfolio.vanilla_european_option.trade_uids.tolist()
+    assert 777 in context.portfolio.vanilla_forward.trade_uids.tolist()
+    with pytest.raises(
+        CompositionContractError, match=r"^D103\.4: .*not SPOT .*\[777\]"
+    ):
+        _canonical_run(context, derived=(777,))
+    _no_downstream_work(spy)
