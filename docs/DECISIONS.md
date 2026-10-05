@@ -4964,6 +4964,105 @@ Closed-form, prior to implementation: identity default (`80 → 82` gives `82`);
 
 ---
 
+## D102 - VANILLA_FORWARD_NODE risk admission boundary
+
+**Status:** LOCKED. Proposed 2026-10-02 in `docs/workstreams/WS-VANILLA-FORWARD-NODE-RISK-ENABLEMENT.md` (revision 8). WS-A implemented 2026-10-02 and owner-verified. WS-B evidence established 2026-10-02. WS-D implemented and independently validated 2026-10-05. The owner now LOCKS this decision.
+
+**Related:** D045, D050, D055, D061, D063, D081, D084, D085, D086, D088, D101.
+
+**Unchanged:** the D081 composition rules; P-1 (the TAYLOR/SUPPLIED refusal in `_require_block_wiring`); D084; D085; D086; the settlement-currency derivation; the row aggregation (D055).
+
+**Decision:**
+
+* **D102.1 No admission by type or namespace.** `BlockType.VANILLA_FORWARD` confers no risk admission. `GlobalIdNamespace` is never a source criterion: `NODES` holds node ids and curve-point rf ids alike.
+
+* **D102.2 Source binding.** The forward source rows of UID u are the ingest rows with `batch.uids == u` and an instrument of the FORWARD family (`INSTRUMENT_TYPE_TO_INSTRUMENT_FAMILY`). `IngestBatch` and D055 permit repeated UIDs, so no single-row assumption is made. A non-forward row of the UID is not a source row.
+
+* **D102.3 Provenance (fail closed).** If any forward source row of a UID that owns a `vanilla_forward` row has an instrument other than `VANILLA_FORWARD_NODE_ID`, the run raises `CompositionContractError` (message prefix "D102.3"). This includes a UID that mixes forward instruments. The check applies to every methodology partition and runs before `_row_aggregation`.
+
+* **D102.4 Methodology.** CURRENT: a UID that owns a `vanilla_forward` row is refused in `taylor_supplied_uids` (message prefix "D102.4"; P-1 refuses TAYLOR/SUPPLIED earlier in the run and is unchanged). In `taylor_derived_uids` the D103 amendment applies: D103.3 and D103.4 decide admission. CURVE stays outside (D102.5, D103.6).
+
+  **SUPERSEDED for `taylor_derived_uids` from the WS-D implementation point:** the original WS-A refusal was replaced by D103. Historical text (WS-A): "A UID that owns a `vanilla_forward` row participates in the NODE forward path only through `full_reval_uids`, in addition to all global contracts. In `taylor_supplied_uids` or `taylor_derived_uids` it is refused (message prefix "D102.4") until D103 is LOCKED. D102.4 covers both Taylor partitions."
+
+  The historical phrase "until D103 is LOCKED" applied to the old U_D rule only. It does not apply to `taylor_supplied_uids`. TAYLOR/SUPPLIED remains refused after the D103 LOCK under D103.5.
+
+  CURRENT diagnostic wording: the D102.4 message identifies TAYLOR/SUPPLIED as not admitted under D103.5 and identifies the admitted routes as FULL_REVAL and TAYLOR/DERIVED under D103.3/D103.4. The diagnostic does not imply future SUPPLIED admission.
+
+* **D102.5 CURVE.** `VANILLA_FORWARD_CURVE` is outside this decision (D050, D061).
+
+* **D102.6 Historical readiness condition.** Before WS-D, `VANILLA_FORWARD_NODE` was not production complete while D102.4 refused TAYLOR/DERIVED. This condition was superseded by D103 from the WS-D implementation point. It is no longer a current admission condition.
+
+**Reason:** block type is a dispatch key, and the rf namespace does not separate a scalar node from a curve pillar. The repository does not guarantee one forward source per UID at the run boundary: `IngestBatch` checks dtypes, contiguity and lengths only, and D055 permits one trade to own several valuation rows. Without D102.3, a non-NODE forward row reaches `_row_aggregation` and fails only later, in the settlement-currency derivation. Without the historical D102.4 U_D refusal, a caller-built TAYLOR/DERIVED book for a forward UID can be certified by P1-A and priced.
+
+**Implementation:** `solutions/risk_run.api._require_forward_capability`. `run_scenario_var_es` calls it unconditionally, directly after `_require_taylor_capable_spot` and before `_row_aggregation`. It returns when `portfolio.vanilla_forward is None`. It reads `portfolio.vanilla_forward.trade_uids`, `ingest_batch.uids` and `ingest_batch.instrument_ids`; the FORWARD-family instrument ids come from `INSTRUMENT_TYPE_TO_FAMILY_ARRAY`. The order is D102.3, then the D103 U_D checks, then the unchanged TAYLOR/SUPPLIED refusal. An instrument id outside the registry is not a FORWARD-family row under D102.2; the existing settlement-currency derivation refuses it, unchanged.
+
+**Evidence (WS-A):** `tests/solutions/risk_run/test_vanilla_forward_taylor_admission.py`, 15 tests, on the hostile static configuration of the market-data remediation suite. The tests cover sparse and non-ascending UIDs, non-adjacent forward rows, `GlobalIdNamespace.NODES` containing forward rf ids, D102.3 provenance, D102.4 SUPPLIED refusal, repeated UIDs, valid SPOT rows, refusal boundaries and guard controls. Every refused case records zero calls of downstream valuation and aggregation functions. Ten mutations of the change were killed by declared tests.
+
+**Evidence (WS-B):** `tests/solutions/risk_run/test_vanilla_forward_node_production.py` (28 tests), with the production world `_fwdfix.py` and oracle `_fwdoracle.py`. Exact and relative NODE valuation, FULL_REVAL, forward/SPOT composition, Proxy V1 target behaviour, deterministic ordering, reporting conversion and numerical identities were evidenced against the revision-8 tolerances. Runtime semantic mutants were detected. No production change.
+
+**Evidence (WS-C / WS-D):** D103.1 and D103.2 were implemented and evidenced by WS-C. WS-D implemented the run-boundary U_D admission rules. D103.3 checks both FX legs and refuses before `_row_aggregation`. D103.4 requires `DiscountingMode.NONE` and permits only SPOT source rows in addition to the forward source rows. FULL_REVAL remains outside those U_D restrictions. D084, P-1, D086, and existing aggregation behaviour remain unchanged.
+
+**Evidence (Independent validation):** 2026-10-05. The current implementation was subjected to adversarial control-flow review, real-ingest reachability tests, counterexamples, mutation testing, exact-rational numerical validation, failure-boundary inspection and regression testing. No production logic defect was found. Real-ingest asset and strike FX inversion were confirmed. Source provenance was confirmed against block-type and RF-namespace mutations. FULL_REVAL isolation was confirmed. Twenty-four validator mutants were examined; the equivalent mutation was identified as equivalent and the remaining relevant mutations were tested for intended failure behaviour. The final implementation and evidence were accepted for owner LOCK review.
+
+**Snapshot binding:** the D102 evidence history is bound through the D103 Snapshot binding. Historical implementation and evidence snapshots remain identified there. The final certification and LOCK decision apply to the owner commit containing this LOCK decision. The owner records that commit ID.
+
+---
+
+## D103 - VANILLA_FORWARD_NODE TAYLOR/DERIVED capability
+
+**Status:** LOCKED. Drafted 2026-10-02 in `docs/workstreams/WS-VANILLA-FORWARD-NODE-RISK-ENABLEMENT.md` (revision 8). WS-C implemented 2026-10-02. WS-D implemented and evidence-hardened 2026-10-05. Formal independent validation completed 2026-10-05. The owner now LOCKS this decision.
+
+**Amends:** D102.4. The amendment took effect with WS-D implementation. CURRENT: the amendment applies to `taylor_derived_uids`; `taylor_supplied_uids` remains refused under D103.5.
+
+**Related:** D050, D061, D069, D081, D084, D088, D101, D102.
+
+**Unchanged:** D102.1 to D102.3; P-1; D084; the `Sensitizer` protocol; `BlockSensitivities`; `run_sensitivities` and `_concat_block_sensitivities` (no cross-block aggregation); `_collapse_duplicates`; the SPOT sensitizer.
+
+**Decision:** all global contracts and D102.3 apply in addition.
+
+* **D103.1 Sensitizer.** `sensitize_vanilla_forward_block`, registered for `BlockType.VANILLA_FORWARD`, implements the dependency and mathematical contracts of the workstream document. Registration is not admission.
+
+* **D103.2 Coordinate.** Target-factor LEVELS (D069, D081 §4). Proxy V1 governs target shock construction and target/driver topology; the sensitizer never applies a loading.
+
+* **D103.3 Inverted FX.** Inverted FX (`invert = 1` on either FX leg of a forward row) is mathematically defined but outside this admission contract. The sensitizer raises `NotImplementedError` with message prefix "D103.3" before kernel arithmetic. The run refuses a UID in `taylor_derived_uids` with such a row by raising `CompositionContractError` with message prefix "D103.3" before `_row_aggregation`. D103.3 does not apply to FULL_REVAL.
+
+* **D103.4 Admission.** A UID in `taylor_derived_uids` with a `vanilla_forward` row may participate only when, in addition to D102.3, D103.3 and the global contracts:
+  (a) every non-forward row of the UID is a SPOT row admitted under D084;
+  (b) `context.discounting_mode` is `DiscountingMode.NONE`.
+  A violation raises `CompositionContractError` with message prefix "D103.4" before `_row_aggregation`. The implementation checks (b) before (a). This is deterministic implementation precedence and is not an additional admission contract.
+
+* **D103.5 SUPPLIED.** `taylor_supplied_uids`: unchanged global refusal under P-1. The direct helper guard also refuses this partition. SUPPLIED remains refused after this LOCK.
+
+* **D103.6 Scope.** FULL_REVAL `VANILLA_FORWARD_NODE` remains admitted in the supported modes. TAYLOR/DERIVED is admitted only in `DiscountingMode.NONE`. TAYLOR/DERIVED in `DiscountingMode.CURVE` remains deferred to D104. Every `VANILLA_FORWARD_CURVE` capability remains deferred.
+
+**Implementation status:** WS-C implements D103.1, D103.2 and the sensitizer refusal of D103.3. WS-D implements the run-boundary refusal of D103.3 and the admitted set of D103.4 in `solutions/risk_run.api._require_forward_capability`. D103.5 remains unchanged under P-1. No other production architecture was changed.
+
+**Implementation (WS-C):** `sensitivities/sensitizer_kernels/vanilla_forward._kernel_sensitize_vanilla_forward` implements the dependency and mathematical contracts with numeric-only Numba inputs. The sensitizer checks both FX legs before market-data reads, maps primitives to rf ids, aggregates by canonical rf identity, handles same-rf diagonals and emits the complete canonical pair set with explicit zeros. Proxy V1 beta is not applied by the sensitizer.
+
+**Evidence (WS-C):** `tests/sensitivities/test_vanilla_forward_sensitizer.py` and `tests/sensitivities/test_vanilla_forward_full_revaluation_reconciliation.py` cover topology, long/short cases, both FX legs, fold indices, scenario columns, chart transforms, curve identity, registration, refusal boundaries and full-revaluation reconciliation. Independent oracle checks and production mutation evidence support the sensitizer implementation.
+
+**Evidence (WS-D):** `tests/solutions/risk_run/test_vanilla_forward_taylor_admission.py` and `tests/solutions/risk_run/test_vanilla_forward_node_production.py` cover valid exact and relative NODE admission, repeated UIDs, forward plus SPOT, shared-rf SUM, mixed FULL_REVAL/DERIVED books, inverted asset and strike FX, D103.4 mode and source restrictions, D084 interaction, D102.3 precedence and failure boundaries. Real-ingest asset-leg inversion and real-ingest non-SPOT option rows were demonstrated. FULL_REVAL with inverted forward FX and with CURVE mode was explicitly admitted and valued.
+
+**Evidence (Independent validation):** formal independent validation was performed on 2026-10-05 against the final validation snapshot. The validator independently reconstructed the contract, inspected the production implementation, executed focused tests, executed adversarial counterexamples, inspected failure boundaries, reran mutation cases, and independently reproduced the numerical result using an exact-rational oracle. The independent validation found no production logic defect. Environmental limitations were confined to unavailable credit and `riskquant_lab` components and did not change the observed WS-D failure identities.
+
+**Evidence (Evidence closure):** the final evidence closure corrected the stale D102.4 diagnostic, added the real-ingest D103.3 asset-leg evidence, added explicit FULL_REVAL isolation evidence, added functional and provenance evidence for D103.4(a), added D103.4 scope evidence, and bound the evidence history to explicit snapshots.
+
+**Snapshot binding:** the D102 and D103 evidence comes from these snapshots:
+
+1. WS-A and WS-B: sandbox reconstruction of `0c70f76` (WS-B plus the WS-A change).
+2. WS-C: sandbox reconstruction of `bfe08ce`.
+3. WS-D implementation evidence: `4cd247a`, retained as the historical WS-C predecessor/evidence baseline where applicable.
+4. WS-D evidence hardening: `3933bfe`.
+5. Independent validation: `f202a1e`.
+6. Final evidence closure: the owner commit containing the final lock-ready decision record.
+
+Historical snapshot references are retained for evidence lineage. The final certification and LOCK decisions apply only to the final owner commit containing this locked decision text. The owner records that final commit ID. D102 and D103 are LOCKED by the owner at that commit.
+
+**Evidence limits:** CURVE valuation numerics are not certified; only CURVE admission boundaries are covered. `VANILLA_FORWARD_CURVE` remains deferred. Environmental failures involving unavailable credit and laboratory packages are not WS-D defects. Independent validation was performed in a sandbox reconstruction rather than the owner runtime environment; the owner-side final checks remain part of release governance.
+
+**Lock rationale:** the implementation satisfies the locked D102 and D103 admission boundaries; the required evidence and mutation checks have been completed; no production logic defect was found; the remaining limitations are outside the locked production scope. The owner therefore LOCKS D102 and D103.
+
+
 ## D-C01 — `obligor_uids_target` ordering (credit / exposure→JTD bridge)
 
 `obligor_uids_target` may be supplied in **any order**. Uids must be unique; duplicates raise. The output rows are emitted in exactly the caller's target order. Sorting is an internal implementation detail: `aggregate_ead_to_obligor` creates a sorted copy of the target, performs the `searchsorted` lookup against that sorted-unique array, and maps the returned ranks back through the sort permutation.

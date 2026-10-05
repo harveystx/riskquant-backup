@@ -50,6 +50,7 @@ import numpy as np
 import numpy.typing as npt
 import polars as pl
 
+from riskquant.config.enums.discounting_modes import DiscountingMode
 from riskquant.config.proxy_model.compile import compile_proxy_model
 from riskquant.config.proxy_model.schema_objects import AuthoredProxyTerm
 from riskquant.config.static_config.static_config import RiskStaticConfig
@@ -63,9 +64,11 @@ from riskquant.market_data.compile import assemble_valuation_state
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.portfolio.compiled import CompiledPortfolio
 from riskquant.portfolio.instruments import (
+    INSTRUMENT_TYPE_TO_FAMILY_ARRAY,
     SPOT_ID,
     VANILLA_EUROPEAN_OPTION_NODE_ID,
     VANILLA_FORWARD_NODE_ID,
+    InstrumentTypeFamily,
 )
 from riskquant.reporting.fx_conversion import (
     FxConversionPlan,
@@ -211,6 +214,114 @@ def _require_taylor_capable_spot(
             f"{refused.size} position(s) declared TAYLOR are inverted-FX SPOT legs "
             f"(effective FX invert = 1; first 10: {refused[:10].tolist()}). An "
             "inverted-FX SPOT leg is admitted as FULL_REVAL only (D084)."
+        )
+
+
+#: D102.2: the instrument ids of the FORWARD family. The registry array is
+#: indexed by instrument id, so a position in it IS the id.
+_FORWARD_FAMILY_INSTRUMENT_IDS: npt.NDArray[np.int32] = np.flatnonzero(
+    np.asarray(INSTRUMENT_TYPE_TO_FAMILY_ARRAY) == int(InstrumentTypeFamily.FORWARD)
+).astype(np.int32)
+
+
+def _require_forward_capability(
+    *, context: ValuationContext, methodology: MethodologyDeclaration
+) -> None:
+    """
+    D102 and D103: source-specific admission of the UIDs that own a
+    `vanilla_forward` row.
+
+    Block type and rf namespace do not establish the instrument source:
+    `BlockType.VANILLA_FORWARD` is a dispatch key, and `GlobalIdNamespace.NODES`
+    holds node ids and curve-point rf ids alike. The source is read from the
+    ingest rows bound to the UID (D102.2). A UID may own several ingest rows
+    (D055), so every row of the UID is inspected; no single-row assumption is
+    made.
+
+    Checks, in this order:
+
+    D102.3     every FORWARD-family row of a forward UID is VANILLA_FORWARD_NODE
+               (every methodology partition);
+    D103.3     no used FX leg of a forward row of a TAYLOR/DERIVED UID is
+               inverted (`fx_effective_pairs[:, 1] == 1`, asset and strike leg);
+    D103.4(b)  a TAYLOR/DERIVED forward UID requires DiscountingMode.NONE;
+    D103.4(a)  every non-forward row of a TAYLOR/DERIVED forward UID is SPOT
+               (its D084 admissibility is proven earlier by
+               `_require_taylor_capable_spot`);
+    D102.4     a forward UID in TAYLOR/SUPPLIED is refused (D103.5; P-1 refuses
+               the partition earlier in the run).
+
+    D102.3 precedes D103.3, which precedes D103.4 (revision 8). (b) before (a)
+    is a deterministic implementation precedence, not a contract ordering.
+    FULL_REVAL forward UIDs are subject to D102.3 only.
+    """
+    block = context.portfolio.vanilla_forward
+    if block is None:
+        return
+    trade_uids = np.asarray(block.trade_uids, dtype=np.int64)
+    forward_uids = np.unique(trade_uids)
+    batch = context.ingest_batch
+    row_uids = np.asarray(batch.uids, dtype=np.int64)
+    instruments = np.asarray(batch.instrument_ids, dtype=np.int32)
+    of_forward_uid = np.isin(row_uids, forward_uids)
+    forward_family = np.isin(instruments, _FORWARD_FAMILY_INSTRUMENT_IDS)
+    foreign = of_forward_uid & forward_family & (instruments != VANILLA_FORWARD_NODE_ID)
+    if bool(foreign.any()):
+        bad = np.unique(row_uids[foreign])
+        raise CompositionContractError(
+            f"D102.3: {bad.size} UID(s) own a vanilla_forward row but have a "
+            "FORWARD-family ingest row whose instrument is not "
+            f"VANILLA_FORWARD_NODE (first 10: {bad[:10].tolist()}; instrument "
+            f"id(s) {np.unique(instruments[foreign]).tolist()}). The forward "
+            "source of the UID is not established; the run fails closed."
+        )
+    _, u_supplied, u_derived = methodology.blocks()
+    derived_rows = np.isin(trade_uids, u_derived)
+    if bool(derived_rows.any()):
+        mapper = context.uix_mapper
+        inverted = np.zeros(trade_uids.shape[0], dtype=np.bool_)
+        for fx in (
+            mapper.efp_effective_quads[block.effective_forward_price_uix, 3],
+            mapper.edf_effective_triples[block.effective_discount_factor_uix, 2],
+        ):
+            has = fx != INVALID_UIX
+            inverted[has] |= mapper.fx_effective_pairs[fx[has], 1] == 1
+        refused_rows = inverted & derived_rows
+        if bool(refused_rows.any()):
+            bad = np.unique(trade_uids[refused_rows])
+            raise CompositionContractError(
+                f"D103.3: {bad.size} position(s) declared TAYLOR/DERIVED own a "
+                "VANILLA_FORWARD row with an inverted FX leg (first 10: "
+                f"{bad[:10].tolist()}). An inverted forward FX leg is admitted as "
+                "FULL_REVAL only."
+            )
+        derived_forward = np.intersect1d(forward_uids, u_derived)
+        if context.discounting_mode is not DiscountingMode.NONE:
+            raise CompositionContractError(
+                f"D103.4: {derived_forward.size} position(s) declared "
+                "TAYLOR/DERIVED own a VANILLA_FORWARD row, and TAYLOR/DERIVED "
+                "forward positions are admitted in DiscountingMode.NONE only "
+                f"(got {context.discounting_mode.name}; first 10: "
+                f"{derived_forward[:10].tolist()})."
+            )
+        other = np.isin(row_uids, derived_forward) & ~forward_family
+        not_spot = other & (instruments != SPOT_ID)
+        if bool(not_spot.any()):
+            bad = np.unique(row_uids[not_spot])
+            raise CompositionContractError(
+                f"D103.4: {bad.size} position(s) declared TAYLOR/DERIVED own a "
+                "VANILLA_FORWARD row and a non-forward row that is not SPOT "
+                f"(first 10: {bad[:10].tolist()}; instrument id(s) "
+                f"{np.unique(instruments[not_spot]).tolist()})."
+            )
+    refused = np.intersect1d(forward_uids, u_supplied)
+    if refused.size:
+        raise CompositionContractError(
+            f"D102.4: {refused.size} position(s) declared TAYLOR/SUPPLIED own a "
+            f"vanilla_forward row (first 10: {refused[:10].tolist()}). "
+            "TAYLOR/SUPPLIED is not admitted for VANILLA_FORWARD_NODE (D103.5); "
+            "the admitted routes are FULL_REVAL and TAYLOR/DERIVED under "
+            "D103.3/D103.4."
         )
 
 
@@ -875,6 +986,7 @@ def run_scenario_var_es(
     _require_taylor_capable_spot(
         context=context, taylor_uids=np.concatenate((u_supplied, u_derived))
     )
+    _require_forward_capability(context=context, methodology=methodology)
     aggregation = _row_aggregation(portfolio=context.portfolio, universe=universe)
     universe_positions = _positions(aggregation.economic_uids, universe)
     full_positions = _positions(aggregation.economic_uids, u_full)

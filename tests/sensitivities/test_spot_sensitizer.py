@@ -170,18 +170,27 @@ def test_unauthored_block_types_fail_fast_and_are_named(
     portfolio_mapper_market,
 ) -> None:
     """
-    Coverage is incremental: only SPOT is authored. Unauthored block types
-    must be named explicitly at import and must RAISE on resolution -- never
-    silently yield zero risk.
+    Coverage is incremental: SPOT and VANILLA_FORWARD (D103, WS-C) are
+    authored. Unauthored block types must be named explicitly at import and
+    must RAISE on resolution -- never silently yield zero risk.
     """
+    from riskquant.sensitivities.sensitizers.vanilla_forward import (
+        sensitize_vanilla_forward_block,
+    )
+
     assert "SPOT" not in UNREGISTERED_BLOCK_TYPE_NAMES
-    assert "VANILLA_FORWARD" in UNREGISTERED_BLOCK_TYPE_NAMES
+    assert "VANILLA_FORWARD" not in UNREGISTERED_BLOCK_TYPE_NAMES
+    assert "VANILLA_EUROPEAN_OPTION" in UNREGISTERED_BLOCK_TYPE_NAMES
 
     class _FakeForwardBlock:
         BLOCK_TYPE_ID = int(BlockType.VANILLA_FORWARD)
 
+    class _FakeOptionBlock:
+        BLOCK_TYPE_ID = int(BlockType.VANILLA_EUROPEAN_OPTION)
+
+    assert resolve_sensitizer(_FakeForwardBlock()) is sensitize_vanilla_forward_block  # type: ignore[arg-type]
     with pytest.raises(NotImplementedError, match="No sensitizer registered"):
-        resolve_sensitizer(_FakeForwardBlock())  # type: ignore[arg-type]
+        resolve_sensitizer(_FakeOptionBlock())  # type: ignore[arg-type]
 
 
 # =============================================================================

@@ -1260,6 +1260,54 @@ def _realistic_factors() -> tuple[FactorDef, ...]:
     return tuple(factors)
 
 
+def realistic_positions(*, num_positions: int, seed: int = 20270105) -> pd.DataFrame:
+    """
+    Vectorised SPOT book for the scaling benchmark: O(M) NumPy, no Python loop.
+
+    Same rules as the book `realistic_fixture` generates: positions on the 53
+    non-FX factors (50 equities, 3 commodities), settled in the asset's quote currency, except ~30% of the
+    EUR/GBP assets settled in USD (a DIRECT quanto FX read, so every position
+    is admissible as FULL_REVAL or TAYLOR/DERIVED); UIDs sparse and in
+    NON-ascending order; quantities ~ N(0, 400) rounded, zero replaced by 1.
+
+    Why a separate generator: `realistic_fixture` draws UIDs from a pool of
+    989,999 values and builds its book with Python lists, so it cannot make
+    10**6 positions. `realistic_fixture` and its RNG stream are untouched (the
+    verified demos depend on them). Pass the frame through its `positions=`
+    argument. UIDs stay below 4 * M + 11,000, far inside int32.
+
+    Parameters
+    ----------
+    num_positions
+        Number of positions M, at least 1.
+    seed
+        Seed of a LOCAL generator; no global random state is touched.
+    """
+    if num_positions <= 0:
+        raise ValueError(f"num_positions must be positive, got {num_positions}.")
+    assets = [f for f in _realistic_factors() if f.asset_class != "FX"]
+    names = np.array([f.name for f in assets], dtype=object)
+    quotes = np.array([f.quote_ccy for f in assets], dtype=object)
+    rng = np.random.default_rng(seed)
+    picks = rng.integers(0, names.shape[0], num_positions)
+    quote = quotes[picks]
+    cross = (rng.uniform(size=num_positions) < 0.30) & (
+        (quote == "EUR") | (quote == "GBP")
+    )
+    settle = np.where(cross, "USD", quote)
+    # Without replacement, in random order: unique, sparse, non-ascending.
+    uids = rng.choice(4 * num_positions + 1_000, size=num_positions, replace=False)
+    quantity = np.round(rng.normal(0.0, 400.0, num_positions))
+    quantity[quantity == 0.0] = 1.0  # ingest refuses zero / dust quantities
+    return pd.DataFrame({
+        "uid": (uids + 10_000).astype(np.int64),
+        "instrument": ["SPOT"] * num_positions,
+        "quantity": quantity,
+        "underlying": names[picks],
+        "settlement_ccy": settle,
+    })
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RealisticFixture:
     world: SpotWorld

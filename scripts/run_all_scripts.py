@@ -26,6 +26,7 @@ def main():
         and not p.name.startswith("_scratch")  # Exclude _scratch scripts
         and not p.name.startswith("audit_")  # Exclude audit scripts
         and not p.name.startswith("run_all_")  # Exclude runner scripts
+        and not p.name.startswith("bench_")  # Exclude benchmarks (minutes, GiB)
     ]
 
     if not scripts:
