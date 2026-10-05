@@ -774,3 +774,44 @@ def test_curve_matrix_discount_factors_attach_to_their_legs() -> None:
                 df_k,
             ),
         )
+
+
+def test_curve_identity_of_each_leg_is_preserved() -> None:
+    """FORMULA CHECK ONLY; NOT CURVE ADMISSION; D103.4b UNCHANGED.
+
+    Section 4 binds DF_a to the asset-leg fold (curve and date of
+    `efp_effective_quads`) and DF_k to the strike-leg fold (curve and date of
+    `edf_effective_triples`). The rows below have different asset and strike
+    curves (USD_SOFR_OIS and EUR_ESTR_OIS, in both orientations). The test
+    replaces the NONE grid (all 1.0) with test-owned values, one distinct value
+    per (curve, date) cell, so a swap of the two curve identities, or of the two
+    dates, changes the coefficients. Each DF of the oracle is read BY THE ROW'S
+    CURVE NAME AND DATE."""
+    rows = [TOPOLOGY[u][0] for u in (70_002, 5, 818, 4_040)]
+    w = _build(rows)
+    grid = np.ascontiguousarray(
+        np.array([[0.97, 0.93], [0.89, 0.85]], dtype=np.float64)[:, :, None]
+    )
+    assert w.matrix.discount_factor_grid.shape == grid.shape
+    matrix = copy.copy(w.matrix)
+    object.__setattr__(matrix, "discount_factor_grid", grid)
+
+    def df(curve: str, day: dt.date) -> float:
+        c = int(np.searchsorted(w.mapper.discount_curve_id_universe, CURVE_ID[curve]))
+        d = int(np.searchsorted(w.mapper.date_ord32_universe, int(date_to_ord32(day))))
+        assert w.mapper.date_ord32_universe[d] == int(date_to_ord32(day))
+        return float(grid[c, d, 0])
+
+    s = sensitize_vanilla_forward_block(
+        block=w.block, uix_mapper=w.mapper, market_data=matrix
+    )
+    for row in rows:
+        assert row["under_discount_curve"] != row["strike_discount_curve"]
+        df_a = df(row["under_discount_curve"], row["delivery_date"])
+        df_k = df(row["strike_discount_curve"], row["settlement_date"])
+        _, view = TOPOLOGY[row["uid"]]
+        _assert_matches(
+            s,
+            row["uid"],
+            _oracle(row["quantity"], row["strike_price"], view, LEVELS, df_a, df_k),
+        )
