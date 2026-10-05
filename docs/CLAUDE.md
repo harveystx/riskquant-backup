@@ -405,3 +405,35 @@ Do not repeat full file contents in the chat.
 
 **Fallback.** If file creation or code execution is unavailable, state this.
 Return the complete files inline. Do not claim that an archive exists.
+
+---
+
+## 11. Final report
+
+This section applies at the end of every implementation or audit response.
+
+The report is not a handoff or continuation document. It is not repository
+authority. It does not replace Section 7 or Section 10.
+
+Include these items, in this order:
+
+1. **Files.** Each path with `created` or `modified`, as in Section 10.
+   Add one sentence per file: what changed and why.
+2. **Decisions.** Each `DECISIONS.md` ID that the change touches or relies on.
+   Write `none` if no ID applies.
+3. **Verification.** Each gate command with its exact raw output and result.
+   Mark a gate that did not run as `NOT RUN` and give the reason.
+4. **Deviations.** Each difference from the prompt. Write `none` if no
+   difference exists.
+5. **Unresolved.** Open questions, owner decisions needed, and adjacent issues
+   found and left unchanged.
+
+Rules:
+
+* Use the labels Observed, Inferred, Unresolved, and Proposed from Section 7.
+* Write report prose in ASD-STE100 (Simplified Technical English). Keep
+  identifiers, paths, dtypes, and decision IDs exact. Do not simplify the
+  language if the technical meaning would change.
+* Do not repeat full file contents.
+* Do not produce images, diagrams, HTML, or video unless the prompt requests
+  them.
