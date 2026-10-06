@@ -99,6 +99,18 @@ DEMO_SCRIPTS: tuple[DemoScript, ...] = (
         "integration template from edge inputs; persist/reload/reproduce bitwise",
     ),
     _demo(
+        "10_forward_node_full_reval.py",
+        "VANILLA_FORWARD_NODE FULL_REVAL: V0 vs hand Q*(F*X_a - K*X_k); exact NODE "
+        "delivery identity; relative NODE resolution; D081 reporting",
+        timeout_seconds=180.0,
+    ),
+    _demo(
+        "11_forward_node_taylor_derived.py",
+        "forward TAYLOR/DERIVED (NONE): sensitivities vs formulas; Taylor == FULL "
+        "scenario P&L; D103.3, D103.4(b) and P-1 refusals; inverted forward FULL_REVAL",
+        timeout_seconds=240.0,
+    ),
+    _demo(
         "demo_e2e_sensi_based_var.py",
         "D019 golden: hand-verified proxy/FX/Taylor wiring; reproducibility",
     ),
@@ -109,6 +121,10 @@ EXCLUDED: dict[str, str] = {
     "bench_spot_scaling.py": (
         "benchmark, not a regression gate: minutes to hours and up to ~14 GiB; "
         "run by hand, timings are never asserted"
+    ),
+    "bench_forward_scaling.py": (
+        "benchmark, not a regression gate: forward FULL_REVAL and TAYLOR/DERIVED "
+        "scaling; run by hand, timings are never asserted"
     ),
 }
 
