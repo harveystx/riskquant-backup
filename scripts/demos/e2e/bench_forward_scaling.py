@@ -328,9 +328,9 @@ def cells(args: argparse.Namespace) -> list[Cell]:
         m_grid, s_fixed, s_grid, m_fixed = (50, 400), 64, (64, 256), 100
     else:
         m_grid, s_fixed, s_grid, m_fixed = (
-            (100, 1_000, 10_000, 50_000),
+            (100, 1_000, 10_000, 50_000, 100_000),
             260,
-            (130, 520, 2_080),
+            (130, 520, 2_080, 4_160),
             2_000,
         )
     paths = ("full", "derived") if args.path == "both" else (args.path,)
