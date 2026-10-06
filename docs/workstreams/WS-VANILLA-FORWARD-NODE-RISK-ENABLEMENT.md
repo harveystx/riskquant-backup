@@ -1,5 +1,7 @@
 # WS-VANILLA-FORWARD-NODE-RISK-ENABLEMENT
 
+**STATUS: CLOSED** (closure recorded 2026-10-06; see section 13, Closure record). The status line below is the historical specification status of revision 8.
+
 Status: SPECIFICATION FROZEN (revision 8, final). NODE FORWARD SENSITIZER SPECIFICATION: LOCKED. Implementation may begin.
 Source of truth: snapshot `0c70f76`; `DECISIONS.md` with D101 LOCKED.
 Supersedes revisions 1 to 7.
@@ -720,3 +722,33 @@ OD-1: is `DiscountingMode.CURVE` in the target envelope? It decides the WS-B CUR
 3. WS-C (may be developed in parallel with WS-B)
 4. WS-D
 5. Independent validation and audit; owner LOCKS D102 and D103
+
+---
+
+## 13. Closure record
+
+**STATUS: CLOSED.** Recorded 2026-10-06. This section is the current state of the workstream. Sections 1 to 12 are the frozen revision-8 specification and its historical evidence; they are not changed.
+
+| Item | Value |
+|---|---|
+| Final production commit | `c1c8dec` (repository snapshot commit of the closed state, dirty=false) |
+| Release tag | `<RELEASE-TAG>` (owner: replace with the tag that points to `c1c8dec`) |
+| Decisions | D101 LOCKED; D102 LOCKED; D103 LOCKED (`docs/DECISIONS.md`) |
+| Independent validation | completed 2026-10-05 (D103 status; validation snapshot `f202a1e`) |
+| Implementation order | WS-A, WS-B, WS-C, WS-D, independent validation and audit, owner LOCK of D102 and D103: all complete |
+
+Delivered (in production at the final commit):
+- D102: source-specific admission of `VANILLA_FORWARD_NODE` UIDs from ingest source rows, before `_row_aggregation`. Block type and rf namespace are not source evidence.
+- FULL_REVAL for exact and relative NODE forwards, including inverted forward FX legs. The numerical certification scope is `DiscountingMode.NONE` (section 5).
+- D103.1 and D103.2: the `VANILLA_FORWARD` sensitizer in the level coordinate, with no Proxy V1 loading.
+- D103.3 and D103.4: TAYLOR/DERIVED admission for NODE forwards in `DiscountingMode.NONE`, with non-inverted forward FX legs and only SPOT rows (D084) beside the forward rows of the UID.
+- The final `api.py` differs from the WS-D evidence state only in the text of the TAYLOR/SUPPLIED refusal message (prefix "D102.4" and behaviour unchanged). `docs/DECISIONS.md` records this under D102.4 ("CURRENT diagnostic wording").
+
+Deferred (outside this workstream; not delivered):
+- TAYLOR/SUPPLIED for forward UIDs (D102.4, D103.5).
+- TAYLOR/DERIVED with `DiscountingMode.CURVE` (D103.6; D104 not opened).
+- TAYLOR/DERIVED for forward rows with an inverted FX leg (D103.3).
+- `VANILLA_FORWARD_CURVE` valuation and risk (D050, D061, D102.5).
+- The open policy question OD-1 (section 11).
+
+No open work remains inside this workstream. New forward capability requires a new workstream and new decisions.
