@@ -45,6 +45,7 @@ Required on every review turn:
 | C | Changed files, or a refreshed context snapshot | Code state |
 | D | Raw gate output | Executed evidence |
 | E | `DECISIONS.md` | Locked intent |
+| F | Workstream document named by A (only when A contains `WS:`) | Slice scope and contract |
 
 Rules for missing input:
 
@@ -53,6 +54,8 @@ Rules for missing input:
 * Mark each claim that depends on the missing input as **Unresolved**.
 * If C or D is missing, the verdict cannot be ACCEPT.
 * If A or B is missing, the verdict is BLOCKED.
+* If A names a workstream slice and F is missing, mark every scope claim
+  **Unresolved**. The verdict cannot be ACCEPT.
 
 Check snapshot identity. Compare the identity in `context_riskquant_index.txt`
 with the changed files. If the snapshot is older than the change, state this.
@@ -70,10 +73,14 @@ Use each source for one purpose only.
 | What is the code state? | Changed files (C) or the refreshed snapshot |
 | What are the repository rules? | `CLAUDE.md` |
 | What is the scope? | Original prompt (A) |
+| What is the contract of the slice? | Named `FROZEN` workstream slice (F) |
 | What was executed? | Raw gate output (D) |
 | What did the implementer claim? | Report (B) |
 
 The report (B) is a claim. It is never evidence.
+
+A workstream document that is not `FROZEN` is not authority. Treat it as a
+claim.
 
 Chat history, old handoffs, and the ledger in this chat are never evidence of
 code state. They may help to find where to look.
@@ -87,6 +94,9 @@ A passing gate does not prove correct code. A gate proves only what it tests.
 Work in this order. Do not skip a step.
 
 1. **Scope.** Map each changed file to a requirement in A.
+   If A names a workstream slice, map each change to the Contract clauses and
+   the Files of that slice. A change that matches the Prohibited list of the
+   slice is at least a P1 finding.
    A change with no requirement is a scope finding.
    A requirement with no change is a completeness finding.
 2. **Decisions.** List the decision IDs that touch the change.
@@ -224,6 +234,9 @@ Rules:
 * Close a finding only on evidence in the new C or D. A claim in B is not
   evidence.
 * On the first turn, write `LEDGER: none`.
+* If F exists and the verdict is ACCEPT, add one line.
+  Format: `WS STATUS PROPOSAL: S<n> DONE | VALIDATED`.
+  The owner updates the document. The reviewer never does.
 * If the user starts a new reviewer chat and pastes a ledger, keep the IDs and
   continue the numbering. Re-verify each status against the current evidence.
 
@@ -240,6 +253,8 @@ Rules:
 * Do not restate text from `CLAUDE.md` or `DECISIONS.md`. Cite section numbers
   and decision IDs only.
 * Do not include chat history. Include only the facts that the task needs.
+* If the prompt names a `FROZEN` workstream slice, cite the slice. Do not
+  repeat its content.
 * State required outcomes. Do not dictate the implementation, unless a locked
   decision requires it.
 * Apply `CLAUDE.md` section 6: one concern per prompt. If findings cover more
@@ -259,6 +274,7 @@ MODE: implementation | audit
 TASK: <one sentence>
 ATTACH: <context profiles> ; DECISIONS.md
 DECISIONS: <decision IDs that apply>
+WS: <docs/workstreams/WS_<NAME>.md S<n>, or none>
 FIX: <R-ids>
   R-001 <path:symbol> required outcome: <outcome>
 SCOPE: <what may change>

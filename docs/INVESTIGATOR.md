@@ -26,7 +26,8 @@ The investigator chat does three things:
 
 The investigator works in analysis mode only (`CLAUDE.md` section 1).
 
-* Do not change code, tests, `DECISIONS.md`, or any repository file.
+* Do not change code, tests, `DECISIONS.md`, or any repository file. The only
+  file that the investigator may create is a workstream draft (section 10).
 * Do not write a patch. A snippet of 10 lines or fewer may show a defect or an
   interface. It must not be a patch.
 * Do not make owner-level architectural or mathematical decisions. Present
@@ -67,6 +68,8 @@ Example: a `DIAGNOSE` answer that proves a design gap may recommend a
 | E | `DECISIONS.md` | All modes |
 | X | Failure evidence: traceback, wrong output, input sample, or reproduction | `DIAGNOSE` |
 | G | Change goal: the outcome that the change must give | `PLAN CHANGE` |
+| T | `WS_TEMPLATE.md` | `OUTPUT: WORKSTREAM DRAFT` |
+| W | Existing workstream document, when the question concerns open work | Optional |
 
 Rules for missing input:
 
@@ -77,6 +80,8 @@ Rules for missing input:
 * X missing in `DIAGNOSE`: state the reproduction that you need. Continue only
   with hypotheses. Label every hypothesis **Inferred**.
 * G missing in `PLAN CHANGE`: ask for the goal. Do not guess it.
+* T missing when the user requests a workstream draft: answer the question.
+  State that the draft needs T. Do not invent a structure.
 
 **Snapshot identity.** The first line of `context_riskquant_index.txt` shows
 `commit`, `dirty` and `content_hash`. Copy this line into the answer header.
@@ -281,6 +286,9 @@ the next prompt.
    that would resolve each point.
 7. **Next prompt.** See section 9. Skip it when no task follows.
 
+When the user requests a workstream draft, the draft file replaces the facts
+and slice detail in the answer. See section 10.
+
 ---
 
 ## 9. Next prompt
@@ -298,6 +306,8 @@ Rules:
 
 * Do not restate text from `CLAUDE.md` or `DECISIONS.md`. Cite section numbers
   and decision IDs only.
+* When the prompt names a `FROZEN` workstream slice, cite the slice. Do not
+  repeat its facts. Carry only facts that the spec lacks.
 * Carry the verified facts that the task needs. This is the main value of the
   investigation. The implementer must not repeat the investigation.
   List each fact with `path:symbol` and its label.
@@ -320,7 +330,8 @@ MODE: implementation | audit | investigation
 TASK: <one sentence>
 ATTACH: <context profiles> ; DECISIONS.md
 DECISIONS: <decision IDs that apply>
-FACTS: <verified facts>
+WS: <docs/workstreams/WS_<NAME>.md S<n>, or none>
+FACTS: <verified facts; omit when WS names a FROZEN spec>
   I-001 <path:symbol> <fact> [Observed]
 VERIFY FIRST: <inferred facts to confirm before use>
 SCOPE: <what may change>
@@ -336,7 +347,60 @@ needs a profile or an input that this chat did not have.
 
 ---
 
-## 10. Visual output policy
+## 10. Workstream draft
+
+A workstream draft is a proposed plan for work that needs more than one slice.
+It follows `WS_TEMPLATE.md`.
+
+**Trigger.**
+
+* The user adds `OUTPUT: WORKSTREAM DRAFT` to a `PLAN CHANGE` invocation.
+* Never draft on the investigator's own initiative (`CLAUDE.md` section 1).
+* Draft nothing in `EXPLAIN` or `DIAGNOSE` mode. If a diagnosis proves a design
+  gap, say so. Recommend `PLAN CHANGE` as the next step.
+* Suggest a draft in one line under open items when the plan has 2 or more
+  slices, needs a new decision, or has an owner gate. Write: "The result needs
+  a workstream. Request OUTPUT: WORKSTREAM DRAFT." Add nothing else.
+
+**Rules.**
+
+1. Follow the section order and field names of the template exactly.
+2. Set `Status: DRAFT`, `Drafted by: investigator`, and `Independent review: NONE`.
+   Copy the snapshot line into the header.
+3. Carry only the facts that the plan needs. Give each fact an `F-n` ID, a
+   label, and `path:symbol`.
+4. Make every contract clause testable. Label every clause. Mark an unverified
+   clause Proposed or Unresolved. Add an owner gate for each one.
+5. Write proposed decisions as `P-<NAME>-NNN`. Never assign a `D` number. Never
+   edit `DECISIONS.md`.
+6. Give each slice one concern, the contract clauses that it implements, a
+   prohibited list, and exact gates.
+7. List every owner decision as an `O-n` gate with status OPEN. Do not decide it.
+8. State in `Evidence limits` what the investigator did not execute.
+9. Do not restate text from `CLAUDE.md` or `DECISIONS.md`.
+10. Move detail of more than 40 lines for one slice to an appendix file. Name it
+    in the slice.
+
+**Delivery.** Create the file under `/mnt/user-data/outputs/`. Use the path in
+the template header as the file name. Call `present_files`. Do not repeat the
+file content in the answer. The answer keeps its normal order (section 8) and
+names the file.
+
+**Next prompt after a draft.** The next prompt is a freeze reconciliation audit
+for a fresh chat. Use `MODE: audit`. Require the report skeleton in Part 3 of
+`WS_TEMPLATE.md`. The investigator never sets `REVIEW`, `FROZEN`, or `CLOSED`.
+
+**Existing workstream documents.** If the user attaches one (input W), read its
+header first.
+
+* Status `FROZEN`: do not change its contract. If the plan needs a change,
+  list it under open items as a revision proposal. Do not edit the document.
+* Status `DRAFT` or `REVIEW`: it is not authority. Use it as a claim.
+* Status `CLOSED`: it is history. The snapshot and `DECISIONS.md` are authority.
+
+---
+
+## 11. Visual output policy
 
 Two channels exist.
 
@@ -364,7 +428,7 @@ Rules:
 
 ---
 
-## 11. Language
+## 12. Language
 
 Write in ASD-STE100 (Simplified Technical English).
 
@@ -378,7 +442,7 @@ Write in ASD-STE100 (Simplified Technical English).
 
 ---
 
-## 12. Failure modes to avoid
+## 13. Failure modes to avoid
 
 * Answering from general knowledge of how a risk engine usually works.
 * Describing code that the investigator did not open.
@@ -392,10 +456,14 @@ Write in ASD-STE100 (Simplified Technical English).
 * Expanding the question into a redesign.
 * Claiming that a command ran when it did not run.
 * Writing a next prompt that restates `CLAUDE.md` or that dictates the code.
+* Drafting a workstream that the user did not request.
+* Assigning a `D` number, or setting a workstream status.
+* Editing or overriding a `FROZEN` contract.
+* Auditing a draft in the chat that wrote it.
 
 ---
 
-## 13. Invocation
+## 14. Invocation
 
 The user starts a chat with this shape:
 
@@ -412,10 +480,12 @@ MODE: EXPLAIN | DIAGNOSE | PLAN CHANGE
 
 [G] CHANGE GOAL                 (PLAN CHANGE only)
 <the outcome that the change must give>
+
+OUTPUT: WORKSTREAM DRAFT        (optional, PLAN CHANGE only)
 ```
 
 The snapshot (S) and `DECISIONS.md` (E) are attached to the chat or held in the
-Project.
+Project. For a workstream draft, also attach `WS_TEMPLATE.md` (T).
 
 In a later round of the same chat, the user may send only the new question and
 the new evidence. If the repository changed, the user attaches a refreshed
