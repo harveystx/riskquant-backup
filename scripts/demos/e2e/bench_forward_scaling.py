@@ -204,35 +204,58 @@ def check_run(result: Any, num_positions: int) -> None:
         raise BenchCheckError("run output malformed (shape or non-finite VaR / ES)")
 
 
-def peak_rss_mib() -> float:
-    if sys.platform == "win32":  # pragma: no cover - same API as bench_spot_scaling
-        import ctypes
-        from ctypes import wintypes
+if sys.platform == "win32":  # the exact working setup of bench_spot_scaling.py
+    import ctypes
+    from ctypes import wintypes
 
-        class _PMC(ctypes.Structure):
-            _fields_ = [
-                ("cb", wintypes.DWORD),
-                ("PageFaultCount", wintypes.DWORD),
-                ("PeakWorkingSetSize", ctypes.c_size_t),
-                ("WorkingSetSize", ctypes.c_size_t),
-                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-                ("QuotaPagedPoolUsage", ctypes.c_size_t),
-                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-                ("PagefileUsage", ctypes.c_size_t),
-                ("PeakPagefileUsage", ctypes.c_size_t),
-            ]
+    class _ProcessMemoryCounters(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
 
-        counters = _PMC()
+    # Typed signatures are required: without them ctypes passes the 64-bit
+    # pseudo-handle of GetCurrentProcess as a C int, the call fails, and an
+    # unchecked failure leaves every counter at 0 (the "0.0 MiB" defect).
+    _KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _PSAPI = ctypes.WinDLL("psapi", use_last_error=True)
+    _KERNEL32.GetCurrentProcess.argtypes = []
+    _KERNEL32.GetCurrentProcess.restype = wintypes.HANDLE
+    _PSAPI.GetProcessMemoryInfo.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(_ProcessMemoryCounters),
+        wintypes.DWORD,
+    ]
+    _PSAPI.GetProcessMemoryInfo.restype = wintypes.BOOL
+
+
+def peak_rss_mib() -> float | None:
+    """
+    Process-lifetime peak resident memory in MiB, or None when the platform
+    offers no measurement (reported as UNAVAILABLE, never as a number).
+    Windows: `PeakWorkingSetSize` (bytes). Linux: `ru_maxrss` (KiB). macOS: bytes.
+    """
+    if sys.platform == "win32":
+        counters = _ProcessMemoryCounters()
         counters.cb = ctypes.sizeof(counters)
-        ctypes.WinDLL("psapi").GetProcessMemoryInfo(
-            ctypes.WinDLL("kernel32").GetCurrentProcess(),
-            ctypes.byref(counters),
-            counters.cb,
+        ok = _PSAPI.GetProcessMemoryInfo(
+            _KERNEL32.GetCurrentProcess(), ctypes.byref(counters), counters.cb
         )
+        if not ok:
+            raise ctypes.WinError(ctypes.get_last_error())
         return float(counters.PeakWorkingSetSize) / 2**20
-    import resource
-
+    try:
+        import resource
+    except ImportError:
+        return None
     rss = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
     return rss / 2**20 if sys.platform == "darwin" else rss / 1024.0
 
@@ -245,6 +268,10 @@ def run_worker(cell: Cell, repeats: int) -> dict[str, Any]:
     start = time.perf_counter()
     world, block = build(cell, rsc)
     build_s = time.perf_counter() - start
+    # Untimed validation run of THIS cell: the production run verifies the
+    # Taylor base binding of this cell's own block (bitwise V0 digest) and the
+    # output is checked before any timing is recorded.
+    check_run(execute(cell, world, block), cell.num_positions)
     runs = []
     for _ in range(repeats):
         start = time.perf_counter()
@@ -289,6 +316,11 @@ def run_cell_subprocess(cell: Cell, repeats: int) -> dict[str, Any]:
 
 
 # ---- parent --------------------------------------------------------------------------
+
+
+def _mib(value: float | None) -> str:
+    """Measured peak RSS in MiB, or UNAVAILABLE (never a substitute number)."""
+    return f"{value:9.1f}" if value is not None else "UNAVAILABLE"
 
 
 def cells(args: argparse.Namespace) -> list[Cell]:
@@ -359,7 +391,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"  {cell.path:8s} {cell.sweep:5s} {cell.num_positions:7d} "
                 f"{cell.num_scenarios:6d} {record['num_factors']:3d} "
                 f"{record['build_s']:9.3f} {record['run_s']:9.3f} {record['total_s']:9.3f} "
-                f"{record['peak_rss_mib']:9.1f}  ok"
+                f"{_mib(record['peak_rss_mib'])}  ok"
             )
         else:
             print(

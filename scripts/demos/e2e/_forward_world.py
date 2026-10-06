@@ -328,8 +328,17 @@ def value_by_uid(
         valuation_state=assemble_valuation_state(matrix=matrix, uix_mapper=mapper),
         out=out,
     )
+    # Per-UID sum, in row order, starting FROM THE FIRST ROW (np.add.reduceat),
+    # exactly as the run aggregates rows. A masked `.sum()` would start from the
+    # identity +0.0 and turn a row value of -0.0 (Q < 0 times an exact zero
+    # spread) into +0.0; the Taylor base binding digests V0 bitwise, sign of
+    # zero included, so that would certify a different base. O(M log M).
     uids = np.asarray(portfolio.trade_uids, dtype=np.int64)
-    return {int(u): out[uids == u].sum(axis=0) for u in np.unique(uids)}
+    order = np.argsort(uids, kind="stable")
+    sorted_uids = uids[order]
+    starts = np.flatnonzero(np.r_[True, sorted_uids[1:] != sorted_uids[:-1]])
+    sums = np.add.reduceat(out[order], starts, axis=0)
+    return {int(u): sums[i] for i, u in enumerate(sorted_uids[starts])}
 
 
 def base_value_by_uid(world: ForwardWorld) -> dict[int, float]:
