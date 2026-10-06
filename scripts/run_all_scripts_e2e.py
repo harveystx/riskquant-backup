@@ -39,7 +39,7 @@ def main():
     # Print the list of all found scripts before running them
     for i, script in enumerate(scripts, start=1):
         # Using relative_to makes the output cleaner, showing path from TARGET_DIR
-        print(f"  {i}. {script.relative_to(TARGET_DIR)}")
+        print(f"  {i:>3d}. {script.relative_to(TARGET_DIR)}")
     print("\n" + "=" * 40 + "\n")
     # ---------------------------
 
