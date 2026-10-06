@@ -26,14 +26,13 @@ then compares VaR / ES (downstream), then shows the admission boundaries:
     STEP 3  certify the Taylor book         (base binding, SECOND_ORDER_FULL)
     STEP 4  scenario P&L: FULL vs TAYLOR    (every scenario, every UID)
     STEP 5  VaR / ES: FULL vs TAYLOR        (downstream confirmation)
-    STEP 6  admission boundaries            (D103.3, D103.4(b), P-1)
+    STEP 6  selected admission boundaries   (D103.3, D103.4(b), P-1 executed)
 
 Run:  python scripts/demos/e2e/11_forward_node_taylor_derived.py
 """
 
 from __future__ import annotations
 
-import dataclasses
 import datetime as dt
 import sys
 from pathlib import Path
@@ -51,57 +50,13 @@ from riskquant.solutions.risk_run.schemas import (
     CompositionContractError,
     MethodologyDeclaration,
     ReportingSpec,
-    TaylorBlock,
     ValuationContext,
 )
 from riskquant.solutions.scenario_models.api import parse_scenario_model_config
-from riskquant.solutions.sensitivity_pnl.api import SensitivityPnlCalculator
-from riskquant.solutions.sensitivity_pnl.book_adapter import (
-    build_sensitivity_book_spec,
-    derive_taylor_declaration,
-)
-from riskquant.solutions.sensitivity_pnl.taylor_contract import (
-    TaylorBaseBinding,
-    TaylorOrder,
-    base_levels_digest,
-    base_settlement_values_digest,
-    static_config_content_digest,
-    valuation_contract_fingerprint,
-)
-from riskquant.utils.dates import date_to_ord32
 
 U32 = 2.0**-24  # float32 unit roundoff: the P&L grid stores float32
 LABEL = fw.LABELS
 EMPTY = np.empty(0, dtype=np.int64)
-
-
-def certified_block(world: fw.ForwardWorld, sens, v0: dict[int, float]) -> TaylorBlock:
-    """Certify `sens` at the run's base and compile it on the valuation prefix."""
-    uids = np.unique(np.asarray(sens.position_uids, dtype=np.int64))
-    binding = TaylorBaseBinding(
-        as_of_ord32=int(date_to_ord32(fw.AS_OF)),
-        base_levels_digest=base_levels_digest(
-            factor_ids=world.axis.factor_ids, base_levels=world.base
-        ),
-        discounting_mode=world.context.discounting_mode.value,
-        static_config_digest=static_config_content_digest(world.rsc),
-        valuation_contract_fingerprint=valuation_contract_fingerprint(),
-        base_settlement_values_digest=base_settlement_values_digest(
-            position_uids=uids, values=np.array([v0[int(u)] for u in uids])
-        ),
-    )
-    spec = build_sensitivity_book_spec(
-        sensitivities=sens, required_factor_ids=world.valuation_factor_ids
-    )
-    spec = dataclasses.replace(
-        spec,
-        taylor_declaration=derive_taylor_declaration(
-            sensitivities=sens,
-            order=TaylorOrder.SECOND_ORDER_FULL,
-            base_binding=binding,
-        ),
-    )
-    return TaylorBlock(calculator=SensitivityPnlCalculator.compile(spec))
 
 
 def run(world, *, full=(), derived=(), supplied=(), block=None, context=None):
@@ -182,7 +137,7 @@ def main() -> None:
     sens = run_sensitivities(
         portfolio=world.context.portfolio,
         uix_mapper=world.context.uix_mapper,
-        market_data=_market_at(world, base_cols),
+        market_data=fw.market_at(world, base_cols),
     )
     name_of = {v: k for k, v in rsc.rel_name_to_rf_id.items()}
     sw.formula(
@@ -228,7 +183,7 @@ def main() -> None:
         "SECOND_ORDER_FULL requires every factor pair of each position, with an "
         "explicit zero where the pair is mathematically zero (D086)."
     )
-    block = certified_block(world, sens, v0)
+    block = fw.certified_taylor_block(world, sens, v0)
     sw.kv([
         ("positions in the book", block.calculator.num_positions),
         ("first-order entries", block.calculator.num_first_order_entries),
@@ -238,52 +193,69 @@ def main() -> None:
     # ------------------------------------------------------------------ STEP 4
     sw.step("STEP 4", "SCENARIO P&L: FULL REVALUATION VERSUS TAYLOR")
     sw.para(
-        "The SAME scenarios feed both paths: the historical 1-day log returns of "
-        "the world's history, applied to today's levels. FULL revalues every "
-        "position with the production pricer; TAYLOR evaluates the certified "
-        "book with the production calculator."
+        "Both paths are fed the SAME production scenarios. They come from the "
+        "production scenario path, in the order run_scenario_var_es composes it: "
+        "proxy model over the run axis (no proxies here), axis operator, world "
+        "binding, the configured scenario generator (historical, 1-day horizon), "
+        "and the inverse chart that turns each shock into a shocked LEVEL. The "
+        "demo does not compute a return or a shock itself."
     )
-    hist = world.data.values
-    ids = list(world.data.factor_ids)
-    returns = np.log(hist[1:] / hist[:-1])  # (S, K) in rf-id order
-    shocked = {
-        name_of[int(f)]: world.level(name_of[int(f)]) * np.exp(returns[:, ids.index(f)])
-        for f in world.axis.factor_ids
-    }
-    full_pnl = {u: v - v0[u] for u, v in fw.value_by_uid(world, shocked).items()}
-    prefix = [name_of[int(f)] for f in world.valuation_factor_ids]
-    market = block.calculator.axis.levels(
-        base_levels=np.array([world.level(n) for n in prefix]),
-        shocked_levels=np.ascontiguousarray(np.stack([shocked[n] for n in prefix])),
+    scenario_config = parse_scenario_model_config({"model": "historical", "horizon": 1})
+    shocked = fw.production_shocked_levels(
+        world, scenario_config=scenario_config, batch_size=32
     )
-    result = block.calculator.run(market)
-    taylor_uids = result.pnl_matrix.trade_uids.tolist()
-    taylor = np.asarray(result.pnl_matrix.pnl, dtype=np.float64)
+    sw.kv([
+        ("scenario model", "historical, horizon 1 (production generator)"),
+        (
+            "shocked levels",
+            f"{shocked.shape[0]} factors x {shocked.shape[1]} scenarios",
+        ),
+    ])
+    full_pnl, taylor_pnl = fw.scenario_pnl_full_and_taylor(world, block, shocked)
+    by_name = {n: shocked[i] for i, n in enumerate(world.names)}
     rows4 = []
     for r in fw.MAIN_BOOK:
         uid = r["uid"]
-        t_pnl = taylor[taylor_uids.index(uid)]
-        diff = np.abs(full_pnl[uid] - t_pnl)
-        scale = np.abs(full_pnl[uid]) + _leg_scale(r, shocked)
+        diff = np.abs(full_pnl[uid] - taylor_pnl[uid])
+        scale = np.abs(full_pnl[uid]) + fw.leg_scale(r, by_name)
         tol = 8.0 * U32 * scale
+        big = np.abs(full_pnl[uid]) > 1e-6 * scale
+        rel = (
+            float((diff[big] / np.abs(full_pnl[uid][big])).max()) if big.any() else 0.0
+        )
+        ok = bool(np.all(diff <= tol))
         rows4.append([
             LABEL[uid],
-            t_pnl.size,
+            diff.size,
             sw.num(np.abs(full_pnl[uid]).max(), 3),
             f"{diff.max():.2e}",
+            f"{rel:.1e}",
             f"{(diff / tol).max():.3f}",
+            "PASS" if ok else "FAIL",
         ])
         checks.check(
-            f"{LABEL[uid]}: TAYLOR == FULL on every scenario within 8u * scale",
-            bool(np.all(diff <= tol)),
+            f"{LABEL[uid]}: TAYLOR == FULL on every scenario within 8u * scale", ok
         )
-    sw.table(["", "scenarios", "max |dV| FULL", "max |diff|", "max diff/tol"], rows4)
+    sw.table(
+        [
+            "",
+            "scenarios",
+            "max |dV| FULL",
+            "max |diff|",
+            "max rel",
+            "diff/tol",
+            "result",
+        ],
+        rows4,
+    )
     sw.para(
         "The tolerance is 8 x the float32 unit roundoff (u = 2^-24) times the "
         "position's scale (|dV| plus its leg magnitudes): Taylor P&L is stored in "
         "float32, full revaluation is float64. Nothing else separates them: in "
-        "this NONE contract the second-order polynomial IS the forward's value "
-        "change. This is not a claim about other discounting modes."
+        "the TAYLOR/DERIVED, DiscountingMode.NONE contract for VANILLA_FORWARD_NODE "
+        "the second-order polynomial IS the value change. This is not a claim "
+        "about any other mode or instrument. 'max rel' skips scenarios whose "
+        "|dV| is below 1e-6 of the scale."
     )
 
     # ------------------------------------------------------------------ STEP 5
@@ -317,20 +289,34 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------------ STEP 6
-    sw.step("STEP 6", "ADMISSION BOUNDARIES")
+    sw.step("STEP 6", "SELECTED ADMISSION-BOUNDARY DEMONSTRATIONS")
+    sw.para(
+        "The table lists the forward-relevant admission gates. This chapter "
+        "EXECUTES only a selection: D103.3, D103.4(b), P-1 and the isolation of "
+        "FULL_REVAL (an inverted forward stays admitted there). D102.3, "
+        "D103.4(a) and D084 are listed for orientation only: their composition "
+        "cases (repeated UIDs, mixed source rows) are exercised by the "
+        "certification test suites, not by this guide."
+    )
     sw.table(
-        ["gate", "what it refuses"],
+        ["gate", "what it refuses", "executed here"],
         [
             [
                 "D102.3",
-                "a UID whose forward source rows are not all VANILLA_FORWARD_NODE",
+                "a forward-family source row that is not NODE",
+                "no (tests)",
             ],
-            ["D103.3", "TAYLOR/DERIVED forward with an inverted FX leg"],
-            ["D103.4(a)", "TAYLOR/DERIVED forward UID with a non-SPOT non-forward row"],
-            ["D103.4(b)", "TAYLOR/DERIVED forward unless DiscountingMode.NONE"],
-            ["D084", "TAYLOR SPOT position with an inverted FX leg"],
-            ["P-1", "every TAYLOR/SUPPLIED position"],
+            ["D103.3", "DERIVED forward with an inverted FX leg", "yes"],
+            [
+                "D103.4(a)",
+                "DERIVED forward UID with a non-SPOT other row",
+                "no (tests)",
+            ],
+            ["D103.4(b)", "DERIVED forward when the mode is not NONE", "yes"],
+            ["D084", "TAYLOR SPOT with an inverted FX leg", "no (tests)"],
+            ["P-1", "every TAYLOR/SUPPLIED position", "yes"],
         ],
+        align="lll",
     )
     sw.para(
         "Inverted forward. F6 is a BRENT_CRUDE_FWD[M+1] forward with a EUR "
@@ -363,7 +349,7 @@ def main() -> None:
         lambda: run_sensitivities(
             portfolio=inverted.context.portfolio,
             uix_mapper=inverted.context.uix_mapper,
-            market_data=_market_at(
+            market_data=fw.market_at(
                 inverted, {n: np.array([inverted.level(n)]) for n in inverted.names}
             ),
         ),
@@ -426,32 +412,6 @@ def main() -> None:
     checks.done()
 
 
-def _market_at(world: fw.ForwardWorld, levels_by_name):
-    """Production market grids at the given levels (used by the sensitizer)."""
-    from riskquant.market_data.assemble import (
-        build_market_data_matrix_from_flat_levels,
-        build_universe_mapping,
-    )
-
-    layout = build_universe_mapping(
-        static_config=world.rsc,
-        uix_mapper=world.context.uix_mapper,
-        discounting_mode=world.context.discounting_mode,
-    )
-    name_of = {v: k for k, v in world.rsc.rel_name_to_rf_id.items()}
-    flat = np.ascontiguousarray(
-        np.stack([levels_by_name[name_of[int(f)]] for f in layout.required_factor_ids])
-    )
-    return build_market_data_matrix_from_flat_levels(
-        discounting_mode=world.context.discounting_mode,
-        as_of_date=fw.AS_OF,
-        uix_mapper=world.context.uix_mapper,
-        universe_map=layout,
-        flat_levels=flat,
-        num_scenarios=flat.shape[1],
-    )
-
-
 def _expected_first_order(row) -> dict[str, float]:
     """The section-4 partials, written out from the row and today's levels."""
     lv, q = fw.LEVELS, row["quantity"]
@@ -470,18 +430,6 @@ def _expected_first_order(row) -> dict[str, float]:
     if k != "identity":
         out["USDEUR"] = out.get("USDEUR", 0.0) - q * row["strike_price"]
     return out
-
-
-def _leg_scale(row, shocked) -> np.ndarray:
-    """|Q| (|F_s X_a,s| + |K X_k,s|) per scenario (|Q S_s X_s| for a SPOT)."""
-    x = shocked["USDEUR"]
-    if row["instrument"] == "SPOT":
-        return np.abs(row["quantity"] * shocked[row["underlying"]])
-    xa = x if row["settlement_ccy"] == "EUR" else 1.0
-    xk = x if row["settlement_ccy"] == "EUR" else 1.0
-    return abs(row["quantity"]) * (
-        np.abs(shocked[row["underlying"]] * xa) + abs(row["strike_price"]) * np.abs(xk)
-    )
 
 
 if __name__ == "__main__":

@@ -50,7 +50,6 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime as dt
-import importlib
 import json
 import os
 import statistics
@@ -66,7 +65,12 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _forward_world as fw
 
-ch11 = importlib.import_module("11_forward_node_taylor_derived")
+from riskquant.solutions.risk_run.api import run_scenario_var_es
+from riskquant.solutions.risk_run.schemas import MethodologyDeclaration, ReportingSpec
+from riskquant.solutions.scenario_models.api import parse_scenario_model_config
+
+U32 = 2.0**-24  # float32 unit roundoff: the P&L grid stores float32
+HISTORICAL = {"model": "historical", "horizon": 1}
 
 BYTES_PER_CELL_ESTIMATE = 64.0  # per (position, scenario); an ESTIMATE, labelled so
 NODES = (
@@ -118,54 +122,34 @@ def book(num_positions: int, seed: int = 20260115) -> list[dict[str, Any]]:
 
 
 def correctness_gate() -> None:
+    """The chapter-10 book: V0 vs hand formula, then Taylor vs FULL P&L on the
+    SAME production scenarios (the checks chapters 10 and 11 print in full)."""
     rsc = fw.static_config()
     world = fw.build_world(fw.MAIN_BOOK, reporting_ccy="EUR", rsc=rsc)
     v0 = fw.base_value_by_uid(world)
+    base_levels = {n: np.array([fw.LEVELS[n]]) for n in fw.LEVELS}
     for row in fw.MAIN_BOOK:
         hand = fw.hand_value(row, fw.LEVELS)
-        scale = float(
-            ch11._leg_scale(row, {n: np.array([fw.LEVELS[n]]) for n in fw.LEVELS})[0]
-        )
-        if abs(v0[row["uid"]] - hand) > 2.0**-48 * scale:
+        if abs(v0[row["uid"]] - hand) > 2.0**-48 * float(
+            fw.leg_scale(row, base_levels)[0]
+        ):
             raise BenchCheckError(
                 f"FULL_REVAL gate: V0 of uid {row['uid']} != hand formula"
             )
     print(
         "  correctness gate FULL_REVAL      : V0 == hand formula for every row   PASS"
     )
-    names = {v: k for k, v in rsc.rel_name_to_rf_id.items()}
-    sens = ch11.run_sensitivities(
-        portfolio=world.context.portfolio,
-        uix_mapper=world.context.uix_mapper,
-        market_data=ch11._market_at(
-            world, {n: np.array([world.level(n)]) for n in world.names}
-        ),
+    block = fw.certified_taylor_block(world, fw.base_sensitivities(world), v0)
+    shocked = fw.production_shocked_levels(
+        world, scenario_config=parse_scenario_model_config(HISTORICAL)
     )
-    block = ch11.certified_block(world, sens, v0)
-    hist, ids = world.data.values, list(world.data.factor_ids)
-    ret = np.log(hist[1:] / hist[:-1])
-    shocked = {
-        names[int(f)]: world.level(names[int(f)]) * np.exp(ret[:, ids.index(f)])
-        for f in world.axis.factor_ids
-    }
-    full = {u: v - v0[u] for u, v in fw.value_by_uid(world, shocked).items()}
-    prefix = [names[int(f)] for f in world.valuation_factor_ids]
-    result = block.calculator.run(
-        block.calculator.axis.levels(
-            base_levels=np.array([world.level(n) for n in prefix]),
-            shocked_levels=np.ascontiguousarray(np.stack([shocked[n] for n in prefix])),
-        )
-    )
-    uids = result.pnl_matrix.trade_uids.tolist()
+    full, taylor = fw.scenario_pnl_full_and_taylor(world, block, shocked)
+    by_name = {n: shocked[i] for i, n in enumerate(world.names)}
     for row in fw.MAIN_BOOK:
-        t = np.asarray(result.pnl_matrix.pnl, dtype=np.float64)[uids.index(row["uid"])]
-        tol = (
-            8.0 * ch11.U32 * (np.abs(full[row["uid"]]) + ch11._leg_scale(row, shocked))
-        )
-        if not np.all(np.abs(full[row["uid"]] - t) <= tol):
-            raise BenchCheckError(
-                f"TAYLOR gate: uid {row['uid']} Taylor P&L != FULL P&L"
-            )
+        uid = row["uid"]
+        tol = 8.0 * U32 * (np.abs(full[uid]) + fw.leg_scale(row, by_name))
+        if not np.all(np.abs(full[uid] - taylor[uid]) <= tol):
+            raise BenchCheckError(f"TAYLOR gate: uid {uid} Taylor P&L != FULL P&L")
     print(
         "  correctness gate TAYLOR/DERIVED  : Taylor P&L == FULL P&L, every scenario PASS"
     )
@@ -184,21 +168,33 @@ def build(cell: Cell, rsc: Any) -> tuple[fw.ForwardWorld, Any]:
     if cell.path == "full":
         return world, None
     v0 = fw.base_value_by_uid(world)
-    sens = ch11.run_sensitivities(
-        portfolio=world.context.portfolio,
-        uix_mapper=world.context.uix_mapper,
-        market_data=ch11._market_at(
-            world, {n: np.array([world.level(n)]) for n in world.names}
-        ),
-    )
-    return world, ch11.certified_block(world, sens, v0)
+    return world, fw.certified_taylor_block(world, fw.base_sensitivities(world), v0)
 
 
 def execute(cell: Cell, world: fw.ForwardWorld, block: Any) -> Any:
-    uids = world.uids.tolist()
-    if cell.path == "full":
-        return ch11.run(world, full=uids)
-    return ch11.run(world, derived=uids, block=block)
+    """One production call; every position in ONE methodology partition."""
+    uids = world.uids
+    none = np.empty(0, dtype=np.int64)
+    full = cell.path == "full"
+    return run_scenario_var_es(
+        scenario_config=parse_scenario_model_config(HISTORICAL),
+        data=world.data,
+        required_factor_ids=world.axis.factor_ids.copy(),
+        required_shift_type_id=world.axis.shift_type_ids.copy(),
+        proxy_terms=(),
+        base_levels=world.base.copy(),
+        methodology=MethodologyDeclaration(
+            production_position_uids=uids,
+            full_reval_uids=uids if full else none,
+            taylor_supplied_uids=none,
+            taylor_derived_uids=none if full else uids,
+        ),
+        valuation_context=world.context,
+        reporting=ReportingSpec(reporting_ccy=world.reporting_ccy),
+        confidence_level=0.95,
+        batch_size=64,
+        taylor_derived=None if full else block,
+    )
 
 
 def check_run(result: Any, num_positions: int) -> None:

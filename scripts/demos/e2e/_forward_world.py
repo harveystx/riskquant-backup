@@ -37,6 +37,7 @@ Everything is deterministic: fixed as-of date, fixed row order, and a LOCAL
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 from dataclasses import dataclass
 from typing import Any
@@ -46,6 +47,7 @@ import numpy.typing as npt
 import polars as pl
 
 from riskquant.config.enums.discounting_modes import DiscountingMode
+from riskquant.config.proxy_model.compile import compile_proxy_model
 from riskquant.config.static_config.compile import (
     compile_risk_static_config_from_dict_of_dfs,
 )
@@ -65,8 +67,26 @@ from riskquant.market_data.compile import assemble_valuation_state
 from riskquant.market_data.risk_factors.matrix import RiskFactorMatrix
 from riskquant.portfolio.engine import build_uix_mapper
 from riskquant.portfolio.ingest.pipeline import compile_raw_df_into_ingest_batch
+from riskquant.sensitivities.engine import run_sensitivities
+from riskquant.simlab.shocks.axis_operator import lower_axis_operator
+from riskquant.simlab.shocks.linear_term_apply import apply_linear_terms_to_base_levels
 from riskquant.solutions.risk_run.api import derive_run_factor_axis
-from riskquant.solutions.risk_run.schemas import ValuationContext
+from riskquant.solutions.risk_run.schemas import TaylorBlock, ValuationContext
+from riskquant.solutions.scenario_models.api import build_scenario_generator
+from riskquant.solutions.scenario_models.world_columns import bind_operator_to_world
+from riskquant.solutions.sensitivity_pnl.api import SensitivityPnlCalculator
+from riskquant.solutions.sensitivity_pnl.book_adapter import (
+    build_sensitivity_book_spec,
+    derive_taylor_declaration,
+)
+from riskquant.solutions.sensitivity_pnl.taylor_contract import (
+    TaylorBaseBinding,
+    TaylorOrder,
+    base_levels_digest,
+    base_settlement_values_digest,
+    static_config_content_digest,
+    valuation_contract_fingerprint,
+)
 from riskquant.utils.dates import date_to_ord32
 from riskquant.valuation.engine import run_valuation
 
@@ -315,6 +335,161 @@ def value_by_uid(
 def base_value_by_uid(world: ForwardWorld) -> dict[int, float]:
     columns = {n: np.array([world.level(n)]) for n in world.names}
     return {u: float(v[0]) for u, v in value_by_uid(world, columns).items()}
+
+
+# ---- production scenarios ----------------------------------------------------------------
+
+
+def production_shocked_levels(
+    world: ForwardWorld, *, scenario_config: Any, batch_size: int = 64
+) -> npt.NDArray[np.float64]:
+    """(K, S) shocked levels on the run axis from the PRODUCTION scenario path,
+    composed in the order `run_scenario_var_es` composes it (D088):
+
+        compile_proxy_model       authored proxy terms over the run axis (none here)
+        lower_axis_operator       one identity term per axis row
+        bind_operator_to_world    (driver, chart) columns the generator must produce
+        build_scenario_generator  the configured model over the world's history
+        apply_linear_terms_to_base_levels   X = sum beta Y, then the inverse chart
+
+    The same calls as `_spot_world.shocked_levels_for`. Nothing here computes a
+    return or a shock itself."""
+    model = compile_proxy_model(
+        authored_terms=(),
+        static_config=world.rsc,
+        as_of_date=AS_OF,
+        run_axis_rf_ids=world.axis.factor_ids,
+    )
+    operator = lower_axis_operator(
+        model=model,
+        axis_rf_ids=world.axis.factor_ids,
+        axis_shift_type_ids=world.axis.shift_type_ids,
+    )
+    binding = bind_operator_to_world(operator, scenario_config, world.data)
+    generator = build_scenario_generator(scenario_config, data=world.data)
+    chunks = []
+    for batch in generator.iter_batches(
+        driver_rf_ids=binding.request_driver_rf_ids,
+        chart_ids=binding.request_chart_ids,
+        batch_size=batch_size,
+    ):
+        out = np.empty((world.base.shape[0], batch.shocks.shape[0]), dtype=np.float64)
+        apply_linear_terms_to_base_levels(
+            base_levels=world.base,
+            row_term_offsets=operator.row_term_offsets,
+            term_column_uix=binding.term_column_uix,
+            term_loadings=operator.term_loadings,
+            target_shift_types=operator.target_shift_type_ids,
+            shocks=batch.shocks,
+            out=out,
+        )
+        chunks.append(out)
+    return np.ascontiguousarray(np.hstack(chunks), dtype=np.float64)
+
+
+# ---- production Taylor book (shared by chapter 11 and the benchmark) -------------------
+
+
+def base_sensitivities(world: ForwardWorld) -> Any:
+    """Production sensitizer output for every position of the world, at the base."""
+    return run_sensitivities(
+        portfolio=world.context.portfolio,
+        uix_mapper=world.context.uix_mapper,
+        market_data=market_at(
+            world, {n: np.array([world.level(n)]) for n in world.names}
+        ),
+    )
+
+
+def certified_taylor_block(
+    world: ForwardWorld, sens: Any, v0: dict[int, float]
+) -> TaylorBlock:
+    """Certify `sens` at the run's exact base, SECOND_ORDER_FULL, and compile it
+    on the run's valuation prefix (D082, D086)."""
+    uids = np.unique(np.asarray(sens.position_uids, dtype=np.int64))
+    binding = TaylorBaseBinding(
+        as_of_ord32=int(date_to_ord32(AS_OF)),
+        base_levels_digest=base_levels_digest(
+            factor_ids=world.axis.factor_ids, base_levels=world.base
+        ),
+        discounting_mode=world.context.discounting_mode.value,
+        static_config_digest=static_config_content_digest(world.rsc),
+        valuation_contract_fingerprint=valuation_contract_fingerprint(),
+        base_settlement_values_digest=base_settlement_values_digest(
+            position_uids=uids, values=np.array([v0[int(u)] for u in uids])
+        ),
+    )
+    spec = build_sensitivity_book_spec(
+        sensitivities=sens, required_factor_ids=world.valuation_factor_ids
+    )
+    spec = dataclasses.replace(
+        spec,
+        taylor_declaration=derive_taylor_declaration(
+            sensitivities=sens,
+            order=TaylorOrder.SECOND_ORDER_FULL,
+            base_binding=binding,
+        ),
+    )
+    return TaylorBlock(calculator=SensitivityPnlCalculator.compile(spec))
+
+
+def market_at(
+    world: ForwardWorld, levels_by_name: dict[str, npt.NDArray[np.float64]]
+) -> Any:
+    """Production market grids at the given levels (one column per scenario)."""
+    layout = build_universe_mapping(
+        static_config=world.rsc,
+        uix_mapper=world.context.uix_mapper,
+        discounting_mode=world.context.discounting_mode,
+    )
+    name_of = {v: k for k, v in world.rsc.rel_name_to_rf_id.items()}
+    flat = np.ascontiguousarray(
+        np.stack([levels_by_name[name_of[int(f)]] for f in layout.required_factor_ids])
+    )
+    return build_market_data_matrix_from_flat_levels(
+        discounting_mode=world.context.discounting_mode,
+        as_of_date=AS_OF,
+        uix_mapper=world.context.uix_mapper,
+        universe_map=layout,
+        flat_levels=flat,
+        num_scenarios=flat.shape[1],
+    )
+
+
+def scenario_pnl_full_and_taylor(
+    world: ForwardWorld, block: TaylorBlock, shocked: npt.NDArray[np.float64]
+) -> tuple[dict[int, npt.NDArray[np.float64]], dict[int, npt.NDArray[np.float64]]]:
+    """Settlement-currency scenario P&L per UID from the SAME (K, S) shocked
+    levels: production full revaluation, and the production Taylor calculator."""
+    v0 = base_value_by_uid(world)
+    by_name = {n: shocked[i] for i, n in enumerate(world.names)}
+    full = {u: v - v0[u] for u, v in value_by_uid(world, by_name).items()}
+    k = world.axis.num_valuation_factors
+    market = block.calculator.axis.levels(
+        base_levels=world.base[:k], shocked_levels=np.ascontiguousarray(shocked[:k])
+    )
+    result = block.calculator.run(market)
+    uids = result.pnl_matrix.trade_uids.tolist()
+    pnl = np.asarray(result.pnl_matrix.pnl, dtype=np.float64)
+    taylor = {int(u): pnl[uids.index(u)] for u in full}
+    return full, taylor
+
+
+def leg_scale(row: dict[str, Any], levels: dict[str, npt.NDArray[np.float64]]) -> Any:
+    """|Q| (|F X_a| + |K X_k|) at the given levels (|Q S X| for a SPOT): the
+    magnitude the float rounding of V is proportional to."""
+    usdeur = levels["USDEUR"]
+    if row["instrument"] == "SPOT":
+        x = usdeur if row["settlement_ccy"] == "EUR" else 1.0
+        return np.abs(row["quantity"] * levels[row["underlying"]] * x)
+    und_ccy = UNDERLYING_CCY[_family(row["underlying"])]
+    o_a = fx_leg(und_ccy, row["settlement_ccy"])[0]
+    o_k = fx_leg(row["strike_ccy"], row["settlement_ccy"])[0]
+    x_a = {"identity": 1.0, "direct": usdeur, "inverted": 1.0 / usdeur}[o_a]
+    x_k = {"identity": 1.0, "direct": usdeur, "inverted": 1.0 / usdeur}[o_k]
+    return abs(row["quantity"]) * (
+        np.abs(levels[row["underlying"]] * x_a) + abs(row["strike_price"]) * np.abs(x_k)
+    )
 
 
 # ---- independent hand formula (NONE: every discount factor is 1) ----------------------
