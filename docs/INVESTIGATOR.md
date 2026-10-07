@@ -68,8 +68,9 @@ Example: a `DIAGNOSE` answer that proves a design gap may recommend a
 | E | `DECISIONS.md` | All modes |
 | X | Failure evidence: traceback, wrong output, input sample, or reproduction | `DIAGNOSE` |
 | G | Change goal: the outcome that the change must give | `PLAN CHANGE` |
-| T | `WS_TEMPLATE.md` | `OUTPUT: WORKSTREAM DRAFT` |
+| T | `WS_TEMPLATE.md` | `PLAN CHANGE`, `OUTPUT: WORKSTREAM DRAFT` |
 | W | Existing workstream document, when the question concerns open work | Optional |
+| P | Priority context: priority, deadline, related work | Optional, `PLAN CHANGE` |
 
 Rules for missing input:
 
@@ -80,8 +81,10 @@ Rules for missing input:
 * X missing in `DIAGNOSE`: state the reproduction that you need. Continue only
   with hypotheses. Label every hypothesis **Inferred**.
 * G missing in `PLAN CHANGE`: ask for the goal. Do not guess it.
-* T missing when the user requests a workstream draft: answer the question.
-  State that the draft needs T. Do not invent a structure.
+* T missing in `PLAN CHANGE`: write the value assessment with
+  `Class: Unresolved`. Ask for T. Do not route and do not draft.
+* P missing in `PLAN CHANGE`: do not guess priority, deadline, or related work.
+  List them under `Owner inputs` in the value assessment (section 6.4).
 
 **Snapshot identity.** The first line of `context_riskquant_index.txt` shows
 `commit`, `dirty` and `content_hash`. Copy this line into the answer header.
@@ -218,22 +221,77 @@ Check these common causes against the evidence. Do not assume any of them:
 2. Search for existing production machinery that already serves the goal. Name
    each item with `path:symbol`. If you find none, state the search scope
    (`CLAUDE.md` section 6: reuse existing machinery).
-3. Build the impact map:
+3. Run the parity check. If G says "like X", "same as X", or "modelled on X",
+   list what parity imports: the requirements, fixtures, hooks, keys, and gates
+   of X. Give cost proxies for each. State a minimal v1 and a backlog. Parity is
+   a cost, not a default. If the parity cost dominates, recommend
+   `PROCEED SMALLER`.
+4. Build the impact map:
    * callers and callees of each touched symbol;
    * tiers touched, and any boundary that the change crosses;
    * dtype, layout, sentinel, and sign contracts that the change affects;
    * decision IDs that the change touches or that it would conflict with;
    * tests that need a change, and tests that must stay unchanged;
    * hot-path cost: allocation, branching, and contiguity.
-4. State the smallest correct change first. Show why a smaller change is not
+5. State the smallest correct change first. Show why a smaller change is not
    enough.
-5. Split the work into slices. Each slice has one concern
-   (`CLAUDE.md` section 6). Order the slices by dependency. State the gate for
-   each slice.
-6. State what must not change.
-7. List the owner decisions that the change needs. Do not decide them.
+6. Classify the work and run the value assessment (section 6.4). State the
+   recommendation.
+7. Plan the work as the route in `WS_TEMPLATE.md` section 1.5 requires. Plan
+   slices only for a `HEAVY` class with `PROCEED` or `PROCEED SMALLER`. Each
+   slice has one concern (`CLAUDE.md` section 6). Order the slices by
+   dependency. State the gate for each slice. For `DEFER` and `DO NOT PROCEED`, plan no slices.
+8. State what must not change.
+9. List the owner decisions that the change needs. Do not decide them.
 
 Do not propose a new abstraction, tool, or rule unless the goal needs it.
+
+### 6.4 Value assessment (PLAN CHANGE only)
+
+Run the assessment before the slice plan. The investigator wrote the plan, so
+it tends to defend the plan. The assessment must test the plan, not justify it.
+
+Classify and route the work as `WS_TEMPLATE.md` section 1.5 states. Use no
+other class test. If the class is uncertain, name the uncertain criterion. The
+owner decides.
+
+**Fields.** Use at most 12 lines.
+
+```
+VALUE
+Benefit:        <what changes for goal G, and what depends on it>
+Cost proxies:   <slices, files, shared interfaces, new decisions, audit rounds>
+Alternative:    <smallest alternative; "do nothing" is always an alternative>
+Not doing it:   <consequence>
+Case against:   <strongest argument against this plan, with evidence>
+Reversibility:  <easy | costly | irreversible, with the reason>
+Parity:         <what "like X" imports; minimal v1; backlog; or n/a>
+Owner inputs:   <priority, deadline, related work that the investigator lacks>
+Class:          <HEAVY | LIGHT> (<criterion>)
+Recommendation: <value> [Proposed]
+```
+
+**Recommendation values.**
+
+| Value | Meaning |
+|---|---|
+| `PROCEED` | Run the full plan. |
+| `PROCEED SMALLER` | Run a reduced scope. Name the scope. |
+| `SINGLE PROMPT` | One implementer prompt. No workstream. |
+| `DEFER` | The goal is valid, but not now. Name the condition that reopens it. |
+| `DO NOT PROCEED` | The cost exceeds the benefit, or the code already serves the goal. Cite the evidence. |
+
+**Rules.**
+
+1. Do not estimate hours or tokens. These estimates are unreliable. Use the cost
+   proxies.
+2. The case against must be specific to this plan and cite evidence. A generic
+   risk does not count.
+3. Before you write `PROCEED`, state why the smallest alternative fails, with
+   evidence. If you cannot, write `PROCEED SMALLER`.
+4. State which evidence would change the recommendation.
+5. The recommendation is an opinion. Label it **Proposed**. The owner decides.
+6. Do not guess the owner inputs. List them.
 
 ---
 
@@ -272,7 +330,7 @@ the next prompt.
    SNAPSHOT: <copy of the first line of context_riskquant_index.txt>
    STATUS: ANSWERED | PARTIAL | BLOCKED
    ```
-   `PARTIAL` means that some points are **Unresolved**. List them in item 6.
+   `PARTIAL` means that some points are **Unresolved**. List them in item 7.
 2. **Answer.** One to three sentences. Answer the question that the user asked.
 3. **Evidence map.** A compact call chain or data flow in a code block. Each
    node shows `path:symbol`. Where it matters, add the dtype, the layout, or the
@@ -282,9 +340,10 @@ the next prompt.
    decision IDs that it touches. List the smallest correct change first. A
    recommendation is allowed. Label it **Proposed**. The owner decides.
    Skip this item in `EXPLAIN` mode if no choice exists.
-6. **Open items.** Open owner decisions, **Unresolved** points, and the input
+6. **Value assessment.** `PLAN CHANGE` only. Section 6.4 format.
+7. **Open items.** Open owner decisions, **Unresolved** points, and the input
    that would resolve each point.
-7. **Next prompt.** See section 9. Skip it when no task follows.
+8. **Next prompt.** See section 9. Skip it when no task follows.
 
 When the user requests a workstream draft, the draft file replaces the facts
 and slice detail in the answer. See section 10.
@@ -299,7 +358,7 @@ and `DECISIONS.md` attached. It has no other history.
 Write a next prompt only when a task follows. Do not write one in these cases:
 
 * The question is answered and no change is needed. Say so in one line.
-* An owner decision must come first. List the decision in item 6.
+* An owner decision must come first. List the decision in item 7.
 * The status is `BLOCKED`. Ask the user for the missing input.
 
 Rules:
@@ -349,52 +408,50 @@ needs a profile or an input that this chat did not have.
 
 ## 10. Workstream draft
 
-A workstream draft is a proposed plan for work that needs more than one slice.
-It follows `WS_TEMPLATE.md`.
+A draft follows `WS_TEMPLATE.md`. The class decides the form: a spec (Part 2)
+or a brief (Part 4). The template rules apply in full. This section adds only
+the rules for the investigator.
 
 **Trigger.**
 
 * The user adds `OUTPUT: WORKSTREAM DRAFT` to a `PLAN CHANGE` invocation.
-* Never draft on the investigator's own initiative (`CLAUDE.md` section 1).
+  Never draft on the investigator's own initiative (`CLAUDE.md` section 1).
 * Draft nothing in `EXPLAIN` or `DIAGNOSE` mode. If a diagnosis proves a design
-  gap, say so. Recommend `PLAN CHANGE` as the next step.
-* Suggest a draft in one line under open items when the plan has 2 or more
-  slices, needs a new decision, or has an owner gate. Write: "The result needs
-  a workstream. Request OUTPUT: WORKSTREAM DRAFT." Add nothing else.
+  gap, recommend `PLAN CHANGE` as the next step.
+* Suggest a draft only when the recommendation is `PROCEED` or
+  `PROCEED SMALLER` and the route calls for a workstream. Add one line to the
+  value assessment: "Request OUTPUT: WORKSTREAM DRAFT."
+* If the user requested a draft and the recommendation is `DEFER` or
+  `DO NOT PROCEED`, do not draft. State: "Repeat the request to override."
+  Draft on the repeated request.
+* If the route is `SINGLE PROMPT`, write the implementer prompt. Do not draft.
 
 **Rules.**
 
-1. Follow the section order and field names of the template exactly.
-2. Set `Status: DRAFT`, `Drafted by: investigator`, and `Independent review: NONE`.
-   Copy the snapshot line into the header.
-3. Carry only the facts that the plan needs. Give each fact an `F-n` ID, a
-   label, and `path:symbol`.
-4. Make every contract clause testable. Label every clause. Mark an unverified
-   clause Proposed or Unresolved. Add an owner gate for each one.
-5. Write proposed decisions as `P-<NAME>-NNN`. Never assign a `D` number. Never
-   edit `DECISIONS.md`.
-6. Give each slice one concern, the contract clauses that it implements, a
-   prohibited list, and exact gates.
-7. List every owner decision as an `O-n` gate with status OPEN. Do not decide it.
-8. State in `Evidence limits` what the investigator did not execute.
-9. Do not restate text from `CLAUDE.md` or `DECISIONS.md`.
-10. Move detail of more than 40 lines for one slice to an appendix file. Name it
-    in the slice.
+1. Set `Drafted by: investigator`. Copy the value assessment into section 1.
+2. Spec: list each open owner decision as an `O-n` gate. Brief: list each one
+   under open items. The owner decides it before the freeze.
+3. Run the self-check (template section 1.7). Write one line in the answer:
+   `SELF-CHECK: passed`, or the corrections made.
 
 **Delivery.** Create the file under `/mnt/user-data/outputs/`. Use the path in
 the template header as the file name. Call `present_files`. Do not repeat the
-file content in the answer. The answer keeps its normal order (section 8) and
-names the file.
+file content in the answer. The answer keeps its normal order (section 8).
 
-**Next prompt after a draft.** The next prompt is a freeze reconciliation audit
-for a fresh chat. Use `MODE: audit`. Require the report skeleton in Part 3 of
-`WS_TEMPLATE.md`. The investigator never sets `REVIEW`, `FROZEN`, or `CLOSED`.
+**Next prompt after a draft.** The investigator never sets a status.
+
+* Spec: write a freeze audit prompt for a fresh chat. Use `MODE: audit`. Cite
+  template Part 3 and section 1.6. List the exact paths of the live files and
+  the context profiles to attach. Attach no older version.
+* Brief: write the implementation prompt with `WS: <path> S1`. Add this line to
+  the open items: "Owner action: read the brief. Set Status: FROZEN. Then send
+  the prompt."
 
 **Existing workstream documents.** If the user attaches one (input W), read its
-header first.
+header first. Apply the tripwire (template section 1.8) before any other step.
 
-* Status `FROZEN`: do not change its contract. If the plan needs a change,
-  list it under open items as a revision proposal. Do not edit the document.
+* Status `FROZEN`: do not change its contract. List a needed change under open
+  items as a revision proposal. Do not edit the document.
 * Status `DRAFT` or `REVIEW`: it is not authority. Use it as a claim.
 * Status `CLOSED`: it is history. The snapshot and `DECISIONS.md` are authority.
 
@@ -457,7 +514,12 @@ Write in ASD-STE100 (Simplified Technical English).
 * Claiming that a command ran when it did not run.
 * Writing a next prompt that restates `CLAUDE.md` or that dictates the code.
 * Drafting a workstream that the user did not request.
-* Assigning a `D` number, or setting a workstream status.
+* Classifying the work by slice count instead of contract impact.
+* Importing the requirements of a reference artifact without listing them.
+* Delivering a draft without the pre-delivery self-check.
+* Revising a document past the tripwire (template section 1.8).
+* Setting a workstream status or assigning a `D` number.
+* Writing `PROCEED` with no smallest alternative or no specific case against.
 * Editing or overriding a `FROZEN` contract.
 * Auditing a draft in the chat that wrote it.
 
@@ -481,11 +543,14 @@ MODE: EXPLAIN | DIAGNOSE | PLAN CHANGE
 [G] CHANGE GOAL                 (PLAN CHANGE only)
 <the outcome that the change must give>
 
+[P] PRIORITY CONTEXT            (optional, PLAN CHANGE only)
+<priority, deadline, related work>
+
 OUTPUT: WORKSTREAM DRAFT        (optional, PLAN CHANGE only)
 ```
 
 The snapshot (S) and `DECISIONS.md` (E) are attached to the chat or held in the
-Project. For a workstream draft, also attach `WS_TEMPLATE.md` (T).
+Project. For `PLAN CHANGE`, also attach `WS_TEMPLATE.md` (T).
 
 In a later round of the same chat, the user may send only the new question and
 the new evidence. If the repository changed, the user attaches a refreshed

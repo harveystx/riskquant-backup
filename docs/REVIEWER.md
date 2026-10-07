@@ -45,7 +45,7 @@ Required on every review turn:
 | C | Changed files, or a refreshed context snapshot | Code state |
 | D | Raw gate output | Executed evidence |
 | E | `DECISIONS.md` | Locked intent |
-| F | Workstream document named by A (only when A contains `WS:`) | Slice scope and contract |
+| F | Live workstream document named by A (only when A contains `WS:`) | Slice scope and contract |
 
 Rules for missing input:
 
