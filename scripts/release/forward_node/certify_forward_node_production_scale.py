@@ -42,6 +42,15 @@ performance
     Wall time of each first run, process peak RSS and host physical memory are
     recorded. A measurement that fails is FAIL. There is no limit.
 
+decisions
+    The numeric checks above certify D044, D101.4, D102 and D103. The
+    certificate certifies D066 and D101.3 at admission only: ingest admits the
+    discount linkage and the absent delivery date, and the run prices the rows.
+    DiscountingMode.NONE gives DF = 1 and the oracle has no DF input, so no
+    numeric check depends on the linked curve or the asset-leg discount date.
+    D103.4 and D103.6 require NONE for TAYLOR/DERIVED. The field
+    `admission_only_reason` records this reason in the certificate.
+
 The certificate is written beside this script:
 
     scripts/release/forward_node/forward_node_production_scale_certificate.json
@@ -103,6 +112,21 @@ CERTIFICATE_PATH: Final[pathlib.Path] = (
     .with_name("forward_node_production_scale_certificate.json")
 )
 PASS, FAIL, NOT_EXECUTED = "PASS", "FAIL", "NOT EXECUTED"
+# Coverage class per decision. DiscountingMode.NONE (required for TAYLOR/DERIVED
+# by D103.4 and D103.6) makes every DF equal 1, so the numeric checks cannot
+# detect a wrong discount curve (D066) or a wrong asset-leg discount date
+# (D101.3). Those decisions are certified by ingest admission only.
+DECISIONS: Final[dict[str, Any]] = {
+    "numeric_checks": ["D044", "D101.4", "D102", "D103"],
+    "admission_only": ["D066", "D101.3"],
+    "admission_only_reason": (
+        "DiscountingMode.NONE gives DF = 1 on every leg and the oracle has no DF"
+        " input (D103.4 and D103.6 require NONE for TAYLOR/DERIVED), so no"
+        " numeric check depends on the linked discount curve (D066) or on the"
+        " asset-leg discount date (D101.3); ingest admits these rows and the"
+        " run prices them"
+    ),
+}
 _PROBE_SIZE: Final[int] = 1 << 16
 
 F64: TypeAlias = npt.NDArray[np.float64]
@@ -578,7 +602,7 @@ def environment() -> dict[str, Any]:
 def main() -> int:
     certificate: dict[str, Any] = {
         "certificate": "VANILLA_FORWARD_NODE production scale",
-        "decisions": ["D044", "D066", "D101", "D102", "D103"],
+        "decisions": DECISIONS,
         "environment": environment(),
     }
     try:

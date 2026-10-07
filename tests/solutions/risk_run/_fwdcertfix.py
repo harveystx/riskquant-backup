@@ -35,9 +35,12 @@ even. FX legs (USDEUR quotes EUR per USD; every underlying is USD-quoted):
                     (USD,EUR) is the inverted strike leg, FULL_REVAL only (D103.3)
     TAYLOR/DERIVED  (settle, strike) cycles (USD,USD) (EUR,USD) (EUR,EUR)
 
-Each leg uses the discount curve of its own currency (D066). Exact NODE rows
-omit `delivery_date` on every third position (D101.3). Relative NODE rows carry
-a delivery date inside the resolved contract period (D101.4, D065).
+Each leg links the discount curve of its own currency, so ingest admits the
+row under D066. Exact NODE rows omit `delivery_date` on every third position,
+so ingest admits them under D101.3. DiscountingMode.NONE gives DF = 1 and the
+oracle has no DF input, so the numeric checks on this world do not cover D066
+or D101.3: this world exercises both decisions at admission only. Relative NODE
+rows carry a delivery date inside the resolved contract period (D101.4, D065).
 
 `ORACLE_ROWS` is written from the raw generation data, never from compiled
 state. The TAYLOR/DERIVED book is produced on the U_D sub-batch at the run
