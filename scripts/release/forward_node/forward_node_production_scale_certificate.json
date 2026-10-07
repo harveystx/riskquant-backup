@@ -1,0 +1,170 @@
+{
+  "certificate": "VANILLA_FORWARD_NODE production scale",
+  "correctness": {
+    "filtered_bootstrap": {
+      "entries": 201,
+      "entries_outside_tolerance": 0,
+      "first_failed_entries": [],
+      "max_es_error_over_tolerance": 0.3257909058061591,
+      "max_var_error_over_tolerance": 0.36675987092735823,
+      "ok": true,
+      "portfolio_es": -10539.50719569437,
+      "portfolio_var": -9713.11239851596,
+      "scenarios": 2000
+    },
+    "filtered_historical": {
+      "entries": 201,
+      "entries_outside_tolerance": 0,
+      "first_failed_entries": [],
+      "max_es_error_over_tolerance": 0.2419786205137257,
+      "max_var_error_over_tolerance": 0.3571767632574123,
+      "ok": true,
+      "portfolio_es": -10432.26934685645,
+      "portfolio_var": -9713.11239851596,
+      "scenarios": 599
+    },
+    "historical": {
+      "entries": 201,
+      "entries_outside_tolerance": 0,
+      "first_failed_entries": [],
+      "levels": {
+        "axis_rows": 140,
+        "first_failed_rows": [],
+        "max_level_error_over_tolerance": 0.0,
+        "ok": true,
+        "rows_outside_tolerance": 0
+      },
+      "max_es_error_over_tolerance": 0.21533130690020516,
+      "max_var_error_over_tolerance": 0.3320197471943314,
+      "ok": true,
+      "portfolio_es": -10663.03059293193,
+      "portfolio_var": -9826.3542933547,
+      "scenarios": 599
+    },
+    "parametric": {
+      "entries": 201,
+      "entries_outside_tolerance": 0,
+      "first_failed_entries": [],
+      "max_es_error_over_tolerance": 0.07068956948172482,
+      "max_var_error_over_tolerance": 0.2816964807350382,
+      "ok": true,
+      "portfolio_es": -16942.22591223693,
+      "portfolio_var": -13543.302577884742,
+      "scenarios": 2000
+    },
+    "sbb": {
+      "entries": 201,
+      "entries_outside_tolerance": 0,
+      "first_failed_entries": [],
+      "max_es_error_over_tolerance": 0.18197722963846974,
+      "max_var_error_over_tolerance": 0.33573216117848487,
+      "ok": true,
+      "portfolio_es": -10666.17395591954,
+      "portfolio_var": -9923.151320965853,
+      "scenarios": 2000
+    }
+  },
+  "decisions": [
+    "D044",
+    "D066",
+    "D101",
+    "D102",
+    "D103"
+  ],
+  "determinism": {
+    "claim_a_numba_multi_thread_execution": true,
+    "claim_b_multi_core_hardware": true,
+    "effective_cpus": 12,
+    "effective_cpus_source": "GetProcessAffinityMask",
+    "models": {
+      "filtered_bootstrap": {
+        "ok": true,
+        "one_vs_n_threads_bitwise_equal": true,
+        "repeat_bitwise_equal": true
+      },
+      "filtered_historical": {
+        "ok": true,
+        "one_vs_n_threads_bitwise_equal": true,
+        "repeat_bitwise_equal": true
+      },
+      "historical": {
+        "ok": true,
+        "one_vs_n_threads_bitwise_equal": true,
+        "repeat_bitwise_equal": true
+      },
+      "parametric": {
+        "ok": true,
+        "one_vs_n_threads_bitwise_equal": true,
+        "repeat_bitwise_equal": true
+      },
+      "sbb": {
+        "ok": true,
+        "one_vs_n_threads_bitwise_equal": true,
+        "repeat_bitwise_equal": true
+      }
+    },
+    "observed_workers_at_1_thread": 1,
+    "observed_workers_at_n_threads": 12,
+    "requested_threads": 12,
+    "threading_layer": "omp"
+  },
+  "environment": {
+    "numba": "0.66.0",
+    "numpy": "2.4.6",
+    "os_cpu_count": 12,
+    "platform": "Windows-10-10.0.26200-SP0",
+    "polars": "1.42.1",
+    "python": "3.11.9"
+  },
+  "performance": {
+    "errors": [],
+    "host_physical_memory_bytes": 34017017856,
+    "peak_rss_bytes": 287494144,
+    "wall_s": {
+      "filtered_bootstrap": 1.31764430005569,
+      "filtered_historical": 0.13677829992957413,
+      "historical": 0.21735729998908937,
+      "parametric": 0.8479635999538004,
+      "sbb": 0.6861503000836819
+    }
+  },
+  "verdict": {
+    "correctness": "PASS",
+    "determinism": "PASS",
+    "exit_code": 0,
+    "performance": "PASS"
+  },
+  "world": {
+    "axis_charts": {
+      "DIFFERENCE": 45,
+      "LOG_RETURN": 49,
+      "SIMPLE_RETURN": 46
+    },
+    "axis_points": 140,
+    "batch_size": 256,
+    "confidence_level": 0.99,
+    "discounting": "NONE",
+    "exact_node_positions": 196,
+    "exact_without_delivery": 66,
+    "full_reval_positions": 100,
+    "fx_asset_leg": {
+      "direct": 116,
+      "identity": 84,
+      "inverted": 0
+    },
+    "fx_strike_leg": {
+      "direct": 58,
+      "identity": 117,
+      "inverted": 25
+    },
+    "history_rf_ids": 250,
+    "observations": 600,
+    "positions": 200,
+    "relative_node_positions": 4,
+    "reporting_ccy": "USD",
+    "spot_release_positions": 200,
+    "stochastic_scenarios": 2000,
+    "taylor_derived_positions": 100,
+    "valuation_prefix": 140
+  }
+}

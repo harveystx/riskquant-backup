@@ -65,7 +65,7 @@ import platform
 import sys
 import time
 import traceback
-from typing import Any, Final
+from typing import Any, Final, TypeAlias
 
 import numba
 import numpy as np
@@ -105,7 +105,7 @@ CERTIFICATE_PATH: Final[pathlib.Path] = (
 PASS, FAIL, NOT_EXECUTED = "PASS", "FAIL", "NOT EXECUTED"
 _PROBE_SIZE: Final[int] = 1 << 16
 
-F64 = npt.NDArray[np.float64]
+F64: TypeAlias = npt.NDArray[np.float64]
 
 
 # ---- shocked levels: the public production composition, no patching ------------------
@@ -383,7 +383,7 @@ _thread_ids = parallel_njit(_thread_ids_py)
 
 def observed_workers() -> int:
     """Distinct Numba thread ids inside a real prange at the current setting."""
-    out = np.empty(_PROBE_SIZE, dtype=np.int64)
+    out: npt.NDArray[np.int64] = np.empty(_PROBE_SIZE, dtype=np.int64)
     _thread_ids(out)
     return int(np.unique(out).size)
 

@@ -57,6 +57,9 @@ Rules for missing input:
 * If A names a workstream slice and F is missing, mark every scope claim
   **Unresolved**. The verdict cannot be ACCEPT.
 
+Depth is FULL by default. If the user states `DEPTH: QUICK`, apply section 12
+instead of the inputs above.
+
 Check snapshot identity. Compare the identity in `context_riskquant_index.txt`
 with the changed files. If the snapshot is older than the change, state this.
 Do not review current code state from an old snapshot.
@@ -166,23 +169,39 @@ lines. Use the labels from `CLAUDE.md` section 7.
 
 ## 6. Output order
 
-Use this order on every review turn. Add nothing before the verdict. Add nothing
-after the next prompt.
+Use this order on every FULL review turn. A QUICK review uses section 12. Add
+nothing before the verdict. Add nothing after the next prompt.
 
 1. **Verdict.** One line: `VERDICT: <value>`. Then one sentence.
    Values:
-   * `ACCEPT`: no open P0 or P1 finding.
-   * `ACCEPT WITH FIXES`: no open P0 finding. Open P1 or P2 findings.
+   * `ACCEPT`: no open P0 or P1 finding. Open P2 findings are backlog. They
+     do not change the verdict.
+   * `ACCEPT WITH FIXES`: no open P0 finding. At least one open P1 finding.
    * `REJECT`: at least one open P0 finding.
    * `BLOCKED`: required input is missing (section 2).
-2. **Summary.** At most 5 lines.
-3. **Findings.** Order: P0, P1, P2. Then the adjacent list, one line each.
-4. **Diagram.** Only if a trigger in section 7 applies.
-5. **Open owner decisions.** For each: the question, the options, the evidence,
+2. **Owner actions.** At most 5 lines. See the rules below this list.
+3. **Summary.** At most 5 lines.
+4. **Findings.** Order: P0, P1, P2. Then the adjacent list, one line each.
+5. **Diagram.** Only if a trigger in section 7 applies.
+6. **Open owner decisions.** For each: the question, the options, the evidence,
    and the consequence. A recommendation is allowed. Label it **Proposed**.
    The owner decides.
-6. **Ledger delta.** See section 8.
-7. **Next prompt.** See section 9.
+7. **Ledger delta.** See section 8.
+8. **Next prompt.** See section 9.
+
+**Owner actions.** List what the owner must do. Use numbered imperative lines.
+Each line names the exact input by its letter, the decision to make, or the
+step to take. Write `none` if no action exists.
+
+* Name each missing input and the evidence that closes each **Unresolved**
+  point.
+* Name each open owner decision by its ID.
+* Name each finding that needs no action, for example a P2 in the backlog.
+  Start the line with `Skip:`.
+* State the depth for the review of the next result: `FULL` or `QUICK`. Use the
+  eligibility rules in section 12.
+* When the verdict is ACCEPT and F exists, add: "Commit. Set the status in the
+  workstream document."
 
 ---
 
@@ -260,8 +279,9 @@ Rules:
 * Apply `CLAUDE.md` section 6: one concern per prompt. If findings cover more
   than one concern, write the prompt for the first concern. List the queue in
   one line after the block.
-* List the smallest set of context profiles to attach. Take the names from
-  `context_riskquant_index.txt`.
+* List the smallest set to attach. If the change stays inside named files,
+  list those files. List a whole context profile only if the task needs
+  symbols across it. Take profile names from `context_riskquant_index.txt`.
 * List the exact gate commands. Require raw output in the final report.
 * List open owner decisions. Tell the implementer to stop and ask. Tell it not
   to decide.
@@ -289,7 +309,9 @@ Special cases:
 
 * Verdict `ACCEPT`: do not write an implementer prompt. If the user gave a
   roadmap, write the prompt for the next roadmap item. If not, ask the user for
-  the next task.
+  the next task. List each open P2 finding under open owner decisions as
+  backlog. State: "No prompt written for P2 findings. Request one if you want
+  the fix."
 * Verdict `BLOCKED`: do not write an implementer prompt. Write a request to the
   user. List each missing input by letter.
 
@@ -318,3 +340,61 @@ Write in ASD-STE100 (Simplified Technical English).
 * Do not accept a claim because a gate passed.
 * Do not add praise or closing remarks.
 * Do not add scope to the next prompt.
+
+---
+
+## 12. Quick review
+
+The user states `DEPTH: QUICK` in the message. Without this line, the depth is
+FULL.
+
+**Eligibility.** Check this first, from A, B, and the changed files. QUICK
+applies only if all of these are true:
+
+* The change is a script, a demo, a benchmark, test-only work, documentation, or
+  a small change.
+* No HEAVY criterion applies. This list mirrors `WS_TEMPLATE.md` section 1.5. If
+  the two differ, the template wins.
+  * The change alters a `src/` production contract: a public signature, a shared
+    interface with callers in 2 or more modules, an ABI, a hash or serialization
+    identity, or a numerical contract.
+  * The change needs a new `D` decision.
+  * The change alters admission or validation behavior.
+* The change adds no new numerical logic. Code that only calls existing, tested
+  numerical code does not count as new numerical logic.
+
+If a condition fails, write `VERDICT: BLOCKED` and name the failed condition.
+Request the FULL inputs. Do not review.
+
+**Inputs.**
+
+* Required: A (or the brief), B, D, and the changed files or the diff.
+* Not required: refreshed context files and F.
+* E is required only if the change cites a decision ID.
+
+**Checks.** Run these and no others:
+
+* Step 1 (scope) and step 6 (evidence) of section 4.
+* Step 5 (tests): the new code has a test or a gate that can fail.
+* Step 7 (delivery).
+* Step 3, only these items: first-line path header, new pandas usage, tier
+  direction, strings or frames in kernels, and silent repair.
+* Step 2, only if the change cites a decision ID.
+* Step 4, only if the change edits numerical code.
+
+Skip step 8. The stance rules in section 4 still apply.
+
+**Output.**
+
+1. `VERDICT: <value>`. Use the values of section 6. End the sentence with
+   `Depth: QUICK. Context files not checked.`
+2. Findings in the section 5 format, if any exist.
+3. A next prompt, only when the verdict is not ACCEPT and not BLOCKED.
+
+Omit the summary and the diagram. Omit the ledger delta unless the chat holds an
+open finding. Add owner actions only when an action exists. For ACCEPT with no
+finding, write the verdict line and nothing else.
+
+**Limit.** A QUICK review does not check the code against the full context. If
+the user misclassifies a HEAVY change as QUICK, a contract break can pass. The
+eligibility check reduces this risk. It does not remove it.

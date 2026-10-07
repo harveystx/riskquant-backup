@@ -50,7 +50,7 @@ import dataclasses
 import datetime as dt
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Final
+from typing import Any, Final, TypeAlias
 
 import numpy as np
 import numpy.typing as npt
@@ -165,7 +165,7 @@ _SEED: Final[int] = 20261007
 
 IDENTITY, DIRECT, INVERTED = "identity", "direct", "inverted"
 
-F64 = npt.NDArray[np.float64]
+F64: TypeAlias = npt.NDArray[np.float64]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
