@@ -112,6 +112,8 @@ A prompt that contains `WS: <path> S<n>` makes the contract clauses named in
   implementer reports this and stops.
 * An audit task may read a `DRAFT` or `REVIEW` document.
 * A prompt may narrow the slice. A prompt never widens it.
+* The standard implementation prompt form is in `WORKFLOW.md` section 3. It takes
+  its attach list from the `Attach:` field of the slice.
 
 ### 1.5 Weight classes
 
@@ -185,7 +187,8 @@ brief.
 3. **Contradictions.** Compare every gate and every prohibition with every
    clause and every owner decision. A gate must not forbid what a clause uses.
 4. **Tests.** Every clause names a test or a gate that exists in a slice.
-5. **References.** Every referenced ID (C, F, O, S, P, D) exists.
+5. **References.** Every referenced ID (C, F, O, S, P, D) exists. Every slice
+   has an `Attach:` field with exact paths.
 6. **Result.** Report `SELF-CHECK: passed`, or list the corrections made.
 
 ### 1.8 Effort tripwire
@@ -296,6 +299,7 @@ Files:
 - create: <paths>
 - modify: <paths>
 Prohibited: <paths, behaviors, or changes>
+Attach: <exact paths of the live files, appendices, and context files that the slice needs>
 Gates: <exact commands, in order>
 Exit: <observable conditions>
 Status: NOT_STARTED | IN_PROGRESS | DONE | VALIDATED
@@ -486,6 +490,7 @@ Files:
 - create: <paths>
 - modify: <paths>
 Prohibited: <paths, behaviors, or changes>
+Attach: <exact paths of the live files and context files that the implementer needs>
 
 ## 5. Gates
 

@@ -64,13 +64,19 @@
       "scenarios": 2000
     }
   },
-  "decisions": [
-    "D044",
-    "D066",
-    "D101",
-    "D102",
-    "D103"
-  ],
+  "decisions": {
+    "admission_only": [
+      "D066",
+      "D101.3"
+    ],
+    "admission_only_reason": "DiscountingMode.NONE gives DF = 1 on every leg and the oracle has no DF input (D103.4 and D103.6 require NONE for TAYLOR/DERIVED), so no numeric check depends on the linked discount curve (D066) or on the asset-leg discount date (D101.3); ingest admits these rows and the run prices them",
+    "numeric_checks": [
+      "D044",
+      "D101.4",
+      "D102",
+      "D103"
+    ]
+  },
   "determinism": {
     "claim_a_numba_multi_thread_execution": true,
     "claim_b_multi_core_hardware": true,
@@ -119,13 +125,13 @@
   "performance": {
     "errors": [],
     "host_physical_memory_bytes": 34017017856,
-    "peak_rss_bytes": 287494144,
+    "peak_rss_bytes": 288944128,
     "wall_s": {
-      "filtered_bootstrap": 1.31764430005569,
-      "filtered_historical": 0.13677829992957413,
-      "historical": 0.21735729998908937,
-      "parametric": 0.8479635999538004,
-      "sbb": 0.6861503000836819
+      "filtered_bootstrap": 0.10064509999938309,
+      "filtered_historical": 0.05225730000529438,
+      "historical": 0.05271259997971356,
+      "parametric": 0.09548949997406453,
+      "sbb": 0.0777700999751687
     }
   },
   "verdict": {
