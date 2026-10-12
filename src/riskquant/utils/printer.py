@@ -33,9 +33,9 @@ ANSI_BLACK_BG = "\033[40m"
 
 
 # Default colors for title hierarchy (same blue palette)
-DEFAULT_TITLE_COLOR = ANSI_BRIGHT_BLUE  # H0 – most prominent
-DEFAULT_HEADER_COLOR = ANSI_BLUE  # H1 – standard
-DEFAULT_SUBHEADER_COLOR = ANSI_NAVY_BLUE  # H2 – subdued
+DEFAULT_TITLE_COLOR = ANSI_BRIGHT_BLUE  # H0 - most prominent
+DEFAULT_HEADER_COLOR = ANSI_BLUE  # H1 - standard
+DEFAULT_SUBHEADER_COLOR = ANSI_NAVY_BLUE  # H2 - subdued
 
 
 def print_title(

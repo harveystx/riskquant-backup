@@ -69,7 +69,7 @@ def demo_ar1_filter(n_days: int = 500, phi: float = 0.85, seed: int = 101) -> No
 
     # Top Left: Original Returns
     axes[0, 0].plot(original_returns, color="tab:red", lw=1)
-    axes[0, 0].set_title(f"Original Returns (AR(1) with $\phi={phi}$)")
+    axes[0, 0].set_title(f"Original Returns (AR(1) with $\\phi={phi}$)")
     axes[0, 0].grid(True, alpha=0.3)
 
     # Top Right: Filtered Residuals

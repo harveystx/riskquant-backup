@@ -79,7 +79,7 @@ def demo_ar1_rejection(n_days: int = 500, phi_2: float = 0.6, seed: int = 42) ->
 
     # Top Left: Original Returns
     axes[0, 0].plot(original_returns, color="tab:purple", lw=1)
-    axes[0, 0].set_title(f"Original Returns (AR(2) Process | $\phi_2={phi_2}$)")
+    axes[0, 0].set_title(f"Original Returns (AR(2) Process | $\\phi_2={phi_2}$)")
     axes[0, 0].grid(True, alpha=0.3)
 
     # Top Right: Filtered Residuals
