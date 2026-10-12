@@ -1,8 +1,8 @@
 # WS_FACTOR_REGRESSION: Appendix A, numerics, digests and oracles
 
 Path: docs/workstreams/WS_FACTOR_REGRESSION/A_NUMERICS.md
-Revision: 2
-Status: DRAFT
+Revision: 3
+Status: FROZEN
 Used by: S1 to S7
 Label rule: every definition below is Proposed. Every sandbox number is Observed (sandbox evidence).
 
@@ -20,7 +20,7 @@ The spec declares step `h >= 0` and stride `s >= 1`.
 - DIFFERENCE value: `v[e_r] - v[b_r]`.
 - The two-point endpoint read matches D088 section 4 (level-backed column) and the D025 endpoint rule.
 - Aligned dates that are neither a start index nor an end index of any row are recorded with reason `NOT_USED_BY_ROWS`.
-  For `h >= 1` and `s = 1` this set is empty.
+  For `h >= 1`, `s = 1` and `m >= 2h` this set is empty. For `m < 2h` the aligned indices `m - h` to `h - 1` are unused.
 - Overlap order `q = ceil(h / s) - 1` for `h >= 1`, and `q = 0` for `h = 0`.
   `h = 5, s = 1` gives `q = 4`: adjacent rows share increments, so the errors have an MA(4) structure.
   `h = 5, s = 5` gives `q = 0`.
@@ -81,7 +81,7 @@ Design `X` has shape `(R, k)`. Column order: intercept (ones) if declared, then 
 A failed Cholesky factor raises `RestrictionError`. With IID covariance and normal errors the F test is exact.
 With HC0 or HAC covariance, `W` is asymptotically chi-squared and `F` is an approximation.
 
-## A.6 Canonical bytes and digests (S4)
+## A.6 Canonical bytes and digests (S6)
 
 All digests are computed in the facade module `digest.py` with `riskquant.solutions.run_identity.hashing.digest_named_arrays` (SHA-256, dtype, shape and C-order bytes folded in).
 Text is encoded as UTF-8 into a `uint8` array. No Unicode normalisation is applied. Names and units hold no control character.
@@ -137,11 +137,9 @@ Every oracle below is independent of the library code.
 |---|---|---|
 | Log additivity | `Q = Z*S`, 4 returns | `max abs(r_Q - r_Z - r_S) = 5.55e-17`, `matrix_rank = 2` |
 | Simple identity | Fraction arithmetic | `sr_Q = sr_Z + sr_S + sr_Z*sr_S` True. `sr_Q = sr_Z + sr_S` False. |
-| Centring, ratio 1e6 | with intercept, `n=250`, sd 1 | all solvers within 4.2e-11 (slope) of the exact value |
-| Centring, ratio 1e7 | same | unscaled `lstsq(rcond=None)` returns rank 1, slope error 3.9e-3 to 2.1e-2, intercept error 1.0. Scaled lstsq and centred QR: slope error at most 8.3e-11. |
-| Centring, ratio 1e8 | same | scaled lstsq: slope error at most 1.2e-9, intercept at most 3.0e-7. Centred QR: 4.4e-9 and 1.1e-6. |
-| Rank gate, log identity | 200 seeds, `R=250`, `tol = R*eps` | vol 1% and 0.5%: kappa 3.65e13 to 5.22e13, detected 200/200. vol 0.1% and 0.05%: kappa 3.53e12 to 5.25e12, detected 0/200. |
-| Simple-return design | 200 seeds, `R=250` | vol 1% and 0.5%: kappa 3.76e2 to 5.82e2. vol 0.1% and 0.05%: 3.76e3 to 5.82e3. Rank 3 in all runs. |
+| Unscaled versus scaled solve | `x = mu + N(0,1)`, `y = 3 + 0.5x + 0.1 N(0,1)`, `numpy.random.default_rng(seed)`, 250 rows, intercept, seeds 1 to 10, exact Fraction oracle | mu 1e6: unscaled `lstsq(rcond=None)` rank 2, slope error 9.4e-12; scaled SVD slope 3.9e-11, raw intercept 3.9e-5, fitted relative 9.3e-16. mu 1e7: unscaled rank 1, slope error 1.2e-2; scaled SVD slope 2.8e-10, raw intercept 2.8e-3, fitted relative 5.6e-16. mu 1e8: unscaled rank 1, slope error 1.2e-2; scaled SVD slope 3.3e-9, raw intercept 0.33, fitted relative 1.6e-15. The raw intercept error equals mean(x) times the slope error. |
+| Rank gate, log identity | 200 seeds, `R=250`, `tol = R*eps`, returns `ln(v[t]/v[t-1])` | vol 1%, 0.5% and 0.1%: detected 200/200. vol 0.05%: kappa 9.7e12 to 1.7e13, detected 0/200. vol 0.02% and 0.01%: kappa 1.9e12 to 6.4e12, detected 0/200. |
+| Simple-return design | 200 seeds, `R=250` | `kappa * vol` 2.40 to 3.59 at vol 1%, 0.5%, 0.1% and 0.05%. `kappa(0.5%) / kappa(1%)` 1.996 to 2.004 per seed. Rank 3 in all runs. |
 | Degenerate-fit rule | `R` in 30, 250, 2500 | exact `y`: `rss` 1.2e-26 to 1.1e-22, threshold 1.3e-23 to 3.1e-17, rule fires. Noise 1e-8: `rss` 3.0e-15 to 2.6e-13, rule does not fire. Zero `y`, intercept only: `rss = 0.0`, rule fires. |
 
 ## A.8 Module placement (S1 to S7)
@@ -150,7 +148,7 @@ Rule (C.22): a module that needs a name, unit, label, `str`-typed data or a dige
 
 | Module | Tier | Reason |
 |---|---|---|
-| `riskquant/factor_regression/errors.py` | core | exceptions carry integer indices and codes only |
+| `riskquant/factor_regression/errors.py` | core | exceptions carry integer indices, integer codes and numeric values; no str data |
 | `riskquant/factor_regression/codes.py` | core | `int8` constants for transforms, covariance kinds, reasons, diagnostics; no names |
 | `riskquant/factor_regression/align.py` | core | alignment is set logic on `int32` date ordinals and position arrays |
 | `riskquant/factor_regression/rows.py` | core | rows and transforms are arithmetic on `float64` levels with integer codes |

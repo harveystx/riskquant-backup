@@ -2,15 +2,15 @@
 
 Path: docs/workstreams/WS_FACTOR_REGRESSION.md
 Class: HEAVY
-Status: REVIEW
-Revision: 2
-Revision note: Owner decisions O-1 to O-7 and O-1a applied; SCOPE INCREASE (owner-confirmed 2026-10-12): O-1 B2 imports a public facade and a change to tests/test_architecture.py, cost proxies +2 slices (7 total), +6 facade files, 1 modified shared test file, 1 new D.
+Status: FROZEN
+Revision: 3
+Revision note: Audit R1 (R_FREEZE_RECONCILIATION_R1.md) BLOCKING B-1 to B-7 applied (B-1 with the owner fitted-value amendment); owner gate O-8 option 1 applied; owner-directed refinements R-1 to R-5, R-13, R-14, R-16 applied; other refinements moved to the backlog; snapshot changed from d4ba609 dirty=true to the audit snapshot 05314f8 dirty=false. Owner 2026-10-12: section 1.8 option A, build v1 now. Known gap I-001: the S6 and S7 Exit text omits the mypy baseline line, which prints exit=1 by design (13 errors in hashing.py). Owner edits after revision 3, non-contract: section 7 mypy risk row, A.6 heading, A.7 centring rows, appendix Status lines.
 Date: 2026-10-12
 Branch: ws/factor-regression
-Snapshot: SNAPSHOT commit=d4ba609 dirty=true content_hash=60ed68e10bd358a7
+Snapshot: SNAPSHOT commit=05314f8 dirty=false content_hash=358d3f657c81a072
 Drafted by: investigator
 Independent review: NONE
-Audit rounds used: 0 of 2
+Audit rounds used: 1 of 2
 Code merged: no
 DECISIONS.md reconciled: NO
 Evidence limits: No code exists and no test, mypy or ruff gate ran. Sandbox: Python 3.12.3, numpy 2.4.4, scipy 1.17.1; numpy 1.26
@@ -50,7 +50,7 @@ Out of scope:
 - Any change to existing `src/` files
 
 Owner decisions in force:
-- 2026-10-12: O-1 B2, O-1a, O-2 (A), O-3 (A), O-4 (A), O-5 (A), O-6 (A), O-7 (A). See section 5.
+- 2026-10-12: O-1 B2, O-1a, O-2 (A), O-3 (A), O-4 (A), O-5 (A), O-6 (A), O-7 (A), O-8 (option 1). See section 5.
 
 Depends on: `riskquant.exceptions.RiskQuantError`; `riskquant.solutions.run_identity.hashing.digest_named_arrays`.
 Blocks: none.
@@ -70,7 +70,7 @@ Blocks: none.
 | F-9 | Wheel packages: `src/riskquant`, `src/riskquant_lab`. Declared: numpy>=1.26, scipy>=1.15, polars, pandas. Not declared: statsmodels, pandera, pydantic. | `pyproject.toml` | Observed |
 | F-10 | `utils.dates` converts dates to int32 ordinals and imports pandas only inside functions. | `src/riskquant/utils/dates.py:date_to_ord32` | Observed |
 | F-11 | At mean to sd 1e7 with an intercept, unscaled `lstsq(rcond=None)` returns rank 1 and a wrong slope. Scaled solves match the exact Fraction value. | Appendix A.7, sandbox | Observed |
-| F-12 | The numpy default rank tolerance misses the exact log identity at low volatility (0 of 200). The scaled simple-return design has rank 3 and kappa about 4.6e2 to 4.6e3. | Appendix A.7, sandbox | Observed |
+| F-12 | With A.1 ratio-form log returns, 250 rows and tolerance 250*eps, the scaled-SVD gate detects the exact log identity at vol 1%, 0.5% and 0.1% (200 of 200) and misses it at vol 0.05%, 0.02% and 0.01% (0 of 200, kappa 1.9e12 to 1.7e13). The scaled simple-return design has rank 3 and kappa * vol between 2.4 and 3.6. | Appendix A.7, sandbox | Observed |
 | F-13 | `riskquant.dependence` has no caller in `src/` outside its package. `riskquant.observations` is imported outside its package by `dependence_stress.engine`, `dependence_stress.permutations` and `market_state.indices` only. No `solutions/dependence/api.py` exists. | index DEPENDENCIES section: grep for edges into `riskquant.dependence` or `riskquant.observations`, minus edges that start in those two packages; index MANIFEST grep for `src/riskquant/solutions/dependence` gives 0 | Observed |
 | F-14 | No D entry exempts `riskquant.dependence` from the facade rule of D001. | `grep -n -i "dependence"` in `DECISIONS.md`: 27 lines, none names the package; `grep "riskquant.dependence"` gives 0 | Observed |
 | F-15 | No module under `src/riskquant` outside `riskquant.solutions` imports `riskquant.solutions`. | index DEPENDENCIES grep `-> .*riskquant.solutions` minus left side `riskquant.solutions`: 0 lines; source grep over all attached src profiles: 0 | Observed |
@@ -89,7 +89,7 @@ All clauses describe new code. Each is Proposed. Formulas are in `A_NUMERICS.md`
 - C.2 `align_levels(series, *, start_ord, end_ord)` keeps exactly the dates `d` with `start_ord <= d < end_ord` that occur in every
   series. It does no fill, interpolation, as-of join, sort or value change. Series names must be unique.
   An empty result, `start_ord >= end_ord` or a duplicate name raises `AlignmentError`. [Proposed]
-  Test: S1.T5, S1.T7, S7.T1
+  Test: S1.T5, S1.T7, S7.T1, S7.T10
 - C.3 `AlignedLevels.exclusions` holds one record per input observation that is not kept: series index, date ordinal and reason
   in {OUTSIDE_WINDOW, NOT_COMMON_DATE}. For every input series, kept count plus excluded count equals its length.
   No observation appears twice. [Proposed] Test: S1.T6, S7.T1
@@ -125,11 +125,13 @@ All clauses describe new code. Each is Proposed. Formulas are in `A_NUMERICS.md`
   A diagnostic never blocks a fit. [Proposed] Test: S3.T8, S3.T9, S3.T10, S7.T6
 - C.12 The core fit (`fit.fit_core`, called by `api.fit_ols`) needs `R >= k + 1`, otherwise it raises `InsufficientObservationsError`
   naming `R` and `k`. It solves on the scaled design from the same SVD as the gate (A.3). Coefficients match an exact
-  Fraction solution to 1e-12 relative on a small case and to 1e-8 (slope) and 1e-6 (intercept) at a mean to sd ratio of 1e7.
-  [Proposed] Test: S4.T1, S4.T2
+  Fraction solution to 1e-12 relative on a small case. At a mean to sd ratio of 1e7 the slope matches to 1e-8 relative and
+  the centred intercept a + b * mean(x) matches to 1e-12 relative, and the fitted values match to 1e-12 relative. The raw
+  intercept is not compared, because its error equals the slope error times mean(x).
+  [Proposed] Test: S4.T1, S4.T2, S4.T13
 - C.13 Covariance types are IID, HC0 and HAC_BARTLETT with a declared lag (A.3). HAC with lag 0 equals HC0 to 1e-12 relative.
   A lag above `R - 1` raises `ModelSpecError`. p-values use Student t with `dof = R - k`. [Proposed]
-  Test: S4.T3, S4.T4, S4.T5, S4.T6
+  Test: S4.T3, S4.T4, S4.T5, S4.T6, S7.T11
 - C.14 `DegenerateFitError` is raised when `rss <= (R * eps)^2 * sum(y^2)` with `eps` the float64 machine epsilon. This rule
   includes `rss == 0.0` and an all-zero `y`, so an exact fit raises whether rounding gives 0.0 or a value near 1e-26. It is
   also raised when the response has zero variance with an intercept, or when a covariance diagonal is not positive.
@@ -138,27 +140,29 @@ All clauses describe new code. Each is Proposed. Formulas are in `A_NUMERICS.md`
   `durbin_watson`, `condition_number`, `singular_values`, `diagnostics`, column names, units, transform per column, response
   term, window, step, stride, overlap order, row start and end dates, exclusions, covariance spec, `rank_rtol`,
   `condition_threshold`, three digests and `ENGINE_VERSION`. All arrays are read-only. It has no field named accepted,
-  approved or valid: the library approves no assumption. [Proposed] Test: S4.T8, S6.T12
+  approved or valid: the library approves no assumption. [Proposed] Test: S6.T12, S7.T9
 - C.16 `sample_digest` covers row start and end dates, column names, `y` and `X` (A.6). `spec_digest` covers the canonical
   spec bytes of A.6, including units and window. `row_digest` covers row dates only. All three are stable across fresh
   processes and change under the mutations of S6.T8. [Proposed] Test: S6.T7, S6.T8, S6.T9
 - C.17 Two results are comparable when `row_digest` and the response term are equal. Models on one `AlignedLevels` with equal step
   and stride share `row_digest`. [Proposed] Test: S7.T4
 - C.18 `wald_test(result, R, r)` tests `R @ coef = r` as one joint statistic with `result.cov` (A.5). It never combines
-  separate t-tests. It returns `W`, `F = W/J`, both p-values and the digests of the result and of `(R, r)`. Shape errors,
+  separate t-tests. It returns `W`, `F = W/J`, both p-values, the digests of the result and of `(R, r)`, and
+  `ENGINE_VERSION` (O-8). Shape errors,
   non-finite entries, rank-deficient `R` or a non-positive-definite `R @ cov @ R.T` raise `RestrictionError`. [Proposed]
   Test: S5.T1, S5.T2, S5.T3, S5.T4, S5.T5, S7.T5
 - C.19 No library function mutates a caller array. This covers the series arrays, the fit inputs, and `R` and `r` of the Wald test.
   Retained arrays are copies and read-only. [Proposed]
   Test: S6.T4, S4.T8, S7.T5
 - C.20 Every exception class that the library defines subclasses `riskquant.exceptions.RiskQuantError`. Core exceptions carry
-  integer indices and codes only. The facade catches each core exception and raises the exception that the clause names,
-  with series names and dates, chained as `__cause__` (a `raise` with `from`). The cell-addressed messages of C.1 and C.7 are facade messages.
+  no str data: integer indices, integer codes and numeric values only. The facade catches each core exception and raises
+  the exception that the clause names, with series names and dates, chained as `__cause__` (a `raise` with `from`). The cell-addressed messages of C.1 and C.7 are facade messages.
   [Proposed] Test: S1.T9, S6.T11, S7.T2
 - C.21 Direct imports (any `import` or `from` statement, `TYPE_CHECKING` blocks included). The core imports only the standard
   library, numpy, `scipy.stats`, `riskquant.exceptions` and its own modules. It imports no `riskquant.solutions`,
   `riskquant.config`, `riskquant.simlab`, `riskquant.valuation`, `riskquant.credit`, pandas, polars, matplotlib or numba.
-  The facade imports the core, `riskquant.exceptions`, numpy and, in `digest.py` only, `riskquant.solutions.run_identity.hashing`.
+  The facade imports only the standard library, numpy, the core, `riskquant.exceptions` and, in `digest.py` only,
+  `riskquant.solutions.run_identity.hashing`.
   The facade has no direct import of `riskquant.config`; the `TYPE_CHECKING` edge of `hashing.py` to
   `riskquant.config.proxy_model.compiled` (F-16) is the only transitive edge to `riskquant.config` and is allowed.
   No module outside the two packages and `tests/` imports `riskquant.factor_regression`. Both packages pass the existing
@@ -171,8 +175,8 @@ All clauses describe new code. Each is Proposed. Formulas are in `A_NUMERICS.md`
   Test: S1.T13, S6.T10
 - C.23 `riskquant.solutions.factor_regression.api` is the only public import surface (D001). Its public functions are
   `align_levels`, `fit_ols` and `wald_test`. Its `__all__` also lists the contract types and facade exceptions. The contract types
-  are frozen dataclasses with read-only arrays, not Pydantic (O-1a). A facade module imports the core; the core never imports
-  the facade. [Proposed] Test: S7.T7, S1.T11
+  are frozen dataclasses with read-only arrays, not Pydantic (O-1a). Array-bearing contracts declare `eq=False` (D064
+  precedent). A facade module imports the core; the core never imports the facade. [Proposed] Test: S7.T7, S1.T11, S6.T12
 
 ## 4. Decisions
 
@@ -188,7 +192,7 @@ Scope: Fixes the tier split, the facade form and the limits of the factor regres
 2. riskquant.solutions.factor_regression.api is the only public import surface. Facade modules import the core.
    The core never imports the facade. No other module outside tests imports the core.
 3. Exemption from Pydantic v2 solution contracts: the facade contracts are frozen dataclasses with read-only arrays.
-   Reason: no JSON boundary exists, the result holds arrays, and pydantic is not declared in pyproject.toml (K8, F-9).
+   Reason: no JSON boundary exists, the result holds arrays, and pydantic is not declared in pyproject.toml (F-9).
 4. The library approves no model assumption. It reports numbers and diagnostics only.
 5. No D088 feed: no fit becomes a proxy loading. A loading enters a proxy model only through the D088 authoring path.
 6. The D025 level-domain convention applies to every return transform in the library.
@@ -207,6 +211,7 @@ Evidence: S1.T10, S1.T11, S1.T13, S2.T5 to S2.T7, S6.T12, S7.T7
 | O-5 | Stationarity tests: none in v1. | CLOSED | 2026-10-12 | owner |
 | O-6 | Public data interface: arrays and `str` only at the facade; Polars adapter in the backlog. | CLOSED | 2026-10-12 | owner |
 | O-7 | Rank tolerance: the caller declares `rank_rtol`; no default. | CLOSED | 2026-10-12 | owner |
+| O-8 | Provenance: option 1. `OlsResult` and `WaldResult` carry `ENGINE_VERSION` only. The environment record and the timestamp (audit R1 options 2 and 3) are in the section 7 backlog. Reason: revision 3 is not audited, and a field added later is additive. | CLOSED | 2026-10-12 | owner |
 
 Status values: OPEN, CLOSED.
 
@@ -232,7 +237,7 @@ Attach: `docs/workstreams/WS_FACTOR_REGRESSION.md`, `docs/workstreams/WS_FACTOR_
 `docs/workstreams/WS_FACTOR_REGRESSION/A_NUMERICS.md`, `context_riskquant_core.txt`, repo files `tests/test_architecture.py`
 and `tests/test_no_stale_path_comments.py`
 Gates: `A_TESTS.md` section S1, gate block.
-Exit: Every gate line prints `exit=0`.
+Exit: Every gate line prints `exit=0`. pytest full: 0 failed, 0 errors, 36 skipped or fewer.
 Status: NOT_STARTED
 Evidence: none
 Tests: S1.T5 to S1.T7, S1.T9 to S1.T13. The table is in `A_TESTS.md`, section S1.
@@ -250,7 +255,7 @@ Prohibited: import of `ShiftType` or `shift_domain` (F-5: they carry NO_SHIFT, A
 Attach: `docs/workstreams/WS_FACTOR_REGRESSION.md`, `docs/workstreams/WS_FACTOR_REGRESSION/A_TESTS.md`,
 `docs/workstreams/WS_FACTOR_REGRESSION/A_NUMERICS.md`, `context_riskquant_core.txt`
 Gates: `A_TESTS.md` section S2, gate block.
-Exit: Every gate line prints `exit=0`.
+Exit: Every gate line prints `exit=0`. pytest full: 0 failed, 0 errors, 36 skipped or fewer.
 Status: NOT_STARTED
 Evidence: none
 Tests: S2.T1 to S2.T9. The table is in `A_TESTS.md`, section S2.
@@ -269,7 +274,7 @@ Prohibited: a default for `rank_rtol` or `condition_threshold`; `numpy.linalg.ls
 Attach: `docs/workstreams/WS_FACTOR_REGRESSION.md`, `docs/workstreams/WS_FACTOR_REGRESSION/A_TESTS.md`,
 `docs/workstreams/WS_FACTOR_REGRESSION/A_NUMERICS.md`, `context_riskquant_core.txt`
 Gates: `A_TESTS.md` section S3, gate block.
-Exit: Every gate line prints `exit=0`.
+Exit: Every gate line prints `exit=0`. pytest full: 0 failed, 0 errors, 36 skipped or fewer.
 Status: NOT_STARTED
 Evidence: none
 Tests: S3.T1 to S3.T10. The table is in `A_TESTS.md`, section S3.
@@ -278,7 +283,7 @@ Appendix: A_NUMERICS.md (A.2, A.4, A.7); A_TESTS.md (S3 table and gates)
 ### S4: Core OLS fit and covariance
 
 Objective: Create the core fit, the three covariance types and the core fit result.
-Contract: C.12, C.13, C.14, C.15, C.19
+Contract: C.12, C.13, C.14, C.19
 Depends on: S2, S3
 Files:
 - create: `src/riskquant/factor_regression/covariance.py`, `fit.py`
@@ -288,10 +293,10 @@ Prohibited: `lstsq`; unscaled solves; any digest in the core
 Attach: `docs/workstreams/WS_FACTOR_REGRESSION.md`, `docs/workstreams/WS_FACTOR_REGRESSION/A_TESTS.md`,
 `docs/workstreams/WS_FACTOR_REGRESSION/A_NUMERICS.md`, `context_riskquant_core.txt`
 Gates: `A_TESTS.md` section S4, gate block.
-Exit: Every gate line prints `exit=0`.
+Exit: Every gate line prints `exit=0`. pytest full: 0 failed, 0 errors, 36 skipped or fewer.
 Status: NOT_STARTED
 Evidence: none
-Tests: S4.T1 to S4.T8. The table is in `A_TESTS.md`, section S4.
+Tests: S4.T1 to S4.T8, S4.T13. The table is in `A_TESTS.md`, section S4.
 Appendix: A_NUMERICS.md (A.3, A.4, A.7); A_TESTS.md (S4 table and gates)
 
 ### S5: Core joint Wald test
@@ -306,7 +311,7 @@ Prohibited: combining separate t-tests; a library oracle for the p-values in the
 Attach: `docs/workstreams/WS_FACTOR_REGRESSION.md`, `docs/workstreams/WS_FACTOR_REGRESSION/A_TESTS.md`,
 `docs/workstreams/WS_FACTOR_REGRESSION/A_NUMERICS.md`, `context_riskquant_core.txt`
 Gates: `A_TESTS.md` section S5, gate block.
-Exit: Every gate line prints `exit=0`.
+Exit: Every gate line prints `exit=0`. pytest full: 0 failed, 0 errors, 36 skipped or fewer.
 Status: NOT_STARTED
 Evidence: none
 Tests: S5.T1 to S5.T5. The table is in `A_TESTS.md`, section S5.
@@ -325,7 +330,8 @@ Prohibited: Pydantic; import of `hashing` outside `digest.py`; changes to `riskq
 Attach: `docs/workstreams/WS_FACTOR_REGRESSION.md`, `docs/workstreams/WS_FACTOR_REGRESSION/A_TESTS.md`,
 `docs/workstreams/WS_FACTOR_REGRESSION/A_NUMERICS.md`, `context_riskquant_core.txt`, `context_riskquant_solutions_run_identity.txt`
 Gates: `A_TESTS.md` section S6, gate block.
-Exit: Every gate line prints `exit=0`. The cross-process digest test (S6.T7) passes.
+Exit: Every gate line prints `exit=0`, except the `mypy --strict` line. That line passes when its `: error:` lines equal
+the `: error:` lines of the `mypy baseline` line. The cross-process digest test (S6.T7) passes. pytest full: 0 failed, 0 errors, 36 skipped or fewer.
 Status: NOT_STARTED
 Evidence: none
 Tests: S6.T1 to S6.T14. The table is in `A_TESTS.md`, section S6.
@@ -334,7 +340,7 @@ Appendix: A_NUMERICS.md (A.6, A.8); A_TESTS.md (S6 table and gates)
 ### S7: Facade entry points
 
 Objective: Create `api.py` with `align_levels`, `fit_ols` and `wald_test`, and the core-to-facade error mapping.
-Contract: C.2, C.3, C.5, C.7, C.9, C.11, C.17, C.18, C.19, C.20, C.23
+Contract: C.2, C.3, C.5, C.7, C.9, C.11, C.13, C.15, C.17, C.18, C.19, C.20, C.23
 Depends on: S5, S6
 Files:
 - create: `src/riskquant/solutions/factor_regression/api.py`, `tests/solutions/factor_regression/test_api.py`
@@ -343,10 +349,11 @@ Prohibited: numerical logic in the facade; a second public module; Pydantic
 Attach: `docs/workstreams/WS_FACTOR_REGRESSION.md`, `docs/workstreams/WS_FACTOR_REGRESSION/A_TESTS.md`,
 `docs/workstreams/WS_FACTOR_REGRESSION/A_NUMERICS.md`, `context_riskquant_core.txt`
 Gates: `A_TESTS.md` section S7, gate block.
-Exit: Every gate line prints `exit=0`.
+Exit: Every gate line prints `exit=0`, except the `mypy --strict` line. That line passes when its `: error:` lines equal
+the `: error:` lines of the `mypy baseline` line. pytest full: 0 failed, 0 errors, 36 skipped or fewer.
 Status: NOT_STARTED
 Evidence: none
-Tests: S7.T1 to S7.T8. The table is in `A_TESTS.md`, section S7.
+Tests: S7.T1 to S7.T11. The table is in `A_TESTS.md`, section S7.
 Appendix: A_NUMERICS.md (A.7, A.8); A_TESTS.md (S7 table and gates)
 
 ## 7. Risks and deferred
@@ -356,17 +363,29 @@ Appendix: A_NUMERICS.md (A.7, A.8); A_TESTS.md (S7 table and gates)
 | A second public module appears in the facade | D001 surface leaks | S7.T7; C.23 |
 | numpy 1.26 lacks `rtol` in `matrix_rank` | none: library and tests use `svd` and `tol` | run S3.T3 on numpy 1.26 if the floor stays |
 | rank gate misses a near-identity | a singular fit proceeds | `kappa` always reported (C.10, S3.T4) |
-| mypy `--strict` on the facade follows the `TYPE_CHECKING` edge of `hashing.py` | gate output shows errors from `riskquant.config` | the edge is existing strict code (F-16) |
+| mypy `--strict` on the facade follows the import of `hashing.py` | gate output shows 13 errors from `hashing.py` itself (owner baseline, exit=1) | S6 and S7 Exit compare the error lines with the mypy baseline line |
 
 Deferred:
 - Numba kernel for the HAC meat: opens when the owner states a throughput need. Benchmark to write first: `fit_ols` with
   HAC_BARTLETT at `(R, k, L)` of `(2500, 8, 10)`, `(25000, 8, 50)`, `(250000, 8, 100)`, best of 5 wall times. No claim is made now.
 
-Backlog (items v1 omits):
+Backlog (REFINEMENT findings and items that v1 omits):
 - HC1 to HC3; automatic lag selection; stationarity, cointegration, Chow and CUSUM tests; lagged regressors
 - Named restriction syntax; unit algebra checks; explicit NaN exclusion policy; model comparison helper; JSON persistence
 - Polars adapter (O-6); adapter from `RiskFactorMatrix`; D088 candidate-loading export (O-4)
 - Adjacent: the non-empty `src/riskquant_lab/__init__.py` (D002) is outside the empty-init test (F-7, F-8)
+- O-8 option 2: environment record (riskquant, python, numpy, scipy versions) outside every digest, as in D040
+- O-8 option 3: UTC timestamp outside every digest (D042 identity versus record); S7.T6 must then exclude it
+- R-6: S4.T1, S4.T4, S4.T5 elementwise 1e-12 relative fails on exact zeros; use `max abs error <= 1e-12 * max abs exact`
+- R-7: S2.T9 SIMPLE identity to 1e-15 absolute holds up to vol 10% only; state the vol in the case
+- R-8: C.14 threshold base and factor (centred base misses exact fits; `4*R*eps^2` candidate from a sample only)
+- R-9: `wald_test(result, R, r)` and uppercase locals of A.3 and A.5 fail ruff N803 and N806; rename or permit noqa
+- R-10: state tolerances for S3.T1 ("unchanged"), S4.T3 (p-value "equals") and S5.T3 ("equals")
+- R-11: state whether the S3 diagnostic function takes `q` as input or computes it from `h` and `s`
+- R-12: "AlignedLevels" names a core type (A.1) and a facade type (C.17, S7.T8); use two names
+- R-15: C.1 "lengths are equal and at least 1" has no test; add cases to S6.T2
+- R-17: value case: a `scripts/` module imports in pytest and from the repository root; it fails outside the checkout
+- R-18: `numpy.linalg.matrix_rank(tol=)` exists in numpy 1.26; `rtol` came in numpy 2.0 [Inferred]
 
 ## 8. Closure record
 
