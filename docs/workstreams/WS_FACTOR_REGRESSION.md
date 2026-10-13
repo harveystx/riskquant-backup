@@ -386,6 +386,8 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - R-15: C.1 "lengths are equal and at least 1" has no test; add cases to S6.T2
 - R-17: value case: a `scripts/` module imports in pytest and from the repository root; it fails outside the checkout
 - R-18: `numpy.linalg.matrix_rank(tol=)` exists in numpy 1.26; `rtol` came in numpy 2.0 [Inferred]
+- S1 guard limits (owner OD-3): the C.21 check does not cover getattr, rebinding the scipy name, quoted annotations, importlib.import_module or __import__. Reviewers check these forms by eye.
+- Core exceptions are not picklable: their __init__ takes keyword-only arguments. Add __reduce__ in errors.py only if a process pool is ever used.
 
 ## 8. Closure record
 
