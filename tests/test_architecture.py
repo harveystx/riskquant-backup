@@ -101,6 +101,186 @@ def test_every_module_declares_its_repository_relative_path() -> None:
         assert first_line == expected, f"{path}: got {first_line!r}"
 
 
+# ---------------------------------------------------------- factor regression
+# C.21 and C.22 of WS_FACTOR_REGRESSION. The core is private; only its facade
+# and tests may import it, and it may import only the allow-list below.
+
+REPOSITORY_ROOT = SOURCE_ROOT.parents[1]
+FACTOR_REGRESSION_CORE = SOURCE_ROOT / "factor_regression"
+FACTOR_REGRESSION_FACADE = SOURCE_ROOT / "solutions" / "factor_regression"
+_CORE_ALLOWED_IMPORT_PREFIXES = (
+    "numpy",
+    "scipy.stats",
+    "riskquant.exceptions",
+    "riskquant.factor_regression",
+)
+_ENUM_BASES = frozenset({"Enum", "IntEnum", "StrEnum", "Flag", "IntFlag", "ReprEnum"})
+
+
+def _module_name(path: Path, root: Path) -> str:
+    parts = list(path.relative_to(root).with_suffix("").parts)
+    if parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
+
+
+def _import_statements(path: Path, root: Path) -> list[tuple[str, tuple[str, ...]]]:
+    """
+    Every import statement of a file as ``(module, imported names)``.
+
+    ``TYPE_CHECKING`` blocks are included (``ast.walk`` visits every node). A
+    relative import is resolved against the module name of ``path`` below
+    ``root``; one that climbs above ``root`` fails. ``import a.b`` gives
+    ``("a.b", ())``; ``from a import b, c`` gives ``("a", ("b", "c"))``.
+    """
+    module = _module_name(path, root)
+    package = module if path.name == "__init__.py" else module.rpartition(".")[0]
+    statements: list[tuple[str, tuple[str, ...]]] = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8-sig"))):
+        if isinstance(node, ast.Import):
+            statements.extend((alias.name, ()) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0:
+                base = node.module or ""
+            else:
+                anchor = package.split(".") if package else []
+                climb = node.level - 1
+                assert climb <= len(anchor), f"{path}: relative import above root"
+                kept = anchor[: len(anchor) - climb]
+                base = ".".join([*kept, *([node.module] if node.module else [])])
+            assert base, f"{path}: unresolved relative import"
+            names = tuple(alias.name for alias in node.names if alias.name != "*")
+            statements.append((base, names))
+    return statements
+
+
+def _import_targets(path: Path, root: Path) -> set[str]:
+    """Absolute names a file imports; ``from a import b`` yields ``a`` and ``a.b``."""
+    targets: set[str] = set()
+    for base, names in _import_statements(path, root):
+        targets.add(base)
+        targets.update(f"{base}.{name}" for name in names)
+    return targets
+
+
+def _core_may_import(name: str) -> bool:
+    import sys
+
+    return name.partition(".")[0] in sys.stdlib_module_names or any(
+        name == prefix or name.startswith(prefix + ".")
+        for prefix in _CORE_ALLOWED_IMPORT_PREFIXES
+    )
+
+
+def _is_core_target(name: str) -> bool:
+    return name == "riskquant.factor_regression" or name.startswith(
+        "riskquant.factor_regression."
+    )
+
+
+def test_factor_regression_import_direction() -> None:
+    src_root = SOURCE_ROOT.parent
+
+    core_files = sorted(FACTOR_REGRESSION_CORE.rglob("*.py"))
+    assert core_files, "the guard scanned no core module"
+    for path in core_files:
+        for base, names in _import_statements(path, src_root):
+            # ``from scipy import stats`` passes through the allowed child
+            # ``scipy.stats``; ``import scipy`` and ``from scipy import linalg``
+            # fail, because neither the base nor every child is allowed.
+            allowed = _core_may_import(base) or (
+                bool(names) and all(_core_may_import(f"{base}.{n}") for n in names)
+            )
+            assert allowed, f"{path}: the factor regression core imports {base}"
+
+    # Both packages: every relative import resolves inside src (asserted in
+    # _import_statements) and the core never imports the facade.
+    for path in sorted(FACTOR_REGRESSION_FACADE.rglob("*.py")):
+        _import_targets(path, src_root)
+    for path in core_files:
+        for name in _import_targets(path, src_root):
+            assert not name.startswith("riskquant.solutions"), (
+                f"{path}: the core imports the facade tier ({name})"
+            )
+
+    outside = [
+        (path, src_root)
+        for path in sorted(src_root.rglob("*.py"))
+        if not path.is_relative_to(FACTOR_REGRESSION_CORE)
+        and not path.is_relative_to(FACTOR_REGRESSION_FACADE)
+    ] + [
+        (path, REPOSITORY_ROOT)
+        for path in sorted((REPOSITORY_ROOT / "scripts").rglob("*.py"))
+    ]
+    assert outside, "the guard scanned no module outside the two packages"
+    for path, root in outside:
+        for name in _import_targets(path, root):
+            assert not _is_core_target(name), (
+                f"{path}: imports {name}; only the facade may import the core"
+            )
+
+
+def _annotation_mentions_str(node: ast.expr | None) -> bool:
+    if node is None:
+        return False
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Name) and sub.id == "str":
+            return True
+        if isinstance(sub, ast.Attribute) and sub.attr == "str":
+            return True
+        # A string annotation is parsed and scanned like code.
+        if (
+            isinstance(sub, ast.Constant)
+            and isinstance(sub.value, str)
+            and _annotation_mentions_str(ast.parse(sub.value, mode="eval").body)
+        ):
+            return True
+    return False
+
+
+def test_factor_regression_core_holds_no_str_type() -> None:
+    core_files = sorted(FACTOR_REGRESSION_CORE.rglob("*.py"))
+    assert core_files, "the guard scanned no core module"
+    n_annotations = 0
+    for path in core_files:
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+        for node in ast.walk(tree):
+            annotations: list[ast.expr | None] = []
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                arguments = node.args
+                every_arg = [
+                    *arguments.posonlyargs,
+                    *arguments.args,
+                    *arguments.kwonlyargs,
+                    *([arguments.vararg] if arguments.vararg else []),
+                    *([arguments.kwarg] if arguments.kwarg else []),
+                ]
+                annotations.extend(arg.annotation for arg in every_arg)
+                annotations.append(node.returns)
+            elif isinstance(node, ast.AnnAssign):
+                annotations.append(node.annotation)
+            elif isinstance(node, ast.ClassDef):
+                for base in node.bases:
+                    base_name = (
+                        base.id
+                        if isinstance(base, ast.Name)
+                        else base.attr
+                        if isinstance(base, ast.Attribute)
+                        else ""
+                    )
+                    assert base_name not in _ENUM_BASES, (
+                        f"{path}: class {node.name} derives from {base_name}"
+                    )
+            for annotation in annotations:
+                if annotation is None:
+                    continue
+                n_annotations += 1
+                assert not _annotation_mentions_str(annotation), (
+                    f"{path}:{annotation.lineno}: str in a core annotation"
+                )
+    assert n_annotations > 0, "the guard scanned no annotation"
+
+
 # -------------------------------------------------------------- public surface
 
 
@@ -185,6 +365,7 @@ def test_core_packages_obey_the_mechanical_rules() -> None:
         "dependence",
         "market_state",
         "scenario_metrics",
+        "factor_regression",
     ):
         for path in _modules(package):
             if path.name in exempt:
