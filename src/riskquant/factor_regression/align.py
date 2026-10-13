@@ -92,8 +92,13 @@ class CoreAlignedLevels:
 def _validate_series(
     j: int, date_ord: NDArray[np.int32], values: NDArray[np.float64]
 ) -> None:
+    # Exact type, not isinstance: an ndarray subclass can redefine the
+    # comparisons and reductions below. numpy.ma.MaskedArray skips masked
+    # elements in .all(), so a NaN or a duplicate date under the mask passes
+    # both checks. The core converts nothing, so it rejects every subclass
+    # before the first reduction on the operand.
     for operand in (date_ord, values):
-        if not isinstance(operand, np.ndarray):
+        if type(operand) is not np.ndarray:
             raise CoreInputError(
                 reason=codes.INPUT_NOT_NDARRAY, operand=j, positions=()
             )
@@ -147,6 +152,9 @@ def align_core(
         matching ``date_ords`` entry.
     start_ord, end_ord
         Half-open window ``[start_ord, end_ord)`` in ``int32`` ordinal range.
+        Each bound is an ``int``. ``operator.index`` also accepts a NumPy
+        integer. A ``bool``, ``numpy.bool_``, float or str bound raises
+        ``TypeError``: the core never rounds or reinterprets a bound.
 
     Returns
     -------
@@ -155,12 +163,23 @@ def align_core(
 
     Raises
     ------
+    TypeError
+        A window bound is not an integer, or is a ``bool`` or ``numpy.bool_``.
     CoreInputError
         An array breaks the contract above. ``operand`` is the series index.
     CoreAlignmentError
         ``start_ord >= end_ord`` (``ALIGN_EMPTY_WINDOW``), a bound outside the
         ``int32`` range (``ALIGN_WINDOW_OUT_OF_RANGE``), or no date is common
         to every series inside the window (``ALIGN_EMPTY_INTERSECTION``).
+
+    Notes
+    -----
+    Every array must be exactly ``numpy.ndarray``. ``numpy.ma.MaskedArray``
+    and every other ndarray subclass raise ``CoreInputError`` with
+    ``INPUT_NOT_NDARRAY``, before any check reads the array. A subclass can
+    redefine the comparisons and reductions of the checks: a mask hides a
+    NaN level or a duplicate date from them. The core does not convert the
+    input, so it rejects it.
     """
     n_series = len(date_ords)
     if n_series == 0:
@@ -175,7 +194,12 @@ def align_core(
         _validate_series(j, date_ords[j], values[j])
 
     # operator.index rejects a float or str bound with TypeError: the core never
-    # rounds a window bound.
+    # rounds a window bound. bool is an int subclass, so operator.index reads
+    # True as 1; a flag is not a date ordinal. numpy.bool_ is rejected by the
+    # same check, so the outcome does not depend on the NumPy version.
+    for bound in (start_ord, end_ord):
+        if isinstance(bound, (bool, np.bool_)):
+            raise TypeError("a window bound must be an int, not a bool")
     start = operator.index(start_ord)
     end = operator.index(end_ord)
     if not (_INT32_MIN <= start <= _INT32_MAX and _INT32_MIN <= end <= _INT32_MAX):

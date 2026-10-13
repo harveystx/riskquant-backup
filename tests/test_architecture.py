@@ -118,39 +118,65 @@ _ENUM_BASES = frozenset({"Enum", "IntEnum", "StrEnum", "Flag", "IntFlag", "ReprE
 
 
 def _module_name(path: Path, root: Path) -> str:
-    parts = list(path.relative_to(root).with_suffix("").parts)
-    if parts[-1] == "__init__":
-        parts.pop()
-    return ".".join(parts)
+    """
+    Dotted name of ``path`` below ``root``, ``__init__`` kept.
+
+    ``a/b/__init__.py`` gives ``a.b.__init__``, so the parent of every name is
+    the package that anchors a relative import in the file, as
+    ``__package__`` does.
+    """
+    return ".".join(path.relative_to(root).with_suffix("").parts)
+
+
+def _resolve_imports(
+    tree: ast.AST, module: str
+) -> list[tuple[int, str | None, tuple[str, ...]]]:
+    """
+    Every import statement of ``tree`` as ``(line, module, imported names)``.
+
+    ``module`` is the dotted name of the source (see ``_module_name``).
+    ``TYPE_CHECKING`` blocks and function bodies are included (``ast.walk``
+    visits every node). ``import a.b`` gives ``("a.b", ())``;
+    ``from a import b, c`` gives ``("a", ("b", "c"))``.
+
+    A relative import that climbs above the top package, or one in a module
+    without a parent package, gives ``None``. Python raises ``ImportError``
+    for both, so neither names an absolute module. Example:
+    ``from ...numpy import x`` in ``riskquant.factor_regression.align``.
+    """
+    anchor = module.split(".")[:-1]
+    statements: list[tuple[int, str | None, tuple[str, ...]]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            statements.extend((node.lineno, alias.name, ()) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            names = tuple(alias.name for alias in node.names if alias.name != "*")
+            climb = node.level - 1
+            base: str | None
+            if node.level == 0:
+                base = node.module
+            elif climb >= len(anchor):
+                # importlib needs at least ``level`` parts in the package name.
+                base = None
+            else:
+                kept = anchor[: len(anchor) - climb]
+                base = ".".join([*kept, *([node.module] if node.module else [])])
+            statements.append((node.lineno, base, names))
+    return statements
 
 
 def _import_statements(path: Path, root: Path) -> list[tuple[str, tuple[str, ...]]]:
     """
     Every import statement of a file as ``(module, imported names)``.
 
-    ``TYPE_CHECKING`` blocks are included (``ast.walk`` visits every node). A
-    relative import is resolved against the module name of ``path`` below
-    ``root``; one that climbs above ``root`` fails. ``import a.b`` gives
-    ``("a.b", ())``; ``from a import b, c`` gives ``("a", ("b", "c"))``.
+    See ``_resolve_imports``. A relative import that does not resolve to an
+    absolute module fails the calling test.
     """
-    module = _module_name(path, root)
-    package = module if path.name == "__init__.py" else module.rpartition(".")[0]
+    tree = ast.parse(path.read_text(encoding="utf-8-sig"))
     statements: list[tuple[str, tuple[str, ...]]] = []
-    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8-sig"))):
-        if isinstance(node, ast.Import):
-            statements.extend((alias.name, ()) for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            if node.level == 0:
-                base = node.module or ""
-            else:
-                anchor = package.split(".") if package else []
-                climb = node.level - 1
-                assert climb <= len(anchor), f"{path}: relative import above root"
-                kept = anchor[: len(anchor) - climb]
-                base = ".".join([*kept, *([node.module] if node.module else [])])
-            assert base, f"{path}: unresolved relative import"
-            names = tuple(alias.name for alias in node.names if alias.name != "*")
-            statements.append((base, names))
+    for line, base, names in _resolve_imports(tree, _module_name(path, root)):
+        assert base, f"{path}:{line}: relative import above the top package"
+        statements.append((base, names))
     return statements
 
 
@@ -172,6 +198,58 @@ def _core_may_import(name: str) -> bool:
     )
 
 
+def _core_import_violations(source: str, module: str) -> list[str]:
+    """
+    The C.21 import violations of one core module, one ``line <n>: ...`` each.
+
+    A pure function of the source text and the dotted module name (see
+    ``_module_name``), so a test can feed it literal sources.
+
+    * Every import statement counts, ``TYPE_CHECKING`` blocks and function
+      bodies included. A relative import above the top package is a violation.
+    * ``import a.b`` needs ``a.b`` allowed. ``from a import b, c`` needs ``a``
+      allowed, or every child ``a.b`` and ``a.c`` allowed. So
+      ``from scipy import stats`` passes through the allowed child
+      ``scipy.stats``; ``from scipy import stats, linalg`` fails.
+    * ``import scipy.stats`` binds the name ``scipy`` to the whole package, and
+      scipy loads a submodule on first attribute access. So any attribute of a
+      name bound to the ``scipy`` package, other than ``stats``, is a violation
+      (``scipy.linalg`` after ``import scipy.stats``).
+    """
+    tree = ast.parse(source)
+    violations: list[tuple[int, str]] = []
+    for line, base, names in _resolve_imports(tree, module):
+        if base is None:
+            violations.append((line, "relative import above the top package"))
+            continue
+        allowed = _core_may_import(base) or (
+            bool(names) and all(_core_may_import(f"{base}.{n}") for n in names)
+        )
+        if not allowed:
+            violations.append((line, f"imports {base}"))
+
+    scipy_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname is None and alias.name.partition(".")[0] == "scipy":
+                    scipy_names.add("scipy")
+                elif alias.asname is not None and alias.name == "scipy":
+                    scipy_names.add(alias.asname)
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in scipy_names
+            and node.attr != "stats"
+        ):
+            violations.append((
+                node.lineno,
+                f"reads {node.value.id}.{node.attr} of the scipy package",
+            ))
+    return [f"line {line}: {what}" for line, what in sorted(violations)]
+
+
 def _is_core_target(name: str) -> bool:
     return name == "riskquant.factor_regression" or name.startswith(
         "riskquant.factor_regression."
@@ -184,14 +262,12 @@ def test_factor_regression_import_direction() -> None:
     core_files = sorted(FACTOR_REGRESSION_CORE.rglob("*.py"))
     assert core_files, "the guard scanned no core module"
     for path in core_files:
-        for base, names in _import_statements(path, src_root):
-            # ``from scipy import stats`` passes through the allowed child
-            # ``scipy.stats``; ``import scipy`` and ``from scipy import linalg``
-            # fail, because neither the base nor every child is allowed.
-            allowed = _core_may_import(base) or (
-                bool(names) and all(_core_may_import(f"{base}.{n}") for n in names)
-            )
-            assert allowed, f"{path}: the factor regression core imports {base}"
+        violations = _core_import_violations(
+            path.read_text(encoding="utf-8-sig"), _module_name(path, src_root)
+        )
+        assert not violations, (
+            f"{path}: the factor regression core breaks C.21: {violations}"
+        )
 
     # Both packages: every relative import resolves inside src (asserted in
     # _import_statements) and the core never imports the facade.
@@ -218,6 +294,61 @@ def test_factor_regression_import_direction() -> None:
             assert not _is_core_target(name), (
                 f"{path}: imports {name}; only the facade may import the core"
             )
+
+
+# Each rejected source holds exactly one forbidden form, on the given line.
+# The accepted sources hold none. The module sits in the core package, so
+# ``...`` climbs above the top package ``riskquant``.
+_PROBE_MODULE = "riskquant.factor_regression.probe"
+_C21_SOURCES = [
+    pytest.param("import scipy\n", 1, id="reject-import-scipy"),
+    pytest.param("import scipy as sp\n", 1, id="reject-import-scipy-as-sp"),
+    pytest.param("from scipy import linalg\n", 1, id="reject-from-scipy-linalg"),
+    pytest.param(
+        "from scipy import stats, linalg\n", 1, id="reject-from-scipy-stats-linalg"
+    ),
+    pytest.param("import polars\n", 1, id="reject-import-polars"),
+    pytest.param("import numba\n", 1, id="reject-import-numba"),
+    pytest.param(
+        "from riskquant import constants\n", 1, id="reject-riskquant-constants"
+    ),
+    pytest.param("from ..simlab import x\n", 1, id="reject-relative-simlab"),
+    pytest.param("from .. import config\n", 1, id="reject-relative-config"),
+    pytest.param(
+        "from typing import TYPE_CHECKING\n"
+        "\n"
+        "if TYPE_CHECKING:\n"
+        "    from riskquant.solutions.factor_regression import contracts\n",
+        4,
+        id="reject-facade-under-type-checking",
+    ),
+    pytest.param(
+        "def load() -> None:\n    import pandas\n", 2, id="reject-import-in-function"
+    ),
+    pytest.param("from ...numpy import x\n", 1, id="reject-above-top-package"),
+    pytest.param(
+        "import scipy.stats\n\nsolve = scipy.linalg.solve\n",
+        3,
+        id="reject-scipy-attribute-other-than-stats",
+    ),
+    pytest.param(
+        "import scipy.stats\n\nsf = scipy.stats.t.sf\n", None, id="accept-scipy-stats"
+    ),
+    pytest.param("from scipy import stats\n", None, id="accept-from-scipy-stats"),
+    pytest.param("from . import codes\n", None, id="accept-relative-codes"),
+    pytest.param("from .codes import x\n", None, id="accept-relative-codes-name"),
+    pytest.param("import numpy as np\n", None, id="accept-numpy"),
+]
+
+
+@pytest.mark.parametrize(("source", "forbidden_line"), _C21_SOURCES)
+def test_the_core_import_check_on_literal_sources(
+    source: str, forbidden_line: int | None
+) -> None:
+    violations = _core_import_violations(source, _PROBE_MODULE)
+    lines = [v.partition(":")[0] for v in violations]
+    expected = [] if forbidden_line is None else [f"line {forbidden_line}"]
+    assert lines == expected, violations
 
 
 def _annotation_mentions_str(node: ast.expr | None) -> bool:

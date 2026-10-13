@@ -209,6 +209,43 @@ def test_a_float_window_bound_is_not_rounded() -> None:
         align_core([a], [np.ones(3)], start_ord=0, end_ord=5.5)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        pytest.param(True, 10, id="start-True"),
+        pytest.param(0, True, id="end-True"),
+        pytest.param(False, 10, id="start-False"),
+        pytest.param(np.True_, 10, id="start-numpy-True"),
+        pytest.param(0, np.True_, id="end-numpy-True"),
+        pytest.param(0, 5.5, id="end-float"),
+    ],
+)
+def test_a_bool_or_float_window_bound_raises_type_error(
+    start: object, end: object
+) -> None:
+    # bool is an int subclass: operator.index alone reads True as 1.
+    a = np.array([1, 5, 9], dtype=np.int32)
+    with pytest.raises(TypeError):
+        align_core([a], [np.ones(3)], start_ord=start, end_ord=end)  # type: ignore[arg-type]
+
+
+def test_numpy_integer_window_bounds_give_the_int_bound_result() -> None:
+    a = np.array([1, 5, 9, 13], dtype=np.int32)
+    v = np.arange(4.0)
+    expected = align_core([a], [v], start_ord=5, end_ord=13)
+    bounds: list[tuple[object, object]] = [
+        (np.int32(5), np.int32(13)),
+        (np.int64(5), np.int64(13)),
+    ]
+    for start, end in bounds:
+        got = align_core([a], [v], start_ord=start, end_ord=end)  # type: ignore[arg-type]
+        assert (got.start_ord, got.end_ord) == (5, 13)
+        assert type(got.start_ord) is int
+        assert type(got.end_ord) is int
+        assert got.date_ord.tolist() == expected.date_ord.tolist()
+        assert got.levels.tolist() == expected.levels.tolist()
+
+
 # ------------------------------------------------------------ input contract
 
 
@@ -262,6 +299,57 @@ def test_input_contract_rejects_without_repair() -> None:
         )
     not_array = _input_error([[1, 2, 3]], [good_v])  # type: ignore[list-item]
     assert not_array.reason == codes.INPUT_NOT_NDARRAY
+
+
+# An ndarray subclass can redefine the comparisons and reductions of the
+# checks. Each case below passed before the exact-type check. In the two masked
+# cases, the mask hides the defect from the checks.
+
+
+class _TrivialSubclass(np.ndarray[tuple[int, ...], np.dtype[np.float64]]):
+    """An ndarray subclass with no override: only the exact type differs."""
+
+
+def test_masked_values_with_nan_under_the_mask_are_rejected() -> None:
+    good_d = np.array([1, 2, 3], dtype=np.int32)
+    good_v = np.array([1.0, 2.0, 3.0])
+    hidden = np.array([False, True, False])
+    masked = np.ma.masked_array(np.array([1.0, np.nan, 3.0]), mask=hidden)
+    assert masked.dtype == np.float64
+    error = _input_error([good_d, good_d], [good_v, masked])
+    assert (error.reason, error.operand, error.positions) == (
+        int(codes.INPUT_NOT_NDARRAY),
+        1,
+        (),
+    )
+
+
+def test_masked_dates_with_a_duplicate_under_the_mask_are_rejected() -> None:
+    good_d = np.array([1, 2, 3], dtype=np.int32)
+    good_v = np.array([1.0, 2.0, 3.0])
+    hidden = np.array([False, False, True])
+    masked = np.ma.masked_array(np.array([1, 2, 2], dtype=np.int32), mask=hidden)
+    assert masked.dtype == np.int32
+    error = _input_error([good_d, masked], [good_v, good_v])
+    assert (error.reason, error.operand, error.positions) == (
+        int(codes.INPUT_NOT_NDARRAY),
+        1,
+        (),
+    )
+
+
+def test_a_view_of_a_trivial_ndarray_subclass_is_rejected() -> None:
+    good_d = np.array([1, 2, 3], dtype=np.int32)
+    good_v = np.array([1.0, 2.0, 3.0])
+    view = good_v.view(_TrivialSubclass)
+    assert isinstance(view, np.ndarray)
+    assert np.shares_memory(view, good_v)
+    error = _input_error([good_d], [view])
+    assert (error.reason, error.operand, error.positions) == (
+        int(codes.INPUT_NOT_NDARRAY),
+        0,
+        (),
+    )
 
 
 # ------------------------------------------------------------------- C.19
