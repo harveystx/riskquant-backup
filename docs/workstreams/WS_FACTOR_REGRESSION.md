@@ -4,7 +4,7 @@ Path: docs/workstreams/WS_FACTOR_REGRESSION.md
 Class: HEAVY
 Status: FROZEN
 Revision: 3
-Revision note: Audit R1 (R_FREEZE_RECONCILIATION_R1.md) BLOCKING B-1 to B-7 applied (B-1 with the owner fitted-value amendment); owner gate O-8 option 1 applied; owner-directed refinements R-1 to R-5, R-13, R-14, R-16 applied; other refinements moved to the backlog; snapshot changed from d4ba609 dirty=true to the audit snapshot 05314f8 dirty=false. Owner 2026-10-12: section 1.8 option A, build v1 now. Known gap I-001: the S6 and S7 Exit text omits the mypy baseline line, which prints exit=1 by design (13 errors in hashing.py). Owner edits after revision 3, non-contract: section 7 mypy risk row, A.6 heading, A.7 centring rows, appendix Status lines.
+Revision note: Audit R1 (R_FREEZE_RECONCILIATION_R1.md) BLOCKING B-1 to B-7 applied (B-1 with the owner fitted-value amendment); owner gate O-8 option 1 applied; owner-directed refinements R-1 to R-5, R-13, R-14, R-16 applied; other refinements moved to the backlog; snapshot changed from d4ba609 dirty=true to the audit snapshot 05314f8 dirty=false. Owner 2026-10-12: section 1.8 option A, build v1 now. Known gap I-001: the S6 and S7 Exit text omits the mypy baseline line, which prints exit=1 by design (13 errors in hashing.py). Owner edits after revision 3, non-contract: section 7 mypy risk row, A.6 heading, A.7 centring rows, appendix Status lines. Owner 2026-10-14: S1 and S2 VALIDATED; OD-3 to OD-6 recorded in the section 7 backlog.
 Date: 2026-10-12
 Branch: ws/factor-regression
 Snapshot: SNAPSHOT commit=05314f8 dirty=false content_hash=358d3f657c81a072
@@ -238,7 +238,7 @@ Attach: `docs/workstreams/WS_FACTOR_REGRESSION.md`, `docs/workstreams/WS_FACTOR_
 and `tests/test_no_stale_path_comments.py`
 Gates: `A_TESTS.md` section S1, gate block.
 Exit: Every gate line prints `exit=0`. pytest full: 0 failed, 0 errors, 36 skipped or fewer.
-Status: NOT_STARTED
+Status: VALIDATED
 Evidence: commit 25f9ba0; Windows gates exit=0 on every line, 5834 passed, 36 skipped (gate_s1_head.txt); independent review ACCEPT, R-001 to R-005 closed.
 Tests: S1.T5 to S1.T7, S1.T9 to S1.T13. The table is in `A_TESTS.md`, section S1.
 Appendix: A_NUMERICS.md (A.8); A_TESTS.md (S1 table and gates)
@@ -256,8 +256,8 @@ Attach: `docs/workstreams/WS_FACTOR_REGRESSION.md`, `docs/workstreams/WS_FACTOR_
 `docs/workstreams/WS_FACTOR_REGRESSION/A_NUMERICS.md`, `context_riskquant_core.txt`
 Gates: `A_TESTS.md` section S2, gate block.
 Exit: Every gate line prints `exit=0`. pytest full: 0 failed, 0 errors, 36 skipped or fewer.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: Windows gates exit=0, 5945 passed, 36 skipped (gate_s2.txt); independent review ACCEPT WITH FIXES; R-007 to R-009 closed by owner decisions OD-5 A and OD-6 B (section 7 backlog).
 Tests: S2.T1 to S2.T9. The table is in `A_TESTS.md`, section S2.
 Appendix: A_NUMERICS.md (A.1, A.7); A_TESTS.md (S2 table and gates)
 
@@ -390,6 +390,10 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - S1 guard residual (owner OD-3): the outside-import rule (no module outside the two packages imports the core) has no committed negative test. The core guard also misses a riskquant.config read after import riskquant.exceptions. Only a slice that lists tests/test_architecture.py in its Files can add these.
 - Core exceptions are not picklable: their __init__ takes keyword-only arguments. Add __reduce__ in errors.py only if a process pool is ever used.
 - S1 guard residual (owner OD-4, R-006): the no-str and no-Enum check (S1.T13) misses aliases (Text, LiteralString, Label = str), an aliased Enum import, functional Enum(...) and module-level str constants or label tuples. Reviewers check these forms by eye. Only a slice that lists tests/test_architecture.py in its Files can add them.
+- S2 R-007 (owner OD-5, option A): rows.py reports a series index outside [0, n_series) as CoreInputError(INPUT_WRONG_SHAPE, OPERAND_TERM_SERIES, positions=(t,)). The S1 docstring says shape errors have empty positions. The S7 facade resolves term names first (C.5), so it never reaches this case.
+- S2 R-008 (owner OD-6, option B): a level pair that passes C.7 can still give +inf or -inf rows (examples: LOG 1e-300 to 1e300, DIFFERENCE -1e308 to 1e308) with only a numpy RuntimeWarning. rows.py does not guard this. S3 and S4 reject a non-finite design or response with CoreInputError(INPUT_NON_FINITE). S5 rejects a non-finite R or r with CoreRestrictionError(RESTRICTION_NON_FINITE). Each has a test.
+- S2 R-009: the C.7 domain tests do not fail if the check skips aligned index 0 or m - 1. rows.py is correct today (4000-case fuzz) and no later slice modifies it. Add boundary cases if rows.py ever changes.
+- S2 adjacent A1: CoreRows.stride is an unbounded Python int. A.6 digests the stride as int64. S6 rejects a step or stride above the int64 range with ModelSpecError.
 
 ## 8. Closure record
 
