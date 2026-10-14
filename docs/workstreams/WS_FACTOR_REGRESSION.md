@@ -239,7 +239,7 @@ and `tests/test_no_stale_path_comments.py`
 Gates: `A_TESTS.md` section S1, gate block.
 Exit: Every gate line prints `exit=0`. pytest full: 0 failed, 0 errors, 36 skipped or fewer.
 Status: NOT_STARTED
-Evidence: none
+Evidence: commit 25f9ba0; Windows gates exit=0 on every line, 5834 passed, 36 skipped (gate_s1_head.txt); independent review ACCEPT, R-001 to R-005 closed.
 Tests: S1.T5 to S1.T7, S1.T9 to S1.T13. The table is in `A_TESTS.md`, section S1.
 Appendix: A_NUMERICS.md (A.8); A_TESTS.md (S1 table and gates)
 
@@ -387,7 +387,9 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - R-17: value case: a `scripts/` module imports in pytest and from the repository root; it fails outside the checkout
 - R-18: `numpy.linalg.matrix_rank(tol=)` exists in numpy 1.26; `rtol` came in numpy 2.0 [Inferred]
 - S1 guard limits (owner OD-3): the C.21 check does not cover getattr, rebinding the scipy name, quoted annotations, importlib.import_module or __import__. Reviewers check these forms by eye.
+- S1 guard residual (owner OD-3): the outside-import rule (no module outside the two packages imports the core) has no committed negative test. The core guard also misses a riskquant.config read after import riskquant.exceptions. Only a slice that lists tests/test_architecture.py in its Files can add these.
 - Core exceptions are not picklable: their __init__ takes keyword-only arguments. Add __reduce__ in errors.py only if a process pool is ever used.
+- S1 guard residual (owner OD-4, R-006): the no-str and no-Enum check (S1.T13) misses aliases (Text, LiteralString, Label = str), an aliased Enum import, functional Enum(...) and module-level str constants or label tuples. Reviewers check these forms by eye. Only a slice that lists tests/test_architecture.py in its Files can add them.
 
 ## 8. Closure record
 
