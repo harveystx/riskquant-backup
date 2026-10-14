@@ -4,7 +4,7 @@ Path: docs/workstreams/WS_FACTOR_REGRESSION.md
 Class: HEAVY
 Status: FROZEN
 Revision: 3
-Revision note: Audit R1 (R_FREEZE_RECONCILIATION_R1.md) BLOCKING B-1 to B-7 applied (B-1 with the owner fitted-value amendment); owner gate O-8 option 1 applied; owner-directed refinements R-1 to R-5, R-13, R-14, R-16 applied; other refinements moved to the backlog; snapshot changed from d4ba609 dirty=true to the audit snapshot 05314f8 dirty=false. Owner 2026-10-12: section 1.8 option A, build v1 now. Known gap I-001: the S6 and S7 Exit text omits the mypy baseline line, which prints exit=1 by design (13 errors in hashing.py). Owner edits after revision 3, non-contract: section 7 mypy risk row, A.6 heading, A.7 centring rows, appendix Status lines. Owner 2026-10-14: S1 and S2 VALIDATED; OD-3 to OD-6 recorded in the section 7 backlog.
+Revision note: Audit R1 (R_FREEZE_RECONCILIATION_R1.md) BLOCKING B-1 to B-7 applied (B-1 with the owner fitted-value amendment); owner gate O-8 option 1 applied; owner-directed refinements R-1 to R-5, R-13, R-14, R-16 applied; other refinements moved to the backlog; snapshot changed from d4ba609 dirty=true to the audit snapshot 05314f8 dirty=false. Owner 2026-10-12: section 1.8 option A, build v1 now. Known gap I-001: the S6 and S7 Exit text omits the mypy baseline line, which prints exit=1 by design (13 errors in hashing.py). Owner edits after revision 3, non-contract: section 7 mypy risk row, A.6 heading, A.7 centring rows, appendix Status lines. Owner 2026-10-14: S1, S2 and S3 VALIDATED; OD-3 to OD-7 recorded in the section 7 backlog.
 Date: 2026-10-12
 Branch: ws/factor-regression
 Snapshot: SNAPSHOT commit=05314f8 dirty=false content_hash=358d3f657c81a072
@@ -275,8 +275,8 @@ Attach: `docs/workstreams/WS_FACTOR_REGRESSION.md`, `docs/workstreams/WS_FACTOR_
 `docs/workstreams/WS_FACTOR_REGRESSION/A_NUMERICS.md`, `context_riskquant_core.txt`
 Gates: `A_TESTS.md` section S3, gate block.
 Exit: Every gate line prints `exit=0`. pytest full: 0 failed, 0 errors, 36 skipped or fewer.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: Windows gates exit=0, 328 passed in the slice, 6211 passed and 36 skipped in the full run (gate_s3.txt); independent review ACCEPT; R-010 and R-011 recorded by owner decision OD-7 A (section 7 backlog).
 Tests: S3.T1 to S3.T10. The table is in `A_TESTS.md`, section S3.
 Appendix: A_NUMERICS.md (A.2, A.4, A.7); A_TESTS.md (S3 table and gates)
 
@@ -394,6 +394,9 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - S2 R-008 (owner OD-6, option B): a level pair that passes C.7 can still give +inf or -inf rows (examples: LOG 1e-300 to 1e300, DIFFERENCE -1e308 to 1e308) with only a numpy RuntimeWarning. rows.py does not guard this. S3 and S4 reject a non-finite design or response with CoreInputError(INPUT_NON_FINITE). S5 rejects a non-finite R or r with CoreRestrictionError(RESTRICTION_NON_FINITE). Each has a test.
 - S2 R-009: the C.7 domain tests do not fail if the check skips aligned index 0 or m - 1. rows.py is correct today (4000-case fuzz) and no later slice modifies it. Add boundary cases if rows.py ever changes.
 - S2 adjacent A1: CoreRows.stride is an unbounded Python int. A.6 digests the stride as int64. S6 rejects a step or stride above the int64 range with ModelSpecError.
+- S3 R-010 (owner OD-7, option A): the involved columns of CoreRankError use the A.2 step 4 floor of 1e-12 on scaled participation. When a member column has a norm 1e6 times smaller than the dependent set, it can drop out of involved (99 of 100 sandbox seeds at ratio 1e6). The relation row stays correct and the gate still raises. A fixed floor of 1e-29 names innocent columns when non-member columns are near-collinear (18 to 100 of 100 seeds). Candidate fix for a later LIGHT change to design.py: floor (100 * eps * s[0] / s[rank - 1]) ** 2 (0 misses and 0 false names in 9 sandbox cells; misses only at ratio 1e14 or above). No later slice of this workstream may change design.py.
+- S3 R-011: diagnose type-checks condition_threshold even when apply_condition_threshold is False. S7 passes a float (for example 0.0) for a None threshold.
+- S3 owner notes: R2_ABOVE_DURBIN_WATSON takes r_squared as its value (A.4 gives none). diagnose raises ValueError for a negative overlap_order or a non-finite statistic, and rank_gate raises INPUT_NON_FINITE for a column 2-norm above the float64 range; no reason code exists for these and no slice lists codes.py. rank_gate rejects R = k with CoreSampleSizeError(SAMPLE_ROWS_NOT_ABOVE_COLUMNS) before the SVD.
 
 ## 8. Closure record
 
