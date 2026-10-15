@@ -4,7 +4,7 @@ Path: docs/workstreams/WS_FACTOR_REGRESSION.md
 Class: HEAVY
 Status: FROZEN
 Revision: 3
-Revision note: Audit R1 (R_FREEZE_RECONCILIATION_R1.md) BLOCKING B-1 to B-7 applied (B-1 with the owner fitted-value amendment); owner gate O-8 option 1 applied; owner-directed refinements R-1 to R-5, R-13, R-14, R-16 applied; other refinements moved to the backlog; snapshot changed from d4ba609 dirty=true to the audit snapshot 05314f8 dirty=false. Owner 2026-10-12: section 1.8 option A, build v1 now. Known gap I-001: the S6 and S7 Exit text omits the mypy baseline line, which prints exit=1 by design (13 errors in hashing.py). Owner edits after revision 3, non-contract: section 7 mypy risk row, A.6 heading, A.7 centring rows, appendix Status lines. Owner 2026-10-14: S1, S2 and S3 VALIDATED; OD-3 to OD-7 recorded in the section 7 backlog.
+Revision note: Audit R1 (R_FREEZE_RECONCILIATION_R1.md) BLOCKING B-1 to B-7 applied (B-1 with the owner fitted-value amendment); owner gate O-8 option 1 applied; owner-directed refinements R-1 to R-5, R-13, R-14, R-16 applied; other refinements moved to the backlog; snapshot changed from d4ba609 dirty=true to the audit snapshot 05314f8 dirty=false. Owner 2026-10-12: section 1.8 option A, build v1 now. Known gap I-001: the S6 and S7 Exit text omits the mypy baseline line, which prints exit=1 by design (13 errors in hashing.py). Owner edits after revision 3, non-contract: section 7 mypy risk row, A.6 heading, A.7 centring rows, appendix Status lines. Owner 2026-10-14: S1 to S4 VALIDATED; OD-3 to OD-9 recorded in the section 7 backlog.
 Date: 2026-10-12
 Branch: ws/factor-regression
 Snapshot: SNAPSHOT commit=05314f8 dirty=false content_hash=358d3f657c81a072
@@ -294,8 +294,8 @@ Attach: `docs/workstreams/WS_FACTOR_REGRESSION.md`, `docs/workstreams/WS_FACTOR_
 `docs/workstreams/WS_FACTOR_REGRESSION/A_NUMERICS.md`, `context_riskquant_core.txt`
 Gates: `A_TESTS.md` section S4, gate block.
 Exit: Every gate line prints `exit=0`. pytest full: 0 failed, 0 errors, 36 skipped or fewer.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: Windows gates exit=0, 266 passed in the slice, 6415 passed and 36 skipped in the full run (gate_s4.txt); independent review ACCEPT, no findings; OD-8 A and OD-9 A recorded (section 7 backlog).
 Tests: S4.T1 to S4.T8, S4.T13. The table is in `A_TESTS.md`, section S4.
 Appendix: A_NUMERICS.md (A.3, A.4, A.7); A_TESTS.md (S4 table and gates)
 
@@ -397,6 +397,10 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - S3 R-010 (owner OD-7, option A): the involved columns of CoreRankError use the A.2 step 4 floor of 1e-12 on scaled participation. When a member column has a norm 1e6 times smaller than the dependent set, it can drop out of involved (99 of 100 sandbox seeds at ratio 1e6). The relation row stays correct and the gate still raises. A fixed floor of 1e-29 names innocent columns when non-member columns are near-collinear (18 to 100 of 100 seeds). Candidate fix for a later LIGHT change to design.py: floor (100 * eps * s[0] / s[rank - 1]) ** 2 (0 misses and 0 false names in 9 sandbox cells; misses only at ratio 1e14 or above). No later slice of this workstream may change design.py.
 - S3 R-011: diagnose type-checks condition_threshold even when apply_condition_threshold is False. S7 passes a float (for example 0.0) for a None threshold.
 - S3 owner notes: R2_ABOVE_DURBIN_WATSON takes r_squared as its value (A.4 gives none). diagnose raises ValueError for a negative overlap_order or a non-finite statistic, and rank_gate raises INPUT_NON_FINITE for a column 2-norm above the float64 range; no reason code exists for these and no slice lists codes.py. rank_gate rejects R = k with CoreSampleSizeError(SAMPLE_ROWS_NOT_ABOVE_COLUMNS) before the SVD.
+- S4 OD-8 (owner, option A): amendment to A.3 for evaluation only. fit_core evaluates the covariance as Q.T @ Q plus the lag terms, with Q = diag(e) @ u @ diag(1 / s) @ vh, not as an explicit B @ M0 @ B. Both are the same matrix in exact arithmetic. Against an exact Fraction sandwich at mean to sd 1e7 (250 rows) the literal form has relative error 2.2e-2 to 1.7e-1 and the factored form 3.3e-10 to 4.8e-10. Zero response variance with an intercept is tested as all(y == y[0]), not by the float centred sum of A.3. A.3 is unchanged.
+- S4 OD-9 (owner, option A): fit_core assumes that column 0 of the design holds ones when intercept is True and does not check it. A wrong pairing gives a wrong r_squared and a wrong zero-variance rule with no error. S7 reads the intercept flag once and passes the same value to assemble_design and fit_core. S7 adds one test (new ID S7.T12): the same data fitted with intercept True and with intercept False, with r_squared compared to the Fraction centred and uncentred values.
+- S4 accepted deviations: a non-finite fitted, resid or rss raises CoreInputError(INPUT_NON_FINITE) on operand 1 at the largest abs(y); the exact-fit rule (DEGENERATE_EXACT_FIT) also fires when the float64 rss underflows to 0.0, so the reason name is inexact for residuals below about 1e-162; the zero-variance check runs after rank_gate and before the solve.
+- S4 adjacent: rank_gate raises CoreSampleSizeError with n_required = k + 1. The S7 message for C.12 names k as n_required - 1.
 
 ## 8. Closure record
 
