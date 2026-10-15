@@ -33,7 +33,8 @@ Check order (wald_core):
     6. RESTRICTION_WRONG_SHAPE: restriction not 2-D; J is 0; K column count
        differs from len(coef); rhs length differs from J.
     7. RESTRICTION_NON_FINITE: a NaN or inf in restriction or rhs.
-    8. RESTRICTION_RANK_DEFICIENT: row rank of restriction is below J.
+    8. RESTRICTION_RANK_DEFICIENT: a zero row, J above K, or s_min <= tau * s_max
+       of the row-normalised restriction (OD-10, amendment to A.5).
     9. RESTRICTION_NOT_POSITIVE_DEFINITE: Cholesky of m fails.
    10. RESTRICTION_NON_FINITE: W or F is not finite after the solve.
 """
@@ -55,8 +56,16 @@ from riskquant.factor_regression.errors import (
     CoreRestrictionError,
 )
 
-# A.5: row-rank tolerance for the restriction matrix SVD.
-_RANK_TOL: Final = 1e-12
+# OD-10, option B (amendment to the rank rule of A.5). The rank test runs on the
+# row-normalised restriction: RESTRICTION_RANK_DEFICIENT when s_min <= tau * s_max.
+# For unit rows, m = restriction @ cov @ restriction.T has a condition number of
+# about 1 / ratio**2 with ratio = s_min / s_max. The relative error of W grows as
+# about eps / ratio**2: 1.8e-8 at ratio 1.1e-4 and 5.5e-9 at ratio 2e-4.
+# Sandbox evidence (numpy 2.4.4, Fraction oracle, 2000 random draws per cell):
+# at ratio 1.1e-4 the median error of W is 3e-9 and the worst is 9e-8; at ratio
+# 2e-4 the median is 9e-10 and the worst is 2.4e-8. An error of about 1e-8 or less
+# is typical just above this tau. It is not a bound.
+_RANK_RATIO_TAU: Final = 1e-4
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -72,11 +81,11 @@ class CoreWald:
     f_stat
         ``F = W / j``.
     chi2_pvalue
-        Two-tail p-value: ``chi2.sf(W, j)``.  Asymptotically chi-squared;
-        exact under normality with IID covariance.
+        Upper-tail survival function ``chi2.sf(W, j)``.  Asymptotic: ``W`` is
+        chi-squared only in the limit, for IID, HC0 and HAC covariance alike.
     f_pvalue
-        Two-tail p-value: ``f.sf(F, j, dof)``.  Exact under normality and
-        IID covariance; approximation for HC0 or HAC (A.5).
+        Upper-tail survival function ``f.sf(F, j, dof)``.  Exact only under
+        IID covariance and normal errors; an approximation for HC0 or HAC (A.5).
     j
         Number of restrictions ``J >= 1``.
     dof
@@ -158,7 +167,8 @@ def wald_core(
         ``CoreParameterError(PARAM_STRIDE_BELOW_ONE)``.
     restriction
         ``float64`` ``(J, K)``: the linear restriction matrix.  Must have
-        full row rank ``J`` (checked by SVD, tol = 1e-12 * s[0]).
+        full row rank ``J``.  The rank test runs on the row-normalised matrix
+        (amendment to A.5, see Notes).
     rhs
         ``float64`` ``(J,)``: the right-hand side of ``restriction @
         coef = rhs``.
@@ -174,12 +184,12 @@ def wald_core(
     ------
     TypeError
         ``dof`` is a ``bool``, ``numpy.bool_``, float or str (steps 3).
-        ``restriction`` or ``rhs`` is not exactly ``numpy.ndarray``
-        (INPUT_NOT_NDARRAY at operand 2 or 3).
     CoreInputError
         Steps 1-2 and 4-5: ``INPUT_NOT_NDARRAY``, ``INPUT_WRONG_DTYPE``,
         ``INPUT_WRONG_NDIM``, ``INPUT_EMPTY``, ``INPUT_WRONG_SHAPE``,
         ``INPUT_NON_FINITE`` (flat index in ``positions``).
+        A ``restriction`` or ``rhs`` that is not exactly ``numpy.ndarray``
+        raises ``INPUT_NOT_NDARRAY`` at operand 2 or 3.
     CoreParameterError
         Step 3: ``PARAM_STRIDE_BELOW_ONE`` when ``dof < 1``.
     CoreRestrictionError
@@ -202,10 +212,30 @@ def wald_core(
     6. ``RESTRICTION_WRONG_SHAPE``: not 2-D; ``J == 0``; ``K`` column count
        differs from ``len(coef)``; ``rhs`` length differs from ``J``.
     7. ``RESTRICTION_NON_FINITE``: NaN or inf in ``restriction`` or ``rhs``.
-    8. ``RESTRICTION_RANK_DEFICIENT``: row rank < ``J`` (SVD, tol
-       ``= 1e-12 * s[0]``).  ``J > K`` is always rank-deficient.
+    8. ``RESTRICTION_RANK_DEFICIENT``: ``J > K``, a zero row, or
+       ``s_min <= tau * s_max`` of the row-normalised ``restriction``.
     9. ``RESTRICTION_NOT_POSITIVE_DEFINITE``: Cholesky of ``m`` fails.
     10. ``RESTRICTION_NON_FINITE``: ``W`` or ``F`` is not finite.
+
+    Amendment to the rank rule of A.5 (owner decision OD-10, option B).  The
+    rest of A.5 is unchanged.
+
+    * Each row of ``restriction`` is divided by its 2-norm.  The matching
+      entry of ``rhs`` is divided by the same norm.  This happens before the
+      rank test and before ``m`` and ``gap`` are formed.  It is an invertible
+      row scaling, so ``W`` does not change in exact arithmetic.  The row
+      norms use the power-of-two scaling of ``design.py``.  They do not
+      overflow or underflow.  A zero row raises ``RESTRICTION_RANK_DEFICIENT``.
+    * ``numpy.linalg.svd`` of the normalised ``restriction`` gives ``s_min``
+      and ``s_max``.  The module constant ``_RANK_RATIO_TAU = 1e-4`` is the
+      threshold ``tau``.  ``RESTRICTION_RANK_DEFICIENT`` is raised when
+      ``s_min <= tau * s_max``.  The old rule ``s > 1e-12 * s[0]`` on the raw
+      rows depended on the units of the rows.
+    * ``J > K`` stays rank deficient.
+
+    The chi-squared p-value is asymptotic.  Only the F test is exact, and only
+    under IID covariance and normal errors (A.5).  With HC0 or HAC covariance
+    the F p-value is an approximation.
 
     The Cholesky path guarantees that ``m = L @ L.T`` is positive definite
     before any solve, so ``L`` is non-singular and
@@ -288,19 +318,38 @@ def wald_core(
         )
 
     # ---- 8. RESTRICTION_RANK_DEFICIENT ------------------------------------------
-    # Thin SVD of restriction: s has shape (min(J, K),).
-    # J > K gives at most K singular values; rank <= K < J, so rank < j.
-    _, sv, _ = np.linalg.svd(restriction, full_matrices=False)
-    rank_tol = _RANK_TOL * float(sv[0])
-    rank = int(np.sum(sv > rank_tol))
-    if rank < j:
+    # OD-10, option B: normalise each row, then test s_min against s_max.
+    # J > K gives at most K singular values, so the ratio test cannot see it.
+    if j > k:
+        raise CoreRestrictionError(
+            reason=codes.RESTRICTION_RANK_DEFICIENT, shape=rest_shape
+        )
+    peak = np.max(np.abs(restriction), axis=1)
+    if bool((peak == 0.0).any()):
+        raise CoreRestrictionError(
+            reason=codes.RESTRICTION_RANK_DEFICIENT, shape=rest_shape
+        )
+    # A power-of-two scaling by the binary exponent of the row peak is exact.
+    # It keeps the sum of squares in range, as in design.py. A plain sum of
+    # squares reads a row near 1e-170 as zero and a row near 1e160 as infinite.
+    _, exponent = np.frexp(peak)
+    unit = np.ldexp(restriction, -exponent[:, np.newaxis])
+    unit_norm = np.sqrt(np.sum(unit * unit, axis=1))  # in [0.5, sqrt(K)]
+    rows = unit / unit_norm[:, np.newaxis]
+    # rhs / ||row|| is formed as ldexp(rhs / unit_norm, -exponent) so that the
+    # row norm is never formed. A result beyond the float64 range is inf, and
+    # step 10 reports it.
+    with np.errstate(over="ignore"):
+        rhs_unit = np.ldexp(rhs / unit_norm, -exponent)
+    sv = np.linalg.svd(rows, compute_uv=False)  # descending; the J <= K case
+    if sv[-1] <= _RANK_RATIO_TAU * sv[0]:
         raise CoreRestrictionError(
             reason=codes.RESTRICTION_RANK_DEFICIENT, shape=rest_shape
         )
 
     # ---- 9. RESTRICTION_NOT_POSITIVE_DEFINITE + solve ---------------------------
-    gap = restriction @ coef - rhs
-    m = restriction @ cov @ restriction.T
+    gap = rows @ coef - rhs_unit
+    m = rows @ cov @ rows.T
     # Symmetrise to guard bit-for-bit asymmetry from floating-point arithmetic:
     # 2*C and 0.5*(2*C) round to C exactly, so the average introduces no error
     # on a symmetric matrix.
@@ -317,7 +366,10 @@ def wald_core(
     # scipy.linalg is prohibited (C.21).  The triangular L is non-singular
     # (positive definite Cholesky), so the solve is numerically stable.
     z = np.linalg.solve(chol, gap)
-    w = float(np.dot(z, z))
+    # numpy 2.4.4 warns on an overflow in dot (sandbox evidence). Step 10 is
+    # the only signal.
+    with np.errstate(over="ignore", invalid="ignore"):
+        w = float(np.dot(z, z))
     f_stat = w / j
 
     # ---- 10. non-finite W or F --------------------------------------------------

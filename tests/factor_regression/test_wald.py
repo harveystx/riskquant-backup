@@ -9,6 +9,11 @@ S5.T2  correlated regressors, J=2; W differs from sum(t^2); oracle check.
 S5.T3  J=1 single restriction; F equals t_j^2 to 1e-12 relative.
 S5.T4  duplicate row in restriction; wrong shape; NaN in rhs.
 S5.T5  HC0 cov; W equals HC0 oracle and differs from IID.
+R-012  mutation resistance: F = W / J, the f.sf degrees of freedom, the W or F
+       non-finite check, the cov finite check, the coef empty check, the rhs
+       ndim check.
+R-013  restriction rank rule (OD-10, option B): row normalisation and the
+       ratio test s_min <= tau * s_max with tau = 1e-4.
 
 Owner decision 3 (restriction errors):
   WRONG_SHAPE cases, NON_FINITE, RANK_DEFICIENT, NOT_POSITIVE_DEFINITE.
@@ -24,12 +29,17 @@ Tolerances (owner decision 6):
   W vs Fraction oracle:  1e-12 relative.
   Closed-form p-values:  1e-12 relative.
   F = t_j^2:             1e-12 relative.
+  F = W / 2 (J = 2):     1e-12 relative.
+  f_pvalue (J=1, dof=2): 1e-12 relative.
+  W, row-scaled rows:    1e-12 relative.
+  W, ratio 2e-4:         1e-8 relative (the error grows as eps / ratio**2).
   All stated in the assertion comments.
 """
 
 from __future__ import annotations
 
 import math
+import warnings
 from fractions import Fraction
 
 import numpy as np
@@ -148,6 +158,39 @@ def _build_fit_hc0(
         covariance_kind=int(codes.HC0),
         covariance_lag=0,
     )
+
+
+def _synthetic_moments(k: int) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """
+    Coefficient vector and covariance of size ``k`` (``k`` from 1 to 4).
+
+    The covariance is strictly diagonally dominant, so it is positive definite.
+    The R-013 tests use it to reach ``k`` above 2 without a regression fit.
+    """
+    coef = np.array([0.3, -1.2, 0.7, 0.45])[:k].copy()
+    cov = np.array([
+        [2.0, 0.3, 0.1, -0.2],
+        [0.3, 1.5, -0.2, 0.1],
+        [0.1, -0.2, 1.0, 0.25],
+        [-0.2, 0.1, 0.25, 1.2],
+    ])[:k, :k].copy()
+    return coef, cov
+
+
+def _two_row_restriction(ratio: float, k: int) -> NDArray[np.float64]:
+    """
+    Rows ``e1`` and ``cos(t) * e1 + sin(t) * e_k`` with ``tan(t / 2) = ratio``.
+
+    ``e_k`` is the last axis, so it is ``e2`` for ``k = 2``.  The singular
+    values of the two unit rows are ``sqrt(1 + cos t)`` and ``sqrt(1 - cos t)``,
+    so ``s_min / s_max = tan(t / 2) = ratio`` (OD-10).
+    """
+    angle = 2.0 * math.atan(ratio)
+    rows = np.zeros((2, k))
+    rows[0, 0] = 1.0
+    rows[1, 0] = math.cos(angle)
+    rows[1, k - 1] = math.sin(angle)
+    return rows
 
 
 # ------------------------------------------------------------------ fixtures
@@ -675,3 +718,252 @@ class TestOD5NoMutation:
         rhs = np.zeros(1)
         result = wald_core(fit.coef, fit.cov, fit.dof, rest, rhs)
         assert math.isfinite(result.w)
+
+
+# ================================================================== R-012 tests
+
+
+class TestR012FStatistic:
+    """R-012 (a): F = W / J, with an oracle that shares no code with wald.py."""
+
+    def test_f_stat_is_w_over_two_for_j_two(self) -> None:
+        """F equals the Fraction W divided by 2 to 1e-12 relative (A.7)."""
+        fit = _build_fit_iid(_X4, _Y4)
+        rest = np.array([[1.0, 0.0], [0.0, 1.0]])
+        rhs = np.array([0.0, 1.0])
+        result = wald_core(fit.coef, fit.cov, fit.dof, rest, rhs)
+        w_exact = _oracle_w(fit.coef, fit.cov, rest, rhs)
+        f_exact = w_exact / 2.0  # J = 2
+        assert abs(result.f_stat - f_exact) / f_exact < 1e-12  # tol: 1e-12 rel
+
+
+class TestR012FPvalueDegreesOfFreedom:
+    """R-012 (b): f.sf receives (J, dof) in this order, not (dof, J)."""
+
+    @pytest.mark.parametrize(
+        ("restriction", "rhs"),
+        [
+            ([[0.0, 1.0]], [0.0]),
+            ([[1.0, 0.0]], [0.0]),
+            ([[0.0, 1.0]], [1.0]),
+        ],
+    )
+    def test_f_pvalue_j_one_dof_two_closed_form(
+        self, restriction: list[list[float]], rhs: list[float]
+    ) -> None:
+        """
+        J = 1 on a fit with dof = 2: ``p = 1 - |t| / sqrt(2 + t**2)``.
+
+        ``F(2, 1)`` is not ``F(1, 2)``, so a swap of the two degrees of freedom
+        changes the p-value.  (J = 2 with dof = 2 is symmetric and cannot
+        detect the swap.)  ``t`` is the square root of the Fraction W because
+        ``F = W = t**2`` for J = 1.  Tolerance: 1e-12 relative.
+        """
+        fit = _build_fit_iid(_X4, _Y4)
+        assert fit.dof == 2
+        rest = np.array(restriction)
+        rhs_arr = np.array(rhs)
+        result = wald_core(fit.coef, fit.cov, fit.dof, rest, rhs_arr)
+        t_abs = math.sqrt(_oracle_w(fit.coef, fit.cov, rest, rhs_arr))
+        expected = 1.0 - t_abs / math.sqrt(2.0 + t_abs**2)
+        assert abs(result.f_pvalue - expected) / expected < 1e-12  # tol: 1e-12 rel
+
+
+class TestR012NonFiniteWald:
+    """R-012 (c): finite inputs, W overflows; RESTRICTION_NON_FINITE, no warning."""
+
+    def test_overflowing_w_raises_non_finite_and_no_warning(self) -> None:
+        # W = (1e200)**2 / 1e-200 = 1e600 exceeds the float64 range.
+        coef = np.array([1e200])
+        cov = np.array([[1e-200]])
+        rest = np.array([[1.0]])
+        rhs = np.array([0.0])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # any warning becomes an exception
+            with pytest.raises(CoreRestrictionError) as exc_info:
+                wald_core(coef, cov, 2, rest, rhs)
+        assert exc_info.value.reason == int(codes.RESTRICTION_NON_FINITE)
+        assert exc_info.value.shape == (1, 1)
+
+
+class TestR012CovFinite:
+    """R-012 (d): non-finite cov raises INPUT_NON_FINITE at the first flat index."""
+
+    @pytest.mark.parametrize(
+        ("entries", "first_flat_index"),
+        [
+            (((0, 1, float("nan")),), 1),
+            (((1, 0, float("inf")),), 2),
+            (((1, 1, float("-inf")),), 3),
+            (((1, 1, float("inf")), (1, 0, float("nan"))), 2),
+        ],
+    )
+    def test_cov_non_finite_raises(
+        self, entries: tuple[tuple[int, int, float], ...], first_flat_index: int
+    ) -> None:
+        fit = _build_fit_iid(_X4, _Y4)
+        cov_bad = fit.cov.copy()
+        for row, col, value in entries:
+            cov_bad[row, col] = value
+        rest = np.eye(2)
+        rhs = np.zeros(2)
+        with pytest.raises(CoreInputError) as exc_info:
+            wald_core(fit.coef, cov_bad, fit.dof, rest, rhs)
+        assert exc_info.value.reason == int(codes.INPUT_NON_FINITE)
+        assert exc_info.value.operand == 1
+        assert exc_info.value.positions == (first_flat_index,)
+
+
+class TestR012CoefEmpty:
+    """R-012 (e): an empty coef raises INPUT_EMPTY at operand 0."""
+
+    def test_empty_coef_raises_input_empty(self) -> None:
+        coef = np.empty(0, dtype=np.float64)
+        cov = np.empty((0, 0), dtype=np.float64)
+        rest = np.empty((1, 0), dtype=np.float64)
+        rhs = np.zeros(1)
+        with pytest.raises(CoreInputError) as exc_info:
+            wald_core(coef, cov, 2, rest, rhs)
+        assert exc_info.value.reason == int(codes.INPUT_EMPTY)
+        assert exc_info.value.operand == 0
+        assert exc_info.value.positions == ()
+
+
+class TestR012RhsNdim:
+    """R-012 (f): a rhs that is not 1-D raises RESTRICTION_WRONG_SHAPE."""
+
+    @pytest.mark.parametrize("rhs_shape", [(2, 1), (2, 2), ()])
+    def test_rhs_not_1d_raises_wrong_shape(self, rhs_shape: tuple[int, ...]) -> None:
+        # The first axis of the 2-D cases equals J = 2, so only the ndim check
+        # can reject them.  The 0-D case has no first axis.
+        fit = _build_fit_iid(_X4, _Y4)
+        rest = np.eye(2)
+        rhs = np.zeros(rhs_shape)
+        with pytest.raises(CoreRestrictionError) as exc_info:
+            wald_core(fit.coef, fit.cov, fit.dof, rest, rhs)
+        assert exc_info.value.reason == int(codes.RESTRICTION_WRONG_SHAPE)
+        assert exc_info.value.shape == (2, 2)
+
+
+# ================================================================== R-013 tests
+
+# tau = 1e-4 (wald._RANK_RATIO_TAU).  The ratio s_min / s_max of the normalised
+# rows must lie above it.  The two ratios below sit 10% from tau on each side.
+_RATIO_ABOVE_TAU = 1.1e-4
+_RATIO_BELOW_TAU = 0.9e-4
+
+
+class TestR013RankRuleBoundary:
+    """R-013 test a: the accept and reject sides of tau = 1e-4."""
+
+    @pytest.mark.parametrize("k", [2, 3])
+    def test_ratio_above_tau_is_accepted(self, k: int) -> None:
+        coef, cov = _synthetic_moments(k)
+        rest = _two_row_restriction(_RATIO_ABOVE_TAU, k)
+        rhs = np.array([0.0, 1.0])
+        result = wald_core(coef, cov, 10, rest, rhs)
+        assert result.j == 2
+        assert math.isfinite(result.w)
+
+    @pytest.mark.parametrize("k", [2, 3])
+    def test_ratio_below_tau_raises_rank_deficient(self, k: int) -> None:
+        coef, cov = _synthetic_moments(k)
+        rest = _two_row_restriction(_RATIO_BELOW_TAU, k)
+        rhs = np.array([0.0, 1.0])
+        with pytest.raises(CoreRestrictionError) as exc_info:
+            wald_core(coef, cov, 10, rest, rhs)
+        assert exc_info.value.reason == int(codes.RESTRICTION_RANK_DEFICIENT)
+        assert exc_info.value.shape == (2, k)
+
+
+class TestR013Accuracy:
+    """R-013 test b: W of a near-collinear restriction against the Fraction oracle."""
+
+    def test_w_at_ratio_2e_minus_4_matches_fraction_oracle(self) -> None:
+        """
+        W equals the Fraction oracle to 1e-8 relative at ratio 2e-4.
+
+        The relative error of W grows as about eps / ratio**2, which is 5.5e-9
+        here.  The tolerance is 1e-8, not 1e-12.  The error depends on the data.
+        This fixed case gives 5.9e-10 (sandbox evidence).  About 1% of random
+        draws at this ratio exceed 1e-8 (sandbox evidence, 2000 draws).
+        """
+        coef, cov = _synthetic_moments(2)
+        rest = _two_row_restriction(2e-4, 2)
+        rhs = np.array([0.0, 1.0])
+        result = wald_core(coef, cov, 10, rest, rhs)
+        w_exact = _oracle_w(coef, cov, rest, rhs)
+        assert abs(result.w - w_exact) / abs(w_exact) < 1e-8  # tol: 1e-8 rel
+
+
+class TestR013RowScale:
+    """R-013 test c: a row scale does not change W; row norms do not over/underflow."""
+
+    @pytest.mark.parametrize("scale", [1e-12, 1e-170, 1e160])
+    def test_scaled_row_is_accepted_and_w_is_unchanged(self, scale: float) -> None:
+        """
+        One row and its rhs entry are multiplied by ``scale``.
+
+        W equals the Fraction W of the unscaled rows to 1e-12 relative.  The
+        scale 1e-12 gives s_min / s_max of about 1e-12: the old absolute rule
+        rejected it.  The scales 1e-170 and 1e160 break a plain sum of squares
+        (zero norm, infinite norm).
+        """
+        coef, cov = _synthetic_moments(2)
+        rest = np.array([[1.0, 0.5], [0.0, 1.0]])
+        rhs = np.array([0.2, 1.0])
+        rest_scaled = rest.copy()
+        rest_scaled[1] *= scale
+        rhs_scaled = rhs.copy()
+        rhs_scaled[1] *= scale
+        result = wald_core(coef, cov, 10, rest_scaled, rhs_scaled)
+        w_exact = _oracle_w(coef, cov, rest, rhs)
+        assert abs(result.w - w_exact) / abs(w_exact) < 1e-12  # tol: 1e-12 rel
+
+
+class TestR013ZeroRowAndJAboveK:
+    """R-013 test d: a zero row and J > K raise RESTRICTION_RANK_DEFICIENT."""
+
+    @pytest.mark.parametrize(
+        "restriction",
+        [
+            [[0.0, 0.0]],
+            [[1.0, 0.0], [0.0, 0.0]],
+            [[0.0, 0.0], [0.0, 1.0]],
+        ],
+    )
+    def test_zero_row_raises_rank_deficient(
+        self, restriction: list[list[float]]
+    ) -> None:
+        coef, cov = _synthetic_moments(2)
+        rest = np.array(restriction)
+        rhs = np.zeros(rest.shape[0])
+        with pytest.raises(CoreRestrictionError) as exc_info:
+            wald_core(coef, cov, 10, rest, rhs)
+        assert exc_info.value.reason == int(codes.RESTRICTION_RANK_DEFICIENT)
+        assert exc_info.value.shape == rest.shape
+
+    @pytest.mark.parametrize("k", [2, 3])
+    def test_j_above_k_raises_rank_deficient(self, k: int) -> None:
+        # k + 1 well-conditioned rows: the ratio test alone would accept them.
+        coef, cov = _synthetic_moments(k)
+        rest = np.vstack([np.eye(k), np.ones((1, k))])
+        rhs = np.zeros(k + 1)
+        with pytest.raises(CoreRestrictionError) as exc_info:
+            wald_core(coef, cov, 10, rest, rhs)
+        assert exc_info.value.reason == int(codes.RESTRICTION_RANK_DEFICIENT)
+        assert exc_info.value.shape == (k + 1, k)
+
+
+class TestR013NoMutation:
+    """The row normalisation works on copies (C.19)."""
+
+    def test_caller_restriction_and_rhs_unchanged(self) -> None:
+        coef, cov = _synthetic_moments(2)
+        rest = np.array([[3e-7, 4e-7], [0.0, 2.0]])
+        rhs = np.array([5e-7, 1.0])
+        rest_before = rest.copy()
+        rhs_before = rhs.copy()
+        wald_core(coef, cov, 10, rest, rhs)
+        np.testing.assert_array_equal(rest, rest_before)
+        np.testing.assert_array_equal(rhs, rhs_before)
