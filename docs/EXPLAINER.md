@@ -25,15 +25,17 @@ The explainer chat does three things:
 
 1. Find what the code does for one business question, with evidence.
 2. State whether the code serves the question: fully, partly, or not at all.
-3. Write a plain-language explanation with pictures, a worked example, and a
-   list of what the code does not cover.
+3. Write a plain-language explanation with pictures, a worked example, a usage
+   snippet when section 5.3 allows it, and a list of what the code does not
+   cover.
 
 The explainer works in analysis mode only (`CLAUDE.md` section 1).
 
 * Do not change code, tests, `DECISIONS.md`, or any repository file. The only
   file that the explainer may create is one HTML explainer (section 9).
 * Do not write a patch or a design. Do not say how the code could solve a
-  problem that it does not solve.
+  problem that it does not solve. The only code that the explainer may write
+  is the usage snippet (section 5.3).
 * Do not make owner-level decisions. Do not set a workstream status.
 * Do not write a next prompt for an implementer. Section 6 states the one
   allowed next-step line.
@@ -166,7 +168,9 @@ Follow `INVESTIGATOR.md` section 6.1 for the code trace. Then do these steps.
 5. **Trace input to output.** For each step, write what it does in one
    sentence, the tier, and the claim ID.
 6. **Build one worked example.** See rule 5.1.
-7. **List the gaps.** Include each locked decision that the code does not
+7. **Write the usage snippet** when section 5.3 allows it. Otherwise, state why
+   none exists.
+8. **List the gaps.** Include each locked decision that the code does not
    implement, each input the code rejects, and each case the code does not
    handle. Search before you state a gap.
 
@@ -201,6 +205,42 @@ Every explanation has one worked example. Small numbers show the flow.
 * Do not use a RiskQuant identifier in the plain text, except in the evidence
   table, the entry points, and the term list. Use a plain name. Add the
   identifier to the term list.
+
+### 5.3 Usage snippet
+
+The snippet shows the user how to call the code for the business question. It
+is optional. It is not a patch and not a tutorial.
+
+1. Write at most one snippet per answer. Put it in item 8 of section 6. Use one
+   fenced block that runs as is.
+2. Call only a `solutions.*` facade or a script entry point. Import no core
+   module, no private module, and no test module. If no public entry point
+   exists, write no snippet. State this in item 7 of section 6.
+3. Write no snippet for a sub-question with coverage `NOT SERVED`.
+4. Make the snippet self-contained. Use synthetic data with a fixed seed, or a
+   fixture that the snapshot shows. Use no database, no network, no file write,
+   and no Excel. Label synthetic data `Illustrative`.
+5. Limit the snippet to 40 lines. Import only from the standard library, NumPy,
+   and `riskquant`.
+6. Use the inputs of the worked example. Print the same quantities.
+7. Add a NumPy cross-check when an independent oracle exists. Example:
+   `np.linalg.lstsq` for an OLS fit. Do not use code that shares logic with the
+   called code (`CLAUDE.md` section 5).
+8. Run a static check. Parse the snippet with `ast`. Confirm that each imported
+   symbol exists in the snapshot. Confirm that each keyword argument exists in
+   the signature of the callee. Report each command and each result.
+9. Give the snippet one status label:
+   * `Executed`: the snippet ran in the sandbox. Show the output. This label
+     needs the `riskquant` package in the sandbox.
+   * `Static-checked`: the snippet passed the checks in rule 8. It did not run.
+
+   Deliver no snippet with a lower status. Do not call a snippet working unless
+   it is `Executed`.
+10. Give each call in the snippet a claim ID. The evidence table cites the
+    callee as `path:symbol`.
+11. The snippet is inline text. It is not a repository file. The first-line
+    path header rule and `CLAUDE.md` section 10 do not apply. It is never
+    authority. No other role may use it as input.
 
 ---
 
@@ -248,7 +288,8 @@ after item 11.
    each, state the inputs that the user supplies and the output that returns.
    Give the exact PowerShell command when a script exists. State the maturity
    level of each entry point (section 5, step 4). Write `Unresolved` when the
-   snapshot shows no entry point.
+   snapshot shows no entry point. Then add the usage snippet and its status
+   label (section 5.3), or one line that states why none exists.
 9. **Terms.** One line for each defined term. Add the RiskQuant identifier.
 10. **Evidence.** The evidence table.
 
@@ -303,6 +344,10 @@ corrections made.
 6. No sentence claims execution, performance, or compliance without evidence.
 7. No sentence says how the code could solve an unsolved problem.
 8. No sentence has more than 20 words. No em dash exists.
+9. The snippet, if present, calls a public entry point only. It has a status
+   label. Its static-check commands and results appear in the answer.
+10. The snippet prints the same quantities as the worked example, and no
+    sub-question with coverage `NOT SERVED` has a snippet.
 
 Place the self-check line after item 11 only when the check changed the
 answer. Otherwise, omit it.
@@ -321,6 +366,8 @@ Trigger: the user writes `OUTPUT: HTML` in the invocation.
   items 4 to 10 in the answer. The answer keeps items 1, 2, 3, and 11.
 * Show the claim ID next to each claim. Link it to its row in the evidence
   table.
+* Show the usage snippet in a code block with its status label. Do not make it
+  a separate download.
 * Define colors as variables. Support a light and a dark display.
 * The file is not a repository file. `CLAUDE.md` section 10 does not apply.
 * This section is the one exception to `CLAUDE.md` section 11. That section
@@ -361,6 +408,13 @@ Write in ASD-STE100 (Simplified Technical English).
 * Describing how the code could solve an unsolved problem.
 * Giving a decision ID a meaning that `DECISIONS.md` does not state.
 * Claiming that a command ran when it did not run.
+* Importing a core, private, or test module in a usage snippet.
+* Writing a snippet when no public entry point exists, or for a `NOT SERVED`
+  sub-question.
+* Labeling a snippet `Executed` when it did not run, or delivering one with no
+  label.
+* Using invented function names or keyword arguments in a snippet.
+* Growing the snippet into a tutorial, a script collection, or a patch.
 
 ---
 
