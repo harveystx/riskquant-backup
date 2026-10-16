@@ -70,11 +70,16 @@ class AlignmentError(RiskQuantError):
         Label name of the violated condition (``codes.ALIGNMENT_ERROR_CODES``).
     start_ord, end_ord
         The declared half-open window ``[start_ord, end_ord)``.
+    series
+        Name of the series that the condition concerns (for example a
+        duplicate series name, C.2).  ``None`` when the condition concerns no
+        single series; the message is then unchanged (OD-12).
     """
 
     reason: str
     start_ord: int
     end_ord: int
+    series: str | None
 
     def __init__(
         self,
@@ -82,11 +87,20 @@ class AlignmentError(RiskQuantError):
         reason: str,
         start_ord: int,
         end_ord: int,
+        series: str | None = None,
     ) -> None:
         self.reason = reason
         self.start_ord = int(start_ord)
         self.end_ord = int(end_ord)
-        super().__init__(f"{reason!r}: window=[{self.start_ord}, {self.end_ord})")
+        self.series = series
+        if series is None:
+            detail = f"{reason!r}: window=[{self.start_ord}, {self.end_ord})"
+        else:
+            detail = (
+                f"{reason!r}: series={series!r} "
+                f"window=[{self.start_ord}, {self.end_ord})"
+            )
+        super().__init__(detail)
 
 
 class ModelSpecError(RiskQuantError):

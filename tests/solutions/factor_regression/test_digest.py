@@ -7,10 +7,14 @@ Test IDs
 S6.T7  - same inputs in-process and fresh subprocess -> three digests equal
 S6.T8  - five single mutations each change exactly the expected digest(s)
 S6.T9  - rebuild A.6 bytes with hashlib -> equals facade digests (oracle)
-S6.T10 - every code in codes.py has exactly one name in labels.py;
-          reverse map returns the original code
-S6.T14 - AST scan: only digest.py imports hashing; no direct riskquant.config
-          import in the facade
+S6.T10 - every *_CODES tuple of codes.py (enumerated from dir(codes)) has a
+          labels group; every code has exactly one name, the name equals its
+          constant name, and the reverse map returns the code
+S6.T14 - AST scan of every facade module: each import (any form, relative
+          imports resolved, TYPE_CHECKING blocks and function bodies included)
+          is in the C.21 allow list; hashing in digest.py only
+R-017  - the digest functions reject a wrong type, dtype or shape and never
+          cast or truncate
 
 Notes
 -----
@@ -28,6 +32,7 @@ import json
 import pathlib
 import subprocess
 import sys
+from collections.abc import Callable
 
 import numpy as np
 import pytest
@@ -598,44 +603,70 @@ def test_t9_sample_no_intercept() -> None:
 
 
 # ================================================================ S6.T10
-# Every code in codes.py has exactly one name; reverse map returns the code
+# Every *_CODES tuple of codes.py has a labels group; every code has exactly
+# one name, equal to its constant name; the reverse map returns the code.
+# The tuples are enumerated from dir(codes), so a new tuple without a labels
+# group fails here (R-018).
+
+_CODES_SUFFIX = "_CODES"
 
 
-@pytest.mark.parametrize("group_name", list(labels.ALL_CODE_GROUPS))
-def test_t10_all_codes_labeled(group_name: str) -> None:
-    codes_tuple, name_map, code_from_name = labels.ALL_CODE_GROUPS[group_name]
+def _codes_tuple_names() -> list[str]:
+    return sorted(name for name in dir(codes) if name.endswith(_CODES_SUFFIX))
+
+
+def test_t10_codes_module_declares_code_tuples() -> None:
+    """Non-vacuity: the enumeration finds the code tuples of codes.py."""
+    names = _codes_tuple_names()
+    assert names, "codes.py declares no *_CODES tuple"
+    for name in names:
+        assert isinstance(getattr(codes, name), tuple), f"codes.{name} is not a tuple"
+
+
+@pytest.mark.parametrize("tuple_name", _codes_tuple_names())
+def test_t10_all_codes_labeled(tuple_name: str) -> None:
+    group_name = tuple_name.removesuffix(_CODES_SUFFIX)
+    assert group_name in labels.ALL_CODE_GROUPS, (
+        f"codes.{tuple_name} has no labels group {group_name!r}"
+    )
+    codes_tuple = getattr(codes, tuple_name)
+    registered, name_map, code_from_name = labels.ALL_CODE_GROUPS[group_name]
+    assert registered is codes_tuple, (
+        f"labels group {group_name!r} does not register codes.{tuple_name}"
+    )
+    values = [int(code) for code in codes_tuple]
+    assert len(set(values)) == len(values), (
+        f"codes.{tuple_name} holds a duplicate value: {values}"
+    )
+    assert set(name_map) == set(values), (
+        f"group {group_name!r}: name keys {sorted(name_map)} != codes {values}"
+    )
+    assert len(code_from_name) == len(values), (
+        f"group {group_name!r}: reverse map has {len(code_from_name)} names "
+        f"for {len(values)} codes"
+    )
     for code in codes_tuple:
-        key = int(code)
-        assert key in name_map, (
-            f"group {group_name!r}: code {code!r} has no entry in {group_name}_NAMES"
-        )
-        name = name_map[key]
+        name = name_map[int(code)]
         assert isinstance(name, str) and name, (
             f"group {group_name!r}: code {code!r} maps to invalid name {name!r}"
         )
+        # The label is the name of the constant itself: the attribute of
+        # codes.py with that name is this exact code object.
+        assert getattr(codes, name, None) is code, (
+            f"group {group_name!r}: label {name!r} is not the constant name "
+            f"of code {code!r}"
+        )
         recovered = code_from_name[name]
-        assert int(recovered) == key, (
+        assert recovered is code, (
             f"group {group_name!r}: reverse map for {name!r} returned "
             f"{recovered!r}, expected {code!r}"
         )
 
 
-def test_t10_no_unlabeled_code_group() -> None:
-    """Every *_CODES tuple in codes.py must appear in ALL_CODE_GROUPS."""
-    expected_groups = {
-        "TRANSFORM",
-        "COVARIANCE",
-        "EXCLUSION",
-        "DIAGNOSTIC",
-        "INPUT_ERROR",
-        "ALIGNMENT_ERROR",
-        "PARAMETER_ERROR",
-        "RANK_ERROR",
-        "SAMPLE_SIZE_ERROR",
-        "DEGENERATE_FIT_ERROR",
-        "RESTRICTION_ERROR",
-    }
-    assert set(labels.ALL_CODE_GROUPS.keys()) == expected_groups
+def test_t10_no_labels_group_without_code_tuple() -> None:
+    """Every labels group names a *_CODES tuple of codes.py."""
+    expected = {name.removesuffix(_CODES_SUFFIX) for name in _codes_tuple_names()}
+    assert set(labels.ALL_CODE_GROUPS) == expected
 
 
 def test_t10_diagnostic_messages_cover_all_diagnostic_codes() -> None:
@@ -647,60 +678,398 @@ def test_t10_diagnostic_messages_cover_all_diagnostic_codes() -> None:
 
 
 # ================================================================ S6.T14
-# AST scan: only digest.py imports hashing; no direct riskquant.config import
+# C.21 import scan of the facade (R-018).
+#
+# _c21_violations is a pure function of the source text and the module path.
+# It resolves every import to absolute dotted names and checks each name
+# against the C.21 allow list.  ast.walk visits every node, so imports under
+# TYPE_CHECKING, inside functions, classes and try blocks are scanned.
+# Known limits (OD-3): getattr, importlib.import_module, __import__ and quoted
+# annotations are not imports and are not scanned.
+
+_FACADE_PACKAGE = "riskquant.solutions.factor_regression"
+_HASHING_MODULE = "riskquant.solutions.run_identity.hashing"
+_DIGEST_MODULE = f"{_FACADE_PACKAGE}.digest"
+_FACADE_ALLOWED = (
+    "numpy",
+    "riskquant.factor_regression",
+    "riskquant.exceptions",
+    _FACADE_PACKAGE,
+)
+_CLIMB = "relative import climbs above the top package"
+
+
+def _module_identity(module_path: str) -> tuple[str, tuple[str, ...]]:
+    """
+    Return the dotted module name and the package parts for a source path.
+
+    ``module_path`` is repository-relative and starts with ``src/``.
+    """
+    path = pathlib.PurePosixPath(module_path)
+    assert path.parts[0] == "src" and path.suffix == ".py", module_path
+    parts = path.with_suffix("").parts[1:]
+    if parts[-1] == "__init__":
+        package = parts[:-1]
+        return ".".join(package), package
+    return ".".join(parts), parts[:-1]
+
+
+def _resolved_imports(source: str, module_path: str) -> list[tuple[int, str]]:
+    """
+    Return ``(lineno, name)`` for every name that the source imports.
+
+    ``from x import y`` yields ``x.y``, because ``y`` can be a submodule (for
+    example ``from riskquant.solutions.run_identity import hashing``).  A
+    relative import is resolved against the package of ``module_path``.  A
+    relative import above the top package yields the name ``_CLIMB``.
+    """
+    _, package = _module_identity(module_path)
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            found.extend((node.lineno, alias.name) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level > 0:
+                if node.level - 1 >= len(package):
+                    found.append((node.lineno, _CLIMB))
+                    continue
+                base_parts = package[: len(package) - (node.level - 1)]
+                base = ".".join(
+                    (*base_parts, node.module) if node.module else base_parts
+                )
+            else:
+                base = node.module or ""
+            for alias in node.names:
+                name = base if alias.name == "*" else f"{base}.{alias.name}"
+                found.append((node.lineno, name))
+    return found
+
+
+def _is_allowed(name: str, *, is_digest: bool) -> bool:
+    if name.split(".")[0] in sys.stdlib_module_names:
+        return True
+    allowed = (*_FACADE_ALLOWED, _HASHING_MODULE) if is_digest else _FACADE_ALLOWED
+    return any(name == prefix or name.startswith(f"{prefix}.") for prefix in allowed)
+
+
+def _c21_violations(source: str, module_path: str) -> list[str]:
+    """Return one message per import of the source that C.21 forbids."""
+    module_name, _ = _module_identity(module_path)
+    is_digest = module_name == _DIGEST_MODULE
+    return [
+        f"{module_path}:{lineno}: {name}"
+        for lineno, name in _resolved_imports(source, module_path)
+        if name == _CLIMB or not _is_allowed(name, is_digest=is_digest)
+    ]
+
+
+_CONTRACTS_PATH = "src/riskquant/solutions/factor_regression/contracts.py"
+_LABELS_PATH = "src/riskquant/solutions/factor_regression/labels.py"
+_DIGEST_PATH = "src/riskquant/solutions/factor_regression/digest.py"
+
+_REJECTED_SOURCES: list[tuple[str, str, str]] = [
+    ("pandas", "import pandas as pd\n", _CONTRACTS_PATH),
+    (
+        "hashing-from-in-labels",
+        "from riskquant.solutions.run_identity import hashing\n",
+        _LABELS_PATH,
+    ),
+    (
+        "hashing-import-in-labels",
+        "import riskquant.solutions.run_identity.hashing\n",
+        _LABELS_PATH,
+    ),
+    (
+        "hashing-member-in-labels",
+        "from riskquant.solutions.run_identity.hashing import digest_named_arrays\n",
+        _LABELS_PATH,
+    ),
+    (
+        "hashing-relative-in-labels",
+        "from ..run_identity import hashing\n",
+        _LABELS_PATH,
+    ),
+    (
+        "config-compiled",
+        "from riskquant.config.proxy_model import compiled\n",
+        _DIGEST_PATH,
+    ),
+    ("config-relative", "from ...config import proxy_model\n", _LABELS_PATH),
+    # The target name is allowed; the only defect is the climb.
+    ("relative-above-top-package", "from .... import numpy\n", _LABELS_PATH),
+    (
+        "import-inside-function",
+        "def f() -> None:\n    import pandas\n",
+        _CONTRACTS_PATH,
+    ),
+    (
+        "import-under-type-checking",
+        "from typing import TYPE_CHECKING\n"
+        "if TYPE_CHECKING:\n"
+        "    from riskquant.config.proxy_model.compiled import CompiledProxyModel\n",
+        _CONTRACTS_PATH,
+    ),
+    ("scipy", "from scipy import stats\n", _CONTRACTS_PATH),
+]
+
+_ACCEPTED_SOURCES: list[tuple[str, str, str]] = [
+    (
+        "hashing-member-in-digest",
+        "from riskquant.solutions.run_identity.hashing import digest_named_arrays\n",
+        _DIGEST_PATH,
+    ),
+    (
+        "hashing-from-in-digest",
+        "from riskquant.solutions.run_identity import hashing\n",
+        _DIGEST_PATH,
+    ),
+    (
+        "hashing-import-in-digest",
+        "import riskquant.solutions.run_identity.hashing\n",
+        _DIGEST_PATH,
+    ),
+    (
+        "numpy",
+        "import numpy as np\nfrom numpy.typing import NDArray\n",
+        _CONTRACTS_PATH,
+    ),
+    ("core-codes", "from riskquant.factor_regression import codes\n", _LABELS_PATH),
+    ("own-package-relative", "from .errors import ModelSpecError\n", _CONTRACTS_PATH),
+    (
+        "stdlib",
+        "from __future__ import annotations\nimport unicodedata\n",
+        _CONTRACTS_PATH,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("source", "module_path"),
+    [(src, path) for _, src, path in _REJECTED_SOURCES],
+    ids=[case_id for case_id, _, _ in _REJECTED_SOURCES],
+)
+def test_t14_helper_rejects_forbidden_import(source: str, module_path: str) -> None:
+    assert _c21_violations(source, module_path), (
+        f"forbidden import accepted in {module_path}: {source!r}"
+    )
+
+
+def test_t14_helper_names_the_climb() -> None:
+    violations = _c21_violations("from .... import numpy\n", _LABELS_PATH)
+    assert violations == [f"{_LABELS_PATH}:1: {_CLIMB}"]
+
+
+@pytest.mark.parametrize(
+    ("source", "module_path"),
+    [(src, path) for _, src, path in _ACCEPTED_SOURCES],
+    ids=[case_id for case_id, _, _ in _ACCEPTED_SOURCES],
+)
+def test_t14_helper_accepts_allowed_import(source: str, module_path: str) -> None:
+    assert _c21_violations(source, module_path) == []
 
 
 def _pkg_dir() -> pathlib.Path:
-    spec = importlib.util.find_spec("riskquant.solutions.factor_regression")
+    spec = importlib.util.find_spec(_FACADE_PACKAGE)
     assert spec is not None
-    return pathlib.Path(spec.origin).parent  # type: ignore[arg-type]
+    assert spec.origin is not None
+    return pathlib.Path(spec.origin).parent
 
 
-def _all_imports(source: str) -> list[ast.stmt]:
-    """Return all Import and ImportFrom nodes, including inside TYPE_CHECKING."""
-    tree = ast.parse(source)
-    result: list[ast.stmt] = []
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            result.append(node)
-    return result
-
-
-def test_t14_only_digest_imports_hashing() -> None:
+def _facade_modules() -> list[tuple[str, str]]:
+    """Return ``(module_path, source)`` for every .py file of the facade."""
     pkg = _pkg_dir()
-    for py_file in sorted(pkg.glob("*.py")):
-        if py_file.name == "__init__.py":
-            continue
-        is_digest = py_file.name == "digest.py"
-        source = py_file.read_text()
-        for node in _all_imports(source):
-            if isinstance(node, ast.ImportFrom):
-                module = node.module or ""
-                if "run_identity" in module and "hashing" in module:
-                    assert is_digest, (
-                        f"{py_file.name} imports hashing (only digest.py is allowed)"
-                    )
-            elif isinstance(node, ast.Import):
-                for alias in node.names:
-                    if "run_identity" in alias.name and "hashing" in alias.name:
-                        assert is_digest, (
-                            f"{py_file.name} imports hashing "
-                            f"(only digest.py is allowed)"
-                        )
+    src_root = pkg.parents[2]
+    return [
+        (
+            f"src/{py_file.relative_to(src_root).as_posix()}",
+            py_file.read_text(encoding="utf-8"),
+        )
+        for py_file in sorted(pkg.rglob("*.py"))
+    ]
 
 
-def test_t14_no_direct_riskquant_config_import() -> None:
-    pkg = _pkg_dir()
-    for py_file in sorted(pkg.glob("*.py")):
-        source = py_file.read_text()
-        for node in _all_imports(source):
-            if isinstance(node, ast.ImportFrom):
-                module = node.module or ""
-                assert not module.startswith("riskquant.config"), (
-                    f"{py_file.name} directly imports riskquant.config"
-                )
-            elif isinstance(node, ast.Import):
-                for alias in node.names:
-                    assert not alias.name.startswith("riskquant.config"), (
-                        f"{py_file.name} directly imports riskquant.config"
-                    )
+def test_t14_facade_imports_obey_c21() -> None:
+    modules = _facade_modules()
+    paths = {path for path, _ in modules}
+    assert _DIGEST_PATH in paths and _CONTRACTS_PATH in paths, sorted(paths)
+    violations = [
+        message for path, source in modules for message in _c21_violations(source, path)
+    ]
+    assert violations == [], "C.21 import violations:\n" + "\n".join(violations)
+
+
+def test_t14_scan_sees_the_hashing_import_of_digest() -> None:
+    """Non-vacuity: the resolver finds the one allowed hashing import."""
+    hashing_users = sorted(
+        path
+        for path, source in _facade_modules()
+        for _, name in _resolved_imports(source, path)
+        if name == _HASHING_MODULE or name.startswith(f"{_HASHING_MODULE}.")
+    )
+    assert hashing_users == [_DIGEST_PATH]
+
+
+# ================================================================ R-017
+# The digest functions reject invalid input and never cast or truncate it.
+
+
+def _spec_kwargs(**overrides: object) -> dict[str, object]:
+    kwargs: dict[str, object] = dict(
+        engine_version=ENGINE_VERSION,
+        response_name="P",
+        response_unit="EUR",
+        response_transform="LOG_RETURN",
+        regressor_names=["Z"],
+        regressor_units=["EUR"],
+        regressor_transforms=["LOG_RETURN"],
+        intercept=True,
+        step=1,
+        stride=1,
+        start_ord=0,
+        end_ord=20,
+        covariance_kind=0,
+        covariance_lag=-1,
+        rank_rtol=1e-10,
+        condition_threshold=None,
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"regressor_names": ["Z", "S"]},
+        {"regressor_units": ["EUR", "USD"]},
+        {"regressor_transforms": ["LOG_RETURN", "LOG_RETURN"]},
+        {"regressor_names": []},
+    ],
+    ids=["two-names-one-unit", "one-name-two-units", "two-transforms", "no-names"],
+)
+def test_r017_spec_digest_unequal_regressor_lengths_raise(
+    overrides: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError):
+        spec_digest(**_spec_kwargs(**overrides))  # type: ignore[arg-type]
+
+
+_SWAPPED_INT32 = np.dtype(np.int32).newbyteorder()
+_SWAPPED_FLOAT64 = np.dtype(np.float64).newbyteorder()
+
+
+def _call_row(start: object, end: object) -> str:
+    return row_digest(start, end)  # type: ignore[arg-type]
+
+
+def _call_restriction(restriction: object, rhs: object) -> str:
+    return restriction_digest(restriction, rhs)  # type: ignore[arg-type]
+
+
+def _call_sample(
+    start: object = None, end: object = None, y: object = None, x: object = None
+) -> str:
+    return sample_digest(
+        row_start_date_ord=_row_start() if start is None else start,  # type: ignore[arg-type]
+        row_end_date_ord=_row_end() if end is None else end,  # type: ignore[arg-type]
+        response_name="P",
+        intercept=True,
+        regressor_names=["Z"],
+        y=_y() if y is None else y,  # type: ignore[arg-type]
+        x=_x() if x is None else x,  # type: ignore[arg-type]
+    )
+
+
+_TYPE_ERROR_CASES: list[tuple[str, Callable[[], str]]] = [
+    ("row-int64-start", lambda: _call_row(_row_start().astype(np.int64), _row_end())),
+    ("row-int64-end", lambda: _call_row(_row_start(), _row_end().astype(np.int64))),
+    (
+        "row-swapped-byte-order",
+        lambda: _call_row(_row_start().astype(_SWAPPED_INT32), _row_end()),
+    ),
+    ("row-list", lambda: _call_row([10, 11, 12], _row_end())),
+    (
+        "row-masked-array",
+        lambda: _call_row(np.ma.array([10, 11, 12], dtype=np.int32), _row_end()),
+    ),
+    ("sample-int64-start", lambda: _call_sample(start=_row_start().astype(np.int64))),
+    ("sample-float32-y", lambda: _call_sample(y=_y().astype(np.float32))),
+    ("sample-int64-y", lambda: _call_sample(y=np.array([1, 2, 3], dtype=np.int64))),
+    ("sample-swapped-y", lambda: _call_sample(y=_y().astype(_SWAPPED_FLOAT64))),
+    ("sample-float32-x", lambda: _call_sample(x=_x().astype(np.float32))),
+    ("sample-list-x", lambda: _call_sample(x=_x().tolist())),
+    (
+        "restriction-float32",
+        lambda: _call_restriction(
+            np.eye(2, dtype=np.float32), np.zeros(2, dtype=np.float64)
+        ),
+    ),
+    (
+        "rhs-int64",
+        lambda: _call_restriction(
+            np.eye(2, dtype=np.float64), np.zeros(2, dtype=np.int64)
+        ),
+    ),
+    (
+        "restriction-swapped",
+        lambda: _call_restriction(
+            np.eye(2, dtype=np.float64).astype(_SWAPPED_FLOAT64),
+            np.zeros(2, dtype=np.float64),
+        ),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "call",
+    [call for _, call in _TYPE_ERROR_CASES],
+    ids=[case_id for case_id, _ in _TYPE_ERROR_CASES],
+)
+def test_r017_wrong_dtype_raises_type_error(call: Callable[[], str]) -> None:
+    with pytest.raises(TypeError):
+        call()
+
+
+_VALUE_ERROR_CASES: list[tuple[str, Callable[[], str]]] = [
+    (
+        "row-unequal-length",
+        lambda: _call_row(_row_start(), np.array([15, 16], dtype=np.int32)),
+    ),
+    (
+        "row-2d",
+        lambda: _call_row(_row_start().reshape(3, 1), _row_end().reshape(3, 1)),
+    ),
+    (
+        "sample-unequal-rows",
+        lambda: _call_sample(end=np.array([15, 16], dtype=np.int32)),
+    ),
+    ("sample-y-short", lambda: _call_sample(y=_y()[:2].copy())),
+    ("sample-y-2d", lambda: _call_sample(y=_y().reshape(3, 1))),
+    ("sample-x-short", lambda: _call_sample(x=_x()[:2].copy())),
+    ("sample-x-1d", lambda: _call_sample(x=_x()[:, 1].copy())),
+    ("sample-x-3d", lambda: _call_sample(x=_x().reshape(3, 2, 1))),
+]
+
+
+@pytest.mark.parametrize(
+    "call",
+    [call for _, call in _VALUE_ERROR_CASES],
+    ids=[case_id for case_id, _ in _VALUE_ERROR_CASES],
+)
+def test_r017_wrong_shape_raises_value_error(call: Callable[[], str]) -> None:
+    with pytest.raises(ValueError):
+        call()
+
+
+def test_r017_restriction_digest_leaves_shape_to_the_core() -> None:
+    """Guards C.18: a wrong shape with the right dtype digests; wald_core rejects it."""
+    digest = restriction_digest(
+        np.zeros(3, dtype=np.float64), np.zeros((2, 2), dtype=np.float64)
+    )
+    assert len(digest) == 64
+
+
+def test_r017_fortran_order_x_digests_as_c_order() -> None:
+    """Guards A.6: the layout is canonicalised, not rejected."""
+    x_f = np.asfortranarray(_x())
+    assert not x_f.flags["C_CONTIGUOUS"]
+    assert _call_sample(x=x_f) == _base_sample_digest()

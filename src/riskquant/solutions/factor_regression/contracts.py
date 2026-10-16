@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import enum
 import operator
+import unicodedata
 from dataclasses import dataclass
-from typing import Final, SupportsIndex, cast
+from typing import Any, Final, SupportsIndex, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -29,18 +30,50 @@ from riskquant.solutions.factor_regression.errors import (
 # Stable identifier folded into every spec_digest (A.6).
 ENGINE_VERSION: Final = "riskquant.factor_regression/1"
 
-# int64 range: step and stride are stored as int64 in the spec bytes (A.6).
+# int64 range: step, stride and the HAC lag are stored as int64 in the spec
+# bytes (A.6).
 _INT64_MAX: Final = (1 << 63) - 1
 
-# Control characters: C0 (0x00-0x1F) and DEL (0x7F).
-# \x1e (0x1E) and \x1f (0x1F) are the field and record separators used in the
-# canonical spec bytes, so they must never appear in names or units (A.6).
-_CTRL_LOW: Final = 0x20
-_CTRL_DEL: Final = 0x7F
+# Unicode general category of control characters: C0 (U+0000 to U+001F), DEL
+# (U+007F) and C1 (U+0080 to U+009F).  C.1 forbids every one of them.  \x1e and
+# \x1f are the field and record separators of the canonical spec bytes (A.6);
+# C1 characters such as \x85 (NEL) are line breaks in some readers.
+_CONTROL_CATEGORY: Final = "Cc"
 
 
 def _has_control(s: str) -> bool:
-    return any(ord(c) < _CTRL_LOW or ord(c) == _CTRL_DEL for c in s)
+    return any(unicodedata.category(c) == _CONTROL_CATEGORY for c in s)
+
+
+def _frozen_array_copy(
+    owner: str, field: str, value: object, dtype: type[np.generic]
+) -> NDArray[Any]:
+    """
+    Return a read-only copy of ``value`` after an exact type and dtype check.
+
+    The check runs before any reduction or cast.  A subclass of
+    ``numpy.ndarray`` (for example ``numpy.ma.MaskedArray``) can redefine
+    reductions, and a cast can change values silently, so both raise (C.19).
+
+    Raises
+    ------
+    TypeError
+        ``value`` is not exactly ``numpy.ndarray``, or its dtype is not
+        ``dtype`` in native byte order.
+    """
+    if type(value) is not np.ndarray:
+        raise TypeError(
+            f"{owner}.{field} must be exactly numpy.ndarray; got {type(value).__name__}"
+        )
+    expected = np.dtype(dtype)
+    if value.dtype != expected or not value.dtype.isnative:
+        raise TypeError(
+            f"{owner}.{field} must have dtype {expected} in native byte order; "
+            f"got {value.dtype.str}"
+        )
+    out = np.array(value, copy=True)
+    out.setflags(write=False)
+    return out
 
 
 # ------------------------------------------------------------------ enums
@@ -168,7 +201,8 @@ class CovarianceSpec:
         ``int`` when required.
     ModelSpecError
         ``IID`` or ``HC0`` with a non-None lag; ``HAC_BARTLETT`` without a lag;
-        ``HAC_BARTLETT`` with a negative lag.
+        ``HAC_BARTLETT`` with a negative lag or a lag above the ``int64``
+        range (the lag is stored as ``int64`` in the spec bytes, A.6).
     """
 
     kind: CovarianceKind
@@ -200,6 +234,10 @@ class CovarianceSpec:
             lag_int = int(self.lag)
             if lag_int < 0:
                 raise ModelSpecError(reason=f"lag must be >= 0, got {lag_int}")
+            if lag_int > _INT64_MAX:
+                raise ModelSpecError(
+                    reason=f"lag {lag_int} exceeds int64 range ({_INT64_MAX})"
+                )
             object.__setattr__(self, "lag", lag_int)
 
 
@@ -228,6 +266,14 @@ class AlignedLevels:
         All exclusion records from the alignment (C.3).
     start_ord, end_ord
         The declared half-open window ``[start_ord, end_ord)``.
+
+    The constructor stores read-only copies of ``date_ord`` and ``levels``.
+
+    Raises
+    ------
+    TypeError
+        ``date_ord`` or ``levels`` is not exactly ``numpy.ndarray`` with its
+        declared dtype.  No cast is applied.
     """
 
     names: tuple[str, ...]
@@ -239,11 +285,9 @@ class AlignedLevels:
     end_ord: int
 
     def __post_init__(self) -> None:
-        d = np.array(self.date_ord, dtype=np.int32, copy=True)
-        d.setflags(write=False)
+        d = _frozen_array_copy("AlignedLevels", "date_ord", self.date_ord, np.int32)
+        lev = _frozen_array_copy("AlignedLevels", "levels", self.levels, np.float64)
         object.__setattr__(self, "date_ord", d)
-        lev = np.array(self.levels, dtype=np.float64, copy=True)
-        lev.setflags(write=False)
         object.__setattr__(self, "levels", lev)
 
 
@@ -307,13 +351,13 @@ class ModelSpec:
     ------
     TypeError
         A field has the wrong Python type (bool/float/str where int is
-        needed, etc.).
+        needed, ``regressors`` not a tuple, etc.).
     ModelSpecError
         Empty design, ``step < 0``, ``stride < 1``, step 0 with a return
-        term, step > 0 with only LEVEL terms, ``rank_rtol`` outside (0, 1),
-        ``condition_threshold`` not None and not above 1, a lag with IID or
-        HC0, ``HAC_BARTLETT`` without a lag, a negative lag, or step/stride
-        above the ``int64`` range.
+        term, step > 0 with only LEVEL terms, ``rank_rtol`` outside (0, 1)
+        or NaN, ``condition_threshold`` not None and not above 1 (NaN
+        included), a lag with IID or HC0, ``HAC_BARTLETT`` without a lag, a
+        negative lag, or step/stride above the ``int64`` range.
     """
 
     response: Term
@@ -332,11 +376,8 @@ class ModelSpec:
                 f"response must be Term, got {type(self.response).__name__}"
             )
 
-        # ---- regressors: accept list and convert to tuple -------------------
+        # ---- regressors: a tuple only; no conversion ------------------------
         regs = self.regressors
-        if isinstance(regs, list):
-            regs = tuple(regs)
-            object.__setattr__(self, "regressors", regs)
         if not isinstance(regs, tuple):
             raise TypeError(
                 f"regressors must be a tuple of Term, got {type(regs).__name__}"
@@ -435,14 +476,16 @@ class ModelSpec:
                 )
             )
 
-        # rank_rtol outside (0, 1).
-        if _rank_rtol <= 0.0 or _rank_rtol >= 1.0:
+        # rank_rtol outside (0, 1).  The negated interval test also rejects
+        # NaN: every comparison with NaN is False.
+        if not (0.0 < _rank_rtol < 1.0):
             raise ModelSpecError(
                 reason=f"rank_rtol must be in (0, 1), got {_rank_rtol!r}"
             )
 
-        # condition_threshold not None and not above 1.
-        if _ct is not None and float(_ct) <= 1.0:
+        # condition_threshold not None and not above 1.  The negated test also
+        # rejects NaN: every comparison with NaN is False.
+        if _ct is not None and not (float(_ct) > 1.0):
             raise ModelSpecError(
                 reason=(
                     f"condition_threshold must be above 1 when not None, "
@@ -466,9 +509,10 @@ class ObservedSeries:
     Parameters
     ----------
     name
-        Non-empty str without control characters (including ``\\x1e``, ``\\x1f``).
+        Non-empty str without a character of Unicode category ``Cc``
+        (C0 including ``\\x1e`` and ``\\x1f``, DEL, C1 including ``\\x85``).
     unit
-        Non-empty str without control characters.
+        Non-empty str without a character of Unicode category ``Cc``.
     date_ord
         ``int32`` 1-D array, strictly increasing.  Exactly ``numpy.ndarray``;
         subclasses (including ``numpy.ma.MaskedArray``) raise
@@ -627,6 +671,12 @@ class OlsResult:
     approves no model assumption (C.15).
 
     Fields follow the order of C.15 as specified by the owner.
+
+    Raises
+    ------
+    TypeError
+        An array field is not exactly ``numpy.ndarray`` with its declared
+        dtype (``float64`` values, ``int32`` row dates).  No cast is applied.
     """
 
     coef: NDArray[np.float64]
@@ -664,8 +714,8 @@ class OlsResult:
     engine_version: str
 
     def __post_init__(self) -> None:
-        # Copy and freeze all array fields.  dtype parameters keep the
-        # declared types explicit for downstream callers.
+        # Check, copy and freeze every array field.  A wrong dtype raises; a
+        # cast would change the values that the digests describe.
         for _name in (
             "coef",
             "se",
@@ -676,12 +726,14 @@ class OlsResult:
             "fitted",
             "singular_values",
         ):
-            _arr = np.array(getattr(self, _name), dtype=np.float64, copy=True)
-            _arr.setflags(write=False)
+            _arr = _frozen_array_copy(
+                "OlsResult", _name, getattr(self, _name), np.float64
+            )
             object.__setattr__(self, _name, _arr)
         for _name in ("row_start_date_ord", "row_end_date_ord"):
-            _arr_i = np.array(getattr(self, _name), dtype=np.int32, copy=True)
-            _arr_i.setflags(write=False)
+            _arr_i = _frozen_array_copy(
+                "OlsResult", _name, getattr(self, _name), np.int32
+            )
             object.__setattr__(self, _name, _arr_i)
 
 

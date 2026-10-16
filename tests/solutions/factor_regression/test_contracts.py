@@ -647,3 +647,192 @@ def test_t13_path_comments_present() -> None:
         assert first_line.startswith("# src/riskquant/solutions/factor_regression/"), (
             f"{path.name}: first line {first_line!r} does not start with expected prefix"
         )
+
+
+# ================================================================ S6 fix round
+# R-016, R-019, R-020 and A1.  Each case below failed on the baseline
+# 4e1b315 unless its docstring says that it guards existing behaviour.
+
+
+# ---------------------------------------------------------------- R-016
+
+
+def test_t6_rank_rtol_nan_raises_model_spec_error() -> None:
+    with pytest.raises(ModelSpecError):
+        _base_spec(rank_rtol=float("nan"))
+
+
+def test_t6_condition_threshold_nan_raises_model_spec_error() -> None:
+    with pytest.raises(ModelSpecError):
+        _base_spec(condition_threshold=float("nan"))
+
+
+# ---------------------------------------------------------------- R-019
+
+
+def test_t5_regressors_list_raises_type_error() -> None:
+    with pytest.raises(TypeError):
+        _base_spec(regressors=[Term(series="X", transform=Transform.LOG_RETURN)])
+
+
+def _aligned_levels(date_ord: object, levels: object) -> AlignedLevels:
+    return AlignedLevels(
+        names=("P",),
+        units=("EUR",),
+        date_ord=date_ord,  # type: ignore[arg-type]
+        levels=levels,  # type: ignore[arg-type]
+        exclusions=(),
+        start_ord=0,
+        end_ord=10,
+    )
+
+
+_LEVELS = np.array([[1.0, 2.0, 3.0]], dtype=np.float64)
+
+
+@pytest.mark.parametrize(
+    "date_ord",
+    [
+        np.array([1, 2, 3], dtype=np.int64),
+        np.array([1, 2, 3], dtype=np.dtype(np.int32).newbyteorder()),
+        [1, 2, 3],
+        np.ma.array([1, 2, 3], dtype=np.int32),
+    ],
+    ids=["int64", "int32-swapped-byte-order", "list", "masked-array"],
+)
+def test_r019_aligned_levels_date_ord_rejected(date_ord: object) -> None:
+    with pytest.raises(TypeError):
+        _aligned_levels(date_ord, _LEVELS)
+
+
+@pytest.mark.parametrize(
+    "levels",
+    [
+        np.array([[1.0, 2.0, 3.0]], dtype=np.float32),
+        np.array([[1, 2, 3]], dtype=np.int64),
+        [[1.0, 2.0, 3.0]],
+        np.ma.array([[1.0, 2.0, 3.0]], dtype=np.float64),
+    ],
+    ids=["float32", "int64", "list", "masked-array"],
+)
+def test_r019_aligned_levels_levels_rejected(levels: object) -> None:
+    with pytest.raises(TypeError):
+        _aligned_levels(_dates(1, 2, 3), levels)
+
+
+def test_r019_aligned_levels_stores_read_only_copies() -> None:
+    """Guards C.19: existing behaviour, passes on the baseline."""
+    d = _dates(1, 2, 3)
+    lev = _LEVELS.copy()
+    a = _aligned_levels(d, lev)
+    d[0] = 99
+    lev[0, 0] = 99.0
+    assert int(a.date_ord[0]) == 1
+    assert float(a.levels[0, 0]) == 1.0
+    assert not a.date_ord.flags["WRITEABLE"]
+    assert not a.levels.flags["WRITEABLE"]
+    assert a.date_ord.dtype == np.int32
+    assert a.levels.dtype == np.float64
+
+
+_OLS_FLOAT_FIELDS = (
+    "coef",
+    "se",
+    "t_stats",
+    "p_values",
+    "cov",
+    "resid",
+    "fitted",
+    "singular_values",
+)
+
+
+@pytest.mark.parametrize("field", _OLS_FLOAT_FIELDS)
+def test_r019_ols_result_float32_array_rejected(field: str) -> None:
+    good = getattr(_ols_result(), field)
+    with pytest.raises(TypeError):
+        _ols_result(**{field: np.array(good, dtype=np.float32)})
+
+
+@pytest.mark.parametrize("field", _OLS_FLOAT_FIELDS)
+def test_r019_ols_result_list_rejected(field: str) -> None:
+    good = getattr(_ols_result(), field)
+    with pytest.raises(TypeError):
+        _ols_result(**{field: good.tolist()})
+
+
+@pytest.mark.parametrize("field", ["row_start_date_ord", "row_end_date_ord"])
+def test_r019_ols_result_int64_row_dates_rejected(field: str) -> None:
+    good = getattr(_ols_result(), field)
+    with pytest.raises(TypeError):
+        _ols_result(**{field: np.array(good, dtype=np.int64)})
+
+
+def test_r019_ols_result_masked_array_rejected() -> None:
+    with pytest.raises(TypeError):
+        _ols_result(coef=np.ma.array([0.5, 1.5], dtype=np.float64))
+
+
+def test_r019_ols_result_stores_read_only_copies() -> None:
+    """Guards C.19: existing behaviour, passes on the baseline."""
+    coef = np.array([0.5, 1.5], dtype=np.float64)
+    rows = np.array([1, 2, 3, 4, 5], dtype=np.int32)
+    result = _ols_result(coef=coef, row_start_date_ord=rows)
+    coef[0] = 99.0
+    rows[0] = 99
+    assert float(result.coef[0]) == 0.5
+    assert int(result.row_start_date_ord[0]) == 1
+    assert not result.coef.flags["WRITEABLE"]
+    assert not result.row_start_date_ord.flags["WRITEABLE"]
+
+
+@pytest.mark.parametrize("ctrl", ["\x80", "\x85", "\x9f"])
+def test_t1_c1_control_char_in_name(ctrl: str) -> None:
+    with pytest.raises(SeriesContractError):
+        _series(name=f"SP{ctrl}X")
+
+
+@pytest.mark.parametrize("ctrl", ["\x80", "\x85", "\x9f"])
+def test_t1_c1_control_char_in_unit(ctrl: str) -> None:
+    with pytest.raises(SeriesContractError):
+        _series(unit=f"EU{ctrl}R")
+
+
+def test_t1_non_control_non_ascii_name_accepted() -> None:
+    """Guards C.1: a non-ASCII letter is not a control character."""
+    s = _series(name="Zürich", unit="€")
+    assert (s.name, s.unit) == ("Zürich", "€")
+
+
+# ---------------------------------------------------------------- R-020
+
+
+def test_r020_alignment_error_series_named_in_message() -> None:
+    exc = AlignmentError(
+        reason="DUPLICATE_SERIES_NAME", start_ord=0, end_ord=10, series="P"
+    )
+    assert exc.series == "P"
+    assert "series='P'" in str(exc)
+    assert exc.reason == "DUPLICATE_SERIES_NAME"
+    assert (exc.start_ord, exc.end_ord) == (0, 10)
+
+
+def test_r020_alignment_error_default_series_is_none() -> None:
+    """Guards OD-12: the construction without series keeps its message."""
+    exc = AlignmentError(reason="ALIGN_EMPTY_WINDOW", start_ord=5, end_ord=5)
+    assert exc.series is None
+    assert str(exc) == "'ALIGN_EMPTY_WINDOW': window=[5, 5)"
+
+
+# ---------------------------------------------------------------- A1
+
+
+def test_a1_hac_lag_above_int64_range() -> None:
+    with pytest.raises(ModelSpecError):
+        CovarianceSpec(kind=CovarianceKind.HAC_BARTLETT, lag=(1 << 63))
+
+
+def test_a1_hac_lag_at_int64_max_accepted() -> None:
+    """Guards the boundary: 2**63 - 1 is in the int64 range."""
+    spec = CovarianceSpec(kind=CovarianceKind.HAC_BARTLETT, lag=(1 << 63) - 1)
+    assert spec.lag == (1 << 63) - 1

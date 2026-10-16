@@ -41,6 +41,18 @@ Stability
 Digests are stable across Python processes and platforms as long as
 ``digest_named_arrays`` is stable (SHA-256, native byte order normalised,
 C-order bytes folded in) (C.16).
+
+Input contract
+--------------
+No function casts, truncates or reshapes its input.  Each array argument must
+be exactly ``numpy.ndarray`` with its A.6 dtype in native byte order, else
+``TypeError``.  ``row_digest`` and ``sample_digest`` check the row shapes,
+else ``ValueError``.  ``spec_digest`` raises ``ValueError`` when the regressor
+name, unit and transform sequences differ in length.  ``restriction_digest``
+checks type and dtype only: shape errors belong to the Wald core (C.18).
+Valid inputs digest exactly as before these checks: the arrays pass to
+``digest_named_arrays`` unchanged, and that function folds in the dtype, the
+shape and the C-order bytes.
 """
 
 from __future__ import annotations
@@ -58,12 +70,50 @@ from riskquant.solutions.run_identity.hashing import digest_named_arrays
 _SCHEMA_VERSION: Final = np.array([1], dtype=np.int64)
 
 
-def _require_ndarray(name: str, arr: object) -> None:
-    """Raise TypeError if arr is not exactly numpy.ndarray (owner note 4)."""
+def _require_array(name: str, arr: object, dtype: type[np.generic]) -> None:
+    """
+    Raise ``TypeError`` unless ``arr`` is exactly ``numpy.ndarray`` with dtype
+    ``dtype`` in native byte order.
+
+    The type check runs first: a subclass can redefine ``dtype`` access and
+    reductions.  The dtype check replaces a cast, because a cast would digest
+    values that the caller did not supply (R-017).
+    """
     if type(arr) is not np.ndarray:
         raise TypeError(
             f"{name} must be exactly numpy.ndarray; got {type(arr).__name__}"
         )
+    expected = np.dtype(dtype)
+    if arr.dtype != expected or not arr.dtype.isnative:
+        raise TypeError(
+            f"{name} must have dtype {expected} in native byte order; "
+            f"got {arr.dtype.str}"
+        )
+
+
+def _require_rows(
+    row_start_date_ord: NDArray[np.int32], row_end_date_ord: NDArray[np.int32]
+) -> int:
+    """
+    Return the row count ``R`` after a shape check of the row date arrays.
+
+    Raises
+    ------
+    ValueError
+        A row array is not 1-D, or the two lengths differ.
+    """
+    if row_start_date_ord.ndim != 1 or row_end_date_ord.ndim != 1:
+        raise ValueError(
+            f"row date arrays must be 1-D; got ndim "
+            f"{row_start_date_ord.ndim} and {row_end_date_ord.ndim}"
+        )
+    n_rows = int(row_start_date_ord.shape[0])
+    if int(row_end_date_ord.shape[0]) != n_rows:
+        raise ValueError(
+            f"row date arrays must have equal length; got {n_rows} and "
+            f"{int(row_end_date_ord.shape[0])}"
+        )
+    return n_rows
 
 
 def _text_uint8(text: str) -> NDArray[np.uint8]:
@@ -90,12 +140,20 @@ def row_digest(
     -------
     str
         64-character lowercase hex digest.
+
+    Raises
+    ------
+    TypeError
+        A row array is not exactly ``numpy.ndarray`` with native ``int32``.
+    ValueError
+        A row array is not 1-D, or the lengths differ.
     """
-    _require_ndarray("row_start_date_ord", row_start_date_ord)
-    _require_ndarray("row_end_date_ord", row_end_date_ord)
+    _require_array("row_start_date_ord", row_start_date_ord, np.int32)
+    _require_array("row_end_date_ord", row_end_date_ord, np.int32)
+    _require_rows(row_start_date_ord, row_end_date_ord)
     return digest_named_arrays(
-        row_start_date_ord=np.ascontiguousarray(row_start_date_ord, dtype=np.int32),
-        row_end_date_ord=np.ascontiguousarray(row_end_date_ord, dtype=np.int32),
+        row_start_date_ord=row_start_date_ord,
+        row_end_date_ord=row_end_date_ord,
     )
 
 
@@ -139,11 +197,25 @@ def sample_digest(
     -------
     str
         64-character lowercase hex digest.
+
+    Raises
+    ------
+    TypeError
+        An array is not exactly ``numpy.ndarray`` with its A.6 dtype in native
+        byte order (``int32`` row dates, ``float64`` ``y`` and ``x``).
+    ValueError
+        Row arrays not 1-D of equal length ``R``; ``y`` not 1-D of length
+        ``R``; ``x`` not 2-D with ``R`` rows.
     """
-    _require_ndarray("row_start_date_ord", row_start_date_ord)
-    _require_ndarray("row_end_date_ord", row_end_date_ord)
-    _require_ndarray("y", y)
-    _require_ndarray("x", x)
+    _require_array("row_start_date_ord", row_start_date_ord, np.int32)
+    _require_array("row_end_date_ord", row_end_date_ord, np.int32)
+    _require_array("y", y, np.float64)
+    _require_array("x", x, np.float64)
+    n_rows = _require_rows(row_start_date_ord, row_end_date_ord)
+    if y.ndim != 1 or int(y.shape[0]) != n_rows:
+        raise ValueError(f"y must be 1-D of length {n_rows}; got shape {y.shape}")
+    if x.ndim != 2 or int(x.shape[0]) != n_rows:
+        raise ValueError(f"x must be 2-D with {n_rows} rows; got shape {x.shape}")
 
     parts = [f"Y\x1f{response_name}"]
     if intercept:
@@ -153,11 +225,11 @@ def sample_digest(
     col_bytes = _text_uint8("\x1e".join(parts))
 
     return digest_named_arrays(
-        row_start_date_ord=np.ascontiguousarray(row_start_date_ord, dtype=np.int32),
-        row_end_date_ord=np.ascontiguousarray(row_end_date_ord, dtype=np.int32),
+        row_start_date_ord=row_start_date_ord,
+        row_end_date_ord=row_end_date_ord,
         column_names=col_bytes,
-        y=np.ascontiguousarray(y, dtype=np.float64),
-        X=np.ascontiguousarray(x, dtype=np.float64),
+        y=y,
+        X=x,
     )
 
 
@@ -216,6 +288,13 @@ def spec_digest(
     str
         64-character lowercase hex digest.
 
+    Raises
+    ------
+    ValueError
+        ``regressor_names``, ``regressor_units`` and ``regressor_transforms``
+        differ in length.  A shorter sequence would drop terms from the
+        digest without notice.
+
     Notes
     -----
     The ``terms`` uint8 array encodes:
@@ -223,10 +302,21 @@ def spec_digest(
     ``X\\x1f{name}\\x1f{unit}\\x1f{TRANSFORM}`` line per regressor, all lines
     joined by ``\\x1e``.
     """
+    lengths = (
+        len(regressor_names),
+        len(regressor_units),
+        len(regressor_transforms),
+    )
+    if len(set(lengths)) != 1:
+        raise ValueError(
+            "regressor_names, regressor_units and regressor_transforms must "
+            f"have equal length; got {lengths}"
+        )
+
     # Build the terms text.
     lines = [f"Y\x1f{response_name}\x1f{response_unit}\x1f{response_transform}"]
     for n, u, t in zip(
-        regressor_names, regressor_units, regressor_transforms, strict=False
+        regressor_names, regressor_units, regressor_transforms, strict=True
     ):
         lines.append(f"X\x1f{n}\x1f{u}\x1f{t}")
     terms_arr = _text_uint8("\x1e".join(lines))
@@ -281,10 +371,14 @@ def restriction_digest(
     -------
     str
         64-character lowercase hex digest.
+
+    Raises
+    ------
+    TypeError
+        An array is not exactly ``numpy.ndarray`` with native ``float64``.
+        Shapes are not checked here: shape errors belong to the Wald core
+        (C.18).
     """
-    _require_ndarray("restriction", restriction)
-    _require_ndarray("rhs", rhs)
-    return digest_named_arrays(
-        restriction=np.ascontiguousarray(restriction, dtype=np.float64),
-        rhs=np.ascontiguousarray(rhs, dtype=np.float64),
-    )
+    _require_array("restriction", restriction, np.float64)
+    _require_array("rhs", rhs, np.float64)
+    return digest_named_arrays(restriction=restriction, rhs=rhs)
