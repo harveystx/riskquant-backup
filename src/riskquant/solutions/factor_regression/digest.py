@@ -1,0 +1,290 @@
+# src/riskquant/solutions/factor_regression/digest.py
+"""
+Digest functions for the factor-regression library (A.6, C.16, C.21).
+
+This is the only facade module that imports
+``riskquant.solutions.run_identity.hashing`` (C.21).  No other module in
+``riskquant.solutions.factor_regression`` may import it.
+
+All four functions delegate to ``digest_named_arrays``, which folds in the
+array name, dtype, shape and C-order bytes via SHA-256 (F-4).  The order and
+names of the arrays in each call are specified in A.6 and are canonical: any
+change of order or name changes the digest.
+
+Canonical byte layout summary (A.6)
+------------------------------------
+``row_digest(start, end)``
+    Arrays: ``row_start_date_ord`` int32, ``row_end_date_ord`` int32.
+
+``sample_digest(start, end, response_name, intercept, regressor_names, y, x)``
+    Arrays: ``row_start_date_ord`` int32, ``row_end_date_ord`` int32,
+    ``column_names`` uint8 (see below), ``y`` float64, ``X`` float64 C-order.
+    ``column_names`` text: lines ``Y\\x1f{response_name}``, ``C\\x1f`` (if
+    intercept), then ``X\\x1f{name}`` per regressor, joined by ``\\x1e``.
+
+``spec_digest(...)``
+    Arrays in this order: ``schema_version`` int64[1] (constant 1),
+    ``engine_version`` uint8 (UTF-8), ``terms`` uint8 (one line
+    ``Y\\x1f{name}\\x1f{unit}\\x1f{TRANSFORM}`` for the response, then
+    ``X\\x1f{name}\\x1f{unit}\\x1f{TRANSFORM}`` per regressor, joined by
+    ``\\x1e``), ``intercept`` int8[0 or 1], ``step`` int64[h],
+    ``stride`` int64[s], ``window`` int32[start_ord, end_ord],
+    ``covariance_kind`` int8[0/1/2], ``covariance_lag`` int64[L or -1],
+    ``rank_rtol`` float64[x], ``condition_threshold`` float64[x] or empty
+    float64 when None.
+
+``restriction_digest(restriction, rhs)``
+    Arrays: ``restriction`` float64 C-order, ``rhs`` float64 C-order.
+
+Stability
+---------
+Digests are stable across Python processes and platforms as long as
+``digest_named_arrays`` is stable (SHA-256, native byte order normalised,
+C-order bytes folded in) (C.16).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import Final
+
+import numpy as np
+from numpy.typing import NDArray
+
+from riskquant.solutions.run_identity.hashing import digest_named_arrays
+
+# Schema version for the spec bytes.  Increment only when the canonical byte
+# layout of spec_digest changes.
+_SCHEMA_VERSION: Final = np.array([1], dtype=np.int64)
+
+
+def _require_ndarray(name: str, arr: object) -> None:
+    """Raise TypeError if arr is not exactly numpy.ndarray (owner note 4)."""
+    if type(arr) is not np.ndarray:
+        raise TypeError(
+            f"{name} must be exactly numpy.ndarray; got {type(arr).__name__}"
+        )
+
+
+def _text_uint8(text: str) -> NDArray[np.uint8]:
+    """Encode text as UTF-8 into a uint8 ndarray."""
+    return np.frombuffer(text.encode("utf-8"), dtype=np.uint8).copy()
+
+
+def row_digest(
+    row_start_date_ord: NDArray[np.int32],
+    row_end_date_ord: NDArray[np.int32],
+) -> str:
+    """
+    SHA-256 digest of the row interval arrays only (A.6, C.16).
+
+    Two fits on the same ``AlignedLevels`` with equal ``step`` and ``stride``
+    share a ``row_digest`` (C.17).
+
+    Parameters
+    ----------
+    row_start_date_ord, row_end_date_ord
+        ``int32`` ``(R,)`` arrays of row start and end date ordinals.
+
+    Returns
+    -------
+    str
+        64-character lowercase hex digest.
+    """
+    _require_ndarray("row_start_date_ord", row_start_date_ord)
+    _require_ndarray("row_end_date_ord", row_end_date_ord)
+    return digest_named_arrays(
+        row_start_date_ord=np.ascontiguousarray(row_start_date_ord, dtype=np.int32),
+        row_end_date_ord=np.ascontiguousarray(row_end_date_ord, dtype=np.int32),
+    )
+
+
+def sample_digest(
+    *,
+    row_start_date_ord: NDArray[np.int32],
+    row_end_date_ord: NDArray[np.int32],
+    response_name: str,
+    intercept: bool,
+    regressor_names: Sequence[str],
+    y: NDArray[np.float64],
+    x: NDArray[np.float64],
+) -> str:
+    """
+    SHA-256 digest of the row intervals, column names, response and design (A.6).
+
+    Changes when the row dates, any column name, ``y`` or ``X`` change.  Unit
+    and covariance parameters are not included (those live in ``spec_digest``).
+
+    The ``column_names`` bytes are: ``Y\\x1f{response_name}``, then ``C\\x1f``
+    (when intercept is True), then ``X\\x1f{name}`` per regressor in declared
+    order, all joined by ``\\x1e``.
+
+    Parameters
+    ----------
+    row_start_date_ord, row_end_date_ord
+        ``int32`` ``(R,)`` row interval dates.
+    response_name
+        Name of the response series.
+    intercept
+        True when the design includes an intercept column.
+    regressor_names
+        Names of the regressor columns in declared order.
+    y
+        ``float64`` ``(R,)`` response values.
+    x
+        ``float64`` ``(R, k)`` design matrix (C-order), intercept column first
+        if declared.
+
+    Returns
+    -------
+    str
+        64-character lowercase hex digest.
+    """
+    _require_ndarray("row_start_date_ord", row_start_date_ord)
+    _require_ndarray("row_end_date_ord", row_end_date_ord)
+    _require_ndarray("y", y)
+    _require_ndarray("x", x)
+
+    parts = [f"Y\x1f{response_name}"]
+    if intercept:
+        parts.append("C\x1f")
+    for name in regressor_names:
+        parts.append(f"X\x1f{name}")
+    col_bytes = _text_uint8("\x1e".join(parts))
+
+    return digest_named_arrays(
+        row_start_date_ord=np.ascontiguousarray(row_start_date_ord, dtype=np.int32),
+        row_end_date_ord=np.ascontiguousarray(row_end_date_ord, dtype=np.int32),
+        column_names=col_bytes,
+        y=np.ascontiguousarray(y, dtype=np.float64),
+        X=np.ascontiguousarray(x, dtype=np.float64),
+    )
+
+
+def spec_digest(
+    *,
+    engine_version: str,
+    response_name: str,
+    response_unit: str,
+    response_transform: str,
+    regressor_names: Sequence[str],
+    regressor_units: Sequence[str],
+    regressor_transforms: Sequence[str],
+    intercept: bool,
+    step: int,
+    stride: int,
+    start_ord: int,
+    end_ord: int,
+    covariance_kind: int,
+    covariance_lag: int,
+    rank_rtol: float,
+    condition_threshold: float | None,
+) -> str:
+    """
+    SHA-256 digest of the canonical specification bytes (A.6, C.16).
+
+    Changes when the engine version, any name, unit, transform, intercept flag,
+    step, stride, window, covariance kind, lag, ``rank_rtol`` or
+    ``condition_threshold`` change.
+
+    Parameters
+    ----------
+    engine_version
+        Canonical engine string (``contracts.ENGINE_VERSION``).
+    response_name, response_unit, response_transform
+        Name, unit and transform-name (e.g. ``"LOG_RETURN"``) of the response.
+    regressor_names, regressor_units, regressor_transforms
+        Parallel sequences for the regressors in declared order.
+    intercept
+        True when the design includes a constant column.
+    step, stride
+        Row-construction parameters ``h`` and ``s``.
+    start_ord, end_ord
+        Alignment window bounds.
+    covariance_kind
+        Integer code (0=IID, 1=HC0, 2=HAC_BARTLETT).
+    covariance_lag
+        Lag ``L`` for HAC_BARTLETT; ``-1`` when not applicable (IID or HC0).
+    rank_rtol
+        Declared rank tolerance.
+    condition_threshold
+        Declared threshold or ``None``.  ``None`` digests as an empty
+        ``float64`` array.
+
+    Returns
+    -------
+    str
+        64-character lowercase hex digest.
+
+    Notes
+    -----
+    The ``terms`` uint8 array encodes:
+    ``Y\\x1f{name}\\x1f{unit}\\x1f{TRANSFORM}`` for the response, then one
+    ``X\\x1f{name}\\x1f{unit}\\x1f{TRANSFORM}`` line per regressor, all lines
+    joined by ``\\x1e``.
+    """
+    # Build the terms text.
+    lines = [f"Y\x1f{response_name}\x1f{response_unit}\x1f{response_transform}"]
+    for n, u, t in zip(
+        regressor_names, regressor_units, regressor_transforms, strict=False
+    ):
+        lines.append(f"X\x1f{n}\x1f{u}\x1f{t}")
+    terms_arr = _text_uint8("\x1e".join(lines))
+
+    engine_arr = _text_uint8(engine_version)
+    intercept_arr = np.array([1 if intercept else 0], dtype=np.int8)
+    step_arr = np.array([step], dtype=np.int64)
+    stride_arr = np.array([stride], dtype=np.int64)
+    window_arr = np.array([start_ord, end_ord], dtype=np.int32)
+    cov_kind_arr = np.array([covariance_kind], dtype=np.int8)
+    cov_lag_arr = np.array([covariance_lag], dtype=np.int64)
+    rank_rtol_arr = np.array([rank_rtol], dtype=np.float64)
+    if condition_threshold is None:
+        ct_arr: NDArray[np.float64] = np.empty(0, dtype=np.float64)
+    else:
+        ct_arr = np.array([condition_threshold], dtype=np.float64)
+
+    return digest_named_arrays(
+        schema_version=_SCHEMA_VERSION,
+        engine_version=engine_arr,
+        terms=terms_arr,
+        intercept=intercept_arr,
+        step=step_arr,
+        stride=stride_arr,
+        window=window_arr,
+        covariance_kind=cov_kind_arr,
+        covariance_lag=cov_lag_arr,
+        rank_rtol=rank_rtol_arr,
+        condition_threshold=ct_arr,
+    )
+
+
+def restriction_digest(
+    restriction: NDArray[np.float64],
+    rhs: NDArray[np.float64],
+) -> str:
+    """
+    SHA-256 digest of a Wald restriction pair (A.6, C.18).
+
+    Hashes the arrays named ``"restriction"`` (float64, C-order) and
+    ``"rhs"`` (float64, C-order) in this order.  Any change of a single
+    element, shape or the order of the two arrays changes the digest.
+
+    Parameters
+    ----------
+    restriction
+        ``float64`` ``(J, K)`` restriction matrix.
+    rhs
+        ``float64`` ``(J,)`` right-hand side vector.
+
+    Returns
+    -------
+    str
+        64-character lowercase hex digest.
+    """
+    _require_ndarray("restriction", restriction)
+    _require_ndarray("rhs", rhs)
+    return digest_named_arrays(
+        restriction=np.ascontiguousarray(restriction, dtype=np.float64),
+        rhs=np.ascontiguousarray(rhs, dtype=np.float64),
+    )
