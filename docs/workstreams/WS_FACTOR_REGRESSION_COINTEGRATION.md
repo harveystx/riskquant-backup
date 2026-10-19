@@ -217,8 +217,10 @@ Attach: `docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION.md`, `docs/workstre
 Gates: section 6 order; pytest slice `tests/factor_regression/test_combination.py`, `tests/factor_regression/test_errors.py`,
 `tests/solutions/factor_regression/test_digest.py` and `tests/test_architecture.py`; pytest full.
 Exit: Every gate line prints `exit=0`. pytest full: 0 failed, 0 errors.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: Windows gates exit=0 on all 7 lines (gate_s1.txt); 267 passed in the slice; pytest full 6881 passed and 36 skipped (baseline 6790 + 91 new tests: 84 in
+test_combination.py, 3 in test_errors.py, 4 in test_digest.py); independent review ACCEPT with no finding; reviewer mutation run 22 of 22 killed; the four
+edits to existing files are additive (0 removed lines); backlog lines in section 7.
 
 | Id | Case | Expected | Defect caught |
 |---|---|---|---|
@@ -340,6 +342,11 @@ Backlog (REFINEMENT findings and items that v1 omits):
   - R-13 S2.T3: the margin is 9.5e-10 under the tolerance and no power defect changes the result. It stays an asymptote check only (its "Defect caught" text is changed by B-4).
   - R-14 A.8: the reason group of the scale exception shares the prefix `SCALE_` with `SCALE_CODES`. No test conflicts. The group is named `SCALE_DOMAIN_ERROR_CODES` in A.8.
   - R-15 Run the gates on Python 3.11 (the mypy target of `pyproject.toml`), not only on 3.12.
+- S1 review, accepted points (source: slice review of S1):
+  - `combine_core` documents that `levels` is C-order but does not check it. Any layout gives the same values, because each term reads one row view.
+  - The module docstring of `codes.py` names only the old group kinds, not the new groups SCALE, DETERMINISTIC, TEST_KIND and SCALE_DOMAIN_ERROR.
+  - The finiteness check of `combine_core` covers every row of `levels`. The LOG domain check covers only the rows that the terms read. The facade always passes finite levels.
+  - `combine_core` checks dtype for all three operands before it checks ndim for any of them (owner decision 2 read as phases; a test fixes the order).
 
 ## 8. Closure record
 
