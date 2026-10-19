@@ -3,14 +3,14 @@
 Path: docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION.md
 Class: HEAVY
 Status: DRAFT
-Revision: 2
-Revision note: Revision 2 (2026-10-19). Owner gates O-1 to O-8 closed as proposed by the investigation. Pre-audit check applied: F-14 to F-17 added; C.14 and C.15 added; S1 and S4 Files lists, tests and Evidence limits changed (labels.py in S1; test_api.py in S4; new code constants named so that they do not clash with existing ones; digest values of the new codes fixed in A.8). Revision 1: first draft from the investigation of 2026-10-19 (cointegration placement and minimum content).
+Revision: 3
+Revision note: Revision 3 (2026-10-19). Freeze audit round 1 (R_FREEZE_RECONCILIATION_R1.md, NOT READY): BLOCKING findings B-1 to B-5 applied (S1 edits `test_errors.py` additively and names `CoreScaleDomainError`; reason code `SAMPLE_ROWS_BELOW_TABLE_MINIMUM` for n < 20; digest and label text fixed in A.3; exact Fraction test of c(n) in S2; mypy rule stated in S4). REFINEMENT findings R-1 to R-15 listed in the section 7 backlog. One text correction without contract change: the value case (R-12). Owner decision under WS_TEMPLATE.md 1.8 on 2026-10-19: Option 1, build v1 from Revision 3, no round-2 audit. Revision 2 (2026-10-19). Owner gates O-1 to O-8 closed as proposed by the investigation. Pre-audit check applied: F-14 to F-17 added; C.14 and C.15 added; S1 and S4 Files lists, tests and Evidence limits changed (labels.py in S1; test_api.py in S4; new code constants named so that they do not clash with existing ones; digest values of the new codes fixed in A.8). Revision 1: first draft from the investigation of 2026-10-19 (cointegration placement and minimum content).
 Date: 2026-10-19
 Branch: ws/factor-regression-cointegration
 Snapshot: SNAPSHOT commit=b7b088a dirty=false content_hash=72b2cb891c2269d9
 Drafted by: investigator
-Independent review: NONE
-Audit rounds used: 0 of 2
+Independent review: freeze audit round 1 in a separate chat (R_FREEZE_RECONCILIATION_R1.md): NOT READY, B-1 to B-5 applied in Revision 3; no round 2 (owner decision)
+Audit rounds used: 1 of 2
 Code merged: no
 DECISIONS.md reconciled: NO
 Evidence limits: No repository test ran. Sandbox: Python 3.12.3, numpy 2.4.4, scipy 1.17.1, statsmodels 0.15.0
@@ -19,8 +19,9 @@ The 23 N = 1 constants equal the text layer of the PDF at
 https://ageconsearch.umn.edu/record/273723/files/qed_wp_1227.pdf and `statsmodels.tsa.adfvalues.tau_2010s` (24 cells with the empty b3 cell,
 0 differences). Nobody compared them with the page images. The pre-audit check repeated the critical-value, power, size, levels-HAC and
 Granger-Newbold numbers with other code and seeds (A.5), and compared the ADF statistic, `n` and the critical values with
-`adfuller(autolag=None)`: equal. The test profile was read; F-14 to F-16 record what it shows. It was not searched for other closed-set tests
-(the audit does that).
+`adfuller(autolag=None)`: equal. The tests profile was searched by the pre-audit check and by audit round 1; F-14 to F-16 and F-18 record what it shows. Neither check compared the
+page images: the audit sandbox cannot reach the site, and the web fetch returns the text layer only. The `scripts/` runners were checked in the
+pre-audit check (F-19). No check ran on Python 3.11, the mypy target of `pyproject.toml` (R-15).
 
 ## 1. Goal and scope
 
@@ -31,13 +32,14 @@ Value case:
 - Benefit: The owner can state, with a tabulated reference distribution, whether the known log spread
   `ln P - ln Z - ln M` of the THG proxy hypothesis rejects a unit root (F-8), and whether each log series
   has a unit root. Today no unit-root code exists in `src/` (F-1). The landed levels path gives invalid inference (F-10).
-- Cost proxies: 4 slices; 3 new core modules; 8 modified files (core `codes.py`, `errors.py`; facade `contracts.py`,
-  `labels.py`, `digest.py`, `errors.py`, `api.py`; test `test_api.py`); 1 new test module per slice; 1 new decision (P-FACTOR_REGRESSION_COINTEGRATION-001);
+- Cost proxies: 4 slices; 3 new core modules; 9 modified files (core `codes.py`, `errors.py`; facade `contracts.py`,
+  `labels.py`, `digest.py`, `errors.py`, `api.py`; tests `test_api.py`, `test_errors.py`); 1 new test module per slice; 1 new decision (P-FACTOR_REGRESSION_COINTEGRATION-001);
   23 transcribed constants; at most 2 audit rounds.
 - Smallest alternative and why it fails: An external `statsmodels` script on the output of `align_levels`. It can
-  compute the statistic today. It fails on three points: no sample binding (the digest functions are private, F-6);
-  `adfuller` chooses the lag by AIC by default, which changes the test size (F-9); `statsmodels` 0.15.0 disagrees with
-  the source PDF text in 2 constant cells (F-7), so its constants need the same verification as ours.
+  compute the statistic today, and `adfuller(autolag=None)` reproduces A.1 (F-17). It fails on one ground only: no sample
+  binding (the digest functions are private, F-6; D001, D104.2), together with the owner decision O-3 (no `statsmodels`
+  dependency). It does not fail on the lag default, because `autolag=None` gives the declared lag. The 2 disputed constant
+  cells of `statsmodels` are N = 2 and N = 3 cells, which v1 does not use (F-7). [R-12]
 - Case against: The motivating case is one hypothesis (THG). A one-off script with a verified constant table answers it.
   The library pays for a public surface, a new decision and 4 slices before any second user exists (owner input).
 - Class: HEAVY. Criteria: new public signature in `riskquant.solutions.factor_regression.api`; new D decision.
@@ -82,8 +84,10 @@ Blocks: none.
 | F-13 | `pyproject.toml` declares no `statsmodels`. The `dev` extra holds ruff, pytest, pytest-cov, mypy, hypothesis. | `pyproject.toml` | Observed |
 | F-14 | `tests/solutions/factor_regression/test_digest.py` (S6.T10) takes every name in `dir(codes)` that ends in `_CODES`, requires a labels group for each, and a second test requires `set(labels.ALL_CODE_GROUPS)` to equal that set. | `test_t10_all_codes_labeled`, `_codes_tuple_names` | Observed |
 | F-15 | `tests/solutions/factor_regression/test_api.py` (S7.T7) asserts `set(api.__all__) == _EXPECTED_PUBLIC`, and that every function and class of `api.py` is in that set or is private. | `test_t7_all_lists_the_public_surface_and_resolves`, `test_t7_helpers_are_private_and_no_other_module_is_public` | Observed |
-| F-16 | `codes.py` holds 50 `np.int8` constants in 11 `*_CODES` groups. `LEVEL` is a transform code. `tests/factor_regression/test_errors.py` checks `int8` and uniqueness for a fixed list of those 11 groups, so a new group is not covered by it. | `codes.py`; `test_every_code_group_is_int8_and_unique` | Observed |
+| F-16 | `codes.py` holds 50 `np.int8` constants in 11 `*_CODES` groups. `LEVEL` is a transform code. `tests/factor_regression/test_errors.py` checks `int8` and uniqueness for a fixed list of those 11 groups, so a new group is not covered by it. The same file fixes the set of core exception classes: `test_the_module_defines_exactly_the_core_exception_set` asserts `set(_defined_classes()) == _EXPECTED_CLASSES` and `set(_FACTORIES) == _EXPECTED_CLASSES` (8 classes). | `codes.py`; `test_every_code_group_is_int8_and_unique`; `test_the_module_defines_exactly_the_core_exception_set` | Observed |
 | F-17 | `adfuller(autolag=None)` gives the A.1 statistic (relative difference 2e-14), the same `n` and the same critical values at 1 %, 5 % and 10 % as A.1 and A.2, for (c, 0), (c, 4), (ct, 4) and (ct, 12) on 600 points. | pre-audit sandbox script | Observed |
+| F-18 | `codes.SAMPLE_SIZE_ERROR_CODES` holds `SAMPLE_STEP_NOT_BELOW_COUNT` (0) and `SAMPLE_ROWS_NOT_ABOVE_COLUMNS` (1). `api.py` maps a core sample-size reason with `labels.SAMPLE_SIZE_ERROR_NAMES[reason]`, a dict lookup that raises `KeyError` for an unlabelled reason. | `codes.py`; `labels.py`; `api.py:_map_core_error` | Observed |
+| F-19 | `scripts/run_all_scripts_factor_regression.py` finds files with `rglob("*.py")`. The tests runners run pytest on the `tests` directory. None holds a fixed module or test list. | pre-audit check of the scripts dump | Observed |
 
 ## 3. Contract
 
@@ -104,10 +108,12 @@ All clauses describe new code. Each is Proposed. Formulas and constants are in `
   covariance. The statistic is `tau = coef[j] / se[j]` for the column `z_{t-1}`. The library adds no second solver.
   [Proposed] Test: S3.T1, S3.T2, S3.T3
 - C.6 The row count `n = m - 1 - p` must be at least 20 and at least `k + 1`. Otherwise
-  `InsufficientObservationsError` names `n` and the requirement. [Proposed] Test: S3.T4, S4.T6
+  `InsufficientObservationsError` names `n` and the requirement. The core raises `CoreSampleSizeError` with the reason
+  `SAMPLE_ROWS_BELOW_TABLE_MINIMUM` for `n` below 20 (A.8). The reason `SAMPLE_ROWS_NOT_ABOVE_COLUMNS` comes from `rank_gate`.
+  [Proposed] Test: S3.T4, S4.T6
 - C.7 Critical values follow A.2: `c(n) = b_inf + b1/n + b2/n^2 + b3/n^3` with the MacKinnon (2010) N = 1 rows, at
   levels 0.01, 0.05, 0.10, with `n` from C.6. The constants exist once, in `mackinnon.py`. [Proposed]
-  Test: S2.T1, S2.T2, S2.T3, S2.T4
+  Test: S2.T1, S2.T2, S2.T3, S2.T4, S2.T5
 - C.8 `UnitRootResult` carries: `statistic`, `gamma`, `critical_levels` `(0.01, 0.05, 0.10)`, `critical_values` `(3,)`,
   `deterministic`, `lag`, `n_obs`, the ADF regression `coef`, `se` and column labels, `condition_number`,
   `null_hypothesis` (fixed text per deterministic case, A.4), `critical_value_source` (fixed text, A.2), combination
@@ -115,7 +121,7 @@ All clauses describe new code. Each is Proposed. Formulas and constants are in `
   `ENGINE_VERSION`. All arrays are read-only. It has no p-value and no field named rejected, accepted, stationary or
   valid (D104.4). [Proposed] Test: S4.T3, S4.T4
 - C.9 `unit_root_spec_digest`, `unit_root_sample_digest` and `row_digest` follow A.3, use `digest_named_arrays`, are
-  stable across fresh processes and change under the mutations of S4.T8. [Proposed] Test: S4.T7, S4.T8
+  stable across fresh processes and change under the mutations of S4.T8. The bytes are fixed by A.3 and A.4. [Proposed] Test: S4.T7, S4.T8, S4.T13
 - C.10 The facade maps every core exception to a facade exception with names and dates, chained as `__cause__`.
   The result never holds NaN. [Proposed] Test: S4.T5, S4.T6
 - C.11 New core modules hold no `str`-typed field, parameter or return and no Enum. They import only the standard
@@ -125,7 +131,8 @@ All clauses describe new code. Each is Proposed. Formulas and constants are in `
   unchanged (O-8). [Proposed] Test: S4.T10
 - C.13 No library function mutates a caller array. Retained arrays are read-only copies. [Proposed] Test: S1.T4, S4.T4
 - C.14 New code constants and labels. Each new `*_CODES` tuple of `codes.py` holds `np.int8` constants with unique values and has a labels group in
-  the same slice that adds the tuple (F-14). Names and fixed values follow A.8. No new constant has the name of an existing constant (F-16).
+  the same slice that adds the tuple (F-14). A code appended to an existing tuple gets its label entries in the same slice. Names and fixed
+  values follow A.8. No new constant has the name of an existing constant (F-16).
   The values of the scale, deterministic and test-kind codes enter the digests (A.3). [Proposed] Test: S1.T6, S1.T7
 - C.15 Public names. `api.__all__` and `_EXPECTED_PUBLIC` in `tests/solutions/factor_regression/test_api.py` hold the same set. The set adds
   `unit_root_test`, `CombinationTerm`, `LinearCombination`, `UnitRootSpec`, `UnitRootResult`, `Scale`, `Deterministic` and `ScaleDomainError`.
@@ -169,7 +176,9 @@ Status values: OPEN, CLOSED.
 Order: S1 and S2 in parallel; S3 after S1 and S2; S4 after S3.
 Every Attach list also holds `CLAUDE.md`, `DECISIONS.md` and `WORKFLOW.md`.
 Gate order (WORKFLOW.md section 6): py_compile, import of the slice modules, ruff check, ruff format --check,
-mypy --strict, pytest slice, pytest full. Slice S4 uses the mypy baseline rule of WS_FACTOR_REGRESSION section 7 (I-001 rule).
+mypy --strict, pytest slice, pytest full. Slice S4 adds the line `mypy baseline` (`mypy --strict src/riskquant/solutions/run_identity/hashing.py`)
+before `mypy --strict`. That line prints 13 errors in `hashing.py` and `exit=1` by design. The S4 `mypy --strict` line passes when every
+`: error:` line that it prints also appears in the `mypy baseline` output (I-001 rule of WS_FACTOR_REGRESSION, stated here in full).
 
 ### S1: Core combination and LOG domain
 
@@ -178,12 +187,15 @@ Contract: C.2, C.3, C.11, C.13, C.14
 Depends on: O-1, O-2, O-6
 Files:
 - create: `src/riskquant/factor_regression/combination.py`, `tests/factor_regression/test_combination.py`
-- modify: `src/riskquant/factor_regression/codes.py` (additive: scale codes, deterministic codes, test-kind code, reason codes, named by A.8);
-  `src/riskquant/factor_regression/errors.py` (additive: one domain exception for the scale);
-  `src/riskquant/solutions/factor_regression/labels.py` (additive: one labels group for each new `*_CODES` tuple, names only; required by the
-  existing S6.T10 tests, F-14)
-Prohibited: change of any existing code value, tuple member order or exception signature; `str` or Enum in the core; a new constant with the name
-of an existing constant (F-16); a change to any existing test file
+- modify: `src/riskquant/factor_regression/codes.py` (additive: scale codes, deterministic codes, test-kind code, the scale-domain reason group and the
+  one appended `SAMPLE_ROWS_BELOW_TABLE_MINIMUM`, named by A.8);
+  `src/riskquant/factor_regression/errors.py` (additive: one class, `CoreScaleDomainError`, A.8);
+  `src/riskquant/solutions/factor_regression/labels.py` (additive: one labels group for each new `*_CODES` tuple and the name entries of the
+  appended `SAMPLE_ROWS_BELOW_TABLE_MINIMUM`; names only; required by the existing S6.T10 tests, F-14);
+  `tests/factor_regression/test_errors.py` (additive only: the name `CoreScaleDomainError` in `_EXPECTED_CLASSES` and one factory in `_FACTORIES`, F-16)
+Prohibited: change of any existing code value, tuple member order (one append at the end of `SAMPLE_SIZE_ERROR_CODES` is allowed) or exception
+signature; `str` or Enum in the core; a new constant with the name of an existing constant (F-16); a change to any existing test file except the
+one additive edit of `test_errors.py` named in Files
 Attach: `docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION.md`, `docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION/A_NUMERICS.md`, `context_riskquant_factor_regression.txt`,
 `context_riskquant_solutions_factor_regression.txt`, `context_riskquant_tests.txt`
 Gates: section 6 order; pytest slice `tests/factor_regression/test_combination.py` and `tests/solutions/factor_regression/test_digest.py`; pytest full.
@@ -199,7 +211,8 @@ Evidence: none
 | S1.T4 | input arrays flagged read-only, then compared after the call | unchanged | caller mutation |
 | S1.T5 | existing `tests/test_architecture.py` scans the new module | pass | str or forbidden import in core |
 | S1.T6 | existing S6.T10 tests of `tests/solutions/factor_regression/test_digest.py`, run after S1 | pass | new `*_CODES` tuple without a labels group (F-14) |
-| S1.T7 | in `test_combination.py`: each new `*_CODES` tuple holds `np.int8` constants with unique values; no name clash with the 50 existing constants; the values of A.8 | exact | clash, duplicate value, wrong digest value |
+| S1.T7 | in `test_combination.py`: each new `*_CODES` tuple holds `np.int8` constants with unique values; no name clash with the 50 existing constants; the values of A.8, including `SAMPLE_ROWS_BELOW_TABLE_MINIMUM` = 2 as the last member of `SAMPLE_SIZE_ERROR_CODES` | exact | clash, duplicate value, wrong digest value |
+| S1.T8 | existing tests of `tests/factor_regression/test_errors.py` after the additive edit (exception set, `RiskQuantError` subclass, no `str` field or parameter, message tests) | pass for `CoreScaleDomainError` | unlisted or `str`-bearing core exception (F-16) |
 
 ### S2: Core MacKinnon critical values
 
@@ -220,8 +233,9 @@ Evidence: none
 |---|---|---|---|
 | S2.T1 | each constant against the A.2 table typed in the test file | exact float equality | transcription error |
 | S2.T2 | seeded Monte Carlo, 200000 random walks, n = 100, lag 0, closed-form DF regression in the test | quantile within 0.05 (1 %) and 0.03 (5 %, 10 %) of `c(100)` | wrong case or wrong row |
-| S2.T3 | n = 1e9 | `c(n)` equal to `b_inf` within 1e-8 | missing or swapped power |
+| S2.T3 | n = 1e9 | `c(n)` equal to `b_inf` within 1e-8 | wrong asymptote |
 | S2.T4 | n from 20 to 1e6 | `c_1% < c_5% < c_10% < 0` | level order swapped |
+| S2.T5 | `c(n)` for the six rows at n in {20, 25, 100, 1000}, against an exact `fractions.Fraction` evaluation of the constants typed in the test | relative error at most 1e-15 | wrong or swapped power of 1/n |
 
 ### S3: Core ADF statistic
 
@@ -243,7 +257,7 @@ Evidence: none
 | S3.T1 | lag 0, CONSTANT, 25 rows, Fraction normal equations in the test | tau within 1e-12 relative | wrong row offset or dof |
 | S3.T2 | lag 4, CONSTANT_TREND, 600 rows, float normal equations in the test | tau within 1e-10 relative | wrong lag columns |
 | S3.T3 | source scan of `adf.py` | no `numpy.linalg`, one call of `fit_core` | second solver |
-| S3.T4 | n = 19, and n = k | `CoreSampleSizeError` with n and requirement | missing size rule |
+| S3.T4 | n = 19 (lag 0), and n = k = 20 (lag 18, 39 aligned dates) | `CoreSampleSizeError`: reason `SAMPLE_ROWS_BELOW_TABLE_MINIMUM` with n_available 19 and n_required 20; then `SAMPLE_ROWS_NOT_ABOVE_COLUMNS` from `rank_gate` | missing size rule |
 
 ### S4: Facade contracts, digests and entry point
 
@@ -258,8 +272,9 @@ Prohibited: numerical logic in the facade; a second public module; Pydantic; any
 `_EXPECTED_PUBLIC`
 Attach: `docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION.md`, `docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION/A_NUMERICS.md`, `context_riskquant_factor_regression.txt`, `context_riskquant_solutions_run_identity.txt`,
 `context_riskquant_solutions_factor_regression.txt`, `context_riskquant_tests.txt`
-Gates: section 6 order; pytest slice `tests/solutions/factor_regression/`; pytest full.
-Exit: Every gate line prints `exit=0`, except the mypy line under the I-001 rule.
+Gates: section 6 order, with the line `mypy baseline` before `mypy --strict`; pytest slice `tests/solutions/factor_regression/`; pytest full.
+Exit: Every gate line prints `exit=0`, except the `mypy baseline` line (`exit=1` by design, 13 errors in `hashing.py`). The `mypy --strict` line passes
+when every `: error:` line that it prints also appears in the `mypy baseline` output.
 Status: NOT_STARTED
 Evidence: none
 
@@ -270,13 +285,14 @@ Evidence: none
 | S4.T3 | field names of `UnitRootResult` | no p-value, no verdict field | approval leak (D104.4) |
 | S4.T4 | arrays of the result | read-only; inputs unchanged | mutation |
 | S4.T5 | LOG level 0.0 on a named date | `ScaleDomainError` names series and date; `__cause__` is core | lost context |
-| S4.T6 | 21 aligned dates with lag 2 | `InsufficientObservationsError` names n = 18 and 20 | wrong n |
+| S4.T6 | 21 aligned dates with lag 2 | `InsufficientObservationsError` names n = 18 and 20 and the reason `SAMPLE_ROWS_BELOW_TABLE_MINIMUM` | wrong n or unlabelled reason (F-18) |
 | S4.T7 | digests in two fresh processes | equal | non-determinism |
 | S4.T8 | change one weight, the scale, the lag, the case, one level, one date | the matching digests change | digest omits a field |
 | S4.T9 | imports of the facade modules | allow-list of D104 only | new dependency |
 | S4.T10 | golden `fit_ols` digests from the S7 tests before and after | equal | collateral change |
 | S4.T11 | existing S7.T7 tests of `test_api.py` after the change of `_EXPECTED_PUBLIC` | pass; the set equals `api.__all__` | unlisted public name or missing name (F-15) |
 | S4.T12 | each `Scale` and `Deterministic` member value against the core code of A.8 | equal | Enum out of step with the core |
+| S4.T13 | `unit_root_spec_digest` and `unit_root_sample_digest` rebuilt with `hashlib` and numpy only, from the text of A.3 and A.4, as `test_t9_oracle_spec_digest_no_threshold` does for the fit digests | equal | digest bytes differ from the contract |
 
 Appendix: A_NUMERICS.md (A.1 to A.7)
 
@@ -300,6 +316,22 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - LOG_LEVEL transform in `fit_ols` (needed by Engle-Granger on log levels; changes `rows.py`, R-009 applies)
 - Half-life `ln(0.5) / ln(1 + gamma)` for `-1 < gamma < 0`; KPSS confirmation; break-robust tests (Gregory-Hansen)
 - Lag rules (Schwert, Ng-Perron) as a facade helper that reports, never selects silently
+- Audit round 1 REFINEMENT findings (source: `R_FREEZE_RECONCILIATION_R1.md` section F, one line each):
+  - R-1 C.6: state the check order when n < 20 and n < k + 1 both hold, and the reason that the error carries.
+  - R-2 C.3, S1.T3: state the scan order for "first offending date" (term-major as `CoreDomainError`, or date-major).
+  - R-3 C.10 says "every core exception". `api.py:_map_core_error` returns `None` for internal `CoreInputError` reasons. List the reachable set: `CoreSampleSizeError`, `CoreRankError`, `CoreDegenerateFitError`, `CoreInputError` `INPUT_NON_FINITE` (overflow of `z`), `CoreParameterError`, `CoreScaleDomainError`.
+  - R-4 C.4: a lag above the int64 range raises `ModelSpecError` before the digest, as `CovarianceSpec` does.
+  - R-5 C.1: state the rule for `bool` and `int` weights (`_check_float_param` rejects `bool` with `TypeError`).
+  - R-6 C.8, A.3: `window` is `AlignedLevels.start_ord, end_ord` (stated in A.3 by B-3). Open: whether the dates `d_0 .. d_p` enter `exclusions` as `NOT_USED_BY_ROWS`.
+  - R-7 Section 6 cites WORKFLOW.md section 6 for 7 gates; that section lists 4. Cite the 7-gate order as the spec's own.
+  - R-8 S6.T11 (`_FACADE_ERRORS`) does not hold `ScaleDomainError`. Check `issubclass(ScaleDomainError, RiskQuantError)` in `test_unit_root.py`.
+  - R-9 Name `test_architecture.py:test_core_packages_obey_the_mechanical_rules` in S1.T5 and in the S2 and S3 gates.
+  - R-10 P-001 Evidence: add S4.T2 for clause 5. Clause 6 has no test; add a gate that reads `pyproject.toml`.
+  - R-11 S4.T10: "before and after" needs no old-code run. The unchanged S6.T9 and S7 tests, green after S4, are the check.
+  - R-12 Value case: restated in section 1 (text correction, no contract change).
+  - R-13 S2.T3: the margin is 9.5e-10 under the tolerance and no power defect changes the result. It stays an asymptote check only (its "Defect caught" text is changed by B-4).
+  - R-14 A.8: the reason group of the scale exception shares the prefix `SCALE_` with `SCALE_CODES`. No test conflicts. The group is named `SCALE_DOMAIN_ERROR_CODES` in A.8.
+  - R-15 Run the gates on Python 3.11 (the mypy target of `pyproject.toml`), not only on 3.12.
 
 ## 8. Closure record
 
