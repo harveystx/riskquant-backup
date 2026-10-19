@@ -427,7 +427,7 @@ Fill this section when the status becomes CLOSED. Leave no placeholder.
 | Item | Value |
 |---|---|
 | Final commit | 397223f, head of ws/factor-regression before the closure commit (S7 code in b43f290 and b949d91; 397223f is the decorator fix outside the workstream) |
-| Release tag | none |
+| Release tag | factor-regression-v1.0 |
 | Decisions locked | D104, promoted from P-FACTOR_REGRESSION-001 with clauses 1 to 6 unchanged |
 | Independent validation | Slice reviews S1 to S7 in a separate reviewer chat, each ACCEPT. Reviewer mutation runs (S4: 17 of 18 killed; S5, S6 and S7 fix rounds and S7: all required mutants killed, 20 of 22 in S7). Independent oracles: Fraction OLS, Fraction Wald, hashlib digests. The owner reports the last full pytest run green; the output was not kept. |
 
