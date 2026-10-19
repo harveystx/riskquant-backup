@@ -2,7 +2,7 @@
 
 Path: docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION/A_NUMERICS.md
 Revision: 4
-Status: DRAFT
+Status: FROZEN
 Used by: S1 to S4
 Label rule: every definition is Proposed. Every sandbox number is Observed (sandbox evidence). Every constant is
 Observed from the source text named in A.2 and is not yet compared with the page images.

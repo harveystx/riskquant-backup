@@ -2,7 +2,7 @@
 
 Path: docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION.md
 Class: HEAVY
-Status: DRAFT
+Status: FROZEN
 Revision: 4
 Revision note: Revision 4 (2026-10-19). Owner decision under WS_TEMPLATE.md 1.8: Revision 4 without merged code is approved, and the decision of 2026-10-19 (build v1, no round-2 audit) stays in force. At the owner's request Revision 4 folds the audit round 1 refinements R-1 to R-11 into the contract and the slices (WS_TEMPLATE.md 1.6 would have put them in the backlog), and corrects the value case (R-12). The new contract text is not independently audited. B-1 to B-5 were applied in Revision 3.
 Date: 2026-10-19
