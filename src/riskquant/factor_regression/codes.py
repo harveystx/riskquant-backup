@@ -142,10 +142,14 @@ RANK_ERROR_CODES: Final = (RANK_ZERO_COLUMN, RANK_DEFICIENT)
 
 SAMPLE_STEP_NOT_BELOW_COUNT: Final = np.int8(0)
 SAMPLE_ROWS_NOT_ABOVE_COLUMNS: Final = np.int8(1)
+# ADF regression row count n below 20, the smallest sample size of the
+# MacKinnon (2010) tables (WS_FACTOR_REGRESSION_COINTEGRATION C.6, A.8).
+SAMPLE_ROWS_BELOW_TABLE_MINIMUM: Final = np.int8(2)
 
 SAMPLE_SIZE_ERROR_CODES: Final = (
     SAMPLE_STEP_NOT_BELOW_COUNT,
     SAMPLE_ROWS_NOT_ABOVE_COLUMNS,
+    SAMPLE_ROWS_BELOW_TABLE_MINIMUM,
 )
 
 # ----------------------------------------- CoreDegenerateFitError reasons
@@ -173,3 +177,34 @@ RESTRICTION_ERROR_CODES: Final = (
     RESTRICTION_RANK_DEFICIENT,
     RESTRICTION_NOT_POSITIVE_DEFINITE,
 )
+
+# ---------------------------------------------------------- combination scales
+# WS_FACTOR_REGRESSION_COINTEGRATION A.8. The values enter the unit-root spec
+# digest (A.3). Do not renumber. The prefix keeps SCALE_LEVEL apart from the
+# transform code LEVEL (F-16).
+
+SCALE_LEVEL: Final = np.int8(0)
+SCALE_LOG: Final = np.int8(1)
+
+SCALE_CODES: Final = (SCALE_LEVEL, SCALE_LOG)
+
+# ---------------------------------------------------- ADF deterministic cases
+# A.8. The values enter the unit-root spec digest (A.3). Do not renumber.
+
+DET_CONSTANT: Final = np.int8(0)
+DET_CONSTANT_TREND: Final = np.int8(1)
+
+DETERMINISTIC_CODES: Final = (DET_CONSTANT, DET_CONSTANT_TREND)
+
+# ------------------------------------------------------------ unit-root tests
+# A.8. The value enters the unit-root spec digest (A.3). Do not renumber.
+
+TEST_ADF: Final = np.int8(0)
+
+TEST_KIND_CODES: Final = (TEST_ADF,)
+
+# --------------------------------------------- CoreScaleDomainError reasons
+
+SCALE_LOG_LEVEL_NOT_POSITIVE: Final = np.int8(0)
+
+SCALE_DOMAIN_ERROR_CODES: Final = (SCALE_LOG_LEVEL_NOT_POSITIVE,)
