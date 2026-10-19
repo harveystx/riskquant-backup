@@ -1,7 +1,7 @@
 # WS_FACTOR_REGRESSION_COINTEGRATION: Appendix A, numerics, constants and oracles
 
 Path: docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION/A_NUMERICS.md
-Revision: 3
+Revision: 4
 Status: DRAFT
 Used by: S1 to S4
 Label rule: every definition is Proposed. Every sandbox number is Observed (sandbox evidence). Every constant is
@@ -14,6 +14,8 @@ Declared: lag `p >= 0`, deterministic case CONSTANT or CONSTANT_TREND.
 
 - Differences: `dz_t = z_t - z_{t-1}` for `t = 1 .. m-1`.
 - Rows: `t = p+1 .. m-1`. Row count `n = m - 1 - p`. Row start date `d[t-1]`, row end date `d[t]`.
+- Size check: after its type and dtype checks, `adf.py` checks `n < 20` first, before it builds the design and before any call of `fit_core`, and
+  raises `CoreSampleSizeError(reason=codes.SAMPLE_ROWS_BELOW_TABLE_MINIMUM, n_available=n, n_required=20)` (C.6). `n` is zero or negative when `p >= m - 1`.
 - Response: `dz_t`.
 - Design columns, in this order: ones; trend `t - (p+1)` (CONSTANT_TREND only); `z_{t-1}`; `dz_{t-1} .. dz_{t-p}`.
   The trend origin does not change tau, because the ones column is present.
@@ -33,8 +35,9 @@ Declared: lag `p >= 0`, deterministic case CONSTANT or CONSTANT_TREND.
 
 Source: MacKinnon, J. G. (2010), "Critical Values for Cointegration Tests", Queen's Economics Department Working
 Paper 1227, appendix Tables 2 and 3. URL: https://ageconsearch.umn.edu/record/273723/files/qed_wp_1227.pdf
-Result text (`critical_value_source`), in full: CONSTANT gives "MacKinnon (2010) QED WP 1227, Table 2 tau_c N=1"; CONSTANT_TREND gives
-"MacKinnon (2010) QED WP 1227, Table 3 tau_ct N=1".
+Result text (`critical_value_source`), in full: CONSTANT gives "MacKinnon (2010) QED WP 1227, Table 2 tau_c, N=1, declared weights"; CONSTANT_TREND gives
+"MacKinnon (2010) QED WP 1227, Table 3 tau_ct, N=1, declared weights". N=1 means one series: the combination is a single series whose weights the caller
+declares and the test does not estimate.
 
 `c(n) = b_inf + b1/n + b2/n^2 + b3/n^3`. An empty cell is 0. `n` is the number of observations in the test regression.
 
@@ -92,6 +95,9 @@ These labels name the columns in `UnitRootResult` and in every error that names 
 `column_names` grammar (same bytes as `digest.sample_digest`). The lines are `Y\x1fdz`, then `C\x1f`, then one line `X\x1f{label}` for each design column
 after the intercept, in design order (`trend` if CONSTANT_TREND, then `z_lag1`, then `dz_lag1` to `dz_lag<p>`), joined by `\x1e`, encoded as UTF-8 into a
 `uint8` array with no trailing separator. The `terms` lines of the spec digest use the grammar above.
+
+`UnitRootResult.window` is `(levels.start_ord, levels.end_ord)`, the pair of the spec digest. `UnitRootResult.exclusions` is `levels.exclusions`, the
+alignment exclusions only (C.8). The first aligned dates `d_0 .. d_p` are not added to it.
 
 ## A.4 Null hypothesis text (S4)
 
@@ -160,6 +166,7 @@ them with a test, as `test_covariance_codes_match_the_canonical_spec_bytes` does
 The label of each code equals its constant name (S6.T10): `SCALE_LEVEL`, `SCALE_LOG`, `DET_CONSTANT`, `DET_CONSTANT_TREND`, `TEST_ADF`,
 `SAMPLE_ROWS_BELOW_TABLE_MINIMUM`, `SCALE_LOG_LEVEL_NOT_POSITIVE`. The existing group `SAMPLE_SIZE_ERROR_CODES` keeps the values 0 and 1 and the order of its
 members; the new member is appended. Its label entries (`SAMPLE_SIZE_ERROR_NAMES` and the reverse map) are added in S1 (F-18, S6.T10).
+For `SAMPLE_ROWS_BELOW_TABLE_MINIMUM`, `n_available` is `n` and `n_required` is 20 (C.6). The docstring of `CoreSampleSizeError` gains one line for it.
 The facade Enum values are the core codes. Their member names are API names and need not equal the labels (S4.T12).
 
 New core exception class (S1, B-1): `CoreScaleDomainError(RiskQuantError)` in `riskquant/factor_regression/errors.py`, built as `CoreDomainError`.
