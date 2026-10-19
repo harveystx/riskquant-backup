@@ -2,20 +2,21 @@
 
 Path: docs/workstreams/WS_FACTOR_REGRESSION.md
 Class: HEAVY
-Status: FROZEN
+Status: CLOSED
 Revision: 3
-Revision note: Audit R1 (R_FREEZE_RECONCILIATION_R1.md) BLOCKING B-1 to B-7 applied (B-1 with the owner fitted-value amendment); owner gate O-8 option 1 applied; owner-directed refinements R-1 to R-5, R-13, R-14, R-16 applied; other refinements moved to the backlog; snapshot changed from d4ba609 dirty=true to the audit snapshot 05314f8 dirty=false. Owner 2026-10-12: section 1.8 option A, build v1 now. Known gap I-001: the S6 and S7 Exit text omits the mypy baseline line, which prints exit=1 by design (13 errors in hashing.py). Owner edits after revision 3, non-contract: section 7 mypy risk row, A.6 heading, A.7 centring rows, appendix Status lines.
+Revision note: Audit R1 (R_FREEZE_RECONCILIATION_R1.md) BLOCKING B-1 to B-7 applied (B-1 with the owner fitted-value amendment); owner gate O-8 option 1 applied; owner-directed refinements R-1 to R-5, R-13, R-14, R-16 applied; other refinements moved to the backlog; snapshot changed from d4ba609 dirty=true to the audit snapshot 05314f8 dirty=false. Owner 2026-10-12: section 1.8 option A, build v1 now. Known gap I-001: the S6 and S7 Exit text omits the mypy baseline line, which prints exit=1 by design (13 errors in hashing.py). Owner edits after revision 3, non-contract: section 7 mypy risk row, A.6 heading, A.7 centring rows, appendix Status lines. Owner 2026-10-19: S1 to S7 VALIDATED; OD-3 to OD-12 recorded in the section 7 backlog; P-FACTOR_REGRESSION-001 promoted to D104.
 Date: 2026-10-12
 Branch: ws/factor-regression
 Snapshot: SNAPSHOT commit=05314f8 dirty=false content_hash=358d3f657c81a072
 Drafted by: investigator
-Independent review: NONE
+Independent review: slice reviews S1 to S7 in a separate reviewer chat (findings R-001 to R-023 are closed or in the section 7 backlog; none is open); freeze audit round 1 (R_FREEZE_RECONCILIATION_R1.md)
 Audit rounds used: 1 of 2
-Code merged: no
-DECISIONS.md reconciled: NO
-Evidence limits: No code exists and no test, mypy or ruff gate ran. Sandbox: Python 3.12.3, numpy 2.4.4, scipy 1.17.1; numpy 1.26
-not tested. No import-all command exists in the repository (F-17), so each gate imports the slice modules explicitly. stx-data-god
-was not attached.
+Code merged: yes
+DECISIONS.md reconciled: YES (D104 added 2026-10-19)
+Evidence limits: Reviewer and implementer sandboxes: Python 3.12.3, numpy 2.4.4, scipy 1.17.1, without the riskquant.dependence,
+credit and valuation sources, so they could not run the full suite. numpy 1.26.4 ran the slice tests of S4 to S6 in reviewer
+sandboxes only. Windows gates ran on the owner machine for every slice. The output of the last full pytest run was not kept.
+No import-all command exists in the repository (F-17), so each gate imports the slice modules explicitly. stx-data-god was not attached.
 
 ## 1. Goal and scope
 
@@ -238,8 +239,8 @@ Attach: `docs/workstreams/WS_FACTOR_REGRESSION.md`, `docs/workstreams/WS_FACTOR_
 and `tests/test_no_stale_path_comments.py`
 Gates: `A_TESTS.md` section S1, gate block.
 Exit: Every gate line prints `exit=0`. pytest full: 0 failed, 0 errors, 36 skipped or fewer.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: commit 25f9ba0; Windows gates exit=0 on every line, 5834 passed, 36 skipped (gate_s1_head.txt); independent review ACCEPT, R-001 to R-005 closed.
 Tests: S1.T5 to S1.T7, S1.T9 to S1.T13. The table is in `A_TESTS.md`, section S1.
 Appendix: A_NUMERICS.md (A.8); A_TESTS.md (S1 table and gates)
 
@@ -256,8 +257,8 @@ Attach: `docs/workstreams/WS_FACTOR_REGRESSION.md`, `docs/workstreams/WS_FACTOR_
 `docs/workstreams/WS_FACTOR_REGRESSION/A_NUMERICS.md`, `context_riskquant_core.txt`
 Gates: `A_TESTS.md` section S2, gate block.
 Exit: Every gate line prints `exit=0`. pytest full: 0 failed, 0 errors, 36 skipped or fewer.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: Windows gates exit=0, 5945 passed, 36 skipped (gate_s2.txt); independent review ACCEPT WITH FIXES; R-007 to R-009 closed by owner decisions OD-5 A and OD-6 B (section 7 backlog).
 Tests: S2.T1 to S2.T9. The table is in `A_TESTS.md`, section S2.
 Appendix: A_NUMERICS.md (A.1, A.7); A_TESTS.md (S2 table and gates)
 
@@ -275,8 +276,8 @@ Attach: `docs/workstreams/WS_FACTOR_REGRESSION.md`, `docs/workstreams/WS_FACTOR_
 `docs/workstreams/WS_FACTOR_REGRESSION/A_NUMERICS.md`, `context_riskquant_core.txt`
 Gates: `A_TESTS.md` section S3, gate block.
 Exit: Every gate line prints `exit=0`. pytest full: 0 failed, 0 errors, 36 skipped or fewer.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: Windows gates exit=0, 328 passed in the slice, 6211 passed and 36 skipped in the full run (gate_s3.txt); independent review ACCEPT; R-010 and R-011 recorded by owner decision OD-7 A (section 7 backlog).
 Tests: S3.T1 to S3.T10. The table is in `A_TESTS.md`, section S3.
 Appendix: A_NUMERICS.md (A.2, A.4, A.7); A_TESTS.md (S3 table and gates)
 
@@ -294,8 +295,8 @@ Attach: `docs/workstreams/WS_FACTOR_REGRESSION.md`, `docs/workstreams/WS_FACTOR_
 `docs/workstreams/WS_FACTOR_REGRESSION/A_NUMERICS.md`, `context_riskquant_core.txt`
 Gates: `A_TESTS.md` section S4, gate block.
 Exit: Every gate line prints `exit=0`. pytest full: 0 failed, 0 errors, 36 skipped or fewer.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: Windows gates exit=0, 266 passed in the slice, 6415 passed and 36 skipped in the full run (gate_s4.txt); independent review ACCEPT, no findings; OD-8 A and OD-9 A recorded (section 7 backlog).
 Tests: S4.T1 to S4.T8, S4.T13. The table is in `A_TESTS.md`, section S4.
 Appendix: A_NUMERICS.md (A.3, A.4, A.7); A_TESTS.md (S4 table and gates)
 
@@ -312,8 +313,8 @@ Attach: `docs/workstreams/WS_FACTOR_REGRESSION.md`, `docs/workstreams/WS_FACTOR_
 `docs/workstreams/WS_FACTOR_REGRESSION/A_NUMERICS.md`, `context_riskquant_core.txt`
 Gates: `A_TESTS.md` section S5, gate block.
 Exit: Every gate line prints `exit=0`. pytest full: 0 failed, 0 errors, 36 skipped or fewer.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: Windows gates exit=0, 135 passed in the slice, 6488 passed and 36 skipped in the full run (gate_s5b.txt); independent review ACCEPT WITH FIXES, then ACCEPT after one fix round; R-012, R-013 and R-015 closed; OD-10 B and OD-11 A recorded (section 7 backlog).
 Tests: S5.T1 to S5.T5. The table is in `A_TESTS.md`, section S5.
 Appendix: A_NUMERICS.md (A.5, A.7); A_TESTS.md (S5 table and gates)
 
@@ -332,8 +333,8 @@ Attach: `docs/workstreams/WS_FACTOR_REGRESSION.md`, `docs/workstreams/WS_FACTOR_
 Gates: `A_TESTS.md` section S6, gate block.
 Exit: Every gate line prints `exit=0`, except the `mypy --strict` line. That line passes when its `: error:` lines equal
 the `: error:` lines of the `mypy baseline` line. The cross-process digest test (S6.T7) passes. pytest full: 0 failed, 0 errors, 36 skipped or fewer.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: Windows gates exit=0 except the mypy baseline line (exit=1 by design, 13 errors in hashing.py); 259 passed in the slice, 6683 passed and 36 skipped in the full run (gate_s6d.txt); independent review ACCEPT WITH FIXES, then ACCEPT after one fix round; R-016 to R-020 and A1 closed; OD-12 A recorded (section 7 backlog).
 Tests: S6.T1 to S6.T14. The table is in `A_TESTS.md`, section S6.
 Appendix: A_NUMERICS.md (A.6, A.8); A_TESTS.md (S6 table and gates)
 
@@ -351,9 +352,13 @@ Attach: `docs/workstreams/WS_FACTOR_REGRESSION.md`, `docs/workstreams/WS_FACTOR_
 Gates: `A_TESTS.md` section S7, gate block.
 Exit: Every gate line prints `exit=0`, except the `mypy --strict` line. That line passes when its `: error:` lines equal
 the `: error:` lines of the `mypy baseline` line. pytest full: 0 failed, 0 errors, 36 skipped or fewer.
-Status: NOT_STARTED
-Evidence: none
-Tests: S7.T1 to S7.T11. The table is in `A_TESTS.md`, section S7.
+Status: VALIDATED
+Evidence: Independent review ACCEPT (reviewer chat): 20 of 22 mutants of api.py killed (one survivor is equivalent, one is R-022); own Fraction OLS and
+hashlib digest oracles agree. Windows gates in the review: exit=0 on every line except the mypy baseline line (13 errors in hashing.py, by design);
+169 passed in the slice; pytest full 6789 passed, 1 failed, 36 skipped, where the failure was a hypothesis time limit in
+tests/dependence_stress (no factor_regression test). After the decorator fix in commit 397223f the owner reports a green full run (output not
+kept; expected 6790 passed, 36 skipped). R-022 and R-023 are in the backlog.
+Tests: S7.T1 to S7.T12. The table is in `A_TESTS.md`, section S7. S7.T12 is the owner addition of OD-9.
 Appendix: A_NUMERICS.md (A.7, A.8); A_TESTS.md (S7 table and gates)
 
 ## 7. Risks and deferred
@@ -386,6 +391,34 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - R-15: C.1 "lengths are equal and at least 1" has no test; add cases to S6.T2
 - R-17: value case: a `scripts/` module imports in pytest and from the repository root; it fails outside the checkout
 - R-18: `numpy.linalg.matrix_rank(tol=)` exists in numpy 1.26; `rtol` came in numpy 2.0 [Inferred]
+- S1 guard limits (owner OD-3): the C.21 check does not cover getattr, rebinding the scipy name, quoted annotations, importlib.import_module or __import__. Reviewers check these forms by eye.
+- S1 guard residual (owner OD-3): the outside-import rule (no module outside the two packages imports the core) has no committed negative test. The core guard also misses a riskquant.config read after import riskquant.exceptions. Only a slice that lists tests/test_architecture.py in its Files can add these.
+- Core exceptions are not picklable: their __init__ takes keyword-only arguments. Add __reduce__ in errors.py only if a process pool is ever used.
+- S1 guard residual (owner OD-4, R-006): the no-str and no-Enum check (S1.T13) misses aliases (Text, LiteralString, Label = str), an aliased Enum import, functional Enum(...) and module-level str constants or label tuples. Reviewers check these forms by eye. Only a slice that lists tests/test_architecture.py in its Files can add them.
+- S2 R-007 (owner OD-5, option A): rows.py reports a series index outside [0, n_series) as CoreInputError(INPUT_WRONG_SHAPE, OPERAND_TERM_SERIES, positions=(t,)). The S1 docstring says shape errors have empty positions. The S7 facade resolves term names first (C.5), so it never reaches this case.
+- S2 R-008 (owner OD-6, option B): a level pair that passes C.7 can still give +inf or -inf rows (examples: LOG 1e-300 to 1e300, DIFFERENCE -1e308 to 1e308) with only a numpy RuntimeWarning. rows.py does not guard this. S3 and S4 reject a non-finite design or response with CoreInputError(INPUT_NON_FINITE). S5 rejects a non-finite R or r with CoreRestrictionError(RESTRICTION_NON_FINITE). Each has a test.
+- S2 R-009: the C.7 domain tests do not fail if the check skips aligned index 0 or m - 1. rows.py is correct today (4000-case fuzz) and no later slice modifies it. Add boundary cases if rows.py ever changes.
+- S2 adjacent A1: CoreRows.stride is an unbounded Python int. A.6 digests the stride as int64. S6 rejects a step or stride above the int64 range with ModelSpecError.
+- S3 R-010 (owner OD-7, option A): the involved columns of CoreRankError use the A.2 step 4 floor of 1e-12 on scaled participation. When a member column has a norm 1e6 times smaller than the dependent set, it can drop out of involved (99 of 100 sandbox seeds at ratio 1e6). The relation row stays correct and the gate still raises. A fixed floor of 1e-29 names innocent columns when non-member columns are near-collinear (18 to 100 of 100 seeds). Candidate fix for a later LIGHT change to design.py: floor (100 * eps * s[0] / s[rank - 1]) ** 2 (0 misses and 0 false names in 9 sandbox cells; misses only at ratio 1e14 or above). No later slice of this workstream may change design.py.
+- S3 R-011: diagnose type-checks condition_threshold even when apply_condition_threshold is False. S7 passes a float (for example 0.0) for a None threshold.
+- S3 owner notes: R2_ABOVE_DURBIN_WATSON takes r_squared as its value (A.4 gives none). diagnose raises ValueError for a negative overlap_order or a non-finite statistic, and rank_gate raises INPUT_NON_FINITE for a column 2-norm above the float64 range; no reason code exists for these and no slice lists codes.py. rank_gate rejects R = k with CoreSampleSizeError(SAMPLE_ROWS_NOT_ABOVE_COLUMNS) before the SVD.
+- S4 OD-8 (owner, option A): amendment to A.3 for evaluation only. fit_core evaluates the covariance as Q.T @ Q plus the lag terms, with Q = diag(e) @ u @ diag(1 / s) @ vh, not as an explicit B @ M0 @ B. Both are the same matrix in exact arithmetic. Against an exact Fraction sandwich at mean to sd 1e7 (250 rows) the literal form has relative error 2.2e-2 to 1.7e-1 and the factored form 3.3e-10 to 4.8e-10. Zero response variance with an intercept is tested as all(y == y[0]), not by the float centred sum of A.3. A.3 is unchanged.
+- S4 OD-9 (owner, option A): fit_core assumes that column 0 of the design holds ones when intercept is True and does not check it. A wrong pairing gives a wrong r_squared and a wrong zero-variance rule with no error. S7 reads the intercept flag once and passes the same value to assemble_design and fit_core. S7 adds one test (new ID S7.T12): the same data fitted with intercept True and with intercept False, with r_squared compared to the Fraction centred and uncentred values.
+- S4 accepted deviations: a non-finite fitted, resid or rss raises CoreInputError(INPUT_NON_FINITE) on operand 1 at the largest abs(y); the exact-fit rule (DEGENERATE_EXACT_FIT) also fires when the float64 rss underflows to 0.0, so the reason name is inexact for residuals below about 1e-162; the zero-variance check runs after rank_gate and before the solve.
+- S4 adjacent: rank_gate raises CoreSampleSizeError with n_required = k + 1. The S7 message for C.12 names k as n_required - 1.
+- S5 OD-10 (owner, option B): amendment to the A.5 rank rule. wald_core divides each restriction row by its 2-norm, and the matching rhs entry by the same norm, before the rank test and before M and the gap are formed. This changes no value of W. It raises RESTRICTION_RANK_DEFICIENT when s_min <= 1e-4 * s_max of the normalised rows (module constant _RANK_RATIO_TAU); a zero row and J > K also raise it. This replaces the A.5 tolerance 1e-12 * s[0] on the unscaled restriction. Evidence: with rows (0,1,0,0) and (0,1,delta,0), the old rule gave a W error of 9.4e-5 at delta 1e-6 and 0.68 at delta 1e-8 with no error, and it rejected a valid restriction with one row scaled by 1e-12. Above tau the W error is typically 1e-9 to 1e-10; at the threshold the worst of 2000 draws is about 9e-8. tau 1e-3 would give about 1e-9 at the cost of rejecting rows within 0.1 percent of collinear.
+- S5 OD-11 (owner, option A): wald_core raises CoreParameterError(PARAM_STRIDE_BELOW_ONE) for dof < 1. The reason name is inexact. No slice lists codes.py, and the facade never reaches the case, because fit_core guarantees dof >= 1.
+- S5 accepted: the restriction and rhs type checks run after the coef and cov finite checks and the dof check (the S5 prompt said first); only the reported error differs when several inputs are bad. Accepted deviations of the fix round: np.errstate around the dot product in wald_core (a W overflow raises RESTRICTION_NON_FINITE with no numpy warning); measured error figures in the wald.py comment; accuracy test with k = 2 only; extra tests (row scales 1e-170 and 1e160, k = 3 boundary, no-mutation); CRLF line endings.
+- S6 I-001 rule (owner): the mypy --strict line of the S6 and S7 gates passes when every ": error:" line that it prints also appears in the "mypy baseline" line (a subset rule). On Windows mypy can reuse its cache from the baseline line, so the strict line may print none of the 13 hashing.py lines. The S6 and S7 Exit text is unchanged.
+- S6 OD-12 (owner, option A): AlignmentError has the optional keyword field series: str | None = None. When it is set, the message names the series. S7.T10 sets it to the duplicate series name.
+- S6 A1: CovarianceSpec rejects a HAC lag above the int64 range (2**63 - 1) with ModelSpecError, as ModelSpec does for step and stride.
+- S6 accepted items: spec_digest converts Python scalars (step, stride, covariance kind, rank_rtol, condition_threshold) to arrays. numpy 1.26.4 wraps an out-of-range int32 with only a DeprecationWarning and numpy 2.4.4 raises OverflowError; validated contracts never reach this case, and an int threshold digests as the equal float. sample_digest does not check x.shape[1] against intercept + len(regressor_names); S7 builds both from one ModelSpec. The S6.T14 helper has the OD-3 limits (importlib.import_module, __import__, getattr, quoted annotations).
+- S6 R-021: test_t13_init_is_empty strips whitespace, so a one-byte newline __init__.py passes it. tests/test_architecture.py catches that file.
+- S6 A2: hashing.digest_array folds dtype.str into the hash before it normalises byte order, so a big-endian array digests differently from the same values in little-endian order. riskquant.solutions.run_identity is out of scope. The digest functions of digest.py reject non-native byte order.
+- S7 accepted deviations: an empty series sequence raises ValueError (no clause names the exception). A duplicate series name raises AlignmentError with reason "DUPLICATE_SERIES_NAME" and series set; labels.py has no code for this facade-only check. api.py sets the OD-1 message of RANK_ZERO_COLUMN (it states no rank) and the k = n_required - 1 message of InsufficientObservationsError by replacing error.args after construction, because the S6 constructors build fixed messages; RankDeficiencyError.rank still holds the core upper bound k - n_zero for RANK_ZERO_COLUMN, and a clean fix needs a message parameter in errors.py. INPUT_NON_FINITE maps to DegenerateFitError with the input label, while its docstring names DEGENERATE_* labels only. S7.T6 uses four renamed series (A, B, C and D) because the level fit of the motivating case needs Q. The overflow tests filter the numpy RuntimeWarning of rows.py (R-008).
+- S7 R-022: every rank-error test fits with an intercept, so design column j and term j carry the same name. A mutant that names the columns from the term list passes all tests. Add a rank-error case with intercept=False.
+- S7 R-023: fit_ols trusts the internal consistency of a hand-built AlignedLevels. Names ("Y", "A", "A") fit with no error, and an exclusion that names an unknown series raises a raw KeyError. The documented path through align_levels is not affected. A later slice makes fit_ols or AlignedLevels reject duplicate names and unknown exclusion series.
+- S7 adjacent, closed outside this workstream: the @settings decorator of test_marginals_are_preserved_for_arbitrary_matrices in tests/dependence_stress/test_invariants.py sat on the helper stressed, so the test ran with the default 200 ms hypothesis deadline and failed once in a full run. Commit 397223f moves it to the test. No source file changed.
 
 ## 8. Closure record
 
@@ -393,15 +426,21 @@ Fill this section when the status becomes CLOSED. Leave no placeholder.
 
 | Item | Value |
 |---|---|
-| Final commit | none yet |
-| Release tag | none yet |
-| Decisions locked | none yet |
-| Independent validation | none yet |
+| Final commit | 397223f, head of ws/factor-regression before the closure commit (S7 code in b43f290 and b949d91; 397223f is the decorator fix outside the workstream) |
+| Release tag | factor-regression-v1.0 (on fa56fd1); rollback tag before the merge: prod_20261019 |
+| Decisions locked | D104, promoted from P-FACTOR_REGRESSION-001 with clauses 1 to 6 unchanged |
+| Independent validation | Slice reviews S1 to S7 in a separate reviewer chat, each ACCEPT. Reviewer mutation runs (S4: 17 of 18 killed; S5, S6 and S7 fix rounds and S7: all required mutants killed, 20 of 22 in S7). Independent oracles: Fraction OLS, Fraction Wald, hashlib digests. The owner reports the last full pytest run green; the output was not kept. |
 
 Delivered:
-- none yet
+- Core package `src/riskquant/factor_regression/`: align, codes, errors, rows, design, diagnostics, covariance, fit, wald.
+- Facade `src/riskquant/solutions/factor_regression/`: contracts, errors, labels, digest, api. Public functions: `align_levels`, `fit_ols`, `wald_test`.
+- 11 test files with 1044 new tests. Full suite: 5746 passed before; the owner reports a green run after (expected 6790 passed, 36 skipped). One existing test file changed: `tests/test_architecture.py` (S1).
+- Documents: this workstream document, `A_NUMERICS.md`, `A_TESTS.md`, `R_FREEZE_RECONCILIATION_R1.md` and D104 in `DECISIONS.md`.
+- Outside the workstream: one decorator moved in `tests/dependence_stress/test_invariants.py` (commit 397223f, no source changed).
 
 Deferred:
-- none yet
+- Numba kernel for the HAC meat: opens when the owner states a throughput need (benchmarks in section 7).
+- Section 7 backlog: R-010, R-011, R-014, R-021, R-022 and R-023; the accepted items of S4 to S7; the environment record and the timestamp in the provenance (O-8); the Polars adapter (O-6).
+- Not in v1 by owner decision: stationarity tests (O-5) and a D088 feed (O-4).
 
-Open work: all slices
+Open work: none
