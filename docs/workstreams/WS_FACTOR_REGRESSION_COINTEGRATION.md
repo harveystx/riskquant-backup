@@ -245,8 +245,11 @@ Prohibited: constants from memory or from statsmodels; scipy in this module
 Attach: `docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION.md`, `docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION/A_NUMERICS.md`, the source PDF (A.2 URL)
 Gates: section 6 order; pytest slice `tests/factor_regression/test_mackinnon.py` and `tests/test_architecture.py`; pytest full.
 Exit: Every gate line prints `exit=0`. The report lists each of the 23 N = 1 constants with its PDF page.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: Windows gates exit=0 on all 7 lines (gate_s2.txt); 111 passed in the slice; pytest full 6930 passed and 36 skipped (6881 + 49 new tests); independent review
+ACCEPT with no finding. All 24 cells of the six rows: the implementer reports a comparison with the page images of the PDF (printed pages 13 and 14), 0 differences; the
+reviewer compared the PDF text layer and statsmodels 0.15.0, 0 differences. Check by the owner's assistant: `critical_values` against `statsmodels.tsa.adfvalues.mackinnoncrit`
+over 834 (table, n) cases, worst difference 8.9e-16. Reviewer mutants killed by S2.T5 (b2 and b3 swapped, one digit changed, tables swapped). Backlog lines in section 7.
 
 | Id | Case | Expected | Defect caught |
 |---|---|---|---|
@@ -347,6 +350,10 @@ Backlog (REFINEMENT findings and items that v1 omits):
   - The module docstring of `codes.py` names only the old group kinds, not the new groups SCALE, DETERMINISTIC, TEST_KIND and SCALE_DOMAIN_ERROR.
   - The finiteness check of `combine_core` covers every row of `levels`. The LOG domain check covers only the rows that the terms read. The facade always passes finite levels.
   - `combine_core` checks dtype for all three operands before it checks ndim for any of them (owner decision 2 read as phases; a test fixes the order).
+- S2 review, accepted points (source: slice review of S2):
+  - `critical_values` raises `OverflowError` for an `int` above the float64 range (about 1.8e308), because it converts `n` with `float()`. `n` is a row count, far outside the valid range. The docstring documents it.
+  - `test_mackinnon.py` reads the private name `_COEFFICIENTS` to compare it with independently typed literals.
+  - The label rule at the top of `A_NUMERICS.md` still says that the constants are not compared with the page images. The S2 evidence records the comparison. Update the label rule at closure.
 
 ## 8. Closure record
 
