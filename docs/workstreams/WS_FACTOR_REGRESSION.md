@@ -2,7 +2,7 @@
 
 Path: docs/workstreams/WS_FACTOR_REGRESSION.md
 Class: HEAVY
-Status: FROZEN
+Status: CLOSED
 Revision: 3
 Revision note: Audit R1 (R_FREEZE_RECONCILIATION_R1.md) BLOCKING B-1 to B-7 applied (B-1 with the owner fitted-value amendment); owner gate O-8 option 1 applied; owner-directed refinements R-1 to R-5, R-13, R-14, R-16 applied; other refinements moved to the backlog; snapshot changed from d4ba609 dirty=true to the audit snapshot 05314f8 dirty=false. Owner 2026-10-12: section 1.8 option A, build v1 now. Known gap I-001: the S6 and S7 Exit text omits the mypy baseline line, which prints exit=1 by design (13 errors in hashing.py). Owner edits after revision 3, non-contract: section 7 mypy risk row, A.6 heading, A.7 centring rows, appendix Status lines. Owner 2026-10-19: S1 to S7 VALIDATED; OD-3 to OD-12 recorded in the section 7 backlog; P-FACTOR_REGRESSION-001 promoted to D104.
 Date: 2026-10-12
@@ -11,7 +11,7 @@ Snapshot: SNAPSHOT commit=05314f8 dirty=false content_hash=358d3f657c81a072
 Drafted by: investigator
 Independent review: slice reviews S1 to S7 in a separate reviewer chat (findings R-001 to R-023 are closed or in the section 7 backlog; none is open); freeze audit round 1 (R_FREEZE_RECONCILIATION_R1.md)
 Audit rounds used: 1 of 2
-Code merged: no
+Code merged: yes
 DECISIONS.md reconciled: YES (D104 added 2026-10-19)
 Evidence limits: Reviewer and implementer sandboxes: Python 3.12.3, numpy 2.4.4, scipy 1.17.1, without the riskquant.dependence,
 credit and valuation sources, so they could not run the full suite. numpy 1.26.4 ran the slice tests of S4 to S6 in reviewer
@@ -427,7 +427,7 @@ Fill this section when the status becomes CLOSED. Leave no placeholder.
 | Item | Value |
 |---|---|
 | Final commit | 397223f, head of ws/factor-regression before the closure commit (S7 code in b43f290 and b949d91; 397223f is the decorator fix outside the workstream) |
-| Release tag | factor-regression-v1.0 |
+| Release tag | factor-regression-v1.0 (on fa56fd1); rollback tag before the merge: prod_20261019 |
 | Decisions locked | D104, promoted from P-FACTOR_REGRESSION-001 with clauses 1 to 6 unchanged |
 | Independent validation | Slice reviews S1 to S7 in a separate reviewer chat, each ACCEPT. Reviewer mutation runs (S4: 17 of 18 killed; S5, S6 and S7 fix rounds and S7: all required mutants killed, 20 of 22 in S7). Independent oracles: Fraction OLS, Fraction Wald, hashlib digests. The owner reports the last full pytest run green; the output was not kept. |
 
@@ -443,4 +443,4 @@ Deferred:
 - Section 7 backlog: R-010, R-011, R-014, R-021, R-022 and R-023; the accepted items of S4 to S7; the environment record and the timestamp in the provenance (O-8); the Polars adapter (O-6).
 - Not in v1 by owner decision: stationarity tests (O-5) and a D088 feed (O-4).
 
-Open work: merge of `ws/factor-regression` into the main branch (owner). No slice and no review finding is open.
+Open work: none
