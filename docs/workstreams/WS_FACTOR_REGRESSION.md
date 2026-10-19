@@ -4,7 +4,7 @@ Path: docs/workstreams/WS_FACTOR_REGRESSION.md
 Class: HEAVY
 Status: FROZEN
 Revision: 3
-Revision note: Audit R1 (R_FREEZE_RECONCILIATION_R1.md) BLOCKING B-1 to B-7 applied (B-1 with the owner fitted-value amendment); owner gate O-8 option 1 applied; owner-directed refinements R-1 to R-5, R-13, R-14, R-16 applied; other refinements moved to the backlog; snapshot changed from d4ba609 dirty=true to the audit snapshot 05314f8 dirty=false. Owner 2026-10-12: section 1.8 option A, build v1 now. Known gap I-001: the S6 and S7 Exit text omits the mypy baseline line, which prints exit=1 by design (13 errors in hashing.py). Owner edits after revision 3, non-contract: section 7 mypy risk row, A.6 heading, A.7 centring rows, appendix Status lines. Owner 2026-10-15: S1 to S5 VALIDATED; OD-3 to OD-11 recorded in the section 7 backlog.
+Revision note: Audit R1 (R_FREEZE_RECONCILIATION_R1.md) BLOCKING B-1 to B-7 applied (B-1 with the owner fitted-value amendment); owner gate O-8 option 1 applied; owner-directed refinements R-1 to R-5, R-13, R-14, R-16 applied; other refinements moved to the backlog; snapshot changed from d4ba609 dirty=true to the audit snapshot 05314f8 dirty=false. Owner 2026-10-12: section 1.8 option A, build v1 now. Known gap I-001: the S6 and S7 Exit text omits the mypy baseline line, which prints exit=1 by design (13 errors in hashing.py). Owner edits after revision 3, non-contract: section 7 mypy risk row, A.6 heading, A.7 centring rows, appendix Status lines. Owner 2026-10-16: S1 to S6 VALIDATED; OD-3 to OD-12 recorded in the section 7 backlog.
 Date: 2026-10-12
 Branch: ws/factor-regression
 Snapshot: SNAPSHOT commit=05314f8 dirty=false content_hash=358d3f657c81a072
@@ -332,8 +332,8 @@ Attach: `docs/workstreams/WS_FACTOR_REGRESSION.md`, `docs/workstreams/WS_FACTOR_
 Gates: `A_TESTS.md` section S6, gate block.
 Exit: Every gate line prints `exit=0`, except the `mypy --strict` line. That line passes when its `: error:` lines equal
 the `: error:` lines of the `mypy baseline` line. The cross-process digest test (S6.T7) passes. pytest full: 0 failed, 0 errors, 36 skipped or fewer.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: Windows gates exit=0 except the mypy baseline line (exit=1 by design, 13 errors in hashing.py); 259 passed in the slice, 6683 passed and 36 skipped in the full run (gate_s6d.txt); independent review ACCEPT WITH FIXES, then ACCEPT after one fix round; R-016 to R-020 and A1 closed; OD-12 A recorded (section 7 backlog).
 Tests: S6.T1 to S6.T14. The table is in `A_TESTS.md`, section S6.
 Appendix: A_NUMERICS.md (A.6, A.8); A_TESTS.md (S6 table and gates)
 
@@ -404,6 +404,12 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - S5 OD-10 (owner, option B): amendment to the A.5 rank rule. wald_core divides each restriction row by its 2-norm, and the matching rhs entry by the same norm, before the rank test and before M and the gap are formed. This changes no value of W. It raises RESTRICTION_RANK_DEFICIENT when s_min <= 1e-4 * s_max of the normalised rows (module constant _RANK_RATIO_TAU); a zero row and J > K also raise it. This replaces the A.5 tolerance 1e-12 * s[0] on the unscaled restriction. Evidence: with rows (0,1,0,0) and (0,1,delta,0), the old rule gave a W error of 9.4e-5 at delta 1e-6 and 0.68 at delta 1e-8 with no error, and it rejected a valid restriction with one row scaled by 1e-12. Above tau the W error is typically 1e-9 to 1e-10; at the threshold the worst of 2000 draws is about 9e-8. tau 1e-3 would give about 1e-9 at the cost of rejecting rows within 0.1 percent of collinear.
 - S5 OD-11 (owner, option A): wald_core raises CoreParameterError(PARAM_STRIDE_BELOW_ONE) for dof < 1. The reason name is inexact. No slice lists codes.py, and the facade never reaches the case, because fit_core guarantees dof >= 1.
 - S5 accepted: the restriction and rhs type checks run after the coef and cov finite checks and the dof check (the S5 prompt said first); only the reported error differs when several inputs are bad. Accepted deviations of the fix round: np.errstate around the dot product in wald_core (a W overflow raises RESTRICTION_NON_FINITE with no numpy warning); measured error figures in the wald.py comment; accuracy test with k = 2 only; extra tests (row scales 1e-170 and 1e160, k = 3 boundary, no-mutation); CRLF line endings.
+- S6 I-001 rule (owner): the mypy --strict line of the S6 and S7 gates passes when every ": error:" line that it prints also appears in the "mypy baseline" line (a subset rule). On Windows mypy can reuse its cache from the baseline line, so the strict line may print none of the 13 hashing.py lines. The S6 and S7 Exit text is unchanged.
+- S6 OD-12 (owner, option A): AlignmentError has the optional keyword field series: str | None = None. When it is set, the message names the series. S7.T10 sets it to the duplicate series name.
+- S6 A1: CovarianceSpec rejects a HAC lag above the int64 range (2**63 - 1) with ModelSpecError, as ModelSpec does for step and stride.
+- S6 accepted items: spec_digest converts Python scalars (step, stride, covariance kind, rank_rtol, condition_threshold) to arrays. numpy 1.26.4 wraps an out-of-range int32 with only a DeprecationWarning and numpy 2.4.4 raises OverflowError; validated contracts never reach this case, and an int threshold digests as the equal float. sample_digest does not check x.shape[1] against intercept + len(regressor_names); S7 builds both from one ModelSpec. The S6.T14 helper has the OD-3 limits (importlib.import_module, __import__, getattr, quoted annotations).
+- S6 R-021: test_t13_init_is_empty strips whitespace, so a one-byte newline __init__.py passes it. tests/test_architecture.py catches that file.
+- S6 A2: hashing.digest_array folds dtype.str into the hash before it normalises byte order, so a big-endian array digests differently from the same values in little-endian order. riskquant.solutions.run_identity is out of scope. The digest functions of digest.py reject non-native byte order.
 
 ## 8. Closure record
 
