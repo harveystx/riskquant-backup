@@ -372,11 +372,6 @@ _matrices = arrays(
 )
 
 
-@settings(
-    max_examples=150,
-    deadline=None,
-    suppress_health_check=[HealthCheck.function_scoped_fixture],
-)
 def stressed(base: FloatArray, result: DependenceStressResult) -> FloatArray:
     """
     Reconstruct the stressed K x S matrix for a result.
@@ -388,6 +383,11 @@ def stressed(base: FloatArray, result: DependenceStressResult) -> FloatArray:
     return reconstruct_stressed(base, result.permutations)
 
 
+@settings(
+    max_examples=150,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
 @given(data=_matrices, seed=st.integers(min_value=0, max_value=2**32 - 1))
 def test_marginals_are_preserved_for_arbitrary_matrices(
     data: FloatArray,
