@@ -1,0 +1,306 @@
+# WS_FACTOR_REGRESSION_COINTEGRATION: Unit-root test of a declared linear combination
+
+Path: docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION.md
+Class: HEAVY
+Status: DRAFT
+Revision: 2
+Revision note: Revision 2 (2026-10-19). Owner gates O-1 to O-8 closed as proposed by the investigation. Pre-audit check applied: F-14 to F-17 added; C.14 and C.15 added; S1 and S4 Files lists, tests and Evidence limits changed (labels.py in S1; test_api.py in S4; new code constants named so that they do not clash with existing ones; digest values of the new codes fixed in A.8). Revision 1: first draft from the investigation of 2026-10-19 (cointegration placement and minimum content).
+Date: 2026-10-19
+Branch: ws/factor-regression-cointegration
+Snapshot: SNAPSHOT commit=b7b088a dirty=false content_hash=72b2cb891c2269d9
+Drafted by: investigator
+Independent review: NONE
+Audit rounds used: 0 of 2
+Code merged: no
+DECISIONS.md reconciled: NO
+Evidence limits: No repository test ran. Sandbox: Python 3.12.3, numpy 2.4.4, scipy 1.17.1, statsmodels 0.15.0
+(installed in the sandbox only, as a cross-check). Sandbox numbers come from investigator and pre-audit scripts, not from library code.
+The 23 N = 1 constants equal the text layer of the PDF at
+https://ageconsearch.umn.edu/record/273723/files/qed_wp_1227.pdf and `statsmodels.tsa.adfvalues.tau_2010s` (24 cells with the empty b3 cell,
+0 differences). Nobody compared them with the page images. The pre-audit check repeated the critical-value, power, size, levels-HAC and
+Granger-Newbold numbers with other code and seeds (A.5), and compared the ADF statistic, `n` and the critical values with
+`adfuller(autolag=None)`: equal. The test profile was read; F-14 to F-16 record what it shows. It was not searched for other closed-set tests
+(the audit does that).
+
+## 1. Goal and scope
+
+Goal: A researcher tests the null hypothesis of a unit root in a declared linear combination of aligned level or
+log-level series, and the result binds to its exact sample and specification.
+
+Value case:
+- Benefit: The owner can state, with a tabulated reference distribution, whether the known log spread
+  `ln P - ln Z - ln M` of the THG proxy hypothesis rejects a unit root (F-8), and whether each log series
+  has a unit root. Today no unit-root code exists in `src/` (F-1). The landed levels path gives invalid inference (F-10).
+- Cost proxies: 4 slices; 3 new core modules; 8 modified files (core `codes.py`, `errors.py`; facade `contracts.py`,
+  `labels.py`, `digest.py`, `errors.py`, `api.py`; test `test_api.py`); 1 new test module per slice; 1 new decision (P-FACTOR_REGRESSION_COINTEGRATION-001);
+  23 transcribed constants; at most 2 audit rounds.
+- Smallest alternative and why it fails: An external `statsmodels` script on the output of `align_levels`. It can
+  compute the statistic today. It fails on three points: no sample binding (the digest functions are private, F-6);
+  `adfuller` chooses the lag by AIC by default, which changes the test size (F-9); `statsmodels` 0.15.0 disagrees with
+  the source PDF text in 2 constant cells (F-7), so its constants need the same verification as ours.
+- Case against: The motivating case is one hypothesis (THG). A one-off script with a verified constant table answers it.
+  The library pays for a public surface, a new decision and 4 slices before any second user exists (owner input).
+- Class: HEAVY. Criteria: new public signature in `riskquant.solutions.factor_regression.api`; new D decision.
+- Recommendation at drafting: PROCEED SMALLER (ADF of a declared combination only; no Engle-Granger, Johansen,
+  ECM, DOLS or p-value in v1) [Proposed]
+
+In scope (v1):
+- Core: linear combination of aligned levels on scale LEVEL or LOG; ADF regression with CONSTANT or CONSTANT_TREND
+  and a declared lag; MacKinnon (2010) N = 1 critical values at 1 %, 5 % and 10 %
+- Facade: `CombinationTerm`, `LinearCombination`, `UnitRootSpec`, `UnitRootResult`, digests, labels, the public function
+  `unit_root_test(levels, spec)`
+
+Out of scope:
+- Engle-Granger with free coefficients (O-4), Phillips-Ouliaris, Johansen, error-correction model, DOLS or FM-OLS
+- p-values (O-5); automatic lag selection (O-7); KPSS; break-robust tests
+- Any change to the behaviour, signature or digest of `align_levels`, `fit_ols`, `wald_test`
+- `statsmodels` in `pyproject.toml` (O-3)
+
+Owner decisions in force:
+- 2026-10-12 (WS_FACTOR_REGRESSION): O-2 own numpy and scipy code, no new dependency; O-7 caller declares `rank_rtol`.
+- O-5 of WS_FACTOR_REGRESSION excluded stationarity tests from v1 of that workstream only. This workstream reopens the scope.
+
+Depends on: D104; `riskquant.factor_regression.fit.fit_core`; `riskquant.solutions.run_identity.hashing.digest_named_arrays`.
+Blocks: none.
+
+## 2. Verified facts
+
+| Id | Fact | Evidence | Label |
+|---|---|---|---|
+| F-1 | No source in the attached profiles contains adfuller, dickey, unit root, cointegrat, kpss, johansen, mackinnon or statsmodels. | `grep -i -E` over `/mnt/project/*.txt` (all 29 attached .txt files): 0 files | Observed |
+| F-2 | `fit_core(design, y, *, intercept, rank_rtol, covariance_kind, covariance_lag)` takes any `(R, k)` design with the ones column first when `intercept` is True, and solves on the scaled SVD. | `src/riskquant/factor_regression/fit.py:fit_core` | Observed |
+| F-3 | The transform codes are LEVEL, LOG_RETURN, SIMPLE_RETURN, DIFFERENCE. No log-level code exists. | `src/riskquant/factor_regression/codes.py:TRANSFORM_CODES` | Observed |
+| F-4 | D104.1 to D104.6 do not forbid a new function. D104.6 covers return transforms only. The D104 Implementation note lists the public functions `align_levels`, `fit_ols`, `wald_test`. | `DECISIONS.md` D104 | Observed |
+| F-5 | D104.2: no module outside the two packages and tests imports the core. | `DECISIONS.md` D104.2 | Observed |
+| F-6 | The digest functions live in `digest.py`; `api.py` is the only public surface. | `src/riskquant/solutions/factor_regression/digest.py`; D104.2 | Observed |
+| F-7 | `statsmodels` 0.15.0 `adfvalues.tau_2010s` differs from the PDF text in 2 cells: tau_c N=2 1 % beta2 (PDF -22.527, statsmodels -33.527) and tau_c N=3 5 % beta1 (PDF -8.5631, statsmodels -8.5632). The N=1 rows agree. | sandbox print of `tau_2010s`; PDF Table 2 | Observed |
+| F-8 | The known log spread test is an ordinary DF test with the N=1 tables, because no coefficient is estimated. | MacKinnon (2010) section 2, regressions (6) and (7) | Observed |
+| F-9 | Under a unit root with MA(1) errors, theta -0.5, T=500, the 5 % tau_c test rejects 0.629 with lag 0, 0.224 with lag 1, 0.056 with lag 4. | A.5 sandbox | Observed |
+| F-10 | In a cointegrated levels regression, the HAC t-test of the true slope rejects 0.109 to 0.466 at a nominal 5 %. | A.5 sandbox | Observed |
+| F-11 | The tau_c table assumes no drift under the null (West 1988). The tables are strictly valid for IID normal errors at finite T. T is the number of observations in the test regression. | MacKinnon (2010) sections 2, 3 and appendix | Observed |
+| F-12 | MacKinnon (2010) does not recommend tau_nc, because it requires highly unrealistic assumptions. The smallest simulated T is 20. | MacKinnon (2010) appendix | Observed |
+| F-13 | `pyproject.toml` declares no `statsmodels`. The `dev` extra holds ruff, pytest, pytest-cov, mypy, hypothesis. | `pyproject.toml` | Observed |
+| F-14 | `tests/solutions/factor_regression/test_digest.py` (S6.T10) takes every name in `dir(codes)` that ends in `_CODES`, requires a labels group for each, and a second test requires `set(labels.ALL_CODE_GROUPS)` to equal that set. | `test_t10_all_codes_labeled`, `_codes_tuple_names` | Observed |
+| F-15 | `tests/solutions/factor_regression/test_api.py` (S7.T7) asserts `set(api.__all__) == _EXPECTED_PUBLIC`, and that every function and class of `api.py` is in that set or is private. | `test_t7_all_lists_the_public_surface_and_resolves`, `test_t7_helpers_are_private_and_no_other_module_is_public` | Observed |
+| F-16 | `codes.py` holds 50 `np.int8` constants in 11 `*_CODES` groups. `LEVEL` is a transform code. `tests/factor_regression/test_errors.py` checks `int8` and uniqueness for a fixed list of those 11 groups, so a new group is not covered by it. | `codes.py`; `test_every_code_group_is_int8_and_unique` | Observed |
+| F-17 | `adfuller(autolag=None)` gives the A.1 statistic (relative difference 2e-14), the same `n` and the same critical values at 1 %, 5 % and 10 % as A.1 and A.2, for (c, 0), (c, 4), (ct, 4) and (ct, 12) on 600 points. | pre-audit sandbox script | Observed |
+
+## 3. Contract
+
+All clauses describe new code. Each is Proposed. Formulas and constants are in `A_NUMERICS.md`.
+
+- C.1 `CombinationTerm(series, weight)`: `series` is a non-empty `str`; `weight` is a finite non-zero `float`.
+  `LinearCombination(terms, scale)`: at least 1 term, unique series names, `scale` in {LEVEL, LOG}. No field has a default.
+  A violation raises `ModelSpecError`. An omitted field raises `TypeError`. [Proposed] Test: S4.T1
+- C.2 The combination value is `z_t = sum_i w_i * g(v_i[t])` on the aligned date axis, with `g` the identity (LEVEL) or the
+  natural logarithm (LOG). It uses `AlignedLevels` only, after alignment. An unknown series raises `ModelSpecError`.
+  [Proposed] Test: S1.T1, S1.T2, S4.T1
+- C.3 LOG domain: every aligned level of every term is above 0, checked before any logarithm. A violation raises
+  `ScaleDomainError` naming series, date and level. The rule follows the D025 convention. [Proposed] Test: S1.T3, S4.T5
+- C.4 `UnitRootSpec(combination, deterministic, lag, rank_rtol)`: no default; `deterministic` in {CONSTANT,
+  CONSTANT_TREND}; `lag` an `int` at or above 0; `rank_rtol` in (0, 1). A violation raises `ModelSpecError`. [Proposed]
+  Test: S4.T2
+- C.5 The ADF regression follows A.1. The core builds the design and the response and calls `fit.fit_core` with IID
+  covariance. The statistic is `tau = coef[j] / se[j]` for the column `z_{t-1}`. The library adds no second solver.
+  [Proposed] Test: S3.T1, S3.T2, S3.T3
+- C.6 The row count `n = m - 1 - p` must be at least 20 and at least `k + 1`. Otherwise
+  `InsufficientObservationsError` names `n` and the requirement. [Proposed] Test: S3.T4, S4.T6
+- C.7 Critical values follow A.2: `c(n) = b_inf + b1/n + b2/n^2 + b3/n^3` with the MacKinnon (2010) N = 1 rows, at
+  levels 0.01, 0.05, 0.10, with `n` from C.6. The constants exist once, in `mackinnon.py`. [Proposed]
+  Test: S2.T1, S2.T2, S2.T3, S2.T4
+- C.8 `UnitRootResult` carries: `statistic`, `gamma`, `critical_levels` `(0.01, 0.05, 0.10)`, `critical_values` `(3,)`,
+  `deterministic`, `lag`, `n_obs`, the ADF regression `coef`, `se` and column labels, `condition_number`,
+  `null_hypothesis` (fixed text per deterministic case, A.4), `critical_value_source` (fixed text, A.2), combination
+  terms, weights, scale, units, window, row start and end dates, exclusions, `rank_rtol`, three digests and
+  `ENGINE_VERSION`. All arrays are read-only. It has no p-value and no field named rejected, accepted, stationary or
+  valid (D104.4). [Proposed] Test: S4.T3, S4.T4
+- C.9 `unit_root_spec_digest`, `unit_root_sample_digest` and `row_digest` follow A.3, use `digest_named_arrays`, are
+  stable across fresh processes and change under the mutations of S4.T8. [Proposed] Test: S4.T7, S4.T8
+- C.10 The facade maps every core exception to a facade exception with names and dates, chained as `__cause__`.
+  The result never holds NaN. [Proposed] Test: S4.T5, S4.T6
+- C.11 New core modules hold no `str`-typed field, parameter or return and no Enum. They import only the standard
+  library, numpy, `riskquant.exceptions` and their own package. The facade adds no import outside the D104 allow-list.
+  [Proposed] Test: S1.T5, S4.T9
+- C.12 `align_levels`, `fit_ols` and `wald_test` keep their signatures, results and digests. `ENGINE_VERSION` is
+  unchanged (O-8). [Proposed] Test: S4.T10
+- C.13 No library function mutates a caller array. Retained arrays are read-only copies. [Proposed] Test: S1.T4, S4.T4
+- C.14 New code constants and labels. Each new `*_CODES` tuple of `codes.py` holds `np.int8` constants with unique values and has a labels group in
+  the same slice that adds the tuple (F-14). Names and fixed values follow A.8. No new constant has the name of an existing constant (F-16).
+  The values of the scale, deterministic and test-kind codes enter the digests (A.3). [Proposed] Test: S1.T6, S1.T7
+- C.15 Public names. `api.__all__` and `_EXPECTED_PUBLIC` in `tests/solutions/factor_regression/test_api.py` hold the same set. The set adds
+  `unit_root_test`, `CombinationTerm`, `LinearCombination`, `UnitRootSpec`, `UnitRootResult`, `Scale`, `Deterministic` and `ScaleDomainError`.
+  No other name changes (F-15). Each `Scale` and `Deterministic` member value equals its core code (A.8). [Proposed] Test: S4.T11, S4.T12
+
+## 4. Decisions
+
+Decisions relied on: D001, D002, D004, D025, D104. Each checked against `DECISIONS.md`: yes.
+
+### P-FACTOR_REGRESSION_COINTEGRATION-001: Unit-root test in the factor regression library (PROPOSED)
+
+```text
+Related: D001, D002, D025, D104
+Scope: Adds a unit-root test of a declared linear combination to riskquant.factor_regression.
+1. The test lives in the D104 packages. D104.1 to D104.5 apply unchanged.
+2. The result reports the statistic and MacKinnon (2010) critical values. It reports no p-value and no verdict.
+3. Critical values come only from MacKinnon (2010), Tables 2 and 3, transcribed once and named in the result.
+4. A LOG-scale combination needs every level above 0 (D025 convention, as D104.6).
+5. The caller declares the deterministic case and the lag. The library has no default and no automatic selection.
+6. statsmodels is neither a runtime dependency nor a test dependency.
+Evidence: S1.T3, S1.T5, S2.T1, S2.T2, S4.T3, S4.T9
+```
+
+## 5. Owner gates
+
+| Id | Question | Status | Closed on | Evidence |
+|---|---|---|---|---|
+| O-1 | Placement: A, extend `riskquant.factor_regression`. | CLOSED | 2026-10-19 | owner |
+| O-2 | Decision form: a new decision (D105) from P-FACTOR_REGRESSION_COINTEGRATION-001. D104 gets one line "Amended by D105" in its Implementation note, as D101 did for D062. | CLOSED | 2026-10-19 | owner |
+| O-3 | statsmodels: not in the repository, neither runtime nor test dependency. A reviewer sandbox may use it as a cross-check. | CLOSED | 2026-10-19 | owner |
+| O-4 | Engle-Granger with free coefficients: backlog. The F-7 cells must be resolved first. | CLOSED | 2026-10-19 | owner |
+| O-5 | p-values: none in v1. A p-value needs the MacKinnon (1994, 1996) coefficients from a verified source. | CLOSED | 2026-10-19 | owner |
+| O-6 | Deterministic cases: CONSTANT and CONSTANT_TREND only (F-12). | CLOSED | 2026-10-19 | owner |
+| O-7 | Lag: declared, no default, no automatic selection. | CLOSED | 2026-10-19 | owner |
+| O-8 | `ENGINE_VERSION` unchanged; the new spec digest holds a test-kind field. | CLOSED | 2026-10-19 | owner |
+
+Status values: OPEN, CLOSED.
+
+## 6. Slices
+
+Order: S1 and S2 in parallel; S3 after S1 and S2; S4 after S3.
+Every Attach list also holds `CLAUDE.md`, `DECISIONS.md` and `WORKFLOW.md`.
+Gate order (WORKFLOW.md section 6): py_compile, import of the slice modules, ruff check, ruff format --check,
+mypy --strict, pytest slice, pytest full. Slice S4 uses the mypy baseline rule of WS_FACTOR_REGRESSION section 7 (I-001 rule).
+
+### S1: Core combination and LOG domain
+
+Objective: Build `z_t` from aligned levels with declared weights and scale, and reject LOG levels at or below 0.
+Contract: C.2, C.3, C.11, C.13, C.14
+Depends on: O-1, O-2, O-6
+Files:
+- create: `src/riskquant/factor_regression/combination.py`, `tests/factor_regression/test_combination.py`
+- modify: `src/riskquant/factor_regression/codes.py` (additive: scale codes, deterministic codes, test-kind code, reason codes, named by A.8);
+  `src/riskquant/factor_regression/errors.py` (additive: one domain exception for the scale);
+  `src/riskquant/solutions/factor_regression/labels.py` (additive: one labels group for each new `*_CODES` tuple, names only; required by the
+  existing S6.T10 tests, F-14)
+Prohibited: change of any existing code value, tuple member order or exception signature; `str` or Enum in the core; a new constant with the name
+of an existing constant (F-16); a change to any existing test file
+Attach: `docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION.md`, `docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION/A_NUMERICS.md`, `context_riskquant_factor_regression.txt`,
+`context_riskquant_solutions_factor_regression.txt`, `context_riskquant_tests.txt`
+Gates: section 6 order; pytest slice `tests/factor_regression/test_combination.py` and `tests/solutions/factor_regression/test_digest.py`; pytest full.
+Exit: Every gate line prints `exit=0`. pytest full: 0 failed, 0 errors.
+Status: NOT_STARTED
+Evidence: none
+
+| Id | Case | Expected | Defect caught |
+|---|---|---|---|
+| S1.T1 | LEVEL, weights (1, -2.5), Fraction oracle | equal to exact value | wrong weight or order |
+| S1.T2 | LOG, `Q = Z*M`, weights (1, -1, -1) on (Q, Z, M) | max abs z below 1e-14 | product instead of log sum |
+| S1.T3 | LOG with one level 0.0 and one level -1.0 | domain error at the first offending date | log of non-positive level |
+| S1.T4 | input arrays flagged read-only, then compared after the call | unchanged | caller mutation |
+| S1.T5 | existing `tests/test_architecture.py` scans the new module | pass | str or forbidden import in core |
+| S1.T6 | existing S6.T10 tests of `tests/solutions/factor_regression/test_digest.py`, run after S1 | pass | new `*_CODES` tuple without a labels group (F-14) |
+| S1.T7 | in `test_combination.py`: each new `*_CODES` tuple holds `np.int8` constants with unique values; no name clash with the 50 existing constants; the values of A.8 | exact | clash, duplicate value, wrong digest value |
+
+### S2: Core MacKinnon critical values
+
+Objective: Transcribe the N = 1 tau_c and tau_ct rows of A.2 and evaluate `c(n)`.
+Contract: C.7
+Depends on: O-5, O-6
+Files:
+- create: `src/riskquant/factor_regression/mackinnon.py`, `tests/factor_regression/test_mackinnon.py`
+- modify: none
+Prohibited: constants from memory or from statsmodels; scipy in this module
+Attach: `docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION.md`, `docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION/A_NUMERICS.md`, the source PDF (A.2 URL)
+Gates: section 6 order; pytest slice `tests/factor_regression/test_mackinnon.py`; pytest full.
+Exit: Every gate line prints `exit=0`. The report lists each of the 23 N = 1 constants with its PDF page.
+Status: NOT_STARTED
+Evidence: none
+
+| Id | Case | Expected | Defect caught |
+|---|---|---|---|
+| S2.T1 | each constant against the A.2 table typed in the test file | exact float equality | transcription error |
+| S2.T2 | seeded Monte Carlo, 200000 random walks, n = 100, lag 0, closed-form DF regression in the test | quantile within 0.05 (1 %) and 0.03 (5 %, 10 %) of `c(100)` | wrong case or wrong row |
+| S2.T3 | n = 1e9 | `c(n)` equal to `b_inf` within 1e-8 | missing or swapped power |
+| S2.T4 | n from 20 to 1e6 | `c_1% < c_5% < c_10% < 0` | level order swapped |
+
+### S3: Core ADF statistic
+
+Objective: Build the ADF design and response of A.1, call `fit_core` with IID covariance, return tau and `c(n)`.
+Contract: C.5, C.6, C.7, C.13
+Depends on: S1, S2
+Files:
+- create: `src/riskquant/factor_regression/adf.py`, `tests/factor_regression/test_adf.py`
+- modify: none
+Prohibited: `lstsq`; a second OLS solver; HAC or HC0 covariance in the ADF regression; p-values of `fit_core` in the core result
+Attach: `docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION.md`, `docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION/A_NUMERICS.md`, `context_riskquant_factor_regression.txt`
+Gates: section 6 order; pytest slice `tests/factor_regression/test_adf.py`; pytest full.
+Exit: Every gate line prints `exit=0`.
+Status: NOT_STARTED
+Evidence: none
+
+| Id | Case | Expected | Defect caught |
+|---|---|---|---|
+| S3.T1 | lag 0, CONSTANT, 25 rows, Fraction normal equations in the test | tau within 1e-12 relative | wrong row offset or dof |
+| S3.T2 | lag 4, CONSTANT_TREND, 600 rows, float normal equations in the test | tau within 1e-10 relative | wrong lag columns |
+| S3.T3 | source scan of `adf.py` | no `numpy.linalg`, one call of `fit_core` | second solver |
+| S3.T4 | n = 19, and n = k | `CoreSampleSizeError` with n and requirement | missing size rule |
+
+### S4: Facade contracts, digests and entry point
+
+Objective: Add the contract types, labels, errors, digests and `unit_root_test` to the facade.
+Contract: C.1, C.3, C.4, C.8, C.9, C.10, C.11, C.12, C.13, C.15
+Depends on: S3, O-3, O-8
+Files:
+- create: `tests/solutions/factor_regression/test_unit_root.py`
+- modify: `src/riskquant/solutions/factor_regression/contracts.py`, `labels.py`, `errors.py`, `digest.py`, `api.py`;
+  `tests/solutions/factor_regression/test_api.py` (the set `_EXPECTED_PUBLIC` only, C.15)
+Prohibited: numerical logic in the facade; a second public module; Pydantic; any change to existing digests; a change to `test_api.py` other than
+`_EXPECTED_PUBLIC`
+Attach: `docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION.md`, `docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION/A_NUMERICS.md`, `context_riskquant_factor_regression.txt`, `context_riskquant_solutions_run_identity.txt`,
+`context_riskquant_solutions_factor_regression.txt`, `context_riskquant_tests.txt`
+Gates: section 6 order; pytest slice `tests/solutions/factor_regression/`; pytest full.
+Exit: Every gate line prints `exit=0`, except the mypy line under the I-001 rule.
+Status: NOT_STARTED
+Evidence: none
+
+| Id | Case | Expected | Defect caught |
+|---|---|---|---|
+| S4.T1 | duplicate series, zero weight, NaN weight, empty terms, unknown series | `ModelSpecError` | missing spec check |
+| S4.T2 | omitted field; lag -1; rank_rtol 1.0; deterministic NONE | `TypeError`, then `ModelSpecError` | defaults or open set |
+| S4.T3 | field names of `UnitRootResult` | no p-value, no verdict field | approval leak (D104.4) |
+| S4.T4 | arrays of the result | read-only; inputs unchanged | mutation |
+| S4.T5 | LOG level 0.0 on a named date | `ScaleDomainError` names series and date; `__cause__` is core | lost context |
+| S4.T6 | 21 aligned dates with lag 2 | `InsufficientObservationsError` names n = 18 and 20 | wrong n |
+| S4.T7 | digests in two fresh processes | equal | non-determinism |
+| S4.T8 | change one weight, the scale, the lag, the case, one level, one date | the matching digests change | digest omits a field |
+| S4.T9 | imports of the facade modules | allow-list of D104 only | new dependency |
+| S4.T10 | golden `fit_ols` digests from the S7 tests before and after | equal | collateral change |
+| S4.T11 | existing S7.T7 tests of `test_api.py` after the change of `_EXPECTED_PUBLIC` | pass; the set equals `api.__all__` | unlisted public name or missing name (F-15) |
+| S4.T12 | each `Scale` and `Deterministic` member value against the core code of A.8 | equal | Enum out of step with the core |
+
+Appendix: A_NUMERICS.md (A.1 to A.7)
+
+## 7. Risks and deferred
+
+| Risk | Consequence | Mitigation |
+|---|---|---|
+| Low power at 250 rows: half-life 20 days gives power 0.26 (A.5) | the owner reads "no rejection" as "no relation" | A.6 text; report `n_obs`; use the longest window |
+| Lag too short under MA errors (F-9) | false rejection, false proxy support | caller declares the lag; coefficients of all lags are reported |
+| Drift in the spread under the null (F-11) | tau_c invalid | CONSTANT_TREND is available; A.6 text |
+| Transcription error in a constant | wrong critical value | S2.T1 and S2.T2; reviewer re-reads the PDF images |
+| A new `*_CODES` tuple or a new public name breaks an existing enumerating test (F-14, F-15) | pytest full fails from S1 or S4 | C.14, C.15; S1.T6; S4.T11; the audit searches `tests/` for other closed-set tests |
+
+Deferred:
+- Engle-Granger with free coefficients: opens on O-4. Needs the N = 2 and N = 3 rows and the EG dof convention (A.2 note).
+- p-values: opens when a verified copy of the MacKinnon (1994) or (1996) coefficients exists.
+- Johansen trace and maximum eigenvalue: opens when the owner needs more than one cointegrating vector.
+- ECM, DOLS and FM-OLS: open when the owner needs inference on the vector or the reversion speed.
+
+Backlog (REFINEMENT findings and items that v1 omits):
+- LOG_LEVEL transform in `fit_ols` (needed by Engle-Granger on log levels; changes `rows.py`, R-009 applies)
+- Half-life `ln(0.5) / ln(1 + gamma)` for `-1 < gamma < 0`; KPSS confirmation; break-robust tests (Gregory-Hansen)
+- Lag rules (Schwert, Ng-Perron) as a facade helper that reports, never selects silently
+
+## 8. Closure record
+
+Fill this section when the status becomes CLOSED. Leave no placeholder.
