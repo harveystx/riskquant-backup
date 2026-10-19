@@ -5063,6 +5063,22 @@ Historical snapshot references are retained for evidence lineage. The final cert
 **Lock rationale:** the implementation satisfies the locked D102 and D103 admission boundaries; the required evidence and mutation checks have been completed; no production logic defect was found; the remaining limitations are outside the locked production scope. The owner therefore LOCKS D102 and D103.
 
 
+## D104 - Factor regression core and facade boundary
+**Status:** LOCKED (2026-10-19, owner approval). Implemented 2026-10-12 to 2026-10-19 in `docs/workstreams/WS_FACTOR_REGRESSION.md`, slices S1 to S7. Promoted from the proposal P-FACTOR_REGRESSION-001 of that document; clauses 1 to 6 are unchanged.
+**Related:** D001, D002, D025, D088. Precedent: D064 (`eq=False` for array-bearing containers).
+**Decision:**
+* **D104.1 Core package.** `riskquant.factor_regression` is a private CORE package (D001). It holds `int32` date ordinals, `float64` arrays, integer indices and integer codes only. It imports no `riskquant.solutions` and no `riskquant.config`.
+* **D104.2 Public surface.** `riskquant.solutions.factor_regression.api` is the only public import surface. Facade modules import the core. The core never imports the facade. No other module outside tests imports the core.
+* **D104.3 Contract form.** Exemption from Pydantic v2 solution contracts: the facade contracts are frozen dataclasses with read-only arrays. Reason: no JSON boundary exists, the result holds arrays, and `pydantic` is not declared in `pyproject.toml` (audit finding F-9 of the workstream).
+* **D104.4 No approval.** The library approves no model assumption. It reports numbers and diagnostics only.
+* **D104.5 No D088 feed.** No fit becomes a proxy loading. A loading enters a proxy model only through the D088 authoring path.
+* **D104.6 Level domains.** The D025 level-domain convention applies to every return transform in the library.
+**Reason:** D104.1 and D104.2 apply D001 and D004: no `str` in the numeric core, and one public surface so that the core can change without a change for callers. D104.3 states its own reason. D104.4 and D104.5 keep a regression result separate from model approval and from the D088 proxy authoring path. D104.6 applies D025, so that a return on a level outside its domain fails at the library edge.
+**Implementation:** core `src/riskquant/factor_regression/` (`align`, `codes`, `errors`, `rows`, `design`, `diagnostics`, `covariance`, `fit`, `wald`). Facade `src/riskquant/solutions/factor_regression/` (`contracts`, `errors`, `labels`, `digest`, `api`). Public functions: `align_levels`, `fit_ols`, `wald_test`. Only `digest.py` imports `riskquant.solutions.run_identity.hashing`. The numerical definitions are in `docs/workstreams/WS_FACTOR_REGRESSION/A_NUMERICS.md`. Two owner amendments to that appendix are in section 7 of the workstream document: the covariance is evaluated as Q'Q with Q = diag(e) U diag(1/s) V^T in place of an explicit B M0 B (OD-8), and the Wald rank rule works on unit-norm rows and rejects a singular-value ratio of 1e-4 or below (OD-10). Neither amendment changes a clause of D104.
+**Evidence:** test IDs S1.T10, S1.T11, S1.T13, S2.T5 to S2.T7, S6.T12 and S7.T7 of `docs/workstreams/WS_FACTOR_REGRESSION/A_TESTS.md`, in `tests/test_architecture.py`, `tests/factor_regression/` and `tests/solutions/factor_regression/`. S6.T14 (`tests/solutions/factor_regression/test_digest.py`) checks that only `digest.py` imports `hashing` and that every facade import is on the allow-list. Each slice passed an independent review in a separate reviewer chat. Full suite: 5746 passed and 36 skipped before the workstream; the owner reports a green run after S7 (expected 6790 passed, 36 skipped).
+**Evidence limits:** the reviewer and implementer sandboxes lacked the `riskquant.dependence`, `credit` and `valuation` sources, so only the Windows runs of the owner decide. The output of the last full run was not kept. numpy 1.26.4 ran the slice tests of S4 to S6 in reviewer sandboxes only; the owner machine does not cover the declared numpy floor.
+
+
 ## D-C01 — `obligor_uids_target` ordering (credit / exposure→JTD bridge)
 
 `obligor_uids_target` may be supplied in **any order**. Uids must be unique; duplicates raise. The output rows are emitted in exactly the caller's target order. Sorting is an internal implementation detail: `aggregate_ead_to_obligor` creates a sorted copy of the target, performs the `searchsorted` lookup against that sorted-unique array, and maps the returned ranks back through the sort permutation.
