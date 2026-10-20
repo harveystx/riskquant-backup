@@ -5065,6 +5065,7 @@ Historical snapshot references are retained for evidence lineage. The final cert
 
 ## D104 - Factor regression core and facade boundary
 **Status:** LOCKED (2026-10-19, owner approval). Implemented 2026-10-12 to 2026-10-19 in `docs/workstreams/WS_FACTOR_REGRESSION.md`, slices S1 to S7. Promoted from the proposal P-FACTOR_REGRESSION-001 of that document; clauses 1 to 6 are unchanged.
+**Amended by:** D105 (2026-10-20). D105 adds the public function `unit_root_test`, its contract types and the core modules `combination`, `mackinnon` and `adf` to the implementation lists of this decision. Clauses D104.1 to D104.6 are unchanged.
 **Related:** D001, D002, D025, D088. Precedent: D064 (`eq=False` for array-bearing containers).
 **Decision:**
 * **D104.1 Core package.** `riskquant.factor_regression` is a private CORE package (D001). It holds `int32` date ordinals, `float64` arrays, integer indices and integer codes only. It imports no `riskquant.solutions` and no `riskquant.config`.
@@ -5078,6 +5079,25 @@ Historical snapshot references are retained for evidence lineage. The final cert
 **Evidence:** test IDs S1.T10, S1.T11, S1.T13, S2.T5 to S2.T7, S6.T12 and S7.T7 of `docs/workstreams/WS_FACTOR_REGRESSION/A_TESTS.md`, in `tests/test_architecture.py`, `tests/factor_regression/` and `tests/solutions/factor_regression/`. S6.T14 (`tests/solutions/factor_regression/test_digest.py`) checks that only `digest.py` imports `hashing` and that every facade import is on the allow-list. Each slice passed an independent review in a separate reviewer chat. Full suite: 5746 passed and 36 skipped before the workstream; the owner reports a green run after S7 (expected 6790 passed, 36 skipped).
 **Evidence limits:** the reviewer and implementer sandboxes lacked the `riskquant.dependence`, `credit` and `valuation` sources, so only the Windows runs of the owner decide. The output of the last full run was not kept. numpy 1.26.4 ran the slice tests of S4 to S6 in reviewer sandboxes only; the owner machine does not cover the declared numpy floor.
 
+---
+
+## D105 - Unit-root test of a declared linear combination
+**Status:** LOCKED (2026-10-20, owner approval). Implemented 2026-10-19 to 2026-10-20 in `docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION.md`, slices S1 to S4. Promoted from the proposal P-FACTOR_REGRESSION_COINTEGRATION-001 of that document; clauses 1 to 6 are unchanged.
+**Amends:** D104, implementation lists only (public functions and core modules). Clauses D104.1 to D104.6 are unchanged.
+**Related:** D001, D002, D004, D025, D104. Precedent: D064 (`eq=False` for array-bearing containers).
+**Decision:**
+* **D105.1 Placement.** The unit-root test lives in the D104 packages: the core `riskquant.factor_regression` and the facade `riskquant.solutions.factor_regression`. D104.1 to D104.5 apply unchanged.
+* **D105.2 No p-value, no verdict.** The result reports the ADF statistic and the MacKinnon (2010) critical values. It reports no p-value and no verdict (D104.4).
+* **D105.3 One source for critical values.** Critical values come only from MacKinnon (2010), QED Working Paper 1227, Tables 2 and 3, rows N = 1. They are transcribed once, and the result names the source in `critical_value_source`.
+* **D105.4 Level domain.** A LOG-scale combination needs every level above 0 (D025 convention, as D104.6). A level outside the domain raises `ScaleDomainError`.
+* **D105.5 Declared inputs.** The caller declares the deterministic case (`CONSTANT` or `CONSTANT_TREND`) and the lag. The library has no default and no automatic selection.
+* **D105.6 No statsmodels.** `statsmodels` is neither a runtime dependency nor a test dependency.
+**Reason:** D105.1 keeps one boundary for the library, so that D104.1 and D104.2 still hold. D105.2 keeps a test statistic separate from model approval (D104.4); a p-value needs a verified copy of the MacKinnon (1994) or (1996) coefficients, which v1 does not have. D105.3 limits the transcription risk to one table source that a reviewer can compare with the page images. D105.4 applies D025. D105.5 states that the lag and the deterministic case change the null distribution and the size of the test, so the caller chooses them and the library does not hide the choice. D105.6 keeps the dependency set unchanged; `statsmodels` ran only in reviewer sandboxes as a cross-check.
+**Implementation:** core `src/riskquant/factor_regression/`: new modules `combination` (linear combination of levels, LEVEL or LOG scale), `mackinnon` (critical values, tau_c from Table 2 and tau_ct from Table 3) and `adf` (ADF regression on `fit_core` with IID covariance; tau is the coefficient of `z_{t-1}` divided by its standard error). `codes.py` and `errors.py` gain the scale, deterministic, test kind and scale-domain codes and `CoreScaleDomainError`. Facade `src/riskquant/solutions/factor_regression/`: `contracts` (`Scale`, `Deterministic`, `CombinationTerm`, `LinearCombination`, `UnitRootSpec`, `UnitRootResult`), `errors` (`ScaleDomainError`), `labels` (the fixed texts of the null hypothesis and of the critical value source), `digest` (`unit_root_spec_digest`, `unit_root_sample_digest`) and `api` (`unit_root_test`). The public surface grows by eight names. `ENGINE_VERSION` is unchanged; the spec digest holds a test kind field. Only `digest.py` imports `riskquant.solutions.run_identity.hashing`. The numerical definitions are in `docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION/A_NUMERICS.md`.
+**Evidence:** test IDs S1.T3, S1.T5, S2.T1, S2.T2, S4.T2, S4.T3 and S4.T9 of `docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION.md`, in `tests/factor_regression/` (`test_combination.py`, `test_mackinnon.py`, `test_adf.py`) and `tests/solutions/factor_regression/test_unit_root.py`. S4.T9 checks that `pyproject.toml` holds no `statsmodels` and that no source or test file of the library imports it. Each slice passed an independent review in a separate reviewer chat (S4 in three rounds). Full suite: 6790 passed and 36 skipped before the workstream; 7117 passed and 36 skipped after S4 (owner Windows run, 327 new tests).
+**Evidence limits:** the reviewer and implementer sandboxes lacked the sources of other packages, so only the Windows runs of the owner decide. No gate ran on Python 3.11, the mypy target, and none ran on the numpy 1.26 floor. The implementer compared the 24 cells of the six rows of the critical value tables with the page images (S2); the reviewer compared the PDF text layer and `statsmodels.tsa.adfvalues`. The N >= 2 cells of the MacKinnon tables are not transcribed; two of them differ between the PDF text and statsmodels (A.2 note of the appendix).
+
+---
 
 ## D-C01 — `obligor_uids_target` ordering (credit / exposure→JTD bridge)
 

@@ -2,27 +2,24 @@
 
 Path: docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION.md
 Class: HEAVY
-Status: FROZEN
+Status: CLOSED
 Revision: 4
-Revision note: Revision 4 (2026-10-19). Owner decision under WS_TEMPLATE.md 1.8: Revision 4 without merged code is approved, and the decision of 2026-10-19 (build v1, no round-2 audit) stays in force. At the owner's request Revision 4 folds the audit round 1 refinements R-1 to R-11 into the contract and the slices (WS_TEMPLATE.md 1.6 would have put them in the backlog), and corrects the value case (R-12). The new contract text is not independently audited. B-1 to B-5 were applied in Revision 3.
+Revision note: Revision 4 (2026-10-19). Owner decision under WS_TEMPLATE.md 1.8: Revision 4 without merged code is approved, and the decision of 2026-10-19 (build v1, no round-2 audit) stays in force. At the owner's request Revision 4 folds the audit round 1 refinements R-1 to R-11 into the contract and the slices (WS_TEMPLATE.md 1.6 would have put them in the backlog), and corrects the value case (R-12). The new contract text is not independently audited. B-1 to B-5 were applied in Revision 3. Owner 2026-10-20: S1 to S4 VALIDATED; P-FACTOR_REGRESSION_COINTEGRATION-001 promoted to D105.
 Date: 2026-10-19
 Branch: ws/factor-regression-cointegration
 Snapshot: SNAPSHOT commit=b7b088a dirty=false content_hash=72b2cb891c2269d9
 Drafted by: investigator
-Independent review: freeze audit round 1 in a separate chat (R_FREEZE_RECONCILIATION_R1.md): NOT READY. B-1 to B-5 applied in Revision 3. R-1 to R-11 applied in Revision 4 without review. No round 2 (owner decision)
+Independent review: slice reviews S1 to S4 in a separate reviewer chat (S4 in three rounds; every slice finding is closed or in the section 7 backlog; none is open); freeze audit round 1 in a separate chat (R_FREEZE_RECONCILIATION_R1.md): NOT READY. B-1 to B-5 applied in Revision 3. R-1 to R-11 applied in Revision 4 without review. No round 2 (owner decision)
 Audit rounds used: 1 of 2
 Code merged: no
-DECISIONS.md reconciled: NO
-Evidence limits: No repository test ran. Sandbox: Python 3.12.3, numpy 2.4.4, scipy 1.17.1, statsmodels 0.15.0
-(installed in the sandbox only, as a cross-check). Sandbox numbers come from investigator and pre-audit scripts, not from library code.
-The 23 N = 1 constants equal the text layer of the PDF at
-https://ageconsearch.umn.edu/record/273723/files/qed_wp_1227.pdf and `statsmodels.tsa.adfvalues.tau_2010s` (24 cells with the empty b3 cell,
-0 differences). Nobody compared them with the page images. The pre-audit check repeated the critical-value, power, size, levels-HAC and
-Granger-Newbold numbers with other code and seeds (A.5), and compared the ADF statistic, `n` and the critical values with
-`adfuller(autolag=None)`: equal. The tests profile was searched by the pre-audit check and by audit round 1; F-14 to F-16 and F-18 record what it shows. Neither check compared the
-page images: the audit sandbox cannot reach the site, and the web fetch returns the text layer only. The `scripts/` runners were checked in the
-pre-audit check (F-19). No check ran on Python 3.11, the mypy target of `pyproject.toml` (R-15). The drafter checked the Revision 4 clauses against
-`rows.py:_validate_domains`, `contracts.py:_check_float_param`, `_check_int_param`, `CovarianceSpec` and `api.py:_map_core_error`; nobody else reviewed them.
+DECISIONS.md reconciled: YES (D105 added 2026-10-20)
+Evidence limits: The owner Windows runs decide (gate_s1.txt to gate_s4_r2.txt, kept untracked; last full run 7117 passed, 36 skipped). The reviewer and
+implementer sandboxes lacked the sources of other packages, so their full runs compared the failing test IDs with and without the slice files. No gate ran on
+Python 3.11, the mypy target of `pyproject.toml` (R-15), and none ran on the numpy 1.26 floor. statsmodels 0.15.0 was installed in sandboxes only, as a cross-check (O-3).
+The 23 N = 1 constants equal the PDF text layer at https://ageconsearch.umn.edu/record/273723/files/qed_wp_1227.pdf and `statsmodels.tsa.adfvalues.tau_2010s`
+(24 cells with the empty b3 cell, 0 differences). The implementer compared all 24 cells of the six rows with page images in S2; no other check compared the page images
+(the reviewer compared the text layer). The N >= 2 cells of the MacKinnon tables are not transcribed in v1; two of them differ between the PDF text and statsmodels (A.2 note).
+The power and size numbers of A.5 come from scripts, not from library code.
 
 ## 1. Goal and scope
 
@@ -157,7 +154,7 @@ All clauses describe new code. Each is Proposed. Formulas and constants are in `
 
 Decisions relied on: D001, D002, D004, D025, D104. Each checked against `DECISIONS.md`: yes.
 
-### P-FACTOR_REGRESSION_COINTEGRATION-001: Unit-root test in the factor regression library (PROPOSED)
+### P-FACTOR_REGRESSION_COINTEGRATION-001: Unit-root test in the factor regression library (PROMOTED to D105 on 2026-10-20, clauses 1 to 6 unchanged)
 
 ```text
 Related: D001, D002, D025, D104
@@ -302,8 +299,13 @@ Attach: `docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION.md`, `docs/workstre
 Gates: section 6 order, with the line `mypy baseline` before `mypy --strict`; pytest slice `tests/solutions/factor_regression/` and `tests/test_architecture.py`; pytest full.
 Exit: Every gate line prints `exit=0`, except the `mypy baseline` line (`exit=1` by design, 13 errors in `hashing.py`). The `mypy --strict` line passes
 when every `: error:` line that it prints also appears in the `mypy baseline` output.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: Windows gates exit=0 on every gate line except `mypy baseline` (exit=1 by design, 13 errors in `hashing.py`; the strict line adds no error) (gate_s4_r2.txt); slice 471 passed;
+pytest full 7117 passed and 36 skipped (7014 + 103 new tests in test_unit_root.py). Independent review in three rounds: round 1 ACCEPT WITH FIXES (R-001 to R-006), round 2 BLOCKED on a
+missing attachment, round 3 ACCEPT; R-001 to R-005 closed. Reviewer checks: `unit_root_test` against `adfuller(autolag=None)` on 18 cases (statistic 2.8e-13 relative, `n` equal, critical
+values 4.4e-16); an end-to-end hashlib oracle for the three digests in 4 cases; the S4.T8 matrix; 30 facade mutants in round 1 (11 survived and led to R-002 and R-003) and 15 required
+mutants in round 3, all killed. The first delivery had known defects and was committed as a rollback point; two fix rounds followed (F-1 to F-13; the bound of the ADF label loop). The owner
+checked the F-16 diff against the pre-S4 text with git, and an independent dump comparison gave the same line counts. Backlog lines in section 7.
 
 | Id | Case | Expected | Defect caught |
 |---|---|---|---|
@@ -361,7 +363,35 @@ Backlog (REFINEMENT findings and items that v1 omits):
   - R-001: the exact-fit fixture `z = 5 + 0.8**t` (60 points) in `test_adf.py` has `rss / bound` 0.833 with `fit_core`, and 0.972 and 0.918 with other solvers; the rule fires at 1.0 or less, and with 40 points it does not fire. Replace it by `z = 0.5**t` with 40 points (`rss / bound` 3.3e-4). S4.T14 uses the dyadic fixture.
   - R-002: `adf_core` builds `row_start_index` and `row_end_index` with `np.arange(..., dtype=np.int32)`, which wraps without an error when `m - 1 > 2**31 - 1`. The facade path is bounded by `INPUT_TOO_LONG` in `align.py`. A later LIGHT change adds the same check to `adf_core`.
   - A lag below the float64 range (for example `-10**400`) gives `OverflowError` from `float()` in `adf_core`, not `CoreParameterError`. `covariance.py` does the same. The facade rejects a negative lag first (C.4).
+- S4 review, accepted points (source: slice review of S4):
+  - R-006: `unit_root_spec_digest` has no int8 range check for `test_kind`, `scale` and `deterministic`. A value outside int8 raises `OverflowError`. Same class as the accepted scalar item of the S6 digests.
+  - R-007: the "Input contract" paragraph of the `digest.py` module docstring omits the two unit-root functions and their A.3 dtypes.
+  - `UnitRootSpec(rank_rtol=10**400)` raises `OverflowError`. `ModelSpec` does the same (C.4 parity).
+  - The `CombinationTerm` message says "above the float64 range" also for `-10**400`.
+  - No static check keeps numerical logic out of the facade. A mutant that computes `coef / se` in `api.py` survives the tests. Code reading finds no numerical operation in `unit_root_test`.
+  - The child-process test `test_r001_huge_lag_raises_size_error_in_child` has no memory cap on Windows (the module `resource` is absent). Its 20 s timeout is the guard. Measure the import margin if the test flakes.
 
 ## 8. Closure record
 
 Fill this section when the status becomes CLOSED. Leave no placeholder.
+
+| Item | Value |
+|---|---|
+| Final commit | 9a5bd68, head of ws/factor-regression-cointegration before the closure commit (S4 fix round 2) |
+| Release tag | none (the owner tags the merge commit) |
+| Decisions locked | D105, promoted from P-FACTOR_REGRESSION_COINTEGRATION-001 with clauses 1 to 6 unchanged. D104 carries an "Amended by D105" line. |
+| Independent validation | Slice reviews S1 to S4 in a separate reviewer chat, each ACCEPT (S3 with two P2 findings; S4 ACCEPT WITH FIXES in round 1, BLOCKED in round 2 on a missing attachment, ACCEPT in round 3). Reviewer mutation runs: S1 22 of 22 killed; S2 all required mutants killed; S3 42 of 43 (the survivor is a one-configuration mutant); S4 round 3 15 of 15. Independent oracles: Fraction arithmetic (the A.2 constants, ADF lag 0), hashlib digests. Reviewer cross-checks with `adfuller(autolag=None)` in sandboxes (statsmodels 0.15.0, sandbox only): 40 core cases (statistic 1.3e-13 relative) and 18 facade cases (2.8e-13). The owner reports the last full pytest run: 7117 passed, 36 skipped (gate_s4_r2.txt, kept). |
+
+Delivered:
+- Core package `src/riskquant/factor_regression/`: new modules `combination`, `mackinnon` and `adf`; additive changes to `codes` and `errors` (scale, deterministic, test kind and scale-domain codes; `CoreScaleDomainError`).
+- Facade `src/riskquant/solutions/factor_regression/`: additive changes to `contracts`, `errors`, `labels`, `digest` and `api`. New public function `unit_root_test`. Eight new public names: `unit_root_test`, `CombinationTerm`, `LinearCombination`, `UnitRootSpec`, `UnitRootResult`, `Scale`, `Deterministic`, `ScaleDomainError`.
+- 327 new tests: S1 91 (`test_combination.py` 84, `test_errors.py` 3, `test_digest.py` 4), S2 49 (`test_mackinnon.py`), S3 84 (`test_adf.py`), S4 103 (`test_unit_root.py`). Full suite: 6790 passed and 36 skipped before; 7117 passed and 36 skipped after (owner run). Existing test files changed: `test_errors.py` and `test_digest.py` (additive, S1) and `test_api.py` (the set `_EXPECTED_PUBLIC`, 8 names, S4).
+- Documents: this workstream document, `A_NUMERICS.md`, `R_FREEZE_RECONCILIATION_R1.md` and D105 in `DECISIONS.md` (with the "Amended by D105" line in D104).
+
+Deferred:
+- Engle-Granger with free coefficients (O-4): opens with the N = 2 and N = 3 rows and the EG dof convention.
+- p-values (O-5): open when a verified copy of the MacKinnon (1994) or (1996) coefficients exists.
+- Johansen, ECM, DOLS and FM-OLS: open when the owner needs them (section 7).
+- Section 7 backlog: R-13 to R-15; the accepted items of S1 to S4.
+
+Open work: merge of `ws/factor-regression-cointegration` into `prod` (owner). No slice and no review finding is open.
