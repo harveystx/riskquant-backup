@@ -9,15 +9,15 @@ classes only; S7 does the mapping.
 
 Core-to-facade mapping
 ----------------------
-``CoreInputError``           -> ``SeriesContractError``
-``CoreAlignmentError``       -> ``AlignmentError``
-``CoreParameterError``       -> ``ModelSpecError``
-``CoreDomainError``          -> ``TransformDomainError``
-``CoreScaleDomainError``     -> ``ScaleDomainError``
-``CoreRankError``            -> ``RankDeficiencyError``
-``CoreSampleSizeError``      -> ``InsufficientObservationsError``
-``CoreDegenerateFitError``   -> ``DegenerateFitError``
-``CoreRestrictionError``     -> ``RestrictionError``
+``CoreInputError``           → ``SeriesContractError``
+``CoreAlignmentError``       → ``AlignmentError``
+``CoreParameterError``       → ``ModelSpecError``
+``CoreDomainError``          → ``TransformDomainError``
+``CoreScaleDomainError``     → ``ScaleDomainError``
+``CoreRankError``            → ``RankDeficiencyError``
+``CoreSampleSizeError``      → ``InsufficientObservationsError``
+``CoreDegenerateFitError``   → ``DegenerateFitError``
+``CoreRestrictionError``     → ``RestrictionError``
 """
 
 from __future__ import annotations

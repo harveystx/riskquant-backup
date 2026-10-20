@@ -3,7 +3,7 @@
 Public surface of the factor regression library (C.23, D001).
 
 This module is the only public import surface of
-``riskquant.solutions.factor_regression``. It exposes three functions:
+``riskquant.solutions.factor_regression``. It exposes four functions:
 
 * ``align_levels``: integer alignment of named level series (C.2, C.3).
 * ``fit_ols``: rows, design, rank gate, OLS fit, diagnostics and digests
@@ -555,9 +555,13 @@ def _core_aligned_levels(levels: AlignedLevels) -> CoreAlignedLevels:
 
 
 class _HasSeries(Protocol):
-    """Any term type that carries a ``series`` attribute (``Term`` or ``CombinationTerm``)."""
+    """Any term type that carries a ``series`` attribute (``Term`` or ``CombinationTerm``).
 
-    series: str
+    ``series`` is a read-only property, so a frozen dataclass field satisfies it.
+    """
+
+    @property
+    def series(self) -> str: ...
 
 
 def _missing_term_series(levels: AlignedLevels, terms: Sequence[_HasSeries]) -> None:
@@ -631,7 +635,7 @@ def fit_ols(levels: AlignedLevels, spec: ModelSpec) -> OlsResult:
         raise TypeError(f"levels must be AlignedLevels, got {type(levels).__name__}")
     intercept = spec.intercept
     terms = (spec.response, *spec.regressors)
-    _missing_term_series(levels, terms)  # type: ignore[arg-type]
+    _missing_term_series(levels, terms)
 
     index_of: dict[str, int] = {}
     for j, name in enumerate(levels.names):
@@ -916,7 +920,7 @@ def unit_root_test(levels: AlignedLevels, spec: UnitRootSpec) -> UnitRootResult:
         raise TypeError(f"levels must be AlignedLevels, got {type(levels).__name__}")
 
     # ---- 2. series check -----------------------------------------------------
-    _missing_term_series(levels, spec.combination.terms)  # type: ignore[arg-type]
+    _missing_term_series(levels, spec.combination.terms)
 
     # ---- index bookkeeping (no numerical logic) ------------------------------
     index_of: dict[str, int] = {}
@@ -994,6 +998,7 @@ def unit_root_test(levels: AlignedLevels, spec: UnitRootSpec) -> UnitRootResult:
     )
     _spec_digest = digest.unit_root_spec_digest(
         engine_version=ENGINE_VERSION,
+        test_kind=int(codes.TEST_ADF),
         term_names=list(term_names),
         term_units=list(units),
         weights=weights,

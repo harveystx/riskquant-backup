@@ -6,7 +6,7 @@ This is the only facade module that imports
 ``riskquant.solutions.run_identity.hashing`` (C.21).  No other module in
 ``riskquant.solutions.factor_regression`` may import it.
 
-All four functions delegate to ``digest_named_arrays``, which folds in the
+All six functions delegate to ``digest_named_arrays``, which folds in the
 array name, dtype, shape and C-order bytes via SHA-256 (F-4).  The order and
 names of the arrays in each call are specified in A.6 and are canonical: any
 change of order or name changes the digest.
@@ -63,7 +63,6 @@ from typing import Final
 import numpy as np
 from numpy.typing import NDArray
 
-from riskquant.factor_regression import codes
 from riskquant.solutions.run_identity.hashing import digest_named_arrays
 
 # Schema version for the spec bytes.  Increment only when the canonical byte
@@ -392,14 +391,11 @@ def restriction_digest(
 # canonical byte layout of unit_root_spec_digest changes.
 _UNIT_ROOT_SCHEMA_VERSION: Final = np.array([1], dtype=np.int64)
 
-# TEST_ADF code, baked in.  The digest always encodes ADF; the schema
-# version changes if a second test kind is ever added.
-_TEST_ADF_ARR: Final = np.array([int(codes.TEST_ADF)], dtype=np.int8)
-
 
 def unit_root_spec_digest(
     *,
     engine_version: str,
+    test_kind: int,
     term_names: Sequence[str],
     term_units: Sequence[str],
     weights: NDArray[np.float64],
@@ -425,6 +421,10 @@ def unit_root_spec_digest(
     ----------
     engine_version
         Canonical engine string (``contracts.ENGINE_VERSION``).
+    test_kind
+        Integer test-kind code (``codes.TEST_ADF``).  Written as ``int8``
+        (A.3).  The caller passes it, so that this module does not import
+        the core.
     term_names, term_units
         Term names and units in declared order.  Must have the same length
         as ``weights``.
@@ -469,12 +469,14 @@ def unit_root_spec_digest(
             f"got {len(term_names)}, {len(term_units)}, {n_terms}"
         )
 
-    terms_text = "\x1e".join(f"T\x1f{n}\x1f{u}" for n, u in zip(term_names, term_units))
+    terms_text = "\x1e".join(
+        f"T\x1f{n}\x1f{u}" for n, u in zip(term_names, term_units, strict=True)
+    )
 
     return digest_named_arrays(
         schema_version=_UNIT_ROOT_SCHEMA_VERSION,
         engine_version=_text_uint8(engine_version),
-        test_kind=_TEST_ADF_ARR,
+        test_kind=np.array([test_kind], dtype=np.int8),
         terms=_text_uint8(terms_text),
         weights=weights,
         scale=np.array([scale], dtype=np.int8),

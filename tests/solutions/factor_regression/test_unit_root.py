@@ -12,9 +12,12 @@ S4.T5  - LOG level 0.0 on a named date -> ScaleDomainError with context
 S4.T6  - 21 aligned dates lag 2 -> InsufficientObservationsError
 S4.T7  - digests in two fresh processes equal
 S4.T8  - one mutation per field -> digest changes as expected
-S4.T9  - facade import scan + pyproject.toml has no statsmodels
-S4.T10 - existing golden digest tests and S7 tests pass (pytest call)
-S4.T11 - _EXPECTED_PUBLIC matches api.__all__
+S4.T9  - no statsmodels import in the slice packages; pyproject.toml has no
+         statsmodels.  The facade allow-list scan is S6.T14 of test_digest.py.
+S4.T10 - existing S6.T9 tests of test_digest.py and S7 tests of test_api.py
+         (they run in the slice; no test here)
+S4.T11 - existing S7.T7 tests of test_api.py (they run in the slice; no test
+         here)
 S4.T12 - Scale and Deterministic values match core codes
 S4.T13 - independent hashlib/numpy oracle for both new digests
 S4.T14 - one case per C.10 mapping
@@ -24,32 +27,32 @@ Extra tests named in decision 10
 - api.py does not import hashing
 - unit_root_test checks argument types in the declared order
 - masked-array and ndarray-subclass rejection for every array arg
-- caller arrays unchanged after unit_root_test
+- caller arrays unchanged after align_levels and unit_root_test
 - two equal calls give equal results
 """
 
-# mypy: ignore-errors
 from __future__ import annotations
 
 import ast
 import dataclasses
 import hashlib
-import importlib
-import pathlib
+import json
 import subprocess
 import sys
-import textwrap
 import warnings
 from fractions import Fraction
+from pathlib import Path
+from typing import Any, cast
 from unittest.mock import patch
 
 import numpy as np
 import pytest
 from numpy import ma
+from numpy.typing import NDArray
 
 from riskquant.exceptions import RiskQuantError
 from riskquant.factor_regression import codes
-from riskquant.solutions.factor_regression import api, digest, labels
+from riskquant.solutions.factor_regression import digest, labels
 from riskquant.solutions.factor_regression.api import (
     AlignedLevels,
     CombinationTerm,
@@ -71,19 +74,20 @@ from riskquant.solutions.factor_regression.contracts import (
     ObservedSeries,
 )
 
-_FACADE_DIR = pathlib.Path(
-    importlib.util.find_spec("riskquant.solutions.factor_regression.api").origin  # type: ignore[union-attr]
-).parent
+# tests/solutions/factor_regression/test_unit_root.py: parents[3] is the
+# repository root.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_FACADE_DIR = _REPO_ROOT / "src" / "riskquant" / "solutions" / "factor_regression"
 
 
 # ------------------------------------------------------------------ helpers
 
 
-def _dates(n: int, start: int = 0) -> np.ndarray:
+def _dates(n: int, start: int = 0) -> NDArray[np.int32]:
     return np.arange(start, start + n, dtype=np.int32)
 
 
-def _vals(n: int, seed: int = 0) -> np.ndarray:
+def _vals(n: int, seed: int = 0) -> NDArray[np.float64]:
     return np.asarray(
         np.cumsum(np.random.default_rng(seed).standard_normal(n)) + 50.0,
         dtype=np.float64,
@@ -117,7 +121,9 @@ def _spec(
         names = ["P"]
     if weights is None:
         weights = [1.0] * len(names)
-    terms = tuple(CombinationTerm(series=n, weight=w) for n, w in zip(names, weights))
+    terms = tuple(
+        CombinationTerm(series=n, weight=w) for n, w in zip(names, weights, strict=True)
+    )
     return UnitRootSpec(
         combination=LinearCombination(terms=terms, scale=scale),
         deterministic=det,
@@ -157,9 +163,9 @@ def _run_ok(
         "weight-Fraction",
     ],
 )
-def test_t1_term_type_error(kw: dict, exc: type) -> None:
+def test_t1_term_type_error(kw: dict[str, Any], exc: type[Exception]) -> None:
     with pytest.raises(exc):
-        CombinationTerm(**kw)  # type: ignore[arg-type]
+        CombinationTerm(**kw)
 
 
 @pytest.mark.parametrize(
@@ -183,13 +189,13 @@ def test_t1_term_type_error(kw: dict, exc: type) -> None:
         "overflow-int",
     ],
 )
-def test_t1_term_model_spec_error(kw: dict, exc: type) -> None:
+def test_t1_term_model_spec_error(kw: dict[str, Any], exc: type[Exception]) -> None:
     with pytest.raises(exc):
-        CombinationTerm(**kw)  # type: ignore[arg-type]
+        CombinationTerm(**kw)
 
 
 def test_t1_weight_int_stored_as_float() -> None:
-    t = CombinationTerm(series="P", weight=2)  # type: ignore[arg-type]
+    t = CombinationTerm(series="P", weight=2)
     assert t.weight == 2.0
     assert isinstance(t.weight, float)
 
@@ -207,10 +213,10 @@ def test_t1_weight_int_stored_as_float() -> None:
     ids=["terms-not-tuple", "scale-str"],
 )
 def test_t1_linear_combination_type_error(
-    terms: object, scale: object, exc: type
+    terms: object, scale: object, exc: type[Exception]
 ) -> None:
     with pytest.raises(exc):
-        LinearCombination(terms=terms, scale=scale)  # type: ignore[arg-type]
+        LinearCombination(terms=cast(Any, terms), scale=cast(Any, scale))
 
 
 @pytest.mark.parametrize(
@@ -227,7 +233,9 @@ def test_t1_linear_combination_type_error(
     ],
     ids=["empty-terms", "repeated-series"],
 )
-def test_t1_linear_combination_model_spec_error(terms: tuple, exc: type) -> None:
+def test_t1_linear_combination_model_spec_error(
+    terms: tuple[CombinationTerm, ...], exc: type[Exception]
+) -> None:
     with pytest.raises(exc):
         LinearCombination(terms=terms, scale=Scale.LEVEL)
 
@@ -290,18 +298,21 @@ def test_t1_combination_term_unknown_series_raises_model_spec_error() -> None:
     ],
     ids=["lag-True", "lag-npbool", "lag-float", "lag-str", "det-str"],
 )
-def test_t2_spec_type_error(kw: dict) -> None:
+def test_t2_spec_type_error(kw: dict[str, Any]) -> None:
     with pytest.raises(TypeError):
-        UnitRootSpec(**kw)  # type: ignore[arg-type]
+        UnitRootSpec(**kw)
 
 
 def test_t2_spec_omitted_field_raises_type_error() -> None:
+    # The field rank_rtol is omitted.  The call goes through Any, because a
+    # static checker rejects the call that this test must make.
+    kw: dict[str, Any] = {
+        "combination": _spec().combination,
+        "deterministic": Deterministic.CONSTANT,
+        "lag": 0,
+    }
     with pytest.raises(TypeError):
-        UnitRootSpec(  # type: ignore[call-arg]
-            combination=_spec().combination,
-            deterministic=Deterministic.CONSTANT,
-            lag=0,
-        )
+        UnitRootSpec(**kw)
 
 
 @pytest.mark.parametrize(
@@ -314,7 +325,7 @@ def test_t2_spec_omitted_field_raises_type_error() -> None:
     ],
     ids=["lag-neg", "lag-too-big", "rtol-1.0", "rtol-nan"],
 )
-def test_t2_spec_domain_error(lag: int, rtol: float, exc: type) -> None:
+def test_t2_spec_domain_error(lag: int, rtol: float, exc: type[Exception]) -> None:
     with pytest.raises(exc):
         UnitRootSpec(
             combination=_spec().combination,
@@ -370,14 +381,36 @@ def test_t4_arrays_read_only() -> None:
         assert not arr.flags["WRITEABLE"], f"UnitRootResult.{fname} must be read-only"
 
 
-def test_t4_caller_levels_unchanged() -> None:
-    levels = _aligned()
-    orig_levels = levels.levels.copy()
-    orig_dates = levels.date_ord.copy()
-    spec = _spec()
-    unit_root_test(levels, spec)
-    np.testing.assert_array_equal(levels.levels, orig_levels)
-    np.testing.assert_array_equal(levels.date_ord, orig_dates)
+@pytest.mark.parametrize("scale", [Scale.LEVEL, Scale.LOG], ids=["LEVEL", "LOG"])
+def test_t4_caller_arrays_unchanged(scale: Scale) -> None:
+    """
+    No caller array changes: the ObservedSeries inputs and the AlignedLevels.
+
+    The raw input arrays stay writeable, so a write by align_levels or by
+    unit_root_test into a retained view changes them and this test fails.
+    """
+    n = 40
+    names = ("P", "Z")
+    raw_dates = [_dates(n), _dates(n)]
+    raw_values = [_vals(n, seed=1), _vals(n, seed=2)]
+    date_copies = [arr.copy() for arr in raw_dates]
+    value_copies = [arr.copy() for arr in raw_values]
+    series = [
+        ObservedSeries(name=name, unit="USD", date_ord=dates, values=values)
+        for name, dates, values in zip(names, raw_dates, raw_values, strict=True)
+    ]
+    levels = align_levels(series, start_ord=0, end_ord=n)
+    levels_before = levels.levels.copy()
+    dates_before = levels.date_ord.copy()
+
+    unit_root_test(levels, _spec(names=list(names), weights=[1.0, -0.5], scale=scale))
+
+    for date_original, date_kept in zip(raw_dates, date_copies, strict=True):
+        np.testing.assert_array_equal(date_original, date_kept, strict=True)
+    for value_original, value_kept in zip(raw_values, value_copies, strict=True):
+        np.testing.assert_array_equal(value_original, value_kept, strict=True)
+    np.testing.assert_array_equal(levels.levels, levels_before, strict=True)
+    np.testing.assert_array_equal(levels.date_ord, dates_before, strict=True)
 
 
 # ================================================================ S4.T5
@@ -429,53 +462,94 @@ def test_t6_insufficient_observations() -> None:
 # Digests in two fresh processes equal.
 
 
-_PROC_SCRIPT = textwrap.dedent("""\
-    import numpy as np
-    import sys
-    sys.path.insert(0, {src_path!r})
-    from riskquant.solutions.factor_regression.api import (
-        align_levels, unit_root_test,
-        CombinationTerm, LinearCombination, Scale, Deterministic, UnitRootSpec,
-    )
-    from riskquant.solutions.factor_regression.contracts import ObservedSeries
+# The child gets the parent's sys.path through the script text, as in
+# test_t7_cross_process_digests_equal of test_digest.py.  The inputs equal
+# those of _t7_result.
+_SUBPROCESS_SCRIPT = """
+import sys
+sys.path[0:0] = {paths!r}
+import json
+import numpy as np
+from riskquant.solutions.factor_regression.api import (
+    CombinationTerm,
+    Deterministic,
+    LinearCombination,
+    Scale,
+    UnitRootSpec,
+    align_levels,
+    unit_root_test,
+)
+from riskquant.solutions.factor_regression.contracts import ObservedSeries
+
+rng = np.random.default_rng(7)
+n = 50
+vals = np.cumsum(rng.standard_normal(n)) + 100.0
+s = ObservedSeries(
+    name="P",
+    unit="USD",
+    date_ord=np.arange(n, dtype=np.int32),
+    values=vals.astype(np.float64),
+)
+levels = align_levels([s], start_ord=0, end_ord=n)
+spec = UnitRootSpec(
+    combination=LinearCombination(
+        terms=(CombinationTerm(series="P", weight=1.0),),
+        scale=Scale.LEVEL,
+    ),
+    deterministic=Deterministic.CONSTANT,
+    lag=1,
+    rank_rtol=1e-10,
+)
+result = unit_root_test(levels, spec)
+print(json.dumps({{
+    "sample": result.sample_digest,
+    "spec": result.spec_digest,
+    "row": result.row_digest,
+}}))
+"""
+
+
+def _t7_result() -> UnitRootResult:
     rng = np.random.default_rng(7)
     n = 50
     vals = np.cumsum(rng.standard_normal(n)) + 100.0
-    s = ObservedSeries(name='P', unit='USD',
-                       date_ord=np.arange(n, dtype=np.int32),
-                       values=vals.astype(np.float64))
+    s = ObservedSeries(
+        name="P",
+        unit="USD",
+        date_ord=np.arange(n, dtype=np.int32),
+        values=vals.astype(np.float64),
+    )
     levels = align_levels([s], start_ord=0, end_ord=n)
-    spec = UnitRootSpec(
-        combination=LinearCombination(
-            terms=(CombinationTerm(series='P', weight=1.0),),
-            scale=Scale.LEVEL,
-        ),
-        deterministic=Deterministic.CONSTANT,
-        lag=1,
-        rank_rtol=1e-10,
-    )
-    result = unit_root_test(levels, spec)
-    print(result.sample_digest)
-    print(result.spec_digest)
-    print(result.row_digest)
-""")
+    return unit_root_test(levels, _spec(lag=1, rtol=1e-10))
 
 
-def _run_proc(src_path: str) -> list[str]:
-    script = _PROC_SCRIPT.format(src_path=src_path)
-    out = subprocess.check_output(
+def _run_child() -> dict[str, str]:
+    script = _SUBPROCESS_SCRIPT.format(paths=sys.path)
+    result = subprocess.run(
         [sys.executable, "-c", script],
+        capture_output=True,
         text=True,
+        check=True,
     )
-    return out.strip().split("\n")
+    out: dict[str, str] = json.loads(result.stdout.strip())
+    return out
 
 
 def test_t7_cross_process_digests_equal() -> None:
-    src_path = str(pathlib.Path(__file__).parents[3] / "src")
-    d1 = _run_proc(src_path)
-    d2 = _run_proc(src_path)
-    assert d1 == d2
-    assert all(len(d) == 64 for d in d1)
+    """
+    Two fresh processes give the same three digests, equal to this process
+    (C.9).
+    """
+    first = _run_child()
+    second = _run_child()
+    in_proc = _t7_result()
+    assert first == second, "digests differ between two fresh processes"
+    assert first == {
+        "sample": in_proc.sample_digest,
+        "spec": in_proc.spec_digest,
+        "row": in_proc.row_digest,
+    }, "digests of a fresh process differ from this process"
+    assert all(len(d) == 64 for d in first.values())
 
 
 # ================================================================ S4.T8
@@ -635,118 +709,63 @@ def test_t8_mutation_matrix() -> None:
 
 
 def test_t9_pyproject_has_no_statsmodels() -> None:
-    pyproject = pathlib.Path(__file__).parents[4] / "pyproject.toml"
-    if not pyproject.exists():
-        pytest.skip("pyproject.toml not found")
-    text = pyproject.read_text(encoding="utf-8")
+    pyproject = _REPO_ROOT / "pyproject.toml"
+    assert pyproject.is_file(), f"pyproject.toml not found at {pyproject}"
+    text = pyproject.read_text(encoding="utf-8").lower()
     assert "statsmodels" not in text, "pyproject.toml must not contain statsmodels"
 
 
-_FACADE_PACKAGE = "riskquant.solutions.factor_regression"
-_HASHING_MODULE = "riskquant.solutions.run_identity.hashing"
-_DIGEST_MODULE = f"{_FACADE_PACKAGE}.digest"
-_FACADE_ALLOWED = (
-    "numpy",
-    "riskquant.factor_regression",
-    "riskquant.exceptions",
-    _FACADE_PACKAGE,
+# The facade allow-list scan (D104) is S6.T14 of test_digest.py.  It runs in
+# the slice.  This scan adds the statsmodels rule of O-3 for the core and
+# facade packages and their tests.
+_STATSMODELS_SCAN_DIRS = (
+    "src/riskquant/factor_regression",
+    "src/riskquant/solutions/factor_regression",
+    "tests/factor_regression",
+    "tests/solutions/factor_regression",
 )
 
 
-def _module_identity(module_path: str) -> tuple[str, tuple[str, ...]]:
-    path = pathlib.PurePosixPath(module_path)
-    assert path.parts[0] == "src" and path.suffix == ".py"
-    parts = path.with_suffix("").parts[1:]
-    if parts[-1] == "__init__":
-        package = parts[:-1]
-        return ".".join(package), package
-    return ".".join(parts), parts[:-1]
+def _names_statsmodels(node: ast.AST) -> bool:
+    """True when an Import or ImportFrom node names statsmodels in any segment."""
+    names: list[str] = []
+    if isinstance(node, ast.Import):
+        names = [alias.name for alias in node.names]
+    elif isinstance(node, ast.ImportFrom):
+        names = [node.module or ""] + [alias.name for alias in node.names]
+    return any("statsmodels" in name.split(".") for name in names)
 
 
-def _resolved_imports(source: str, module_path: str) -> list[tuple[int, str]]:
-    _, package = _module_identity(module_path)
-    found: list[tuple[int, str]] = []
-    for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.Import):
-            found.extend((node.lineno, alias.name) for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            if node.level > 0:
-                if node.level - 1 >= len(package):
-                    found.append(
-                        (node.lineno, "relative import climbs above the top package")
-                    )
-                    continue
-                base_parts = package[: len(package) - (node.level - 1)]
-                base = ".".join(
-                    (*base_parts, node.module) if node.module else base_parts
-                )
-            else:
-                base = node.module or ""
-            for alias in node.names:
-                name = base if alias.name == "*" else f"{base}.{alias.name}"
-                found.append((node.lineno, name))
-    return found
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import statsmodels\n",
+        "import statsmodels.api as sm\n",
+        "from statsmodels.tsa.stattools import adfuller\n",
+        "from x import statsmodels\n",
+        "def f() -> None:\n    import statsmodels\n",
+    ],
+)
+def test_t9_statsmodels_detector_flags_every_import_form(source: str) -> None:
+    assert any(_names_statsmodels(node) for node in ast.walk(ast.parse(source)))
 
 
-def _is_allowed(name: str, *, is_digest: bool) -> bool:
-    if name.split(".")[0] in sys.stdlib_module_names:
-        return True
-    allowed = (*_FACADE_ALLOWED, _HASHING_MODULE) if is_digest else _FACADE_ALLOWED
-    return any(name == prefix or name.startswith(f"{prefix}.") for prefix in allowed)
-
-
-def _c21_violations(source: str, module_path: str) -> list[str]:
-    module_name, _ = _module_identity(module_path)
-    is_digest = module_name == _DIGEST_MODULE
-    return [
-        f"{module_path}:{lineno}: {name}"
-        for lineno, name in _resolved_imports(source, module_path)
-        if not _is_allowed(name, is_digest=is_digest)
-    ]
-
-
-def _facade_modules() -> list[tuple[str, str]]:
-    pkg = _FACADE_DIR
-    src_root = pkg.parents[2]
-    return [
-        (
-            f"src/{py_file.relative_to(src_root).as_posix()}",
-            py_file.read_text(encoding="utf-8"),
-        )
-        for py_file in sorted(pkg.rglob("*.py"))
-    ]
-
-
-def test_t9_facade_imports_obey_c21() -> None:
-    modules = _facade_modules()
-    violations = [
-        msg for path, source in modules for msg in _c21_violations(source, path)
-    ]
-    assert violations == [], "C.21 import violations:\n" + "\n".join(violations)
-
-
-def test_t9_only_digest_imports_hashing() -> None:
-    modules = _facade_modules()
-    hashing_users = sorted(
-        path
-        for path, source in modules
-        for _, name in _resolved_imports(source, path)
-        if name == _HASHING_MODULE or name.startswith(f"{_HASHING_MODULE}.")
-    )
-    assert hashing_users == ["src/riskquant/solutions/factor_regression/digest.py"]
-
-
-# ================================================================ S4.T11
-# _EXPECTED_PUBLIC matches api.__all__.
-
-
-def test_t11_public_surface() -> None:
-    from tests.solutions.factor_regression.test_api import _EXPECTED_PUBLIC  # type: ignore[import]
-
-    assert set(api.__all__) == _EXPECTED_PUBLIC
-    module = importlib.import_module("riskquant.solutions.factor_regression.api")
-    for name in api.__all__:
-        assert getattr(module, name, None) is not None, f"api.{name} resolves to None"
+def test_t9_no_statsmodels_import_in_slice_packages() -> None:
+    violations: list[str] = []
+    for rel in _STATSMODELS_SCAN_DIRS:
+        directory = _REPO_ROOT / rel
+        assert directory.is_dir(), f"directory not found: {directory}"
+        files = sorted(directory.rglob("*.py"))
+        assert files, f"no .py file under {directory}"
+        for path in files:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            violations.extend(
+                f"{path.relative_to(_REPO_ROOT).as_posix()}:{node.lineno}"
+                for node in ast.walk(tree)
+                if isinstance(node, (ast.Import, ast.ImportFrom))
+                and _names_statsmodels(node)
+            )
+    assert violations == [], "statsmodels imports:\n" + "\n".join(violations)
 
 
 # ================================================================ S4.T12
@@ -767,7 +786,7 @@ def test_t12_deterministic_values_match_codes() -> None:
 # Independent oracle for unit_root_spec_digest and unit_root_sample_digest.
 
 
-def _oracle_digest_array(arr: np.ndarray) -> str:
+def _oracle_digest_array(arr: NDArray[Any]) -> str:
     h = hashlib.sha256()
     h.update(str(arr.dtype.str).encode("utf-8"))
     h.update(b"|")
@@ -777,7 +796,7 @@ def _oracle_digest_array(arr: np.ndarray) -> str:
     return h.hexdigest()
 
 
-def _oracle_digest_named(**arrays: np.ndarray) -> str:
+def _oracle_digest_named(**arrays: NDArray[Any]) -> str:
     h = hashlib.sha256()
     for name, arr in arrays.items():
         h.update(name.encode("utf-8"))
@@ -787,7 +806,7 @@ def _oracle_digest_named(**arrays: np.ndarray) -> str:
     return h.hexdigest()
 
 
-def _text_uint8(text: str) -> np.ndarray:
+def _text_uint8(text: str) -> NDArray[np.uint8]:
     return np.frombuffer(text.encode("utf-8"), dtype=np.uint8).copy()
 
 
@@ -796,7 +815,7 @@ def _oracle_unit_root_spec_digest(
     engine_version: str,
     term_names: list[str],
     term_units: list[str],
-    weights: np.ndarray,
+    weights: NDArray[np.float64],
     scale: int,
     deterministic: int,
     lag: int,
@@ -806,7 +825,9 @@ def _oracle_unit_root_spec_digest(
     critical_value_source: str,
 ) -> str:
     # A.3 field order exactly.
-    terms_text = "\x1e".join(f"T\x1f{n}\x1f{u}" for n, u in zip(term_names, term_units))
+    terms_text = "\x1e".join(
+        f"T\x1f{n}\x1f{u}" for n, u in zip(term_names, term_units, strict=True)
+    )
     return _oracle_digest_named(
         schema_version=np.array([1], dtype=np.int64),
         engine_version=_text_uint8(engine_version),
@@ -824,11 +845,11 @@ def _oracle_unit_root_spec_digest(
 
 def _oracle_unit_root_sample_digest(
     *,
-    row_start_date_ord: np.ndarray,
-    row_end_date_ord: np.ndarray,
+    row_start_date_ord: NDArray[np.int32],
+    row_end_date_ord: NDArray[np.int32],
     regressor_names: list[str],
-    y: np.ndarray,
-    x: np.ndarray,
+    y: NDArray[np.float64],
+    x: NDArray[np.float64],
 ) -> str:
     # A.3 column_names grammar: Y\x1fdz, C\x1f, then X\x1f{label} for each label.
     parts = ["Y\x1fdz", "C\x1f"] + [f"X\x1f{n}" for n in regressor_names]
@@ -849,6 +870,7 @@ def test_t13_spec_digest_oracle(det: Deterministic) -> None:
     cv = labels.CRITICAL_VALUE_SOURCES[int(det.value)]
     actual = digest.unit_root_spec_digest(
         engine_version=ENGINE_VERSION,
+        test_kind=int(codes.TEST_ADF),
         term_names=["P", "Z"],
         term_units=["EUR", "EUR"],
         weights=w,
@@ -883,17 +905,17 @@ def test_t13_sample_digest_oracle(det: Deterministic) -> None:
     start = np.arange(0, n, dtype=np.int32)
     end = np.arange(1, n + 1, dtype=np.int32)
     y = np.asarray(rng.standard_normal(n), dtype=np.float64)
-    X = np.asarray(rng.standard_normal((n, k)), dtype=np.float64)
+    x = np.asarray(rng.standard_normal((n, k)), dtype=np.float64)
     reg_names = ["z_lag1", "dz_lag1", "dz_lag2"]
     if det == Deterministic.CONSTANT_TREND:
-        reg_names = ["trend"] + reg_names
-        X = np.ascontiguousarray(np.column_stack([np.arange(n), X]), dtype=np.float64)
+        reg_names = ["trend", *reg_names]
+        x = np.ascontiguousarray(np.column_stack([np.arange(n), x]), dtype=np.float64)
 
     actual = digest.unit_root_sample_digest(
         row_start_date_ord=start,
         row_end_date_ord=end,
         y=y,
-        x=X,
+        x=x,
         regressor_names=reg_names,
     )
     oracle = _oracle_unit_root_sample_digest(
@@ -901,7 +923,7 @@ def test_t13_sample_digest_oracle(det: Deterministic) -> None:
         row_end_date_ord=end,
         regressor_names=reg_names,
         y=y,
-        x=X,
+        x=x,
     )
     assert actual == oracle, f"sample_digest mismatch for {det.name}"
 
@@ -931,11 +953,8 @@ def test_t14_rank_deficiency() -> None:
         unit_root_test(levels, spec)
     err = exc_info.value
     assert err.reason == "RANK_DEFICIENT"
-    # Column names must come from ADF labels (const, trend, z_lag1)
-    adf_labels = {"const", "trend", "z_lag1"}
-    assert set(err.column_names).issubset(adf_labels), (
-        f"Unexpected column names: {err.column_names}"
-    )
+    # The ADF column labels of A.3, in design order.
+    assert err.column_names == ("const", "trend", "z_lag1")
     assert err.__cause__ is not None
 
 
@@ -1076,7 +1095,7 @@ def test_api_does_not_import_hashing() -> None:
 def test_type_check_order_spec_first() -> None:
     """TypeError for wrong spec type is raised before wrong levels type."""
     with pytest.raises(TypeError) as exc_info:
-        unit_root_test("not_levels", "not_spec")  # type: ignore[arg-type]
+        unit_root_test(cast(Any, "not_levels"), cast(Any, "not_spec"))
     assert "UnitRootSpec" in str(exc_info.value)
 
 
@@ -1084,53 +1103,90 @@ def test_type_check_levels_second() -> None:
     """TypeError for wrong levels type with valid spec."""
     spec = _spec()
     with pytest.raises(TypeError) as exc_info:
-        unit_root_test("not_levels", spec)  # type: ignore[arg-type]
+        unit_root_test(cast(Any, "not_levels"), spec)
     assert "AlignedLevels" in str(exc_info.value)
 
 
+class _PlainSubclass(np.ndarray[Any, Any]):
+    """A trivial subclass of numpy.ndarray with no new behaviour."""
+
+
+_ARRAY_KINDS = ("masked", "subclass")
+
+
+def _as_kind(arr: NDArray[Any], kind: str) -> NDArray[Any]:
+    """Return ``arr`` as a numpy.ma.MaskedArray or as a view of _PlainSubclass."""
+    if kind == "masked":
+        return ma.array(arr)
+    return arr.view(_PlainSubclass)
+
+
+def test_array_kinds_are_ndarray_subclasses() -> None:
+    base = np.ones(3, dtype=np.float64)
+    for kind in _ARRAY_KINDS:
+        arr = _as_kind(base, kind)
+        assert isinstance(arr, np.ndarray)
+        assert type(arr) is not np.ndarray
+        assert arr.dtype == np.float64
+
+
+@pytest.mark.parametrize("kind", _ARRAY_KINDS)
 @pytest.mark.parametrize(
-    "arg_name",
-    ["row_start_date_ord", "row_end_date_ord", "y", "x"],
+    "arg_name", ["row_start_date_ord", "row_end_date_ord", "y", "x"]
 )
-def test_masked_array_raises_for_sample_digest(arg_name: str) -> None:
+def test_ndarray_subclass_raises_for_sample_digest(arg_name: str, kind: str) -> None:
     n, k = 10, 2
-    start = np.arange(n, dtype=np.int32)
-    end = np.arange(1, n + 1, dtype=np.int32)
-    y = np.ones(n, dtype=np.float64)
-    X = np.ones((n, k), dtype=np.float64)
-    kwargs: dict = {
-        "row_start_date_ord": start,
-        "row_end_date_ord": end,
-        "y": y,
-        "x": X,
+    kwargs: dict[str, Any] = {
+        "row_start_date_ord": np.arange(n, dtype=np.int32),
+        "row_end_date_ord": np.arange(1, n + 1, dtype=np.int32),
+        "y": np.ones(n, dtype=np.float64),
+        "x": np.ones((n, k), dtype=np.float64),
         "regressor_names": ["z_lag1", "dz_lag1"],
     }
-    if arg_name in ("row_start_date_ord", "row_end_date_ord"):
-        kwargs[arg_name] = ma.array(start)
-    elif arg_name == "y":
-        kwargs["y"] = ma.array(y)
-    else:
-        kwargs["x"] = ma.array(X)
+    digest.unit_root_sample_digest(**kwargs)  # control: the plain inputs pass
+    kwargs[arg_name] = _as_kind(kwargs[arg_name], kind)
     with pytest.raises(TypeError):
         digest.unit_root_sample_digest(**kwargs)
 
 
-def test_masked_array_raises_for_spec_digest_weights() -> None:
-    w = ma.array(np.array([1.0], dtype=np.float64))
+@pytest.mark.parametrize("kind", _ARRAY_KINDS)
+def test_ndarray_subclass_raises_for_spec_digest_weights(kind: str) -> None:
+    kwargs: dict[str, Any] = {
+        "engine_version": ENGINE_VERSION,
+        "test_kind": int(codes.TEST_ADF),
+        "term_names": ["P"],
+        "term_units": ["USD"],
+        "weights": np.array([1.0], dtype=np.float64),
+        "scale": int(codes.SCALE_LEVEL),
+        "deterministic": int(codes.DET_CONSTANT),
+        "lag": 0,
+        "rank_rtol": 1e-10,
+        "start_ord": 0,
+        "end_ord": 100,
+        "critical_value_source": "src",
+    }
+    digest.unit_root_spec_digest(**kwargs)  # control: the plain inputs pass
+    kwargs["weights"] = _as_kind(kwargs["weights"], kind)
     with pytest.raises(TypeError):
-        digest.unit_root_spec_digest(
-            engine_version=ENGINE_VERSION,
-            term_names=["P"],
-            term_units=["USD"],
-            weights=w,  # type: ignore[arg-type]
-            scale=int(codes.SCALE_LEVEL),
-            deterministic=int(codes.DET_CONSTANT),
-            lag=0,
-            rank_rtol=1e-10,
-            start_ord=0,
-            end_ord=100,
-            critical_value_source="src",
-        )
+        digest.unit_root_spec_digest(**kwargs)
+
+
+@pytest.mark.parametrize("kind", _ARRAY_KINDS)
+@pytest.mark.parametrize(
+    "field_name",
+    ["critical_values", "coef", "se", "row_start_date_ord", "row_end_date_ord"],
+)
+def test_ndarray_subclass_raises_for_unit_root_result_field(
+    field_name: str, kind: str
+) -> None:
+    result = _run_ok()
+    kwargs: dict[str, Any] = {
+        f.name: getattr(result, f.name) for f in dataclasses.fields(UnitRootResult)
+    }
+    UnitRootResult(**kwargs)  # control: the fields of a real result pass
+    kwargs[field_name] = _as_kind(np.array(kwargs[field_name]), kind)
+    with pytest.raises(TypeError):
+        UnitRootResult(**kwargs)
 
 
 def test_two_equal_calls_give_equal_results() -> None:
