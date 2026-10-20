@@ -9,6 +9,8 @@ This module is the only public import surface of
 * ``fit_ols``: rows, design, rank gate, OLS fit, diagnostics and digests
   (C.4 to C.17).
 * ``wald_test``: joint Wald test on a fit (C.18).
+* ``unit_root_test``: ADF unit-root test of a linear combination of aligned
+  levels (C.2 to C.10).
 
 ``__all__`` also names the contract types of ``contracts.py`` and the facade
 exceptions of ``errors.py``.
@@ -22,6 +24,8 @@ core exception to its facade exception. Every facade raise of a mapped error
 uses ``raise ... from core_error``, so ``__cause__`` is the core error:
 
 * ``CoreAlignmentError`` to ``AlignmentError``.
+* ``CoreScaleDomainError`` to ``ScaleDomainError`` with the series name, the
+  date of the offending aligned level and the level.
 * ``CoreDomainError`` to ``TransformDomainError`` with the series name, the
   transform name, the date of the offending aligned level and the level.
 * ``CoreSampleSizeError`` to ``InsufficientObservationsError`` with the core
@@ -36,7 +40,10 @@ uses ``raise ... from core_error``, so ``__cause__`` is the core error:
 * ``CoreInputError`` with ``INPUT_NON_FINITE`` during row, design or fit work
   to ``DegenerateFitError``: a transform result overflowed to a non-finite
   number (backlog R-008). ``CoreInputError`` on the restriction or the
-  right-hand side of ``wald_test`` to ``RestrictionError``. Every other
+  right-hand side of ``wald_test`` to ``RestrictionError``.
+  ``CoreInputError`` with ``INPUT_NON_FINITE`` during the ``"adf"`` stage of
+  ``unit_root_test`` to ``DegenerateFitError`` with no column names: the
+  combination or a difference of it overflowed. Every other
   ``CoreInputError`` is an internal contract violation and propagates
   unchanged.
 * ``CoreRestrictionError`` to ``RestrictionError``.
@@ -194,7 +201,8 @@ class _ErrorContext:
     ----------
     stage
         The core call: ``align_core``, ``build_rows``, ``assemble_design``,
-        ``fit_core`` (with ``diagnose``) or ``wald_core``.
+        ``fit_core`` (with ``diagnose``), ``wald_core``, ``combine_core``
+        (stage ``"combination"``) or ``adf_core`` (stage ``"adf"``).
     term_names
         Series name of each term, response first (the ``build_rows`` term
         order).
@@ -353,7 +361,7 @@ def _map_core_error(
                 "from it, exceeds the float64 range",
             )
         # Overflow of the combination or a difference thereof: z has inf.
-        # Positions are not decoded — adf_core and fit_core inside it both
+        # Positions are not decoded: adf_core and fit_core inside it both
         # report operand 0, so the position index has two meanings (A.1).
         if core_error.reason == codes.INPUT_NON_FINITE and context.stage == "adf":
             return _restated(
@@ -885,7 +893,9 @@ def unit_root_test(levels: AlignedLevels, spec: UnitRootSpec) -> UnitRootResult:
         ``spec`` is not a ``UnitRootSpec`` or ``levels`` is not an
         ``AlignedLevels``.
     ModelSpecError
-        A combination series is not in ``levels`` (C.2).
+        A combination series is not in ``levels`` (C.2), or a core parameter
+        check fails (for example a rank_rtol out of range, which the facade
+        checks earlier but the core re-checks).
     ScaleDomainError
         A ``LOG``-scale term has a level at or below zero (C.3).
     InsufficientObservationsError
@@ -895,9 +905,6 @@ def unit_root_test(levels: AlignedLevels, spec: UnitRootSpec) -> UnitRootResult:
     DegenerateFitError
         Exact fit, zero response variance, or an overflow to non-finite
         of the combination or a difference of it (C.10).
-    ModelSpecError
-        A core parameter check fails (for example a rank_rtol out of
-        range, which the facade checks earlier but the core re-checks).
 
     Notes
     -----
@@ -935,14 +942,18 @@ def unit_root_test(levels: AlignedLevels, spec: UnitRootSpec) -> UnitRootResult:
     scale = int(spec.combination.scale.value)
     lag = spec.lag
 
-    # ADF column labels — built before the core calls because a mapping error
+    # ADF column labels, built before the core calls because a mapping error
     # needs them (C.10, A.3).
     has_trend = spec.deterministic == Deterministic.CONSTANT_TREND
     col_labels: list[str] = [_INTERCEPT_NAME]
     if has_trend:
         col_labels.append("trend")
     col_labels.append("z_lag1")
-    for q in range(1, lag + 1):
+    # Bound the loop by m. The labels are read only when n = m - 1 - lag is at
+    # least 20, so lag is at most m - 21. For lag at least m the core raises
+    # the size error before any label is read. An unbounded loop would exhaust
+    # memory for a lag near 2**63 - 1, which S4.T2 accepts.
+    for q in range(1, min(lag, int(levels.date_ord.shape[0])) + 1):
         col_labels.append(f"dz_lag{q}")
     column_names: tuple[str, ...] = tuple(col_labels)
 

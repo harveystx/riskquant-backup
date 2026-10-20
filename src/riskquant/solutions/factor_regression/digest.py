@@ -36,6 +36,22 @@ Canonical byte layout summary (A.6)
 ``restriction_digest(restriction, rhs)``
     Arrays: ``restriction`` float64 C-order, ``rhs`` float64 C-order.
 
+``unit_root_spec_digest(...)`` (A.3)
+    Arrays in this order: ``schema_version`` int64[1] (constant 1),
+    ``engine_version`` uint8 (UTF-8), ``test_kind`` int8[ADF code],
+    ``terms`` uint8 (one line ``T\\x1f{name}\\x1f{unit}`` per term, joined
+    by ``\\x1e``), ``weights`` float64 ``(n_terms,)``, ``scale`` int8,
+    ``deterministic`` int8, ``lag`` int64, ``rank_rtol`` float64,
+    ``window`` int32[start_ord, end_ord], ``critical_value_source`` uint8
+    (UTF-8 of the A.2 text of the declared case).
+
+``unit_root_sample_digest(start, end, y, x, regressor_names)`` (A.3)
+    Arrays: ``row_start_date_ord`` int32, ``row_end_date_ord`` int32,
+    ``column_names`` uint8, ``y`` float64 ``(n,)``, ``X`` float64 ``(n, k)``
+    C-order. ``column_names`` text: lines ``Y\\x1fdz``, ``C\\x1f``, then
+    ``X\\x1f{label}`` per design column after the intercept, joined by
+    ``\\x1e``.
+
 Stability
 ---------
 Digests are stable across Python processes and platforms as long as

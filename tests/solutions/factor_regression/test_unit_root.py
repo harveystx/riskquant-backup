@@ -29,6 +29,15 @@ Extra tests named in decision 10
 - masked-array and ndarray-subclass rejection for every array arg
 - caller arrays unchanged after align_levels and unit_root_test
 - two equal calls give equal results
+
+Fix round 2
+-----------
+- R-001: a lag far above m raises the C.6 size error at once (child process
+  with a timeout); exact labels for lag 3 with CONSTANT_TREND
+- R-002: row dates (A.1), labels (A.3), units, window, exclusions, critical
+  levels, rank_rtol reaches the core, float storage of rank_rtol
+- R-003: the three digests of a result against a hashlib and numpy oracle
+  built from the input levels; the A.2 and A.4 texts typed in this file
 """
 
 from __future__ import annotations
@@ -37,6 +46,7 @@ import ast
 import dataclasses
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import warnings
@@ -1198,3 +1208,449 @@ def test_two_equal_calls_give_equal_results() -> None:
     assert r1.sample_digest == r2.sample_digest
     assert r1.row_digest == r2.row_digest
     assert r1.statistic == r2.statistic
+
+
+# ================================================================ Fix round 2
+# R-001: the dz label loop is bounded. R-002, R-003: end-to-end checks of
+# unit_root_test results. Expected values come from A.1 to A.4, A.8 and the
+# test inputs, not from facade or digest code.
+
+# A.2 and A.4 texts, typed from the appendix.
+_TAU_C_SOURCE = "MacKinnon (2010) QED WP 1227, Table 2 tau_c, N=1, declared weights"
+_TAU_CT_SOURCE = "MacKinnon (2010) QED WP 1227, Table 3 tau_ct, N=1, declared weights"
+_H0_CONSTANT = (
+    "H0: the combination has a unit root (gamma = 0) and no drift. "
+    "H1: it is stationary around a constant."
+)
+_H0_CONSTANT_TREND = (
+    "H0: the combination has a unit root (gamma = 0). "
+    "H1: it is stationary around a linear trend."
+)
+
+# A.8 code values, typed from the appendix.
+_A8_SCALE_LEVEL = 0
+_A8_SCALE_LOG = 1
+_A8_DET_CONSTANT = 0
+_A8_DET_CONSTANT_TREND = 1
+_A8_TEST_ADF = 0
+
+_A8_DET_CODE = {
+    Deterministic.CONSTANT: _A8_DET_CONSTANT,
+    Deterministic.CONSTANT_TREND: _A8_DET_CONSTANT_TREND,
+}
+_SOURCE_TEXT = {
+    Deterministic.CONSTANT: _TAU_C_SOURCE,
+    Deterministic.CONSTANT_TREND: _TAU_CT_SOURCE,
+}
+_H0_TEXT = {
+    Deterministic.CONSTANT: _H0_CONSTANT,
+    Deterministic.CONSTANT_TREND: _H0_CONSTANT_TREND,
+}
+
+_CHILD_TIMEOUT_S = 20
+_CHILD_ADDRESS_SPACE_CAP = 2 * 1024**3
+
+# The child gets the parent's sys.path through the script text, as in
+# test_t7_cross_process_digests_equal of test_digest.py.  The address-space
+# cap is set after the imports, so that it bounds the unit_root_test call
+# only.  A regression to an unbounded label loop then fails with MemoryError
+# (POSIX) or with the parent timeout (every platform), and does not hang.
+_HUGE_LAG_SCRIPT = """
+import sys
+sys.path[0:0] = {paths!r}
+import json
+import numpy as np
+from riskquant.solutions.factor_regression.api import (
+    CombinationTerm,
+    Deterministic,
+    InsufficientObservationsError,
+    LinearCombination,
+    Scale,
+    UnitRootSpec,
+    align_levels,
+    unit_root_test,
+)
+from riskquant.solutions.factor_regression.contracts import ObservedSeries
+
+m = 40
+lag = {lag!r}
+series = ObservedSeries(
+    name="P",
+    unit="USD",
+    date_ord=np.arange(m, dtype=np.int32),
+    values=np.cumsum(np.random.default_rng(3).standard_normal(m)) + 50.0,
+)
+levels = align_levels([series], start_ord=0, end_ord=m)
+spec = UnitRootSpec(
+    combination=LinearCombination(
+        terms=(CombinationTerm(series="P", weight=1.0),),
+        scale=Scale.LEVEL,
+    ),
+    deterministic=Deterministic.CONSTANT,
+    lag=lag,
+    rank_rtol=1e-10,
+)
+try:
+    import resource
+except ImportError:
+    resource = None
+if resource is not None:
+    soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+    cap = {cap!r}
+    if hard != resource.RLIM_INFINITY:
+        cap = min(cap, hard)
+    resource.setrlimit(resource.RLIMIT_AS, (cap, hard))
+try:
+    unit_root_test(levels, spec)
+except InsufficientObservationsError as err:
+    cause = err.__cause__
+    print(json.dumps({{
+        "error": type(err).__name__,
+        "reason": err.reason,
+        "n_available": err.n_available,
+        "n_required": err.n_required,
+        "cause": None if cause is None else type(cause).__name__,
+    }}))
+else:
+    print(json.dumps({{"error": None}}))
+"""
+
+
+@pytest.mark.parametrize("lag", [2**63 - 1, 10**9], ids=["lag-int64-max", "lag-1e9"])
+def test_r001_huge_lag_raises_size_error_in_child(lag: int) -> None:
+    """
+    A lag far above m raises the C.6 size error at once (R-001, S4.T2, C.6).
+
+    S4.T2 accepts lag ``2**63 - 1``.  The column labels must not be built for
+    every lag up to the declared lag before the core size check runs.
+    """
+    m = 40
+    script = _HUGE_LAG_SCRIPT.format(
+        paths=sys.path, lag=lag, cap=_CHILD_ADDRESS_SPACE_CAP
+    )
+    # One BLAS thread keeps the child address space small under the cap.
+    env = dict(os.environ)
+    for key in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+        env[key] = "1"
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=_CHILD_TIMEOUT_S,
+            env=env,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(
+            f"unit_root_test with lag {lag} did not stop in {_CHILD_TIMEOUT_S} s"
+        )
+    assert completed.returncode == 0, completed.stderr
+    out = json.loads(completed.stdout.strip().splitlines()[-1])
+    assert out == {
+        "error": "InsufficientObservationsError",
+        "reason": "SAMPLE_ROWS_BELOW_TABLE_MINIMUM",
+        "n_available": m - 1 - lag,
+        "n_required": 20,
+        "cause": "CoreSampleSizeError",
+    }
+
+
+def test_r001_column_names_lag3_constant_trend() -> None:
+    result = _run_ok(n=40, lag=3, det=Deterministic.CONSTANT_TREND)
+    assert result.column_names == (
+        "const",
+        "trend",
+        "z_lag1",
+        "dz_lag1",
+        "dz_lag2",
+        "dz_lag3",
+    )
+
+
+# ---- R-002, R-003 fixtures
+
+
+def _step_series(
+    name: str, unit: str, dates: NDArray[np.int32], seed: int
+) -> ObservedSeries:
+    rng = np.random.default_rng(seed)
+    values = np.asarray(
+        np.exp(np.cumsum(0.01 * rng.standard_normal(dates.shape[0])) + 4.0),
+        dtype=np.float64,
+    )
+    return ObservedSeries(name=name, unit=unit, date_ord=dates, values=values)
+
+
+def test_r002_row_dates_follow_a1_with_non_unit_step() -> None:
+    m, lag, step, first = 40, 2, 7, 1000
+    dates = np.arange(first, first + step * m, step, dtype=np.int32)
+    levels = align_levels(
+        [_step_series("P", "USD", dates, seed=4)],
+        start_ord=first,
+        end_ord=first + step * m,
+    )
+    result = unit_root_test(levels, _spec(lag=lag))
+    t = np.arange(lag + 1, m)  # A.1: t = p+1 .. m-1
+    np.testing.assert_array_equal(
+        result.row_start_date_ord, dates[t - 1].astype(np.int32), strict=True
+    )
+    np.testing.assert_array_equal(
+        result.row_end_date_ord, dates[t].astype(np.int32), strict=True
+    )
+    assert result.n_obs == m - 1 - lag
+
+
+@pytest.mark.parametrize(
+    ("lag", "expected"),
+    [
+        (2, ("const", "trend", "z_lag1", "dz_lag1", "dz_lag2")),
+        (
+            12,
+            (
+                "const",
+                "trend",
+                "z_lag1",
+                "dz_lag1",
+                "dz_lag2",
+                "dz_lag3",
+                "dz_lag4",
+                "dz_lag5",
+                "dz_lag6",
+                "dz_lag7",
+                "dz_lag8",
+                "dz_lag9",
+                "dz_lag10",
+                "dz_lag11",
+                "dz_lag12",
+            ),
+        ),
+    ],
+    ids=["lag-2", "lag-12"],
+)
+def test_r002_column_names_constant_trend(lag: int, expected: tuple[str, ...]) -> None:
+    result = _run_ok(n=60, lag=lag, det=Deterministic.CONSTANT_TREND)
+    assert result.column_names == expected
+
+
+def test_r002_units_in_declared_term_order() -> None:
+    n = 40
+    dates = _dates(n)
+    levels = align_levels(
+        [
+            _step_series("A", "USD", dates, seed=11),
+            _step_series("B", "EUR", dates, seed=12),
+            _step_series("C", "GBP", dates, seed=13),
+        ],
+        start_ord=0,
+        end_ord=n,
+    )
+    result = unit_root_test(levels, _spec(names=["C", "A"], weights=[1.0, -1.0]))
+    assert result.units == ("GBP", "USD")
+
+
+def test_r002_window_is_the_align_levels_window() -> None:
+    n = 40
+    dates = _dates(n, start=10)
+    levels = align_levels(
+        [_step_series("P", "USD", dates, seed=5)], start_ord=0, end_ord=100
+    )
+    result = unit_root_test(levels, _spec())
+    assert result.window == (0, 100)
+    assert result.window == (levels.start_ord, levels.end_ord)
+
+
+def test_r002_exclusions_are_the_alignment_exclusions() -> None:
+    n = 45
+    full = _dates(n)
+    gap = np.delete(full, 5)
+    levels = align_levels(
+        [_step_series("P", "USD", full, seed=6), _step_series("Q", "USD", gap, seed=7)],
+        start_ord=0,
+        end_ord=n,
+    )
+    assert len(levels.exclusions) >= 1
+    result = unit_root_test(levels, _spec(names=["P", "Q"], weights=[1.0, -1.0]))
+    assert result.exclusions == levels.exclusions
+
+
+def test_r002_critical_levels() -> None:
+    assert _run_ok().critical_levels == (0.01, 0.05, 0.10)
+
+
+def test_r002_rank_rtol_reaches_adf_core() -> None:
+    from riskquant.factor_regression import adf
+
+    real_adf_core = adf.adf_core
+    with patch.object(adf, "adf_core", side_effect=real_adf_core) as recorder:
+        unit_root_test(_aligned(), _spec(rtol=3e-7))
+    assert recorder.call_count == 1
+    passed = recorder.call_args.args[3]
+    assert type(passed) is float
+    assert passed == 3e-7
+
+
+def test_r002_unit_root_spec_stores_float32_rank_rtol_as_float() -> None:
+    spec = UnitRootSpec(
+        combination=_spec().combination,
+        deterministic=Deterministic.CONSTANT,
+        lag=0,
+        rank_rtol=cast(float, np.float32(1e-6)),
+    )
+    assert type(spec.rank_rtol) is float
+    assert spec.rank_rtol == float(np.float32(1e-6))
+    assert type(unit_root_test(_aligned(), spec).rank_rtol) is float
+
+
+# ---- R-003: digest oracle built from the input levels
+
+
+def _oracle_adf(
+    log_levels: list[NDArray[np.float64]],
+    weights: list[float],
+    lag: int,
+    has_trend: bool,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], list[str]]:
+    """
+    Rebuild the A.1 response, design and regressor labels from the levels.
+
+    ``z`` is the left-to-right sum of ``w_i * log(v_i)`` (C.2).  The design
+    columns are ones, the trend ``t - (p + 1)``, ``z_{t-1}``, then
+    ``dz_{t-1} .. dz_{t-p}`` (A.1).  The labels follow A.3.
+    """
+    z = weights[0] * np.log(log_levels[0])
+    for w, v in zip(weights[1:], log_levels[1:], strict=True):
+        z = z + w * np.log(v)
+    m = int(z.shape[0])
+    rows = np.arange(lag + 1, m)  # t = p+1 .. m-1
+    dz_at = {t: z[t] - z[t - 1] for t in range(1, m)}
+    y = np.array([dz_at[int(t)] for t in rows], dtype=np.float64)
+    columns: list[NDArray[np.float64]] = [np.ones(rows.shape[0], dtype=np.float64)]
+    names: list[str] = []
+    if has_trend:
+        columns.append((rows - (lag + 1)).astype(np.float64))
+        names.append("trend")
+    columns.append(np.array([z[int(t) - 1] for t in rows], dtype=np.float64))
+    names.append("z_lag1")
+    for q in range(1, lag + 1):
+        columns.append(np.array([dz_at[int(t) - q] for t in rows], dtype=np.float64))
+        names.append(f"dz_lag{q}")
+    x = np.ascontiguousarray(np.column_stack(columns), dtype=np.float64)
+    return y, x, names
+
+
+@pytest.mark.parametrize("det", [Deterministic.CONSTANT, Deterministic.CONSTANT_TREND])
+def test_r003_result_digests_equal_the_oracle(det: Deterministic) -> None:
+    m, lag, step, first = 48, 2, 3, 500
+    start_ord, end_ord = 400, 700
+    rank_rtol = 2e-9
+    dates = np.arange(first, first + step * m, step, dtype=np.int32)
+    p_series = _step_series("P", "USD", dates, seed=21)
+    q_series = _step_series("Q", "EUR", dates, seed=22)
+    levels = align_levels([p_series, q_series], start_ord=start_ord, end_ord=end_ord)
+    weights = [-1.0, -0.75]
+    spec = _spec(
+        names=["Q", "P"],
+        weights=weights,
+        scale=Scale.LOG,
+        det=det,
+        lag=lag,
+        rtol=rank_rtol,
+    )
+    result = unit_root_test(levels, spec)
+
+    has_trend = det == Deterministic.CONSTANT_TREND
+    y, x, names = _oracle_adf(
+        [q_series.values, p_series.values], weights, lag, has_trend
+    )
+    t = np.arange(lag + 1, m)
+    row_start = dates[t - 1].astype(np.int32)
+    row_end = dates[t].astype(np.int32)
+
+    expected_sample = _oracle_unit_root_sample_digest(
+        row_start_date_ord=row_start,
+        row_end_date_ord=row_end,
+        regressor_names=names,
+        y=y,
+        x=x,
+    )
+    expected_spec = _oracle_unit_root_spec_digest_a8(
+        term_names=["Q", "P"],
+        term_units=["EUR", "USD"],
+        weights=np.array(weights, dtype=np.float64),
+        scale=_A8_SCALE_LOG,
+        deterministic=_A8_DET_CODE[det],
+        lag=lag,
+        rank_rtol=rank_rtol,
+        start_ord=start_ord,
+        end_ord=end_ord,
+        critical_value_source=_SOURCE_TEXT[det],
+    )
+    expected_row = _oracle_digest_named(
+        row_start_date_ord=row_start, row_end_date_ord=row_end
+    )
+    assert result.sample_digest == expected_sample
+    assert result.spec_digest == expected_spec
+    assert result.row_digest == expected_row
+
+
+def _oracle_unit_root_spec_digest_a8(
+    *,
+    term_names: list[str],
+    term_units: list[str],
+    weights: NDArray[np.float64],
+    scale: int,
+    deterministic: int,
+    lag: int,
+    rank_rtol: float,
+    start_ord: int,
+    end_ord: int,
+    critical_value_source: str,
+) -> str:
+    # A.3 field order, with the A.8 TEST_ADF value typed in this file.
+    terms_text = "\x1e".join(
+        f"T\x1f{n}\x1f{u}" for n, u in zip(term_names, term_units, strict=True)
+    )
+    return _oracle_digest_named(
+        schema_version=np.array([1], dtype=np.int64),
+        engine_version=_text_uint8(ENGINE_VERSION),
+        test_kind=np.array([_A8_TEST_ADF], dtype=np.int8),
+        terms=_text_uint8(terms_text),
+        weights=weights,
+        scale=np.array([scale], dtype=np.int8),
+        deterministic=np.array([deterministic], dtype=np.int8),
+        lag=np.array([lag], dtype=np.int64),
+        rank_rtol=np.array([rank_rtol], dtype=np.float64),
+        window=np.array([start_ord, end_ord], dtype=np.int32),
+        critical_value_source=_text_uint8(critical_value_source),
+    )
+
+
+# ---- R-003: fixed texts of A.2 and A.4
+
+
+def test_r003_label_texts_equal_a2_and_a4() -> None:
+    assert labels.CRITICAL_VALUE_SOURCES == {
+        _A8_DET_CONSTANT: _TAU_C_SOURCE,
+        _A8_DET_CONSTANT_TREND: _TAU_CT_SOURCE,
+    }
+    assert labels.NULL_HYPOTHESIS_TEXTS == {
+        _A8_DET_CONSTANT: _H0_CONSTANT,
+        _A8_DET_CONSTANT_TREND: _H0_CONSTANT_TREND,
+    }
+
+
+@pytest.mark.parametrize("det", [Deterministic.CONSTANT, Deterministic.CONSTANT_TREND])
+def test_r003_result_texts_equal_a2_and_a4(det: Deterministic) -> None:
+    result = _run_ok(det=det)
+    assert result.critical_value_source == _SOURCE_TEXT[det]
+    assert result.null_hypothesis == _H0_TEXT[det]
+
+
+def test_r003_a8_codes_used_by_the_oracle() -> None:
+    # The oracle types the A.8 values; this pins them to the core codes.
+    assert int(codes.SCALE_LEVEL) == _A8_SCALE_LEVEL
+    assert int(codes.SCALE_LOG) == _A8_SCALE_LOG
+    assert int(codes.DET_CONSTANT) == _A8_DET_CONSTANT
+    assert int(codes.DET_CONSTANT_TREND) == _A8_DET_CONSTANT_TREND
+    assert int(codes.TEST_ADF) == _A8_TEST_ADF
