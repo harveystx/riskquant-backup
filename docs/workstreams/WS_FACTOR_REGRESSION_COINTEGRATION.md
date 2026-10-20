@@ -271,8 +271,11 @@ Prohibited: `lstsq`; a second OLS solver; HAC or HC0 covariance in the ADF regre
 Attach: `docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION.md`, `docs/workstreams/WS_FACTOR_REGRESSION_COINTEGRATION/A_NUMERICS.md`, `context_riskquant_factor_regression.txt`
 Gates: section 6 order; pytest slice `tests/factor_regression/test_adf.py` and `tests/test_architecture.py`; pytest full.
 Exit: Every gate line prints `exit=0`.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: Windows gates exit=0 on all 7 lines (gate_s3.txt); 146 passed in the slice; pytest full 7014 passed and 36 skipped (6930 + 84 new tests); independent review
+ACCEPT with two P2 findings in the backlog (R-001, R-002). Reviewer checks: A.1 rebuilt row by row (design, response, row indices, n, k, gamma column) bit-exact in 4 cases;
+`adfuller(autolag=None)` on 40 cases: tau 1.3e-13 relative, critical values 4.4e-16 absolute, `n` equal; mutation run 42 of 43 non-equivalent mutants killed (the survivor
+is a one-configuration mutant, recorded as no finding). Backlog lines in section 7.
 
 | Id | Case | Expected | Defect caught |
 |---|---|---|---|
@@ -354,6 +357,10 @@ Backlog (REFINEMENT findings and items that v1 omits):
   - `critical_values` raises `OverflowError` for an `int` above the float64 range (about 1.8e308), because it converts `n` with `float()`. `n` is a row count, far outside the valid range. The docstring documents it.
   - `test_mackinnon.py` reads the private name `_COEFFICIENTS` to compare it with independently typed literals.
   - The label rule at the top of `A_NUMERICS.md` still says that the constants are not compared with the page images. The S2 evidence records the comparison. Update the label rule at closure.
+- S3 review, accepted points (source: slice review of S3):
+  - R-001: the exact-fit fixture `z = 5 + 0.8**t` (60 points) in `test_adf.py` has `rss / bound` 0.833 with `fit_core`, and 0.972 and 0.918 with other solvers; the rule fires at 1.0 or less, and with 40 points it does not fire. Replace it by `z = 0.5**t` with 40 points (`rss / bound` 3.3e-4). S4.T14 uses the dyadic fixture.
+  - R-002: `adf_core` builds `row_start_index` and `row_end_index` with `np.arange(..., dtype=np.int32)`, which wraps without an error when `m - 1 > 2**31 - 1`. The facade path is bounded by `INPUT_TOO_LONG` in `align.py`. A later LIGHT change adds the same check to `adf_core`.
+  - A lag below the float64 range (for example `-10**400`) gives `OverflowError` from `float()` in `adf_core`, not `CoreParameterError`. `covariance.py` does the same. The facade rejects a negative lag first (C.4).
 
 ## 8. Closure record
 
