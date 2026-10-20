@@ -26,8 +26,11 @@ Seeds and tolerances:
 
 Sandbox evidence (Python 3.12.3, numpy 2.4.4), seeds 1 to 40: S3.T1 worst
 relative error 1.4e-15; S3.T2 worst 4.3e-14; origin 1000 worst 1.1e-13. The
-exact fit ``z = 5 + 0.8**t`` gives ``rss / bound = 0.83`` (DEGENERATE_EXACT_FIT
-needs at most 1.0); the alternating series gives ``1.1e-3``.
+exact fit ``z = 0.5**t`` (40 points, dyadic, no rounding) gives
+``rss / bound = 3.3e-4`` (DEGENERATE_EXACT_FIT needs at most 1.0); the
+alternating series gives ``1.1e-3``. The earlier fixture ``z = 5 + 0.8**t``
+gave 0.83 with ``fit_core`` and up to 0.97 with other solvers, so it was
+replaced (backlog R-001).
 
 The S3 Prohibited list (no second solver, IID only, no p-value) is checked by
 the AST scan of S3.T3 and at run time with a recording ``fit_core``.
@@ -445,8 +448,10 @@ def test_a_constant_response_raises_zero_response_variance() -> None:
 @pytest.mark.parametrize(
     "z",
     [
-        # Owner fixture: dz_t = 1 - 0.2 z_{t-1}. Sandbox rss / bound = 0.83.
-        pytest.param(5.0 + 0.8 ** np.arange(60, dtype=np.float64), id="geometric"),
+        # dz_t = -0.5 z_{t-1}, exact in float64: dyadic values, no rounding.
+        # Sandbox rss / bound = 3.3e-4. The earlier fixture 5 + 0.8**t had 0.83
+        # (0.97 with another solver): too close to the limit of 1.0 (R-001).
+        pytest.param(0.5 ** np.arange(40, dtype=np.float64), id="geometric"),
         # dz_t = 1 - 2 z_{t-1}, exact in float64. Sandbox rss / bound = 1.1e-3.
         pytest.param(np.tile([0.0, 1.0], 30), id="alternating"),
     ],
