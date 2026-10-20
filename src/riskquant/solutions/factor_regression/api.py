@@ -3,12 +3,14 @@
 Public surface of the factor regression library (C.23, D001).
 
 This module is the only public import surface of
-``riskquant.solutions.factor_regression``. It exposes three functions:
+``riskquant.solutions.factor_regression``. It exposes four functions:
 
 * ``align_levels``: integer alignment of named level series (C.2, C.3).
 * ``fit_ols``: rows, design, rank gate, OLS fit, diagnostics and digests
   (C.4 to C.17).
 * ``wald_test``: joint Wald test on a fit (C.18).
+* ``unit_root_test``: ADF unit-root test of a linear combination of aligned
+  levels (C.2 to C.10).
 
 ``__all__`` also names the contract types of ``contracts.py`` and the facade
 exceptions of ``errors.py``.
@@ -22,6 +24,8 @@ core exception to its facade exception. Every facade raise of a mapped error
 uses ``raise ... from core_error``, so ``__cause__`` is the core error:
 
 * ``CoreAlignmentError`` to ``AlignmentError``.
+* ``CoreScaleDomainError`` to ``ScaleDomainError`` with the series name, the
+  date of the offending aligned level and the level.
 * ``CoreDomainError`` to ``TransformDomainError`` with the series name, the
   transform name, the date of the offending aligned level and the level.
 * ``CoreSampleSizeError`` to ``InsufficientObservationsError`` with the core
@@ -36,7 +40,10 @@ uses ``raise ... from core_error``, so ``__cause__`` is the core error:
 * ``CoreInputError`` with ``INPUT_NON_FINITE`` during row, design or fit work
   to ``DegenerateFitError``: a transform result overflowed to a non-finite
   number (backlog R-008). ``CoreInputError`` on the restriction or the
-  right-hand side of ``wald_test`` to ``RestrictionError``. Every other
+  right-hand side of ``wald_test`` to ``RestrictionError``.
+  ``CoreInputError`` with ``INPUT_NON_FINITE`` during the ``"adf"`` stage of
+  ``unit_root_test`` to ``DegenerateFitError`` with no column names: the
+  combination or a difference of it overflowed. Every other
   ``CoreInputError`` is an internal contract violation and propagates
   unchanged.
 * ``CoreRestrictionError`` to ``RestrictionError``.
@@ -51,13 +58,13 @@ import operator
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Final, Literal, SupportsIndex, TypeVar, cast
+from typing import Final, Literal, Protocol, SupportsIndex, TypeVar, cast
 
 import numpy as np
 from numpy.typing import NDArray
 
 from riskquant.exceptions import RiskQuantError
-from riskquant.factor_regression import codes
+from riskquant.factor_regression import adf, codes, combination
 from riskquant.factor_regression.align import CoreAlignedLevels, align_core
 from riskquant.factor_regression.design import assemble_design
 from riskquant.factor_regression.diagnostics import diagnose
@@ -70,6 +77,7 @@ from riskquant.factor_regression.errors import (
     CoreRankError,
     CoreRestrictionError,
     CoreSampleSizeError,
+    CoreScaleDomainError,
 )
 from riskquant.factor_regression.fit import OPERAND_DESIGN, OPERAND_RESPONSE, fit_core
 from riskquant.factor_regression.rows import build_rows
@@ -78,15 +86,21 @@ from riskquant.solutions.factor_regression import digest, labels
 from riskquant.solutions.factor_regression.contracts import (
     ENGINE_VERSION,
     AlignedLevels,
+    CombinationTerm,
     CovarianceKind,
     CovarianceSpec,
+    Deterministic,
     Diagnostic,
     Exclusion,
+    LinearCombination,
     ModelSpec,
     ObservedSeries,
     OlsResult,
+    Scale,
     Term,
     Transform,
+    UnitRootResult,
+    UnitRootSpec,
     WaldResult,
 )
 from riskquant.solutions.factor_regression.errors import (
@@ -96,6 +110,7 @@ from riskquant.solutions.factor_regression.errors import (
     ModelSpecError,
     RankDeficiencyError,
     RestrictionError,
+    ScaleDomainError,
     SeriesContractError,
     TransformDomainError,
 )
@@ -103,25 +118,33 @@ from riskquant.solutions.factor_regression.errors import (
 __all__ = [
     "AlignedLevels",
     "AlignmentError",
+    "CombinationTerm",
     "CovarianceKind",
     "CovarianceSpec",
     "DegenerateFitError",
+    "Deterministic",
     "Diagnostic",
     "Exclusion",
     "InsufficientObservationsError",
+    "LinearCombination",
     "ModelSpec",
     "ModelSpecError",
     "ObservedSeries",
     "OlsResult",
     "RankDeficiencyError",
     "RestrictionError",
+    "Scale",
+    "ScaleDomainError",
     "SeriesContractError",
     "Term",
     "Transform",
     "TransformDomainError",
+    "UnitRootResult",
+    "UnitRootSpec",
     "WaldResult",
     "align_levels",
     "fit_ols",
+    "unit_root_test",
     "wald_test",
 ]
 
@@ -148,13 +171,14 @@ _CORE_ERRORS: Final = (
     CoreRankError,
     CoreRestrictionError,
     CoreSampleSizeError,
+    CoreScaleDomainError,
 )
 
 # Operand positions of restriction and rhs in wald_core (its check order).
 _WALD_OPERAND_RESTRICTION: Final = 2
 _WALD_OPERAND_RHS: Final = 3
 
-_Stage = Literal["align", "rows", "design", "fit", "wald"]
+_Stage = Literal["align", "rows", "design", "fit", "wald", "combination", "adf"]
 
 _ErrorT = TypeVar("_ErrorT", bound=BaseException)
 _ScalarT = TypeVar("_ScalarT", bound=np.generic)
@@ -177,7 +201,8 @@ class _ErrorContext:
     ----------
     stage
         The core call: ``align_core``, ``build_rows``, ``assemble_design``,
-        ``fit_core`` (with ``diagnose``) or ``wald_core``.
+        ``fit_core`` (with ``diagnose``), ``wald_core``, ``combine_core``
+        (stage ``"combination"``) or ``adf_core`` (stage ``"adf"``).
     term_names
         Series name of each term, response first (the ``build_rows`` term
         order).
@@ -252,6 +277,13 @@ def _map_core_error(
         The facade exception, not yet raised. ``None`` when the core error is
         an internal contract violation that propagates unchanged.
     """
+    if isinstance(core_error, CoreScaleDomainError):
+        return ScaleDomainError(
+            reason=labels.SCALE_DOMAIN_ERROR_NAMES[core_error.reason],
+            series=context.term_names[core_error.term],
+            date_ord=int(context.date_ord[core_error.aligned_index]),
+            level=core_error.level,
+        )
     if isinstance(core_error, CoreAlignmentError):
         return AlignmentError(
             reason=labels.ALIGNMENT_ERROR_NAMES[core_error.reason],
@@ -327,6 +359,15 @@ def _map_core_error(
                 DegenerateFitError(reason=reason, column_names=names),
                 f"{reason}: a row value of {names}, or a fit quantity formed "
                 "from it, exceeds the float64 range",
+            )
+        # Overflow of the combination or a difference thereof: z has inf.
+        # Positions are not decoded: adf_core and fit_core inside it both
+        # report operand 0, so the position index has two meanings (A.1).
+        if core_error.reason == codes.INPUT_NON_FINITE and context.stage == "adf":
+            return _restated(
+                DegenerateFitError(reason=reason, column_names=()),
+                f"{reason}: a value of the combination, or a difference of it, "
+                "exceeds the float64 range",
             )
     return None
 
@@ -521,7 +562,17 @@ def _core_aligned_levels(levels: AlignedLevels) -> CoreAlignedLevels:
     )
 
 
-def _missing_term_series(levels: AlignedLevels, terms: tuple[Term, ...]) -> None:
+class _HasSeries(Protocol):
+    """Any term type that carries a ``series`` attribute (``Term`` or ``CombinationTerm``).
+
+    ``series`` is a read-only property, so a frozen dataclass field satisfies it.
+    """
+
+    @property
+    def series(self) -> str: ...
+
+
+def _missing_term_series(levels: AlignedLevels, terms: Sequence[_HasSeries]) -> None:
     known = set(levels.names)
     for term in terms:
         if term.series not in known:
@@ -809,5 +860,192 @@ def wald_test(
         spec_digest=result.spec_digest,
         row_digest=result.row_digest,
         restriction_digest=digest.restriction_digest(restriction, rhs),
+        engine_version=ENGINE_VERSION,
+    )
+
+
+# ------------------------------------------------------------------ unit_root_test
+
+
+def unit_root_test(levels: AlignedLevels, spec: UnitRootSpec) -> UnitRootResult:
+    """
+    ADF unit-root test of a declared linear combination (C.2 to C.10).
+
+    Parameters
+    ----------
+    levels
+        Output of ``align_levels``.  Holds the aligned level series that
+        the combination references.
+    spec
+        The declared test specification.  Every combination series must be
+        a name in ``levels``.
+
+    Returns
+    -------
+    UnitRootResult
+        Statistic, MacKinnon critical values, ADF regression output,
+        digests, labels and provenance.  Every array is read-only.  No
+        caller array is changed (C.13).
+
+    Raises
+    ------
+    TypeError
+        ``spec`` is not a ``UnitRootSpec`` or ``levels`` is not an
+        ``AlignedLevels``.
+    ModelSpecError
+        A combination series is not in ``levels`` (C.2), or a core parameter
+        check fails (for example a rank_rtol out of range, which the facade
+        checks earlier but the core re-checks).
+    ScaleDomainError
+        A ``LOG``-scale term has a level at or below zero (C.3).
+    InsufficientObservationsError
+        ``n = m - 1 - lag < 20`` (C.6) or ``n < k + 1`` from ``fit_core``.
+    RankDeficiencyError
+        The ADF design is rank-deficient (C.5, C.8).
+    DegenerateFitError
+        Exact fit, zero response variance, or an overflow to non-finite
+        of the combination or a difference of it (C.10).
+
+    Notes
+    -----
+    Checks run in this order:
+
+    1. ``spec`` must be ``UnitRootSpec`` and ``levels`` must be
+       ``AlignedLevels`` (``TypeError``).
+    2. Every combination series must be in ``levels.names``
+       (``ModelSpecError``).
+    3. Core calls: ``combination.combine_core`` (stage ``"combination"``),
+       then ``adf.adf_core`` (stage ``"adf"``).
+
+    Core calls are attributes of their modules, so tests can patch them:
+    ``combination.combine_core`` and ``adf.adf_core``.
+    """
+    # ---- 1. type checks (order fixed: spec first, then levels) ---------------
+    if not isinstance(spec, UnitRootSpec):
+        raise TypeError(f"spec must be UnitRootSpec, got {type(spec).__name__}")
+    if not isinstance(levels, AlignedLevels):
+        raise TypeError(f"levels must be AlignedLevels, got {type(levels).__name__}")
+
+    # ---- 2. series check -----------------------------------------------------
+    _missing_term_series(levels, spec.combination.terms)
+
+    # ---- index bookkeeping (no numerical logic) ------------------------------
+    index_of: dict[str, int] = {}
+    for j, name in enumerate(levels.names):
+        index_of.setdefault(name, j)
+
+    term_names = tuple(term.series for term in spec.combination.terms)
+    term_series = np.array([index_of[name] for name in term_names], dtype=np.int32)
+    weights = np.array(
+        [term.weight for term in spec.combination.terms], dtype=np.float64
+    )
+    scale = int(spec.combination.scale.value)
+    lag = spec.lag
+
+    # ADF column labels, built before the core calls because a mapping error
+    # needs them (C.10, A.3).
+    has_trend = spec.deterministic == Deterministic.CONSTANT_TREND
+    col_labels: list[str] = [_INTERCEPT_NAME]
+    if has_trend:
+        col_labels.append("trend")
+    col_labels.append("z_lag1")
+    # Bound the loop by m. The labels are read only when n = m - 1 - lag is at
+    # least 20, so lag is at most m - 21. For lag at least m the core raises
+    # the size error before any label is read. An unbounded loop would exhaust
+    # memory for a lag near 2**63 - 1, which S4.T2 accepts.
+    for q in range(1, min(lag, int(levels.date_ord.shape[0])) + 1):
+        col_labels.append(f"dz_lag{q}")
+    column_names: tuple[str, ...] = tuple(col_labels)
+
+    # ---- 3a. combination (stage "combination") --------------------------------
+    with _facade_errors(
+        _ErrorContext(
+            stage="combination",
+            term_names=term_names,
+            date_ord=levels.date_ord,
+        )
+    ):
+        z = combination.combine_core(levels.levels, term_series, weights, scale)
+
+    # ---- 3b. ADF regression (stage "adf") ------------------------------------
+    with _facade_errors(
+        _ErrorContext(
+            stage="adf",
+            column_names=column_names,
+        )
+    ):
+        adf_result = adf.adf_core(z, lag, int(spec.deterministic.value), spec.rank_rtol)
+
+    # ---- row date bookkeeping ------------------------------------------------
+    # row_start_index[r] and row_end_index[r] are aligned indices; map to
+    # date ordinals from levels.date_ord.
+    row_start_date_ord = np.array(
+        levels.date_ord[adf_result.row_start_index], dtype=np.int32, copy=True
+    )
+    row_end_date_ord = np.array(
+        levels.date_ord[adf_result.row_end_index], dtype=np.int32, copy=True
+    )
+    row_start_date_ord.setflags(write=False)
+    row_end_date_ord.setflags(write=False)
+
+    window = (levels.start_ord, levels.end_ord)
+    exclusions = levels.exclusions
+    # Unit of each term's series in declared order.
+    units: tuple[str, ...] = tuple(
+        levels.units[index_of[term.series]] for term in spec.combination.terms
+    )
+    det_code = int(spec.deterministic.value)
+
+    # ---- digests ------------------------------------------------------------
+    # regressor_names: ADF design labels after "const".
+    regressor_names = list(column_names[1:])
+
+    _sample_digest = digest.unit_root_sample_digest(
+        row_start_date_ord=row_start_date_ord,
+        row_end_date_ord=row_end_date_ord,
+        y=adf_result.response,
+        x=adf_result.design,
+        regressor_names=regressor_names,
+    )
+    _spec_digest = digest.unit_root_spec_digest(
+        engine_version=ENGINE_VERSION,
+        test_kind=int(codes.TEST_ADF),
+        term_names=list(term_names),
+        term_units=list(units),
+        weights=weights,
+        scale=scale,
+        deterministic=det_code,
+        lag=lag,
+        rank_rtol=spec.rank_rtol,
+        start_ord=levels.start_ord,
+        end_ord=levels.end_ord,
+        critical_value_source=labels.CRITICAL_VALUE_SOURCES[det_code],
+    )
+    _row_digest = digest.row_digest(row_start_date_ord, row_end_date_ord)
+
+    return UnitRootResult(
+        statistic=adf_result.tau,
+        gamma=adf_result.gamma,
+        critical_levels=(0.01, 0.05, 0.10),
+        critical_values=adf_result.critical_values,
+        deterministic=spec.deterministic,
+        lag=spec.lag,
+        n_obs=adf_result.n_obs,
+        coef=adf_result.coef,
+        se=adf_result.se,
+        column_names=column_names,
+        condition_number=adf_result.condition_number,
+        null_hypothesis=labels.NULL_HYPOTHESIS_TEXTS[det_code],
+        critical_value_source=labels.CRITICAL_VALUE_SOURCES[det_code],
+        combination=spec.combination,
+        units=units,
+        window=window,
+        row_start_date_ord=row_start_date_ord,
+        row_end_date_ord=row_end_date_ord,
+        exclusions=exclusions,
+        rank_rtol=spec.rank_rtol,
+        sample_digest=_sample_digest,
+        spec_digest=_spec_digest,
+        row_digest=_row_digest,
         engine_version=ENGINE_VERSION,
     )

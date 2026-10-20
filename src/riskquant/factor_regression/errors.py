@@ -152,6 +152,45 @@ class CoreDomainError(RiskQuantError):
         )
 
 
+class CoreScaleDomainError(RiskQuantError):
+    """
+    An aligned level is outside the domain of the combination scale.
+
+    ``SCALE_LOG`` needs every aligned level of every term above 0, checked
+    before any logarithm (WS_FACTOR_REGRESSION_COINTEGRATION C.3, D025
+    convention). The scan is term-major, so the payload names the first
+    offending level of the lowest offending term.
+
+    Parameters
+    ----------
+    reason
+        Code of ``codes.SCALE_DOMAIN_ERROR_CODES``.
+    term
+        Index of the offending term in the declared combination order.
+    aligned_index
+        Index of the offending level on the aligned date axis.
+    level
+        The offending level.
+    """
+
+    reason: int
+    term: int
+    aligned_index: int
+    level: float
+
+    def __init__(
+        self, *, reason: int | np.int8, term: int, aligned_index: int, level: float
+    ) -> None:
+        self.reason = int(reason)
+        self.term = int(term)
+        self.aligned_index = int(aligned_index)
+        self.level = float(level)
+        super().__init__(
+            f"core scale domain error: reason={self.reason} term={self.term} "
+            f"aligned_index={self.aligned_index} level={self.level!r}"
+        )
+
+
 class CoreRankError(RiskQuantError):
     """
     The design has a zero column or is rank deficient (A.2).
@@ -222,6 +261,8 @@ class CoreSampleSizeError(RiskQuantError):
     n_available
         ``SAMPLE_STEP_NOT_BELOW_COUNT``: aligned date count ``m``.
         ``SAMPLE_ROWS_NOT_ABOVE_COLUMNS``: row count ``R``.
+        ``SAMPLE_ROWS_BELOW_TABLE_MINIMUM``: ADF row count ``n``; ``n_required``
+        is 20, the smallest MacKinnon (2010) table size.
     n_required
         ``SAMPLE_STEP_NOT_BELOW_COUNT``: ``h + 1``.
         ``SAMPLE_ROWS_NOT_ABOVE_COLUMNS``: ``k + 1``, so ``k = n_required - 1``.

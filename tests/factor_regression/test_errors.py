@@ -49,6 +49,9 @@ _FACTORIES: dict[str, Callable[[], BaseException]] = {
     "CoreRestrictionError": lambda: errors.CoreRestrictionError(
         reason=codes.RESTRICTION_WRONG_SHAPE, shape=(2, 3)
     ),
+    "CoreScaleDomainError": lambda: errors.CoreScaleDomainError(
+        reason=codes.SCALE_LOG_LEVEL_NOT_POSITIVE, term=1, aligned_index=4, level=0.0
+    ),
 }
 
 _EXPECTED_CLASSES = {
@@ -60,6 +63,7 @@ _EXPECTED_CLASSES = {
     "CoreSampleSizeError",
     "CoreDegenerateFitError",
     "CoreRestrictionError",
+    "CoreScaleDomainError",
 }
 
 

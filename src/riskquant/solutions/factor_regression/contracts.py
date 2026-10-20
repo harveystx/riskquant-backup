@@ -13,6 +13,7 @@ bytes format (A.6).  It changes only when the canonical byte layout changes.
 from __future__ import annotations
 
 import enum
+import math
 import operator
 import unicodedata
 from dataclasses import dataclass
@@ -761,3 +762,299 @@ class WaldResult:
     row_digest: str
     restriction_digest: str
     engine_version: str
+
+
+# ===================================================================== S4
+
+# ------------------------------------------------------------------ enums
+
+
+class Scale(enum.Enum):
+    """
+    Scale applied to each level before the weighted sum (C.2, C.3).
+
+    The value equals the ``int`` form of the matching ``codes.py`` constant
+    so that ``int(Scale.LOG.value) == int(codes.SCALE_LOG)`` (C.15).
+    The code enters the unit-root spec digest (A.3).
+    """
+
+    LEVEL = int(codes.SCALE_LEVEL)
+    LOG = int(codes.SCALE_LOG)
+
+
+class Deterministic(enum.Enum):
+    """
+    Deterministic component for the ADF regression (C.4, A.1).
+
+    The value equals the ``int`` form of the matching ``codes.py`` constant.
+    CONSTANT adds a constant; CONSTANT_TREND adds a constant and a linear
+    trend.  The code enters the unit-root spec digest (A.3).
+    """
+
+    CONSTANT = int(codes.DET_CONSTANT)
+    CONSTANT_TREND = int(codes.DET_CONSTANT_TREND)
+
+
+# ------------------------------------------------------------------ combination types
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CombinationTerm:
+    """
+    One term of a linear combination: a series name and its weight (C.1).
+
+    Parameters
+    ----------
+    series
+        Name of the series.  Must be a non-empty ``str`` with no Unicode
+        category-Cc (control) character.
+    weight
+        Scalar multiplier.  Accepted types: ``int``, ``float``,
+        ``numpy.integer``, ``numpy.floating`` (not ``bool`` or
+        ``numpy.bool_``).  Stored as ``float``.  ``0.0`` and non-finite
+        values raise ``ModelSpecError``; an ``int`` above the float64 range
+        (e.g. ``10**400``) raises ``ModelSpecError`` (C.1).
+
+    Raises
+    ------
+    TypeError
+        ``series`` is not ``str``; ``weight`` is ``bool``, ``numpy.bool_``
+        or any type outside ``int``, ``float``, ``numpy.integer``,
+        ``numpy.floating``.
+    ModelSpecError
+        Empty or control-character ``series``; ``weight`` is zero,
+        non-finite or above the float64 range.
+    """
+
+    series: str
+    weight: float
+
+    def __post_init__(self) -> None:
+        # ---- series ---------------------------------------------------------
+        if not isinstance(self.series, str):
+            raise TypeError(
+                f"CombinationTerm.series must be str, got {type(self.series).__name__}"
+            )
+        if not self.series:
+            raise ModelSpecError(reason="CombinationTerm.series must not be empty")
+        if _has_control(self.series):
+            raise ModelSpecError(
+                reason=(
+                    "CombinationTerm.series contains a control character: "
+                    f"{self.series!r}"
+                )
+            )
+        # ---- weight ---------------------------------------------------------
+        # _check_float_param raises TypeError for bool / non-numeric.
+        # float(int_above_float64_range) raises OverflowError; catch it and
+        # convert to ModelSpecError so the caller sees a consistent error (C.1).
+        try:
+            w = _check_float_param("CombinationTerm.weight", self.weight)
+        except OverflowError:
+            raise ModelSpecError(
+                reason=(
+                    "CombinationTerm.weight is above the float64 range: "
+                    f"{self.weight!r}"
+                )
+            ) from None
+        if w == 0.0:
+            raise ModelSpecError(reason="CombinationTerm.weight must not be zero")
+        # math.isfinite catches nan, +inf and -inf together.
+        if not math.isfinite(w):
+            raise ModelSpecError(reason=f"CombinationTerm.weight must be finite: {w!r}")
+        object.__setattr__(self, "weight", w)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LinearCombination:
+    """
+    A linear combination of named level series (C.1, C.2).
+
+    Parameters
+    ----------
+    terms
+        Non-empty ``tuple`` of ``CombinationTerm`` with unique series names.
+    scale
+        ``Scale`` member: LEVEL computes the weighted sum of levels; LOG
+        computes the weighted sum of natural logarithms.
+
+    Raises
+    ------
+    TypeError
+        ``terms`` is not a ``tuple`` of ``CombinationTerm``; ``scale`` is
+        not a ``Scale`` member.
+    ModelSpecError
+        Empty ``terms`` tuple; repeated series name.
+    """
+
+    terms: tuple[CombinationTerm, ...]
+    scale: Scale
+
+    def __post_init__(self) -> None:
+        # ---- terms ----------------------------------------------------------
+        if not isinstance(self.terms, tuple):
+            raise TypeError(
+                "LinearCombination.terms must be a tuple of CombinationTerm, "
+                f"got {type(self.terms).__name__}"
+            )
+        for i, term in enumerate(self.terms):
+            if not isinstance(term, CombinationTerm):
+                raise TypeError(
+                    f"LinearCombination.terms[{i}] must be CombinationTerm, "
+                    f"got {type(term).__name__}"
+                )
+        if not self.terms:
+            raise ModelSpecError(reason="LinearCombination.terms must not be empty")
+        seen: set[str] = set()
+        for term in self.terms:
+            if term.series in seen:
+                raise ModelSpecError(
+                    reason=(
+                        "LinearCombination.terms contains repeated series "
+                        f"{term.series!r}"
+                    )
+                )
+            seen.add(term.series)
+        # ---- scale ----------------------------------------------------------
+        if not isinstance(self.scale, Scale):
+            raise TypeError(
+                f"LinearCombination.scale must be Scale, "
+                f"got {type(self.scale).__name__}"
+            )
+
+
+# ------------------------------------------------------------------ unit-root spec
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UnitRootSpec:
+    """
+    Declared specification for one ADF unit-root test (C.4).
+
+    All fields are required (``kw_only=True``, no defaults).  Type
+    violations raise ``TypeError``; domain violations raise
+    ``ModelSpecError``.
+
+    Parameters
+    ----------
+    combination
+        The linear combination to test.
+    deterministic
+        ``Deterministic`` member: CONSTANT or CONSTANT_TREND.
+    lag
+        ADF augmentation lag ``p >= 0``.  Stored as ``int``.  A ``bool``
+        or a non-integer type raises ``TypeError``; ``lag < 0`` or
+        ``lag > 2**63 - 1`` raises ``ModelSpecError``.
+    rank_rtol
+        Relative rank tolerance passed to ``fit_core``.  Must lie strictly
+        in ``(0, 1)``; ``nan`` raises ``ModelSpecError`` (the negated
+        interval test catches it).
+
+    Raises
+    ------
+    TypeError
+        A field has the wrong Python type (an omitted field raises
+        ``TypeError`` from the dataclass machinery).
+    ModelSpecError
+        A field violates a domain rule.
+    """
+
+    combination: LinearCombination
+    deterministic: Deterministic
+    lag: int
+    rank_rtol: float
+
+    def __post_init__(self) -> None:
+        # ---- combination ----------------------------------------------------
+        if not isinstance(self.combination, LinearCombination):
+            raise TypeError(
+                "UnitRootSpec.combination must be LinearCombination, "
+                f"got {type(self.combination).__name__}"
+            )
+        # ---- deterministic --------------------------------------------------
+        if not isinstance(self.deterministic, Deterministic):
+            raise TypeError(
+                "UnitRootSpec.deterministic must be Deterministic, "
+                f"got {type(self.deterministic).__name__}"
+            )
+        # ---- lag  -----------------------------------------------------------
+        # Follows ModelSpec / CovarianceSpec pattern exactly (C.4).
+        lag = _check_int_param("lag", self.lag)
+        if lag < 0:
+            raise ModelSpecError(reason=f"lag must be >= 0, got {lag}")
+        if lag > _INT64_MAX:
+            raise ModelSpecError(reason=f"lag {lag} exceeds int64 range ({_INT64_MAX})")
+        object.__setattr__(self, "lag", lag)
+        # ---- rank_rtol ------------------------------------------------------
+        rank_rtol = _check_float_param("rank_rtol", self.rank_rtol)
+        object.__setattr__(self, "rank_rtol", rank_rtol)
+        # Negated interval also rejects NaN: every comparison with NaN is False.
+        if not (0.0 < float(self.rank_rtol) < 1.0):
+            raise ModelSpecError(
+                reason=(f"rank_rtol must be in (0, 1), got {float(self.rank_rtol)!r}")
+            )
+
+
+# ------------------------------------------------------------------ unit-root result
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
+class UnitRootResult:
+    """
+    Full result of one ADF unit-root test (C.8, D104.4).
+
+    ``eq=False`` because an auto-generated ``__eq__`` would compare arrays
+    element-wise (D064 precedent).
+
+    Array fields are read-only copies; no caller array is retained (C.13).
+    No field is named ``rejected``, ``accepted``, ``stationary``, ``valid``
+    or ``approved``: the library reports; it does not decide (D104.4).
+
+    Fields follow the owner-declared order (decision 4 of S4).
+
+    Raises
+    ------
+    TypeError
+        An array field is not exactly ``numpy.ndarray`` with its declared
+        dtype (``float64`` for ``coef``, ``se``, ``critical_values``;
+        ``int32`` for row dates).  No cast is applied.
+    """
+
+    statistic: float
+    gamma: float
+    critical_levels: tuple[float, ...]
+    critical_values: NDArray[np.float64]
+    deterministic: Deterministic
+    lag: int
+    n_obs: int
+    coef: NDArray[np.float64]
+    se: NDArray[np.float64]
+    column_names: tuple[str, ...]
+    condition_number: float
+    null_hypothesis: str
+    critical_value_source: str
+    combination: LinearCombination
+    units: tuple[str, ...]
+    window: tuple[int, int]
+    row_start_date_ord: NDArray[np.int32]
+    row_end_date_ord: NDArray[np.int32]
+    exclusions: tuple[Exclusion, ...]
+    rank_rtol: float
+    sample_digest: str
+    spec_digest: str
+    row_digest: str
+    engine_version: str
+
+    def __post_init__(self) -> None:
+        # Check, copy and freeze every array field.  A wrong dtype raises; a
+        # cast would change the values that the digests describe (C.13, C.9).
+        for _name in ("coef", "se", "critical_values"):
+            _arr = _frozen_array_copy(
+                "UnitRootResult", _name, getattr(self, _name), np.float64
+            )
+            object.__setattr__(self, _name, _arr)
+        for _name in ("row_start_date_ord", "row_end_date_ord"):
+            _arr_i = _frozen_array_copy(
+                "UnitRootResult", _name, getattr(self, _name), np.int32
+            )
+            object.__setattr__(self, _name, _arr_i)

@@ -13,6 +13,7 @@ Core-to-facade mapping
 ``CoreAlignmentError``       → ``AlignmentError``
 ``CoreParameterError``       → ``ModelSpecError``
 ``CoreDomainError``          → ``TransformDomainError``
+``CoreScaleDomainError``     → ``ScaleDomainError``
 ``CoreRankError``            → ``RankDeficiencyError``
 ``CoreSampleSizeError``      → ``InsufficientObservationsError``
 ``CoreDegenerateFitError``   → ``DegenerateFitError``
@@ -155,6 +156,50 @@ class TransformDomainError(RiskQuantError):
         self.level = float(level)
         super().__init__(
             f"series={series!r} transform={transform!r} "
+            f"date_ord={self.date_ord} level={self.level!r}"
+        )
+
+
+class ScaleDomainError(RiskQuantError):
+    """
+    A term's aligned level is outside the domain of the declared scale (C.3).
+
+    Raised when a ``LOG``-scale combination includes a level at or below zero.
+    The facade maps ``CoreScaleDomainError`` to this exception, chaining the
+    core error as ``__cause__``.
+
+    Parameters
+    ----------
+    reason
+        Label name of the domain violation
+        (``codes.SCALE_DOMAIN_ERROR_CODES``).
+    series
+        Name of the series with the offending level.
+    date_ord
+        ``int32`` date ordinal of the first offending aligned level.
+    level
+        The offending level value (at or below zero for ``SCALE_LOG``).
+    """
+
+    reason: str
+    series: str
+    date_ord: int
+    level: float
+
+    def __init__(
+        self,
+        *,
+        reason: str,
+        series: str,
+        date_ord: int,
+        level: float,
+    ) -> None:
+        self.reason = reason
+        self.series = series
+        self.date_ord = int(date_ord)
+        self.level = float(level)
+        super().__init__(
+            f"series={series!r} reason={reason!r} "
             f"date_ord={self.date_ord} level={self.level!r}"
         )
 

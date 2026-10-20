@@ -195,11 +195,13 @@ RANK_ERROR_NAME_TO_CODE: Final[dict[str, np.int8]] = {
 SAMPLE_SIZE_ERROR_NAMES: Final[dict[int, str]] = {
     int(codes.SAMPLE_STEP_NOT_BELOW_COUNT): "SAMPLE_STEP_NOT_BELOW_COUNT",
     int(codes.SAMPLE_ROWS_NOT_ABOVE_COLUMNS): "SAMPLE_ROWS_NOT_ABOVE_COLUMNS",
+    int(codes.SAMPLE_ROWS_BELOW_TABLE_MINIMUM): "SAMPLE_ROWS_BELOW_TABLE_MINIMUM",
 }
 
 SAMPLE_SIZE_ERROR_NAME_TO_CODE: Final[dict[str, np.int8]] = {
     "SAMPLE_STEP_NOT_BELOW_COUNT": codes.SAMPLE_STEP_NOT_BELOW_COUNT,
     "SAMPLE_ROWS_NOT_ABOVE_COLUMNS": codes.SAMPLE_ROWS_NOT_ABOVE_COLUMNS,
+    "SAMPLE_ROWS_BELOW_TABLE_MINIMUM": codes.SAMPLE_ROWS_BELOW_TABLE_MINIMUM,
 }
 
 # ---------------------------------------- CoreDegenerateFitError reasons
@@ -230,6 +232,52 @@ RESTRICTION_ERROR_NAME_TO_CODE: Final[dict[str, np.int8]] = {
     "RESTRICTION_NON_FINITE": codes.RESTRICTION_NON_FINITE,
     "RESTRICTION_RANK_DEFICIENT": codes.RESTRICTION_RANK_DEFICIENT,
     "RESTRICTION_NOT_POSITIVE_DEFINITE": codes.RESTRICTION_NOT_POSITIVE_DEFINITE,
+}
+
+# ---------------------------------------------------------- combination scales
+# Values (0, 1) enter the unit-root spec digest (A.3 of
+# WS_FACTOR_REGRESSION_COINTEGRATION); do not renumber.
+
+SCALE_NAMES: Final[dict[int, str]] = {
+    int(codes.SCALE_LEVEL): "SCALE_LEVEL",
+    int(codes.SCALE_LOG): "SCALE_LOG",
+}
+
+SCALE_NAME_TO_CODE: Final[dict[str, np.int8]] = {
+    "SCALE_LEVEL": codes.SCALE_LEVEL,
+    "SCALE_LOG": codes.SCALE_LOG,
+}
+
+# ---------------------------------------------------- ADF deterministic cases
+
+DETERMINISTIC_NAMES: Final[dict[int, str]] = {
+    int(codes.DET_CONSTANT): "DET_CONSTANT",
+    int(codes.DET_CONSTANT_TREND): "DET_CONSTANT_TREND",
+}
+
+DETERMINISTIC_NAME_TO_CODE: Final[dict[str, np.int8]] = {
+    "DET_CONSTANT": codes.DET_CONSTANT,
+    "DET_CONSTANT_TREND": codes.DET_CONSTANT_TREND,
+}
+
+# ------------------------------------------------------------ unit-root tests
+
+TEST_KIND_NAMES: Final[dict[int, str]] = {
+    int(codes.TEST_ADF): "TEST_ADF",
+}
+
+TEST_KIND_NAME_TO_CODE: Final[dict[str, np.int8]] = {
+    "TEST_ADF": codes.TEST_ADF,
+}
+
+# ---------------------------------------- CoreScaleDomainError reasons
+
+SCALE_DOMAIN_ERROR_NAMES: Final[dict[int, str]] = {
+    int(codes.SCALE_LOG_LEVEL_NOT_POSITIVE): "SCALE_LOG_LEVEL_NOT_POSITIVE",
+}
+
+SCALE_DOMAIN_ERROR_NAME_TO_CODE: Final[dict[str, np.int8]] = {
+    "SCALE_LOG_LEVEL_NOT_POSITIVE": codes.SCALE_LOG_LEVEL_NOT_POSITIVE,
 }
 
 # ------------------------------------------------------------------ registry
@@ -301,5 +349,51 @@ ALL_CODE_GROUPS: Final[
         codes.RESTRICTION_ERROR_CODES,
         RESTRICTION_ERROR_NAMES,
         RESTRICTION_ERROR_NAME_TO_CODE,
+    ),
+    "SCALE": (
+        codes.SCALE_CODES,
+        SCALE_NAMES,
+        SCALE_NAME_TO_CODE,
+    ),
+    "DETERMINISTIC": (
+        codes.DETERMINISTIC_CODES,
+        DETERMINISTIC_NAMES,
+        DETERMINISTIC_NAME_TO_CODE,
+    ),
+    "TEST_KIND": (
+        codes.TEST_KIND_CODES,
+        TEST_KIND_NAMES,
+        TEST_KIND_NAME_TO_CODE,
+    ),
+    "SCALE_DOMAIN_ERROR": (
+        codes.SCALE_DOMAIN_ERROR_CODES,
+        SCALE_DOMAIN_ERROR_NAMES,
+        SCALE_DOMAIN_ERROR_NAME_TO_CODE,
+    ),
+}
+
+# ------------------------------------------------------------------ unit-root texts
+# Fixed text strings per deterministic case (A.2, A.4 of
+# WS_FACTOR_REGRESSION_COINTEGRATION).  The keys are the int forms of the
+# DET_CONSTANT and DET_CONSTANT_TREND codes so that api.py can look them up
+# directly from ``int(spec.deterministic.value)``.
+
+NULL_HYPOTHESIS_TEXTS: Final[dict[int, str]] = {
+    int(codes.DET_CONSTANT): (
+        "H0: the combination has a unit root (gamma = 0) and no drift. "
+        "H1: it is stationary around a constant."
+    ),
+    int(codes.DET_CONSTANT_TREND): (
+        "H0: the combination has a unit root (gamma = 0). "
+        "H1: it is stationary around a linear trend."
+    ),
+}
+
+CRITICAL_VALUE_SOURCES: Final[dict[int, str]] = {
+    int(codes.DET_CONSTANT): (
+        "MacKinnon (2010) QED WP 1227, Table 2 tau_c, N=1, declared weights"
+    ),
+    int(codes.DET_CONSTANT_TREND): (
+        "MacKinnon (2010) QED WP 1227, Table 3 tau_ct, N=1, declared weights"
     ),
 }
