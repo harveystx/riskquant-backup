@@ -371,3 +371,29 @@ ALL_CODE_GROUPS: Final[
         SCALE_DOMAIN_ERROR_NAME_TO_CODE,
     ),
 }
+
+# ------------------------------------------------------------------ unit-root texts
+# Fixed text strings per deterministic case (A.2, A.4 of
+# WS_FACTOR_REGRESSION_COINTEGRATION).  The keys are the int forms of the
+# DET_CONSTANT and DET_CONSTANT_TREND codes so that api.py can look them up
+# directly from ``int(spec.deterministic.value)``.
+
+NULL_HYPOTHESIS_TEXTS: Final[dict[int, str]] = {
+    int(codes.DET_CONSTANT): (
+        "H0: the combination has a unit root (gamma = 0) and no drift. "
+        "H1: it is stationary around a constant."
+    ),
+    int(codes.DET_CONSTANT_TREND): (
+        "H0: the combination has a unit root (gamma = 0). "
+        "H1: it is stationary around a linear trend."
+    ),
+}
+
+CRITICAL_VALUE_SOURCES: Final[dict[int, str]] = {
+    int(codes.DET_CONSTANT): (
+        "MacKinnon (2010) QED WP 1227, Table 2 tau_c, N=1, declared weights"
+    ),
+    int(codes.DET_CONSTANT_TREND): (
+        "MacKinnon (2010) QED WP 1227, Table 3 tau_ct, N=1, declared weights"
+    ),
+}

@@ -453,6 +453,7 @@ _EXPECTED_PUBLIC = {
     "align_levels",
     "fit_ols",
     "wald_test",
+    "unit_root_test",
     "ObservedSeries",
     "AlignedLevels",
     "Exclusion",
@@ -464,6 +465,12 @@ _EXPECTED_PUBLIC = {
     "Diagnostic",
     "OlsResult",
     "WaldResult",
+    "CombinationTerm",
+    "LinearCombination",
+    "UnitRootSpec",
+    "UnitRootResult",
+    "Scale",
+    "Deterministic",
     "SeriesContractError",
     "AlignmentError",
     "ModelSpecError",
@@ -472,6 +479,7 @@ _EXPECTED_PUBLIC = {
     "InsufficientObservationsError",
     "DegenerateFitError",
     "RestrictionError",
+    "ScaleDomainError",
 }
 
 

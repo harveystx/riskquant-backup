@@ -63,6 +63,7 @@ from typing import Final
 import numpy as np
 from numpy.typing import NDArray
 
+from riskquant.factor_regression import codes
 from riskquant.solutions.run_identity.hashing import digest_named_arrays
 
 # Schema version for the spec bytes.  Increment only when the canonical byte
@@ -382,3 +383,162 @@ def restriction_digest(
     _require_array("restriction", restriction, np.float64)
     _require_array("rhs", rhs, np.float64)
     return digest_named_arrays(restriction=restriction, rhs=rhs)
+
+
+# ===================================================================== S4
+# Digests for the unit-root test (A.3, C.9).
+
+# Schema version for the unit-root spec bytes.  Increment only when the
+# canonical byte layout of unit_root_spec_digest changes.
+_UNIT_ROOT_SCHEMA_VERSION: Final = np.array([1], dtype=np.int64)
+
+# TEST_ADF code, baked in.  The digest always encodes ADF; the schema
+# version changes if a second test kind is ever added.
+_TEST_ADF_ARR: Final = np.array([int(codes.TEST_ADF)], dtype=np.int8)
+
+
+def unit_root_spec_digest(
+    *,
+    engine_version: str,
+    term_names: Sequence[str],
+    term_units: Sequence[str],
+    weights: NDArray[np.float64],
+    scale: int,
+    deterministic: int,
+    lag: int,
+    rank_rtol: float,
+    start_ord: int,
+    end_ord: int,
+    critical_value_source: str,
+) -> str:
+    """
+    SHA-256 digest of the unit-root specification bytes (A.3, C.9).
+
+    Changes when the engine version, any term name or unit, the weight
+    vector, the scale, the deterministic case, the lag, ``rank_rtol``, the
+    window, or the critical-value source change.
+
+    The ``terms`` uint8 array encodes one line
+    ``T\x1f{name}\x1f{unit}`` per term, joined by ``\x1e``.
+
+    Parameters
+    ----------
+    engine_version
+        Canonical engine string (``contracts.ENGINE_VERSION``).
+    term_names, term_units
+        Term names and units in declared order.  Must have the same length
+        as ``weights``.
+    weights
+        Exactly ``numpy.ndarray``, native ``float64``, ``(n_terms,)``:
+        the declared weight of each term.
+    scale
+        Integer scale code (``codes.SCALE_LEVEL`` or ``codes.SCALE_LOG``).
+    deterministic
+        Integer deterministic code (``codes.DET_CONSTANT`` or
+        ``codes.DET_CONSTANT_TREND``).
+    lag
+        Declared ADF lag ``p``.
+    rank_rtol
+        Declared rank tolerance.
+    start_ord, end_ord
+        Alignment window bounds from ``AlignedLevels``.
+    critical_value_source
+        Fixed text string from ``labels.CRITICAL_VALUE_SOURCES``.
+
+    Returns
+    -------
+    str
+        64-character lowercase hex digest.
+
+    Raises
+    ------
+    TypeError
+        ``weights`` is not exactly ``numpy.ndarray`` with native ``float64``.
+    ValueError
+        ``term_names`` and ``term_units`` do not have the same length as
+        ``weights``.
+    """
+    # Exact-type check runs before any reduction (note 4, C.9).
+    _require_array("weights", weights, np.float64)
+    if weights.ndim != 1:
+        raise ValueError(f"weights must be 1-D; got ndim {weights.ndim}")
+    n_terms = int(weights.shape[0])
+    if len(term_names) != n_terms or len(term_units) != n_terms:
+        raise ValueError(
+            "term_names, term_units and weights must have equal length; "
+            f"got {len(term_names)}, {len(term_units)}, {n_terms}"
+        )
+
+    terms_text = "\x1e".join(f"T\x1f{n}\x1f{u}" for n, u in zip(term_names, term_units))
+
+    return digest_named_arrays(
+        schema_version=_UNIT_ROOT_SCHEMA_VERSION,
+        engine_version=_text_uint8(engine_version),
+        test_kind=_TEST_ADF_ARR,
+        terms=_text_uint8(terms_text),
+        weights=weights,
+        scale=np.array([scale], dtype=np.int8),
+        deterministic=np.array([deterministic], dtype=np.int8),
+        lag=np.array([lag], dtype=np.int64),
+        rank_rtol=np.array([rank_rtol], dtype=np.float64),
+        window=np.array([start_ord, end_ord], dtype=np.int32),
+        critical_value_source=_text_uint8(critical_value_source),
+    )
+
+
+def unit_root_sample_digest(
+    *,
+    row_start_date_ord: NDArray[np.int32],
+    row_end_date_ord: NDArray[np.int32],
+    y: NDArray[np.float64],
+    x: NDArray[np.float64],
+    regressor_names: Sequence[str],
+) -> str:
+    """
+    SHA-256 digest of the unit-root sample arrays (A.3, C.9).
+
+    Delegates to ``sample_digest`` with ``response_name="dz"`` and
+    ``intercept=True``, so the ``column_names`` bytes are:
+    ``Y\x1fdz``, ``C\x1f``, then ``X\x1f{label}`` per label in
+    ``regressor_names``, all joined by ``\x1e``.
+
+    Changes when the row dates, any column label, the response vector ``y``
+    or the design matrix ``X`` change.  ``rank_rtol`` and other spec
+    parameters are not included (those live in ``unit_root_spec_digest``).
+
+    Parameters
+    ----------
+    row_start_date_ord, row_end_date_ord
+        Exactly ``numpy.ndarray``, native ``int32``, ``(n,)``.
+    y
+        Exactly ``numpy.ndarray``, native ``float64``, ``(n,)``: ADF
+        response ``dz``.
+    x
+        Exactly ``numpy.ndarray``, native ``float64``, ``(n, k)`` C-order:
+        ADF design before column scaling.
+    regressor_names
+        ADF design column labels after the intercept (``"trend"`` when
+        present, then ``"z_lag1"``, ``"dz_lag1"`` … ``"dz_lag<p>"``).
+
+    Returns
+    -------
+    str
+        64-character lowercase hex digest.
+
+    Raises
+    ------
+    TypeError
+        An array is not exactly ``numpy.ndarray`` with its declared dtype.
+    ValueError
+        Row arrays not 1-D of equal length; ``y`` not 1-D of that length;
+        ``x`` not 2-D with that many rows.
+    """
+    return sample_digest(
+        row_start_date_ord=row_start_date_ord,
+        row_end_date_ord=row_end_date_ord,
+        response_name="dz",
+        intercept=True,
+        regressor_names=regressor_names,
+        y=y,
+        x=x,
+    )
