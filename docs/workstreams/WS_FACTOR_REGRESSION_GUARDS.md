@@ -2,14 +2,15 @@
 
 Path: docs/workstreams/WS_FACTOR_REGRESSION_GUARDS.md
 Class: HEAVY
-Status: DRAFT
+Status: FROZEN
 Revision: 2
 Revision note: Revision 2 (2026-10-21). Audit round 1 (R_FREEZE_RECONCILIATION_R1.md): B-1 and B-2 applied; owner rewording of the first sentence of O-2 (O-A-1). Revision 1 (2026-10-20): investigator draft from a PLAN CHANGE on defects N-1 and B-2.
 Date: 2026-10-21
 Branch: ws/factor-regression-guards
-Snapshot: SNAPSHOT commit=3b39de7 dirty=false content_hash=<copy from the refreshed context_riskquant_index.txt>
+Snapshot: SNAPSHOT commit=dbcb827 dirty=false content_hash=7461aad8accf3519
 Drafted by: investigator
-Independent review: PENDING (round 1 NOT READY: B-1, B-2)
+Independent review: PASSED (commit=dbcb827 dirty=false content_hash=7461aad8accf3519); rounds
+1 and 2; B-3 fixed by the owner header edit at freeze.
 Audit rounds used: 1 of 2
 Code merged: no
 DECISIONS.md reconciled: NO
