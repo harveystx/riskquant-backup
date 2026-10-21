@@ -11,7 +11,7 @@ Snapshot: SNAPSHOT commit=dbcb827 dirty=false content_hash=7461aad8accf3519
 Drafted by: investigator
 Independent review: PASSED (commit=dbcb827 dirty=false content_hash=7461aad8accf3519); rounds
 1 and 2; B-3 fixed by the owner header edit at freeze.
-Audit rounds used: 1 of 2
+Audit rounds used: 2 of 2
 Code merged: no
 DECISIONS.md reconciled: NO
 Evidence limits: Sandbox only (Python 3.12.3, numpy 2.4.4, scipy 1.17.1), source rebuilt from the factor_regression,
@@ -174,8 +174,16 @@ Gates:
 2. `pytest -q` (full suite).
 3. Floor gate (below).
 Exit: every S1 test passes on Python 3.12 and on Python 3.11 with numpy 1.26.4. Every existing test passes.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: S1 land 2c9fef5 and fix cc336ab on ws/factor-regression-guards. Windows gates exit=0 (gate_g1.txt,
+gate_g1_fix.txt; mypy baseline exit=1 by design); slice 278 passed; pytest full 7153 passed and 36 skipped (7117 + 36
+new tests). Floor gate (gate_g1_floor.txt): Python 3.11.9, numpy 1.26.4, scipy 1.15.3; 1387 passed; mypy exit=0.
+Independent review: ACCEPT WITH FIXES (R-001 and R-003, P1), then ACCEPT at depth QUICK after the fix. Reviewer
+mutation run: 9 mutants; M6 and M8 survived the first review and the fix tests kill them. Owner ruling (OD-R4, R-004):
+S1.T8 compares W bit for bit with the pre-change symmetrization run on the same machine and checks the recorded Linux
+values to 1e-12 relative. Reason: the recorded literals differed on Windows in 8 of 15 cases, by up to 1.5e-14
+relative, with the pre-change code too. The reviewer confirmed from git diff dbcb827 2c9fef5 that the symmetrization
+line is the only arithmetic change in step 9, so S1.T8 equals C.6 on each machine. Backlog lines in section 7.
 
 | Id | Case | Expected | Defect caught |
 |---|---|---|---|
@@ -261,6 +269,10 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - `api.py:_core_aligned_levels` uses `setdefault` for duplicate names. S2 makes the path unreachable.
 - AlignedLevels keeps the input memory order. combine_core documents C-order and does not check it.
 - Conditioning of cov in wald_core (outside C.2).
+- S1 review R-002: the S1 implementer report showed no archive listing, gave condensed gate lines and counted 37 S1 tests instead of 34.
+- S1 review R-005: the floor mypy ran on wald.py only. The S2 floor gate prints its mypy command and covers every changed src file.
+- S1 U-5: the wald_core Raises text "Steps 6-10" does not name the step 9 cause.
+- S1 U-6: pyproject.toml does not declare pydantic, which tests import. This is outside this workstream.
 
 ## 8. Closure record
 
