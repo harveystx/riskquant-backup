@@ -27,15 +27,27 @@ from riskquant.exceptions import RiskQuantError
 
 class SeriesContractError(RiskQuantError):
     """
-    An ``ObservedSeries`` violates the C.1 array contract.
+    An ``ObservedSeries`` violates the C.1 array contract, or an
+    ``AlignedLevels`` field has a wrong value.
+
+    Type and value rule (O-2 of WS_FACTOR_REGRESSION_GUARDS).
+    ``ObservedSeries`` raises this class for a type fault and for a value
+    fault.  ``AlignedLevels`` raises this class for a value fault only.  A
+    field of ``AlignedLevels`` with a wrong Python type raises ``TypeError``.
 
     Parameters
     ----------
     series
-        Name of the offending series (or its ``repr`` when ``name`` is not a
-        ``str``).
+        Series convention.  The name of the offending series when the fault
+        concerns one series (for an ``ObservedSeries``, the ``repr`` of
+        ``name`` when ``name`` is not a ``str``).  For an ``AlignedLevels``
+        fault that concerns no single series: ``"AlignedLevels.<field>"``,
+        for example ``"AlignedLevels.date_ord"``.  The ``AlignedLevels``
+        docstring gives the value for each check.
     message
-        Human-readable description of the violation.
+        Human-readable description of the violation.  For an
+        ``AlignedLevels`` fault it names the field and, where one exists, the
+        exclusion index.
     date_ord
         For a non-finite value: the ``int32`` date ordinal of the first
         offending element.  ``None`` for violations that do not address a
