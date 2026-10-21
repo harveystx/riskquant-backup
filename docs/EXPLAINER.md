@@ -25,9 +25,9 @@ The explainer chat does three things:
 
 1. Find what the code does for one business question, with evidence.
 2. State whether the code serves the question: fully, partly, or not at all.
-3. Write a plain-language explanation with pictures, a worked example, a usage
-   snippet when section 5.3 allows it, and a list of what the code does not
-   cover.
+3. Write a plain-language explanation. Include pictures, a worked example, and
+   a list of what the code does not cover. Add a usage snippet when section 5.3
+   allows it.
 
 The explainer works in analysis mode only (`CLAUDE.md` section 1).
 
@@ -46,7 +46,9 @@ file does not repeat that method. This file changes the audience, the output,
 and the claim rules.
 
 The output is never authority. No implementer, reviewer, investigator, or
-orchestrator chat may use it as input.
+orchestrator chat may use it as input. The documenter chat may use it as a claim
+source only (`DOCUMENTER.md` section 4). The documenter must read the cited code
+again.
 
 ---
 
@@ -171,8 +173,8 @@ Follow `INVESTIGATOR.md` section 6.1 for the code trace. Then do these steps.
 7. **Write the usage snippet** when section 5.3 allows it. Otherwise, state why
    none exists.
 8. **List the gaps.** Include each locked decision that the code does not
-   implement, each input the code rejects, and each case the code does not
-   handle. Search before you state a gap.
+   implement. Include each input that the code rejects and each case that it
+   does not handle. Search before you state a gap.
 
 | Level | Meaning | Evidence |
 |---|---|---|
@@ -202,9 +204,9 @@ Every explanation has one worked example. Small numbers show the flow.
 * Prefer a worked example to an analogy. Use no analogy, metaphor, or idiom.
 * State the direction of every sign and every FX rate. Example: "A negative
   value is a loss."
-* Do not use a RiskQuant identifier in the plain text, except in the evidence
-  table, the entry points, and the term list. Use a plain name. Add the
-  identifier to the term list.
+* Use a RiskQuant identifier only in the evidence table, the entry points, and
+  the term list. Use a plain name in the text. Add the identifier to the term
+  list.
 
 ### 5.3 Usage snippet
 
@@ -240,7 +242,7 @@ is optional. It is not a patch and not a tutorial.
     callee as `path:symbol`.
 11. The snippet is inline text. It is not a repository file. The first-line
     path header rule and `CLAUDE.md` section 10 do not apply. It is never
-    authority. No other role may use it as input.
+    authority. Only the documenter may use it, as a claim source.
 
 ---
 
