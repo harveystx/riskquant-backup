@@ -18,6 +18,11 @@ S1.T3  WS_FACTOR_REGRESSION_GUARDS: matmul overflow of m raises
        RESTRICTION_NON_FINITE before numpy.linalg.cholesky (C.1).
 S1.T4  overflow of gap raises RESTRICTION_NON_FINITE before the Cholesky step.
 S1.T5  no RuntimeWarning leaves wald_core for the S1.T1 to S1.T4 inputs (C.4).
+R-001  S1 review: a rank-deficient restriction with an overflowing m raises
+       RESTRICTION_RANK_DEFICIENT; the step 8 rank rule runs before the step 9
+       check (C.1 "After step 8").
+R-003  S1 review: a gap of inf - inf = nan raises RESTRICTION_NON_FINITE with
+       no RuntimeWarning (C.4, the invalid branch of the step 9 errstate).
 S1.T8  W of each existing fixture equals, bit for bit, W of the pre-change
        symmetrization run on the same machine (C.6, O-1 = B). The recorded
        values hold to 1e-12 relative on every platform.
@@ -1171,6 +1176,50 @@ def _row_scaled_inputs(scale: float) -> _WaldInputs:
     rest[1] *= scale
     rhs[1] *= scale
     return coef, cov, 10, rest, rhs
+
+
+class TestS1R001RankRuleBeforeFiniteCheck:
+    """
+    S1 review R-001 (C.1 "After step 8"): the step 8 rank rule runs first.
+
+    The restriction is rank deficient and its m would overflow. The rank rule
+    raises RESTRICTION_RANK_DEFICIENT. A step 9 check that runs before step 8
+    would raise RESTRICTION_NON_FINITE.
+    """
+
+    def test_rank_deficient_restriction_with_overflowing_m_raises_rank_deficient(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = _spy_cholesky(monkeypatch)
+        rest = np.array([[1.0, 1.0], [1.0, 1.0]])
+        with pytest.raises(CoreRestrictionError) as exc_info:
+            wald_core(_OVERFLOW_COEF, _OVERFLOW_COV, _DOF_S1, rest, np.zeros(2))
+        assert exc_info.value.reason == int(codes.RESTRICTION_RANK_DEFICIENT)
+        assert exc_info.value.shape == rest.shape
+        assert calls == []
+
+
+class TestS1R003InvalidBranchNoWarning:
+    """
+    S1 review R-003 (C.4): the invalid branch of the step 9 errstate.
+
+    ``rows @ coef`` and ``rhs_unit`` both overflow to inf, so gap is
+    inf - inf = nan. Without ``invalid="ignore"``, numpy warns "invalid value
+    encountered in subtract". Only the wald_core call runs under the filter.
+    """
+
+    def test_nan_gap_raises_non_finite_with_no_warning(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = _spy_cholesky(monkeypatch)
+        coef = np.array([1.7e308, 1.7e308])
+        rest = np.array([[1e-300, 1e-300]])
+        with pytest.raises(CoreRestrictionError) as exc_info, warnings.catch_warnings():
+            warnings.simplefilter("error")
+            wald_core(coef, np.eye(2), _DOF_S1, rest, np.array([1e10]))
+        assert exc_info.value.reason == int(codes.RESTRICTION_NON_FINITE)
+        assert exc_info.value.shape == rest.shape
+        assert calls == []
 
 
 # S1.T8 recorded values: repr(float) of W for every existing fixture of this
