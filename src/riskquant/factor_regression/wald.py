@@ -35,7 +35,12 @@ Check order (wald_core):
     7. RESTRICTION_NON_FINITE: a NaN or inf in restriction or rhs.
     8. RESTRICTION_RANK_DEFICIENT: a zero row, J above K, or s_min <= tau * s_max
        of the row-normalised restriction (OD-10, amendment to A.5).
-    9. RESTRICTION_NOT_POSITIVE_DEFINITE: Cholesky of m fails.
+    9. RESTRICTION_NON_FINITE: a non-finite entry in gap or in m (the matrix
+       passed to numpy.linalg.cholesky), checked before the Cholesky step;
+       numpy.linalg.cholesky is not called. This also applies where m is not
+       positive definite: that input class raised
+       RESTRICTION_NOT_POSITIVE_DEFINITE before this check existed.
+       RESTRICTION_NOT_POSITIVE_DEFINITE: Cholesky of the finite m fails.
    10. RESTRICTION_NON_FINITE: W or F is not finite after the solve.
 """
 
@@ -214,7 +219,13 @@ def wald_core(
     7. ``RESTRICTION_NON_FINITE``: NaN or inf in ``restriction`` or ``rhs``.
     8. ``RESTRICTION_RANK_DEFICIENT``: ``J > K``, a zero row, or
        ``s_min <= tau * s_max`` of the row-normalised ``restriction``.
-    9. ``RESTRICTION_NOT_POSITIVE_DEFINITE``: Cholesky of ``m`` fails.
+    9. ``RESTRICTION_NON_FINITE``: a non-finite entry in ``gap`` or in ``m``
+       (the matrix passed to ``numpy.linalg.cholesky``), checked before the
+       Cholesky step; ``numpy.linalg.cholesky`` is not called.  This also
+       applies where ``m`` is not positive definite: that input class raised
+       ``RESTRICTION_NOT_POSITIVE_DEFINITE`` before this check existed.
+       ``RESTRICTION_NOT_POSITIVE_DEFINITE``: Cholesky of the finite ``m``
+       fails.
     10. ``RESTRICTION_NON_FINITE``: ``W`` or ``F`` is not finite.
 
     Amendment to the rank rule of A.5 (owner decision OD-10, option B).  The
@@ -347,13 +358,26 @@ def wald_core(
             reason=codes.RESTRICTION_RANK_DEFICIENT, shape=rest_shape
         )
 
-    # ---- 9. RESTRICTION_NOT_POSITIVE_DEFINITE + solve ---------------------------
-    gap = rows @ coef - rhs_unit
-    m = rows @ cov @ rows.T
-    # Symmetrise to guard bit-for-bit asymmetry from floating-point arithmetic:
-    # 2*C and 0.5*(2*C) round to C exactly, so the average introduces no error
-    # on a symmetric matrix.
-    m = 0.5 * (m + m.T)
+    # ---- 9. RESTRICTION_NON_FINITE (gap, m), NOT_POSITIVE_DEFINITE + solve -----
+    # Finite rows, coef, cov and rhs_unit can still give an overflow here: a
+    # cov entry near the float64 maximum overflows the matmul, and rhs_unit is
+    # inf when the row norm is tiny. numpy.linalg.cholesky returns inf with no
+    # LinAlgError on such an m, and the solve then gives a finite wrong W (W = 0
+    # for J = 1). The errstate keeps the overflow silent; the check below is the
+    # only signal (C.1, C.4).
+    with np.errstate(over="ignore", invalid="ignore"):
+        gap = rows @ coef - rhs_unit
+        m = rows @ cov @ rows.T
+        # Symmetrise to guard bit-for-bit asymmetry from floating-point
+        # arithmetic. Halve before the add (O-1 = B): 0.5 * (m + m.T) overflows
+        # when two finite entries near the float64 maximum are added. Halving is
+        # exact outside the subnormal range, so wherever 0.5 * (m + m.T) is
+        # finite this form equals it bit for bit (F-7).
+        m = 0.5 * m + 0.5 * m.T
+    if not (bool(np.isfinite(gap).all()) and bool(np.isfinite(m).all())):
+        raise CoreRestrictionError(
+            reason=codes.RESTRICTION_NON_FINITE, shape=rest_shape
+        )
     try:
         chol = np.linalg.cholesky(m)  # lower triangular, m = chol @ chol.T
     except np.linalg.LinAlgError as exc:

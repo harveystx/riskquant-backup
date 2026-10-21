@@ -14,6 +14,14 @@ R-012  mutation resistance: F = W / J, the f.sf degrees of freedom, the W or F
        ndim check.
 R-013  restriction rank rule (OD-10, option B): row normalisation and the
        ratio test s_min <= tau * s_max with tau = 1e-4.
+S1.T3  WS_FACTOR_REGRESSION_GUARDS: matmul overflow of m raises
+       RESTRICTION_NON_FINITE before numpy.linalg.cholesky (C.1).
+S1.T4  overflow of gap raises RESTRICTION_NON_FINITE before the Cholesky step.
+S1.T5  no RuntimeWarning leaves wald_core for the S1.T1 to S1.T4 inputs (C.4).
+S1.T8  W of each existing fixture equals, bit for bit, W of the pre-change
+       symmetrization run on the same machine (C.6, O-1 = B). The recorded
+       values hold to 1e-12 relative on every platform.
+S1.T9  the wald.py check-order lists name the step 9 finiteness check (C.7).
 
 Owner decision 3 (restriction errors):
   WRONG_SHAPE cases, NON_FINITE, RANK_DEFICIENT, NOT_POSITIVE_DEFINITE.
@@ -38,16 +46,23 @@ Tolerances (owner decision 6):
 
 from __future__ import annotations
 
+import inspect
 import math
+import re
+import sys
+import types
 import warnings
+from collections.abc import Callable, Iterator
 from fractions import Fraction
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
 from numpy import ma
 from numpy.typing import NDArray
 
-from riskquant.factor_regression import codes
+from riskquant.factor_regression import codes, wald
 from riskquant.factor_regression.design import assemble_design
 from riskquant.factor_regression.errors import (
     CoreInputError,
@@ -967,3 +982,378 @@ class TestR013NoMutation:
         wald_core(coef, cov, 10, rest, rhs)
         np.testing.assert_array_equal(rest, rest_before)
         np.testing.assert_array_equal(rhs, rhs_before)
+
+
+# ================================================================== S1 (WS_FACTOR_REGRESSION_GUARDS)
+
+# S1.T3 (R-4): a covariance near the float64 maximum. Every input is finite, but
+# m = rows @ cov @ rows.T overflows in the matmul. Before the change, cholesky
+# returned inf with no LinAlgError and wald_core returned a finite wrong W (F-3).
+_OVERFLOW_COEF = np.array([3.0, 3.0])
+_OVERFLOW_COV = np.array([[1e308, 0.9e308], [0.9e308, 1e308]])
+
+# S1.T4: a row norm of 1e-300 with rhs 1e10. The normalised rhs entry is
+# 1e10 / 1e-300, which overflows to inf, so gap is not finite (F-4).
+_GAP_COEF = np.array([3.0, 3.0])
+_GAP_COV = np.eye(2)
+
+_DOF_S1 = 50
+
+_S1_T3_RESTRICTIONS = [
+    pytest.param([[1.0, 1.0]], id="J1"),
+    pytest.param([[1.0, 1.0], [1.0, 0.0]], id="J2"),
+]
+_S1_T4_CASES = [
+    pytest.param([[1e-300, 0.0]], [1e10], id="J1"),
+    pytest.param([[1e-300, 0.0], [0.0, 1.0]], [1e10, 0.0], id="J2"),
+]
+
+
+def _spy_cholesky(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """
+    Replace ``numpy.linalg.cholesky`` by a counting wrapper.
+
+    wald.py looks up ``np.linalg.cholesky`` at call time, so the patch of the
+    numpy attribute reaches it. The returned list gets one entry per call.
+    """
+    calls: list[int] = []
+    original = np.linalg.cholesky
+
+    def spy(a: NDArray[np.float64]) -> object:
+        calls.append(1)
+        return original(a)
+
+    monkeypatch.setattr(np.linalg, "cholesky", spy)
+    return calls
+
+
+def _guard_fit(seed: int, scale: float) -> CoreFit:
+    """
+    Core OLS fit of the F-2 generator (n = 250, LEVEL, intercept, IID).
+
+    ``Y`` on ``X1`` and ``X2``, where both regressors have the size ``scale``.
+    At ``scale`` near 2e-156 the covariance diagonal is near the float64
+    maximum. The design and ``rank_rtol = 1e-12`` are those of ``fit_ols`` for
+    the F-2 ``ModelSpec``: the coefficient and covariance are equal to the
+    ``fit_ols`` values bit for bit (sandbox evidence). This module imports no
+    facade module (R-5, E-2).
+    """
+    n = 250
+    rng = np.random.default_rng(seed)
+    x1 = scale * (1 + 0.5 * rng.random(n))
+    x2 = scale * (1 + 0.5 * rng.random(n))
+    y = 1 + 0.3 * x1 / scale + 0.2 * x2 / scale + 0.05 * rng.standard_normal(n)
+    design = assemble_design(np.vstack([x1, x2]), intercept=True)
+    return fit_core(
+        design,
+        y,
+        intercept=True,
+        rank_rtol=1e-12,
+        covariance_kind=int(codes.IID),
+        covariance_lag=0,
+    )
+
+
+class TestS1T3MatmulOverflow:
+    """S1.T3 (C.1): a non-finite m raises before numpy.linalg.cholesky."""
+
+    @pytest.mark.parametrize("restriction", _S1_T3_RESTRICTIONS)
+    def test_non_finite_m_raises_and_cholesky_is_not_called(
+        self, monkeypatch: pytest.MonkeyPatch, restriction: list[list[float]]
+    ) -> None:
+        calls = _spy_cholesky(monkeypatch)
+        rest = np.array(restriction)
+        rhs = np.zeros(rest.shape[0])
+        with pytest.raises(CoreRestrictionError) as exc_info:
+            wald_core(_OVERFLOW_COEF, _OVERFLOW_COV, _DOF_S1, rest, rhs)
+        assert exc_info.value.reason == int(codes.RESTRICTION_NON_FINITE)
+        assert exc_info.value.shape == rest.shape
+        assert calls == []
+
+
+class TestS1T4GapOverflow:
+    """S1.T4 (C.1): a non-finite gap raises before numpy.linalg.cholesky."""
+
+    @pytest.mark.parametrize(("restriction", "rhs"), _S1_T4_CASES)
+    def test_non_finite_gap_raises_and_cholesky_is_not_called(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        restriction: list[list[float]],
+        rhs: list[float],
+    ) -> None:
+        calls = _spy_cholesky(monkeypatch)
+        rest = np.array(restriction)
+        with pytest.raises(CoreRestrictionError) as exc_info:
+            wald_core(_GAP_COEF, _GAP_COV, _DOF_S1, rest, np.array(rhs))
+        assert exc_info.value.reason == int(codes.RESTRICTION_NON_FINITE)
+        assert exc_info.value.shape == rest.shape
+        assert calls == []
+
+
+class TestS1T5NoRuntimeWarning:
+    """
+    S1.T5 (C.4, B-1): no RuntimeWarning leaves wald_core.
+
+    Only the wald_core call runs under ``warnings.simplefilter("error")``, so a
+    warning from the fit cannot fail the test.
+    """
+
+    @pytest.mark.parametrize(
+        "restriction",
+        [
+            pytest.param([[0.0, 1.0, 1.0]], id="S1.T1"),
+            pytest.param([[0.0, 1.0, 1.0], [1.0, 0.0, 0.0]], id="S1.T2"),
+        ],
+    )
+    def test_owner_case_returns_w_with_no_warning(
+        self, restriction: list[list[float]]
+    ) -> None:
+        fit = _guard_fit(1, 2.0e-156)
+        rest = np.array(restriction)
+        rhs = np.zeros(rest.shape[0])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            result = wald_core(fit.coef, fit.cov, fit.dof, rest, rhs)
+        w_exact = _oracle_w(fit.coef, fit.cov, rest, rhs)
+        assert abs(result.w - w_exact) / abs(w_exact) < 1e-11  # tol: C.3, 1e-11 rel
+
+    @pytest.mark.parametrize("restriction", _S1_T3_RESTRICTIONS)
+    def test_matmul_overflow_raises_with_no_warning(
+        self, restriction: list[list[float]]
+    ) -> None:
+        rest = np.array(restriction)
+        rhs = np.zeros(rest.shape[0])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            with pytest.raises(CoreRestrictionError) as exc_info:
+                wald_core(_OVERFLOW_COEF, _OVERFLOW_COV, _DOF_S1, rest, rhs)
+        assert exc_info.value.reason == int(codes.RESTRICTION_NON_FINITE)
+
+    @pytest.mark.parametrize(("restriction", "rhs"), _S1_T4_CASES)
+    def test_gap_overflow_raises_with_no_warning(
+        self, restriction: list[list[float]], rhs: list[float]
+    ) -> None:
+        rest = np.array(restriction)
+        rhs_arr = np.array(rhs)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            with pytest.raises(CoreRestrictionError) as exc_info:
+                wald_core(_GAP_COEF, _GAP_COV, _DOF_S1, rest, rhs_arr)
+        assert exc_info.value.reason == int(codes.RESTRICTION_NON_FINITE)
+
+
+_WaldInputs = tuple[
+    NDArray[np.float64],
+    NDArray[np.float64],
+    int,
+    NDArray[np.float64],
+    NDArray[np.float64],
+]
+
+
+def _fit_inputs(
+    fit: CoreFit, restriction: list[list[float]], rhs: list[float]
+) -> _WaldInputs:
+    return fit.coef, fit.cov, fit.dof, np.array(restriction), np.array(rhs)
+
+
+def _synthetic_inputs(
+    k: int, restriction: NDArray[np.float64], rhs: list[float]
+) -> _WaldInputs:
+    coef, cov = _synthetic_moments(k)
+    return coef, cov, 10, restriction, np.array(rhs)
+
+
+def _row_scaled_inputs(scale: float) -> _WaldInputs:
+    coef, cov = _synthetic_moments(2)
+    rest = np.array([[1.0, 0.5], [0.0, 1.0]])
+    rhs = np.array([0.2, 1.0])
+    rest[1] *= scale
+    rhs[1] *= scale
+    return coef, cov, 10, rest, rhs
+
+
+# S1.T8 recorded values: repr(float) of W for every existing fixture of this
+# module that reaches step 9 and returns W. Recorded on the pre-change working
+# tree (R-9): commit dbcb827, code equal to prod 3b39de7; sandbox, Linux,
+# OpenBLAS, Python 3.12.3, numpy 2.4.4. Other platforms round the matrix
+# products differently in the last bits: the owner Windows run of 2026-10-21
+# differed in 8 of 15 values, by up to 1.5e-14 relative, with the pre-change
+# code. The bit-for-bit check of C.6 therefore compares with the pre-change
+# symmetrization on the running machine; the recorded values hold to 1e-12.
+# The two remaining step 9 calls of this module raise
+# (RESTRICTION_NOT_POSITIVE_DEFINITE and the step 10 RESTRICTION_NON_FINITE);
+# their existing tests pin the reason.
+_GOLDEN_W: list[tuple[str, Callable[[], _WaldInputs], float]] = [
+    (
+        "T1_iid_x4_joint",
+        lambda: _fit_inputs(
+            _build_fit_iid(_X4, _Y4), [[1.0, 0.0], [0.0, 1.0]], [0.0, 1.0]
+        ),
+        2.972375690607725,
+    ),
+    (
+        "T2_correlated_eye",
+        lambda: _fit_inputs(
+            TestT2CorrelatedRegressorsJ2()._make_fit(),
+            [[1.0, 0.0], [0.0, 1.0]],
+            [0.0, 0.0],
+        ),
+        3396.9842298420426,
+    ),
+    (
+        "T3_iid_x4_beta",
+        lambda: _fit_inputs(_build_fit_iid(_X4, _Y4), [[0.0, 1.0]], [0.0]),
+        42.47513812154696,
+    ),
+    (
+        "T5_hc0_x8_joint",
+        lambda: _fit_inputs(
+            _build_fit_hc0(_X8, _Y8), [[1.0, 0.0], [0.0, 1.0]], [0.0, 1.0]
+        ),
+        12.91472100192866,
+    ),
+    (
+        "T5_iid_x8_joint",
+        lambda: _fit_inputs(
+            _build_fit_iid(_X8, _Y8), [[1.0, 0.0], [0.0, 1.0]], [0.0, 1.0]
+        ),
+        8.044585987261037,
+    ),
+    (
+        "OD5_iid_x8_alpha",
+        lambda: _fit_inputs(_build_fit_iid(_X8, _Y8), [[1.0, 0.0]], [0.0]),
+        4.736043461970745,
+    ),
+    (
+        "R012_iid_x4_alpha",
+        lambda: _fit_inputs(_build_fit_iid(_X4, _Y4), [[1.0, 0.0]], [0.0]),
+        2.6611418047882065,
+    ),
+    (
+        "R012_iid_x4_beta_rhs_one",
+        lambda: _fit_inputs(_build_fit_iid(_X4, _Y4), [[0.0, 1.0]], [1.0]),
+        1.5911602209944729,
+    ),
+    (
+        "R013_ratio_above_tau_k2",
+        lambda: _synthetic_inputs(
+            2, _two_row_restriction(_RATIO_ABOVE_TAU, 2), [0.0, 1.0]
+        ),
+        14207887.98269837,
+    ),
+    (
+        "R013_ratio_above_tau_k3",
+        lambda: _synthetic_inputs(
+            3, _two_row_restriction(_RATIO_ABOVE_TAU, 3), [0.0, 1.0]
+        ),
+        20758724.158822093,
+    ),
+    (
+        "R013_ratio_2e_minus_4",
+        lambda: _synthetic_inputs(2, _two_row_restriction(2e-4, 2), [0.0, 1.0]),
+        4299812.448130833,
+    ),
+    ("R013_row_scale_1e-12", lambda: _row_scaled_inputs(1e-12), 3.7841924398625415),
+    ("R013_row_scale_1e-170", lambda: _row_scaled_inputs(1e-170), 3.7841924398625415),
+    ("R013_row_scale_1e+160", lambda: _row_scaled_inputs(1e160), 3.7841924398625415),
+    (
+        "R013_no_mutation",
+        lambda: _synthetic_inputs(2, np.array([[3e-7, 4e-7], [0.0, 2.0]]), [5e-7, 1.0]),
+        1.9934707903780067,
+    ),
+]
+
+
+_NEW_SYMMETRIZATION = "m = 0.5 * m + 0.5 * m.T"
+_PRE_CHANGE_SYMMETRIZATION = "m = 0.5 * (m + m.T)"
+_PRE_CHANGE_MODULE = "_wald_with_pre_change_symmetrization"
+# Recorded values hold to this relative tolerance on every platform. Observed
+# platform spread: 1.5e-14 (owner Windows run against the Linux recording).
+_RECORDED_RTOL = 1e-12
+
+
+@pytest.fixture(scope="module")
+def pre_change_wald_core() -> Iterator[Callable[..., Any]]:
+    """
+    wald_core with the pre-change symmetrization, built from the current source.
+
+    The source of wald.py is read at test time, and its one step 9
+    symmetrization line is replaced by the pre-change line. Every other line,
+    the BLAS and the platform are the same, so a W difference can only come from
+    the symmetrization form (C.6). The module is registered under a private
+    name for the duration of the module scope, because its dataclasses resolve
+    their module through sys.modules.
+    """
+    path = wald.__file__
+    assert path is not None
+    source = Path(path).read_text(encoding="utf-8")
+    assert source.count(_NEW_SYMMETRIZATION) == 1, (
+        "the O-1 = B line is not in wald.py once"
+    )
+    module = types.ModuleType(_PRE_CHANGE_MODULE)
+    sys.modules[_PRE_CHANGE_MODULE] = module
+    try:
+        exec(
+            compile(
+                source.replace(_NEW_SYMMETRIZATION, _PRE_CHANGE_SYMMETRIZATION),
+                path,
+                "exec",
+            ),
+            module.__dict__,
+        )
+        yield module.wald_core
+    finally:
+        del sys.modules[_PRE_CHANGE_MODULE]
+
+
+class TestS1T8GoldenW:
+    """
+    S1.T8 (C.6): the step 9 change leaves W of every existing fixture unchanged.
+
+    ``0.5 * m + 0.5 * m.T`` equals ``0.5 * (m + m.T)`` bit for bit when no entry
+    of m is near the subnormal range (F-7). Every fixture has such an m. The
+    comparison runs on the running machine, because recorded literals differ
+    between platforms in the last bits.
+    """
+
+    @pytest.mark.parametrize(
+        ("make", "golden"),
+        [pytest.param(make, golden, id=name) for name, make, golden in _GOLDEN_W],
+    )
+    def test_w_equals_w_of_the_pre_change_symmetrization(
+        self,
+        make: Callable[[], _WaldInputs],
+        golden: float,
+        pre_change_wald_core: Callable[..., Any],
+    ) -> None:
+        coef, cov, dof, rest, rhs = make()
+        result = wald_core(coef, cov, dof, rest, rhs)
+        reference = pre_change_wald_core(coef, cov, dof, rest, rhs)
+        assert result.w == reference.w  # tol: 0, bit for bit on this machine (C.6)
+        assert result.w == pytest.approx(golden, rel=_RECORDED_RTOL, abs=0.0)
+
+
+def _step_nine(text: str) -> str:
+    """Return the item 9 text of a numbered check-order list."""
+    match = re.search(r"^\s*9\.\s(.*?)^\s*10\.\s", text, flags=re.MULTILINE | re.DOTALL)
+    assert match is not None, "no check-order item 9 found"
+    return match.group(1)
+
+
+class TestS1T9CheckOrderDocstrings:
+    """S1.T9 (C.7): both wald.py check-order lists name the step 9 check."""
+
+    @pytest.mark.parametrize(
+        "doc",
+        [
+            pytest.param(inspect.getdoc(wald), id="module"),
+            pytest.param(wald.wald_core.__doc__, id="wald_core"),
+        ],
+    )
+    def test_step_nine_names_the_finiteness_check(self, doc: str | None) -> None:
+        assert doc is not None
+        step = _step_nine(doc)
+        assert "RESTRICTION_NON_FINITE" in step
+        assert "gap" in step
+        assert "numpy.linalg.cholesky" in step
