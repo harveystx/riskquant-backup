@@ -13,7 +13,7 @@ computes only display quantities (FX-converted levels and spreads for plots).
 
 import marimo
 
-__generated_with = "0.25.2"
+__generated_with = "0.23.14"
 app = marimo.App(width="medium", app_title="riskquant factor regression")
 
 
@@ -47,10 +47,10 @@ def _():
     )
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Factor regression in riskquant
+    # Factor regression in `riskquant`
 
     The library answers one kind of question: **how does one market series
     move with others?** It has four public functions in
@@ -193,7 +193,7 @@ def _(cases, mo):
 
 
 @app.cell
-def _(cases, levels_by_case, case_picker, dates_of, mo, np, pl, plt):
+def _(case_picker, cases, dates_of, levels_by_case, mo, np, pl, plt):
     _case = cases[case_picker.value]
     _levels = levels_by_case[case_picker.value]
     _summary = _case.frame.group_by("series_name", "unit", maintain_order=True).agg(
@@ -259,7 +259,7 @@ def _(mo):
 
 
 @app.cell
-def _(mo, levels_by_case, dates_of, level_of, np, plt):
+def _(dates_of, level_of, levels_by_case, mo, np, plt):
     _lv = levels_by_case["fx_converted_cointegration"]
     _d = dates_of(_lv)
     _usd_in_eur = level_of(_lv, "XLIST_USD") * level_of(_lv, "USDEUR")
@@ -289,7 +289,7 @@ def _(mo):
 
 
 @app.cell
-def _(levels_by_case, api, fx_det, fx_lag, fr_analyses, pl, unit_root_row):
+def _(api, fr_analyses, fx_det, fx_lag, levels_by_case, pl, unit_root_row):
     def _spec(first: str) -> api.UnitRootSpec:
         return api.UnitRootSpec(
             combination=api.LinearCombination(
@@ -316,7 +316,17 @@ def _(levels_by_case, api, fx_det, fx_lag, fr_analyses, pl, unit_root_row):
 
 
 @app.cell
-def _(levels_by_case, api, coef_table, fit_summary, fr_analyses, mo, np, pl, try_call):
+def _(
+    api,
+    coef_table,
+    fit_summary,
+    fr_analyses,
+    levels_by_case,
+    mo,
+    np,
+    pl,
+    try_call,
+):
     _lv = levels_by_case["fx_converted_cointegration"]
     _level_fit = fr_analyses.run_ols_analysis(
         fr_analyses.ols_analysis("fx_level_peer"), _lv
@@ -443,10 +453,10 @@ def _(api, fr_analyses, term):
 
 @app.cell
 def _(
-    mo,
+    api,
     cases,
     levels_by_case,
-    api,
+    mo,
     np,
     plt,
     population_loadings,
@@ -482,11 +492,11 @@ def _(
 
 @app.cell
 def _(
-    cases,
-    levels_by_case,
     api,
+    cases,
     coef_table,
     fit_summary,
+    levels_by_case,
     mo,
     np,
     pl,
@@ -558,7 +568,7 @@ def _(mo):
 
 
 @app.cell
-def _(cases, levels_by_case, api, fr_analyses, np, pl, term):
+def _(api, cases, fr_analyses, levels_by_case, np, pl, term):
     _lv = levels_by_case["credit_factor_loadings"]
     _truth = cases["credit_factor_loadings"].truth
     _log = api.Transform.LOG_RETURN
@@ -626,7 +636,17 @@ def _(mo):
 
 
 @app.cell
-def _(levels_by_case, api, coef_table, fit_summary, fr_analyses, mo, np, pl, try_call):
+def _(
+    api,
+    coef_table,
+    fit_summary,
+    fr_analyses,
+    levels_by_case,
+    mo,
+    np,
+    pl,
+    try_call,
+):
     _lv = levels_by_case["collinear_drivers"]
     _one = fr_analyses.run_ols_analysis(fr_analyses.ols_analysis("gas_single_hub"), _lv)
     _two = fr_analyses.run_ols_analysis(fr_analyses.ols_analysis("gas_two_hubs"), _lv)
@@ -671,7 +691,7 @@ def _(mo):
 
 
 @app.cell
-def _(mo, levels_by_case, dates_of, level_of, plt):
+def _(dates_of, level_of, levels_by_case, mo, plt):
     _lv = levels_by_case["rates_spread"]
     _d = dates_of(_lv)
     _fig, (_a, _b) = plt.subplots(1, 2, figsize=(10, 3.2))
@@ -700,7 +720,7 @@ def _(mo, levels_by_case, dates_of, level_of, plt):
 
 
 @app.cell
-def _(levels_by_case, api, fr_analyses, mo, pl, try_call, unit_root_row):
+def _(api, fr_analyses, levels_by_case, mo, pl, try_call, unit_root_row):
     _lv = levels_by_case["rates_spread"]
     _pairs = {
         "swap level": (("CHF_SWAP_2Y", 1.0),),
@@ -763,7 +783,7 @@ def _(mo):
 
 
 @app.cell
-def _(levels_by_case, fr_analyses, pl, try_call):
+def _(fr_analyses, levels_by_case, pl, try_call):
     _rows = []
     _fits = {}
     for _a in fr_analyses.CANONICAL_OLS_ANALYSES:
