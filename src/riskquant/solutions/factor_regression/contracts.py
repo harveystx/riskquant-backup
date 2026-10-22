@@ -23,6 +23,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from riskquant.factor_regression import codes
+from riskquant.solutions.factor_regression import labels
 from riskquant.solutions.factor_regression.errors import (
     ModelSpecError,
     SeriesContractError,
@@ -244,6 +245,18 @@ class CovarianceSpec:
 
 # ------------------------------------------------------------------ aligned levels
 
+# int32 range: date ordinals and window bounds are int32 in the core and in
+# the spec bytes (A.6).  A wider value would wrap on the int32 cast.
+_INT32_MIN: Final = int(np.iinfo(np.int32).min)
+_INT32_MAX: Final = int(np.iinfo(np.int32).max)
+
+# Exclusion reasons that the alignment emits (O-3).  NOT_USED_BY_ROWS is a
+# label of the fit, not of the alignment, so an AlignedLevels never holds it.
+_ALIGNMENT_EXCLUSION_REASONS: Final = frozenset(
+    labels.EXCLUSION_NAMES[int(code)]
+    for code in (codes.OUTSIDE_WINDOW, codes.NOT_COMMON_DATE)
+)
+
 
 @dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class AlignedLevels:
@@ -257,24 +270,90 @@ class AlignedLevels:
     ----------
     names
         Series names, in the order they were passed to ``align_levels``.
+        Exactly ``tuple`` of ``str``; at least one name; each name not empty,
+        without a character of Unicode category ``Cc``, and unique.
     units
-        Series units, matching ``names``.
+        Series units, matching ``names``.  Exactly ``tuple`` of ``str`` with
+        one non-empty unit per name, without a character of category ``Cc``.
     date_ord
-        ``int32`` ``(m,)`` kept dates, strictly increasing.
+        ``int32`` ``(m,)`` kept dates, strictly increasing, ``m >= 1``.
     levels
-        ``float64`` ``(n_series, m)`` aligned levels; C-order.
+        ``float64`` ``(n_series, m)`` aligned levels, all finite.  The memory
+        order of the input is kept.
     exclusions
-        All exclusion records from the alignment (C.3).
+        All exclusion records from the alignment (C.3).  Exactly ``tuple`` of
+        ``Exclusion``.  Each record names a series of ``names``, has the
+        reason ``OUTSIDE_WINDOW`` or ``NOT_COMMON_DATE``, and an integer
+        ``date_ord`` in the ``int32`` range.
     start_ord, end_ord
-        The declared half-open window ``[start_ord, end_ord)``.
+        The declared half-open window ``[start_ord, end_ord)``.  Each bound is
+        an ``int`` or a NumPy integer (not ``bool``) in the ``int32`` range,
+        and is stored as ``int``.  The window holds every date of
+        ``date_ord``.  It can be wider than the date range: the window is the
+        declared window, not the date range.
 
     The constructor stores read-only copies of ``date_ord`` and ``levels``.
+    It does not rebuild the ``Exclusion`` records.
 
     Raises
     ------
     TypeError
-        ``date_ord`` or ``levels`` is not exactly ``numpy.ndarray`` with its
-        declared dtype.  No cast is applied.
+        A field has a wrong Python type.  ``date_ord`` or ``levels`` is not
+        exactly ``numpy.ndarray`` with its declared dtype in native byte order
+        (no cast is applied); ``names``, ``units`` or ``exclusions`` is not
+        exactly ``tuple``; a name or a unit is not ``str``; an exclusion is
+        not ``Exclusion``; ``Exclusion.series`` or ``Exclusion.reason`` is not
+        ``str``; ``start_ord``, ``end_ord`` or ``Exclusion.date_ord`` is a
+        ``bool`` or not an integer.
+    SeriesContractError
+        A field has a wrong value (the list below).
+
+    Notes
+    -----
+    Check order.  The first failing check raises:
+
+    1. The array type and dtype of ``date_ord``, then of ``levels``
+       (``TypeError``).
+    2. The type checks (``TypeError``): the ``names``, ``units`` and
+       ``exclusions`` containers; each name; each unit; ``start_ord``;
+       ``end_ord``; for each exclusion in order, its type, then its
+       ``series``, ``date_ord`` and ``reason`` fields.
+    3. The value checks (``SeriesContractError``):
+
+       a. ``date_ord`` is 1-D, not empty and strictly increasing.
+       b. ``len(names) >= 1``; ``levels`` is 2-D with shape
+          ``(len(names), m)``.
+       c. ``len(units) == len(names)``.
+       d. Each name is not empty and has no ``Cc`` character; no name occurs
+          twice; each unit is not empty and has no ``Cc`` character.
+       e. ``start_ord`` and ``end_ord`` are in the ``int32`` range;
+          ``date_ord[0] >= start_ord``; ``date_ord[-1] < end_ord``.
+       f. ``levels`` is all finite.
+       g. For each exclusion in order: ``series`` is in ``names``; ``reason``
+          is ``OUTSIDE_WINDOW`` or ``NOT_COMMON_DATE``; ``date_ord`` is in
+          the ``int32`` range.
+
+    The ``series`` field of ``SeriesContractError`` (O-2).  It is the series
+    name when the fault concerns one series, else ``"AlignedLevels.<field>"``:
+
+    * a fault of ``date_ord``, of the ``levels`` shape or of the ``units``
+      length: ``"AlignedLevels.date_ord"``, ``"AlignedLevels.levels"`` or
+      ``"AlignedLevels.units"``;
+    * an empty name or a name with a ``Cc`` character:
+      ``"AlignedLevels.names"``, and the message names the index;
+    * a duplicate name: that name;
+    * an empty unit or a unit with a ``Cc`` character: the name at the index
+      of the unit;
+    * a bound fault: ``"AlignedLevels.start_ord"`` or
+      ``"AlignedLevels.end_ord"``;
+    * a non-finite level: the name of the first row (in ``names`` order) that
+      holds one; ``date_ord`` of the error is the date of the first
+      non-finite value of that row;
+    * an exclusion fault: the ``series`` string of that exclusion, and the
+      message names the exclusion index and the field.
+
+    Every message names the field.  The type checks run before the value
+    checks, so a value check never reads a field of a wrong type.
     """
 
     names: tuple[str, ...]
@@ -288,8 +367,243 @@ class AlignedLevels:
     def __post_init__(self) -> None:
         d = _frozen_array_copy("AlignedLevels", "date_ord", self.date_ord, np.int32)
         lev = _frozen_array_copy("AlignedLevels", "levels", self.levels, np.float64)
+        start, end = _aligned_levels_type_checks(
+            self.names, self.units, self.exclusions, self.start_ord, self.end_ord
+        )
+        _aligned_levels_value_checks(
+            self.names, self.units, d, lev, self.exclusions, start, end
+        )
         object.__setattr__(self, "date_ord", d)
         object.__setattr__(self, "levels", lev)
+        # Store the int that _check_int_param returns: a NumPy integer bound
+        # would otherwise reach OlsResult.window and the spec digest.
+        object.__setattr__(self, "start_ord", start)
+        object.__setattr__(self, "end_ord", end)
+
+
+def _aligned_levels_type_checks(
+    names: object,
+    units: object,
+    exclusions: object,
+    start_ord: object,
+    end_ord: object,
+) -> tuple[int, int]:
+    """
+    Run the ``AlignedLevels`` type checks (step 2 of the check order).
+
+    Returns
+    -------
+    tuple[int, int]
+        ``start_ord`` and ``end_ord`` as ``int``.
+
+    Raises
+    ------
+    TypeError
+        The first type fault.  The message names the field and, for an
+        exclusion, its index.
+    """
+    for field, value in (
+        ("names", names),
+        ("units", units),
+        ("exclusions", exclusions),
+    ):
+        if type(value) is not tuple:
+            raise TypeError(
+                f"AlignedLevels.{field} must be exactly tuple; "
+                f"got {type(value).__name__}"
+            )
+    for field, items in (("names", names), ("units", units)):
+        for i, item in enumerate(cast(tuple[object, ...], items)):
+            if not isinstance(item, str):
+                raise TypeError(
+                    f"AlignedLevels.{field}[{i}] must be str; got {type(item).__name__}"
+                )
+    start = _check_int_param("AlignedLevels.start_ord", start_ord)
+    end = _check_int_param("AlignedLevels.end_ord", end_ord)
+    for i, record in enumerate(cast(tuple[object, ...], exclusions)):
+        if not isinstance(record, Exclusion):
+            raise TypeError(
+                f"AlignedLevels.exclusions[{i}] must be Exclusion; "
+                f"got {type(record).__name__}"
+            )
+        prefix = f"AlignedLevels.exclusions[{i}]"
+        if not isinstance(record.series, str):
+            raise TypeError(
+                f"{prefix}.series must be str; got {type(record.series).__name__}"
+            )
+        _check_int_param(f"{prefix}.date_ord", record.date_ord)
+        if not isinstance(record.reason, str):
+            raise TypeError(
+                f"{prefix}.reason must be str; got {type(record.reason).__name__}"
+            )
+    return start, end
+
+
+def _aligned_levels_value_checks(
+    names: tuple[str, ...],
+    units: tuple[str, ...],
+    date_ord: NDArray[np.int32],
+    levels: NDArray[np.float64],
+    exclusions: tuple[Exclusion, ...],
+    start: int,
+    end: int,
+) -> None:
+    """
+    Run the ``AlignedLevels`` value checks (step 3 of the check order).
+
+    The type checks ran before, so each field has its declared type.
+
+    Raises
+    ------
+    SeriesContractError
+        The first value fault, with the ``series`` value of the
+        ``AlignedLevels`` docstring.
+    """
+    # ---- (a) date_ord -------------------------------------------------------
+    if date_ord.ndim != 1:
+        raise SeriesContractError(
+            series="AlignedLevels.date_ord",
+            message=f"AlignedLevels.date_ord must be 1-D; got ndim={date_ord.ndim}",
+        )
+    m = int(date_ord.shape[0])
+    if m == 0:
+        raise SeriesContractError(
+            series="AlignedLevels.date_ord",
+            message="AlignedLevels.date_ord must not be empty",
+        )
+    steps_up = date_ord[1:] > date_ord[:-1]
+    if not bool(steps_up.all()):
+        first = int(np.flatnonzero(~steps_up)[0]) + 1
+        raise SeriesContractError(
+            series="AlignedLevels.date_ord",
+            message=(
+                f"AlignedLevels.date_ord must be strictly increasing; "
+                f"position {first} is not above position {first - 1}"
+            ),
+        )
+
+    # ---- (b) names count and levels shape -----------------------------------
+    n_series = len(names)
+    if n_series == 0:
+        raise SeriesContractError(
+            series="AlignedLevels.names",
+            message="AlignedLevels.names must hold at least one name",
+        )
+    if levels.ndim != 2 or levels.shape != (n_series, m):
+        raise SeriesContractError(
+            series="AlignedLevels.levels",
+            message=(
+                f"AlignedLevels.levels must have shape (len(names), m) = "
+                f"({n_series}, {m}); got {levels.shape}"
+            ),
+        )
+
+    # ---- (c) units count ----------------------------------------------------
+    if len(units) != n_series:
+        raise SeriesContractError(
+            series="AlignedLevels.units",
+            message=(
+                f"AlignedLevels.units must hold one unit per name; "
+                f"got {len(units)} units for {n_series} names"
+            ),
+        )
+
+    # ---- (d) name and unit values -------------------------------------------
+    for i, name in enumerate(names):
+        if len(name) == 0 or _has_control(name):
+            raise SeriesContractError(
+                series="AlignedLevels.names",
+                message=(
+                    f"AlignedLevels.names[{i}] must be non-empty and free of "
+                    f"control characters; got {name!r}"
+                ),
+            )
+    seen: set[str] = set()
+    for i, name in enumerate(names):
+        if name in seen:
+            raise SeriesContractError(
+                series=name,
+                message=f"AlignedLevels.names[{i}] repeats an earlier name",
+            )
+        seen.add(name)
+    for i, unit in enumerate(units):
+        if len(unit) == 0 or _has_control(unit):
+            raise SeriesContractError(
+                series=names[i],
+                message=(
+                    f"AlignedLevels.units[{i}] must be non-empty and free of "
+                    f"control characters; got {unit!r}"
+                ),
+            )
+
+    # ---- (e) window bounds --------------------------------------------------
+    for field, bound in (("start_ord", start), ("end_ord", end)):
+        if not _INT32_MIN <= bound <= _INT32_MAX:
+            raise SeriesContractError(
+                series=f"AlignedLevels.{field}",
+                message=(
+                    f"AlignedLevels.{field} {bound} is outside the int32 range "
+                    f"[{_INT32_MIN}, {_INT32_MAX}]"
+                ),
+            )
+    first_date = int(date_ord[0])
+    last_date = int(date_ord[-1])
+    if first_date < start:
+        raise SeriesContractError(
+            series="AlignedLevels.start_ord",
+            message=(
+                f"AlignedLevels.date_ord[0] = {first_date} is below "
+                f"AlignedLevels.start_ord = {start}"
+            ),
+        )
+    if last_date >= end:
+        raise SeriesContractError(
+            series="AlignedLevels.end_ord",
+            message=(
+                f"AlignedLevels.date_ord[-1] = {last_date} is not below "
+                f"AlignedLevels.end_ord = {end} (half-open window)"
+            ),
+        )
+
+    # ---- (f) finite levels --------------------------------------------------
+    finite = np.isfinite(levels)
+    if not bool(finite.all()):
+        row = int(np.flatnonzero(~finite.all(axis=1))[0])
+        col = int(np.flatnonzero(~finite[row])[0])
+        raise SeriesContractError(
+            series=names[row],
+            message=(
+                f"AlignedLevels.levels[{row}, {col}] is not finite: "
+                f"{float(levels[row, col])!r}"
+            ),
+            date_ord=int(date_ord[col]),
+        )
+
+    # ---- (g) exclusion values -----------------------------------------------
+    for i, record in enumerate(exclusions):
+        prefix = f"AlignedLevels.exclusions[{i}]"
+        if record.series not in seen:
+            raise SeriesContractError(
+                series=record.series,
+                message=f"{prefix}.series is not a name of AlignedLevels.names",
+            )
+        if record.reason not in _ALIGNMENT_EXCLUSION_REASONS:
+            raise SeriesContractError(
+                series=record.series,
+                message=(
+                    f"{prefix}.reason must be one of "
+                    f"{sorted(_ALIGNMENT_EXCLUSION_REASONS)}; got {record.reason!r}"
+                ),
+            )
+        record_date = operator.index(record.date_ord)
+        if not _INT32_MIN <= record_date <= _INT32_MAX:
+            raise SeriesContractError(
+                series=record.series,
+                message=(
+                    f"{prefix}.date_ord {record_date} is outside the int32 range "
+                    f"[{_INT32_MIN}, {_INT32_MAX}]"
+                ),
+            )
 
 
 # ------------------------------------------------------------------ model spec

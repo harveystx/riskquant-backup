@@ -38,6 +38,13 @@ Fix round 2
   levels, rank_rtol reaches the core, float storage of rank_rtol
 - R-003: the three digests of a result against a hashlib and numpy oracle
   built from the input levels; the A.2 and A.4 texts typed in this file
+
+WS_FACTOR_REGRESSION_GUARDS, slice S2 (AlignedLevels admission)
+---------------------------------------------------------------
+- S2.T1: AlignedLevels(**fields) of the unit-root fixtures constructs and
+  gives the same result (C.10)
+- S2.T6: unit_root_test on a window wider than the dates: window and
+  spec_digest (C.12)
 """
 
 from __future__ import annotations
@@ -50,6 +57,7 @@ import os
 import subprocess
 import sys
 import warnings
+from collections.abc import Callable
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, cast
@@ -1654,3 +1662,71 @@ def test_r003_a8_codes_used_by_the_oracle() -> None:
     assert int(codes.DET_CONSTANT) == _A8_DET_CONSTANT
     assert int(codes.DET_CONSTANT_TREND) == _A8_DET_CONSTANT_TREND
     assert int(codes.TEST_ADF) == _A8_TEST_ADF
+
+
+# ======================================== WS_FACTOR_REGRESSION_GUARDS S2
+# AlignedLevels admission through unit_root_test (C.10, C.12).
+
+
+def _rebuilt(levels: AlignedLevels) -> AlignedLevels:
+    """AlignedLevels(**fields) of an existing instance (S2.T1)."""
+    fields = {
+        f.name: getattr(levels, f.name) for f in dataclasses.fields(AlignedLevels)
+    }
+    return AlignedLevels(**fields)
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda: _aligned(),
+        lambda: _aligned([_series("P", 45, 1), _series("Q", 45, 2)], n=45),
+        lambda: _make_linear_levels(),
+    ],
+    ids=["aligned-one-series", "aligned-two-series", "linear-levels"],
+)
+def test_s2_t1_unit_root_fixtures_are_admitted(
+    make: Callable[[], AlignedLevels],
+) -> None:
+    """S2.T1 (C.10): the unit-root fixtures pass the S2 checks; equal result."""
+    levels = make()
+    rebuilt = _rebuilt(levels)
+    assert rebuilt.names == levels.names
+    assert rebuilt.exclusions == levels.exclusions
+    assert (rebuilt.start_ord, rebuilt.end_ord) == (levels.start_ord, levels.end_ord)
+    spec = _spec(names=[levels.names[0]])
+    try:
+        expected = unit_root_test(levels, spec)
+    except RiskQuantError as error:
+        with pytest.raises(type(error)):
+            unit_root_test(rebuilt, spec)
+        return
+    result = unit_root_test(rebuilt, spec)
+    assert result.statistic == expected.statistic
+    assert result.spec_digest == expected.spec_digest
+    assert result.sample_digest == expected.sample_digest
+
+
+def test_s2_t6_unit_root_window_is_the_declared_window() -> None:
+    """S2.T6 (C.12): UnitRootResult.window is the declared window."""
+    base = _aligned(n=40)
+    first, last = int(base.date_ord[0]), int(base.date_ord[-1])
+
+    def on_window(start: int, end: int) -> AlignedLevels:
+        return AlignedLevels(
+            names=base.names,
+            units=base.units,
+            date_ord=base.date_ord,
+            levels=base.levels,
+            exclusions=(),
+            start_ord=start,
+            end_ord=end,
+        )
+
+    wide = unit_root_test(on_window(first - 5, last + 10), _spec())
+    tight = unit_root_test(on_window(first, last + 1), _spec())
+    assert wide.window == (first - 5, last + 10)
+    assert tight.window == (first, last + 1)
+    assert wide.spec_digest != tight.spec_digest
+    # The window changes no number of the test: the dates and levels are equal.
+    assert wide.statistic == tight.statistic

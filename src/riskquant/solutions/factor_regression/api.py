@@ -622,6 +622,10 @@ def fit_ols(levels: AlignedLevels, spec: ModelSpec) -> OlsResult:
         An exact fit, a constant response with an intercept, a non-positive
         covariance diagonal (C.14), or a transformed value that overflowed to
         a non-finite number (R-008).
+    SeriesContractError
+        Raised by the ``AlignedLevels`` constructor, before this call, for a
+        value fault of a ``levels`` field (O-2). Every ``levels`` that reaches
+        this function passed those checks.
 
     Notes
     -----
@@ -838,6 +842,10 @@ def wald_test(
         ``numpy.ma.MaskedArray`` included) or not ``float64``; a wrong shape;
         a non-finite entry; a rank-deficient ``restriction``; or
         ``restriction @ cov @ restriction.T`` is not positive definite.
+        ``RESTRICTION_NON_FINITE`` also when ``restriction @ cov @
+        restriction.T`` or ``restriction @ coef - rhs`` overflows to a
+        non-finite entry (both on the row-normalised restriction); the core
+        raises before the Cholesky step and returns no ``W``.
 
     Notes
     -----
@@ -905,6 +913,10 @@ def unit_root_test(levels: AlignedLevels, spec: UnitRootSpec) -> UnitRootResult:
     DegenerateFitError
         Exact fit, zero response variance, or an overflow to non-finite
         of the combination or a difference of it (C.10).
+    SeriesContractError
+        Raised by the ``AlignedLevels`` constructor, before this call, for a
+        value fault of a ``levels`` field (O-2).  Every ``levels`` that
+        reaches this function passed those checks.
 
     Notes
     -----

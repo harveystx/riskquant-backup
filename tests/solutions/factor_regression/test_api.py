@@ -17,6 +17,21 @@ S7.T10 - two series with one name: AlignmentError before any core call
 S7.T11 - HAC lag above R - 1: ModelSpecError
 S7.T12 - intercept True and False: r_squared against exact Fraction values (OD-9)
 
+WS_FACTOR_REGRESSION_GUARDS, slice S1 (Wald overflow guard):
+S1.T1  - owner case, J = 1: W against an exact Fraction oracle (C.3)
+S1.T2  - owner case, J = 2: W against the oracle (C.3)
+S1.T6  - the owner case through wald_test; the C.1 error through wald_test (C.5)
+S1.T7  - 400-case sweep: W within 1e-11 of the oracle or RESTRICTION_NON_FINITE (C.2)
+S1.T9  - the wald_test Raises section names RESTRICTION_NON_FINITE (C.7)
+
+WS_FACTOR_REGRESSION_GUARDS, slice S2 (AlignedLevels admission):
+S2.T1  - AlignedLevels(**fields) of align_levels outputs constructs; the core
+          rebuild of the copy equals align_core (C.10)
+S2.T5  - property-based: every admitted AlignedLevels through fit_ols and
+          unit_root_test gives a result, a TypeError or a facade error (C.11)
+S2.T6  - fit_ols on a window wider than the dates: window and spec_digest
+          (C.12)
+
 Also: one test per core-to-facade mapping with a __cause__ check, the check
 order of align_levels, fit_ols and wald_test, the masked-array and
 ndarray-subclass cases of restriction and rhs, and the rebuild of the core
@@ -33,11 +48,15 @@ import ast
 import dataclasses
 import importlib
 import pathlib
+import re
+import warnings
 from collections.abc import Callable
 from fractions import Fraction
 
 import numpy as np
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from numpy.typing import NDArray
 
 from riskquant.factor_regression import codes
@@ -54,25 +73,35 @@ from riskquant.factor_regression.errors import (
     CoreSampleSizeError,
 )
 from riskquant.factor_regression.fit import fit_core
+from riskquant.factor_regression.wald import wald_core
 from riskquant.solutions.factor_regression import api, digest
+from riskquant.solutions.factor_regression import errors as facade_errors
 from riskquant.solutions.factor_regression.api import (
     AlignedLevels,
     AlignmentError,
+    CombinationTerm,
     CovarianceKind,
     CovarianceSpec,
     DegenerateFitError,
+    Deterministic,
+    Exclusion,
     InsufficientObservationsError,
+    LinearCombination,
     ModelSpec,
     ModelSpecError,
     ObservedSeries,
     OlsResult,
     RankDeficiencyError,
     RestrictionError,
+    Scale,
     Term,
     Transform,
     TransformDomainError,
+    UnitRootSpec,
+    WaldResult,
     align_levels,
     fit_ols,
+    unit_root_test,
     wald_test,
 )
 from riskquant.solutions.factor_regression.contracts import ENGINE_VERSION
@@ -1181,3 +1210,455 @@ def test_rank_error_is_not_raised_when_exact_identity_absent() -> None:
         _spec("P", ("Q", "Z", "S"), transform=Transform.SIMPLE_RETURN),
     )
     assert result.singular_values.shape == (4,)
+
+
+# ------------------------------------------------- S1: Wald overflow guard (C.1 to C.7)
+
+_GUARD_N = 250
+_GUARD_START = 20_000
+_GUARD_DATES = (_GUARD_START + np.arange(_GUARD_N, dtype=np.int64)).astype(np.int32)
+_GUARD_SPEC = ModelSpec(
+    response=Term(series="Y", transform=Transform.LEVEL),
+    regressors=(
+        Term(series="X1", transform=Transform.LEVEL),
+        Term(series="X2", transform=Transform.LEVEL),
+    ),
+    intercept=True,
+    step=0,
+    stride=1,
+    covariance=_IID,
+    rank_rtol=1e-12,
+    condition_threshold=None,
+)
+_OWNER_SEED = 1
+_OWNER_SCALE = 2.0e-156
+_GUARD_TOL = 1e-11  # C.2 and C.3: relative to the exact Fraction W
+
+
+def _guard_fit(seed: int, scale: float) -> OlsResult:
+    """
+    fit_ols of the F-2 generator (R-5).
+
+    ``Y`` on ``X1`` and ``X2`` at LEVEL with an intercept, IID covariance. The
+    regressors have the size ``scale``, so near 2e-156 the covariance diagonal
+    is near the float64 maximum. Window: ``[20000, 20250)``.
+    """
+    rng = np.random.default_rng(seed)
+    x1 = scale * (1 + 0.5 * rng.random(_GUARD_N))
+    x2 = scale * (1 + 0.5 * rng.random(_GUARD_N))
+    y = 1 + 0.3 * x1 / scale + 0.2 * x2 / scale + 0.05 * rng.standard_normal(_GUARD_N)
+    series = [
+        _series(name, "u", _GUARD_DATES, values)
+        for name, values in (("Y", y), ("X1", x1), ("X2", x2))
+    ]
+    levels = align_levels(
+        series, start_ord=_GUARD_START, end_ord=_GUARD_START + _GUARD_N
+    )
+    return fit_ols(levels, _GUARD_SPEC)
+
+
+def _exact_wald(
+    coef: NDArray[np.float64],
+    cov: NDArray[np.float64],
+    restriction: NDArray[np.float64],
+    rhs: NDArray[np.float64],
+) -> Fraction:
+    """
+    Exact W of ``restriction @ coef = rhs`` on the float64 inputs (A.7).
+
+    Every float is read as an exact rational. ``M = R cov R^T`` and
+    ``gap = R coef - rhs`` are exact, so no overflow can occur. Gaussian
+    elimination on ``[M | gap]`` gives ``x = M^{-1} gap``, and ``W = gap . x``.
+    The raw rows are used: W does not change under a row scaling, so the row
+    normalisation of wald.py needs no copy here. Shares no code with wald.py.
+    """
+    j, k = restriction.shape
+    b = [Fraction(float(v)) for v in coef]
+    c = [[Fraction(float(v)) for v in row] for row in cov]
+    r = [[Fraction(float(v)) for v in row] for row in restriction]
+    gap = [
+        sum((r[a][i] * b[i] for i in range(k)), Fraction(0)) - Fraction(float(rhs[a]))
+        for a in range(j)
+    ]
+    rc = [
+        [sum((r[a][i] * c[i][q] for i in range(k)), Fraction(0)) for q in range(k)]
+        for a in range(j)
+    ]
+    m = [
+        [sum((rc[a][q] * r[d][q] for q in range(k)), Fraction(0)) for d in range(j)]
+        for a in range(j)
+    ]
+    aug = [[*m[a], gap[a]] for a in range(j)]
+    for col in range(j):
+        piv = next(row for row in range(col, j) if aug[row][col] != 0)
+        aug[col], aug[piv] = aug[piv], aug[col]
+        for row in range(j):
+            if row != col and aug[row][col] != 0:
+                fac = aug[row][col] / aug[col][col]
+                aug[row] = [
+                    x - fac * p for x, p in zip(aug[row], aug[col], strict=True)
+                ]
+    return sum((gap[a] * aug[a][j] / aug[a][a] for a in range(j)), Fraction(0))
+
+
+def _relative_error(w: float, exact: Fraction) -> float:
+    return float(abs(Fraction(w) - exact) / abs(exact))
+
+
+@pytest.mark.parametrize(
+    ("restriction", "approx_exact"),
+    [
+        pytest.param([[0.0, 1.0, 1.0]], 216.715, id="S1.T1"),
+        pytest.param([[0.0, 1.0, 1.0], [1.0, 0.0, 0.0]], 215475.557, id="S1.T2"),
+    ],
+)
+def test_s1_owner_case_w_matches_the_exact_oracle(
+    restriction: list[list[float]], approx_exact: float
+) -> None:
+    # Before the change: W = 0 for J = 1 and a finite wrong W for J = 2 (F-2).
+    result = _guard_fit(_OWNER_SEED, _OWNER_SCALE)
+    rest = np.array(restriction)
+    rhs = np.zeros(rest.shape[0])
+    core = wald_core(result.coef, result.cov, result.dof, rest, rhs)
+    exact = _exact_wald(result.coef, result.cov, rest, rhs)
+    # Identity of the case: the oracle W of F-2, to 1e-6 relative.
+    assert float(exact) == pytest.approx(approx_exact, rel=1e-6)
+    assert _relative_error(core.w, exact) < _GUARD_TOL  # tol: C.3, 1e-11 rel
+
+
+def test_s1_t6_wald_test_returns_the_owner_case_w() -> None:
+    # S1.T6 (C.3, R-16): the facade passes the C.3 result through, and no
+    # RuntimeWarning leaves wald_test.
+    result = _guard_fit(_OWNER_SEED, _OWNER_SCALE)
+    rest = np.array([[0.0, 1.0, 1.0]])
+    rhs = np.zeros(1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        wald = wald_test(result, rest, rhs)
+    assert isinstance(wald, WaldResult)
+    exact = _exact_wald(result.coef, result.cov, rest, rhs)
+    assert _relative_error(wald.w, exact) < _GUARD_TOL  # tol: C.3, 1e-11 rel
+
+
+@pytest.mark.parametrize(
+    ("scale", "restriction", "rhs"),
+    [
+        # m overflows: the exact m is about 1.033 times the float64 maximum
+        # (sandbox evidence), so no finite m exists.
+        pytest.param(1.9e-156, [[0.0, 1.0, 1.0]], [0.0], id="m_overflow"),
+        # gap overflows: the normalised rhs entry is 1e10 / 1e-300.
+        pytest.param(_OWNER_SCALE, [[0.0, 1e-300, 0.0]], [1e10], id="gap_overflow"),
+    ],
+)
+def test_s1_t6_wald_test_maps_the_non_finite_error(
+    scale: float, restriction: list[list[float]], rhs: list[float]
+) -> None:
+    # C.5: RestrictionError(RESTRICTION_NON_FINITE, shape as received), with the
+    # core error as __cause__. No RuntimeWarning leaves wald_test (C.4).
+    result = _guard_fit(_OWNER_SEED, scale)
+    rest = np.array(restriction)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(RestrictionError) as info:
+            wald_test(result, rest, np.array(rhs))
+    assert info.value.reason == "RESTRICTION_NON_FINITE"
+    assert info.value.shape == rest.shape
+    cause = info.value.__cause__
+    assert isinstance(cause, CoreRestrictionError)
+    assert cause.reason == int(codes.RESTRICTION_NON_FINITE)
+
+
+_SWEEP_RESTRICTIONS = (
+    [[0.0, 1.0, 1.0]],
+    [[0.0, 1.0, -1.0]],
+    [[0.0, 1.0, 1.0], [1.0, 0.0, 0.0]],
+    [[0.0, 1.0, -1.0], [0.0, 0.0, 1.0]],
+    [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+)
+
+
+def test_s1_t7_sweep_w_is_exact_or_non_finite() -> None:
+    # S1.T7 (C.2): 8 seeds x 10 scales x 5 restrictions = 400 cases. A fit that
+    # raises DEGENERATE_NON_POSITIVE_VARIANCE is a skip; the skip count must be
+    # 0 (R-10). Each case gives W within 1e-11 of the oracle or
+    # RESTRICTION_NON_FINITE. Any other outcome fails.
+    skips = 0
+    cases = 0
+    failures: list[str] = []
+    for seed in range(1, 9):
+        for scale in np.geomspace(3.2e-156, 1.95e-156, 10):
+            try:
+                result = _guard_fit(seed, float(scale))
+            except DegenerateFitError as error:
+                if error.reason != "DEGENERATE_NON_POSITIVE_VARIANCE":
+                    raise
+                skips += 1
+                continue
+            for restriction in _SWEEP_RESTRICTIONS:
+                cases += 1
+                rest = np.array(restriction)
+                rhs = np.zeros(rest.shape[0])
+                case = f"seed={seed} scale={float(scale)!r} R={restriction}"
+                try:
+                    core = wald_core(result.coef, result.cov, result.dof, rest, rhs)
+                except CoreRestrictionError as error:
+                    if error.reason != int(codes.RESTRICTION_NON_FINITE):
+                        failures.append(f"{case}: reason {int(error.reason)}")
+                    continue
+                exact = _exact_wald(result.coef, result.cov, rest, rhs)
+                error_rel = _relative_error(core.w, exact)
+                if not error_rel < _GUARD_TOL:  # tol: C.2, 1e-11 rel
+                    failures.append(f"{case}: relative error {error_rel:.3e}")
+    assert skips == 0
+    assert cases == 400
+    assert failures == []
+
+
+def test_s1_t9_wald_test_raises_names_restriction_non_finite() -> None:
+    # S1.T9 (C.7): the Raises section of wald_test names RESTRICTION_NON_FINITE.
+    doc = api.wald_test.__doc__
+    assert doc is not None
+    match = re.search(
+        r"Raises\s*\n\s*-+\s*\n(.*?)\n\s*Notes\s*\n", doc, flags=re.DOTALL
+    )
+    assert match is not None, "no Raises section before Notes"
+    assert "RESTRICTION_NON_FINITE" in match.group(1)
+
+
+# ======================================== WS_FACTOR_REGRESSION_GUARDS S2
+# AlignedLevels admission through the facade (C.10, C.11, C.12).
+
+
+def _rebuilt(levels: AlignedLevels) -> AlignedLevels:
+    """AlignedLevels(**fields) of an existing instance (S2.T1)."""
+    fields = {
+        f.name: getattr(levels, f.name) for f in dataclasses.fields(AlignedLevels)
+    }
+    return AlignedLevels(**fields)
+
+
+def _assert_rebuild_admitted(
+    series: list[ObservedSeries], start: int, end: int
+) -> AlignedLevels:
+    levels = align_levels(series, start_ord=start, end_ord=end)
+    rebuilt = _rebuilt(levels)
+    assert rebuilt.names == levels.names
+    assert rebuilt.units == levels.units
+    assert rebuilt.exclusions == levels.exclusions
+    assert (rebuilt.start_ord, rebuilt.end_ord) == (levels.start_ord, levels.end_ord)
+    assert _bits(rebuilt.date_ord, levels.date_ord)
+    assert _bits(rebuilt.levels, levels.levels)
+    core = align_core(
+        [s.date_ord for s in series],
+        [s.values for s in series],
+        start_ord=start,
+        end_ord=end,
+    )
+    _assert_same_core(api._core_aligned_levels(rebuilt), core)
+    return rebuilt
+
+
+def test_s2_t1_motivating_levels_are_admitted() -> None:
+    """S2.T1 (C.10): the motivating fixture passes the S2 checks unchanged."""
+    _assert_rebuild_admitted(_motivating_series(), _BASE_ORD, _BASE_ORD + 270)
+
+
+def test_s2_t1_both_exclusion_reasons_are_admitted() -> None:
+    """S2.T1 (C.10): an output with OUTSIDE_WINDOW and NOT_COMMON_DATE records."""
+    series = [
+        _series(name, "u", d, np.arange(d.shape[0], dtype=np.float64) + 1.0)
+        for name, d in (
+            ("alpha", _ords(0, 1, 2, 3, 5, 6, 9)),
+            ("beta", _ords(1, 2, 3, 4, 5, 6, 7, 8)),
+            ("gamma", _ords(-2, 1, 3, 5, 6, 8)),
+        )
+    ]
+    rebuilt = _assert_rebuild_admitted(series, _BASE_ORD + 1, _BASE_ORD + 8)
+    assert {e.reason for e in rebuilt.exclusions} == {
+        "OUTSIDE_WINDOW",
+        "NOT_COMMON_DATE",
+    }
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_s2_t1_random_alignments_are_admitted(seed: int) -> None:
+    """S2.T1 (C.10): the random alignments of the rebuild test pass the checks."""
+    rng = np.random.default_rng(seed)
+    n_series = int(rng.integers(1, 5))
+    series: list[ObservedSeries] = []
+    for j in range(n_series):
+        span = int(rng.integers(5, 60))
+        keep = rng.random(span) < 0.8
+        keep[span // 2] = True
+        offsets = np.flatnonzero(keep) + int(rng.integers(-5, 5))
+        values = rng.standard_normal(offsets.shape[0])
+        series.append(_series(f"s{j}", "u", _ords(*offsets.tolist()), values))
+    lo = _BASE_ORD + int(rng.integers(-3, 10))
+    hi = lo + int(rng.integers(5, 50))
+    try:
+        align_core(
+            [s.date_ord for s in series],
+            [s.values for s in series],
+            start_ord=lo,
+            end_ord=hi,
+        )
+    except CoreAlignmentError:
+        return
+    _assert_rebuild_admitted(series, lo, hi)
+
+
+def _with_window(levels: AlignedLevels, start: int, end: int) -> AlignedLevels:
+    """A hand-built AlignedLevels: the levels of ``levels`` on another window."""
+    return AlignedLevels(
+        names=levels.names,
+        units=levels.units,
+        date_ord=levels.date_ord,
+        levels=levels.levels,
+        exclusions=(),
+        start_ord=start,
+        end_ord=end,
+    )
+
+
+def test_s2_t6_fit_ols_window_is_the_declared_window() -> None:
+    """S2.T6 (C.12): OlsResult.window is the declared window, not the date range."""
+    base = _motivating_levels()
+    first, last = int(base.date_ord[0]), int(base.date_ord[-1])
+    wide = _with_window(base, first - 5, last + 10)
+    tight = _with_window(base, first, last + 1)
+    spec = _spec("P", ("Q",))
+    wide_result = fit_ols(wide, spec)
+    tight_result = fit_ols(tight, spec)
+    assert wide_result.window == (first - 5, last + 10)
+    assert tight_result.window == (first, last + 1)
+    assert wide_result.spec_digest != tight_result.spec_digest
+    # The window changes no number of the fit: the dates and levels are equal.
+    assert _bits(wide_result.coef, tight_result.coef)
+
+
+# ---- S2.T5 (C.11): every AlignedLevels that constructs gives a result, a
+# TypeError or a facade error.  The strategy builds fields that pass C.8 and
+# C.9 by construction: a window wider than the dates, exclusion records that
+# need not agree with date_ord (deferred in the spec), F-order levels, and
+# levels near 1e300, 1e-300 and in the subnormal range.
+
+_S2_T5_MAGNITUDES = (1.0, 1e300, 1e-300, 1e-310)
+
+
+@st.composite
+def _admitted_levels(draw: st.DrawFn) -> AlignedLevels:
+    n_series = draw(st.integers(min_value=1, max_value=3))
+    m = draw(st.integers(min_value=1, max_value=45))
+    gaps = draw(st.lists(st.integers(1, 3), min_size=m - 1, max_size=m - 1))
+    first = _BASE_ORD + draw(st.integers(-1000, 1000))
+    dates = (first + np.concatenate(([0], np.cumsum(gaps, dtype=np.int64)))).astype(
+        np.int32
+    )
+    rng = np.random.default_rng(draw(st.integers(0, 2**32 - 1)))
+    magnitude = draw(st.sampled_from(_S2_T5_MAGNITUDES))
+    shape = draw(st.sampled_from(("walk", "mixed-sign", "constant", "zeros")))
+    if shape == "walk":
+        raw = np.exp(np.cumsum(0.05 * rng.standard_normal((n_series, m)), axis=1))
+    elif shape == "mixed-sign":
+        raw = rng.standard_normal((n_series, m))
+    elif shape == "constant":
+        raw = np.ones((n_series, m))
+    else:
+        raw = np.where(
+            rng.random((n_series, m)) < 0.3, 0.0, 1.0 + rng.random((n_series, m))
+        )
+    levels = np.asarray(magnitude * raw, dtype=np.float64)
+    if draw(st.booleans()):
+        levels = np.asfortranarray(levels)
+    names = ("A", "B", "C")[:n_series]
+    start = int(dates[0]) - draw(st.integers(0, 10))
+    end = int(dates[-1]) + 1 + draw(st.integers(0, 10))
+    records = draw(
+        st.lists(
+            st.tuples(
+                st.integers(0, n_series - 1),
+                st.integers(start - 20, end + 20),
+                st.sampled_from(("OUTSIDE_WINDOW", "NOT_COMMON_DATE")),
+            ),
+            max_size=4,
+        )
+    )
+    return AlignedLevels(
+        names=names,
+        units=tuple("u" for _ in names),
+        date_ord=dates,
+        levels=levels,
+        exclusions=tuple(
+            Exclusion(series=names[j], date_ord=d, reason=reason)
+            for j, d, reason in records
+        ),
+        start_ord=start,
+        end_ord=end,
+    )
+
+
+@st.composite
+def _ols_specs(draw: st.DrawFn, names: tuple[str, ...]) -> ModelSpec:
+    transform = draw(st.sampled_from(list(Transform)))
+    step = 0 if transform is Transform.LEVEL else draw(st.integers(1, 3))
+    lag = draw(st.integers(0, 2))
+    covariance = draw(
+        st.sampled_from((
+            _IID,
+            _HC0,
+            CovarianceSpec(kind=CovarianceKind.HAC_BARTLETT, lag=lag),
+        ))
+    )
+    return ModelSpec(
+        response=Term(series=names[0], transform=transform),
+        regressors=tuple(Term(series=n, transform=transform) for n in names[1:]),
+        intercept=True,
+        step=step,
+        stride=draw(st.integers(1, 2)),
+        covariance=covariance,
+        rank_rtol=1e-10,
+        condition_threshold=None,
+    )
+
+
+@st.composite
+def _unit_root_specs(draw: st.DrawFn, names: tuple[str, ...]) -> UnitRootSpec:
+    terms = tuple(
+        CombinationTerm(series=n, weight=draw(st.sampled_from((1.0, -0.5, 2.0))))
+        for n in names
+    )
+    return UnitRootSpec(
+        combination=LinearCombination(
+            terms=terms, scale=draw(st.sampled_from(list(Scale)))
+        ),
+        deterministic=draw(st.sampled_from(list(Deterministic))),
+        lag=draw(st.integers(0, 2)),
+        rank_rtol=1e-10,
+    )
+
+
+def _admitted_outcome(call: Callable[[], object]) -> str:
+    """Run one facade call; return the outcome name or fail on a raw error."""
+    try:
+        call()
+    except Exception as error:
+        assert isinstance(error, TypeError) or type(error).__module__ == (
+            facade_errors.__name__
+        ), f"C.11 leak: {type(error).__module__}.{type(error).__name__}: {error}"
+        return type(error).__name__
+    return "result"
+
+
+@settings(max_examples=200, deadline=None, derandomize=True)
+@given(data=st.data())
+def test_s2_t5_admitted_levels_never_leak_a_raw_error(data: st.DataObject) -> None:
+    """S2.T5 (C.11): fit_ols and unit_root_test on every admitted AlignedLevels."""
+    levels = data.draw(_admitted_levels())
+    ols_spec = data.draw(_ols_specs(levels.names))
+    ur_spec = data.draw(_unit_root_specs(levels.names))
+    # A RuntimeWarning from an overflow in rows.py or combination.py is the
+    # N-3 backlog item, not a C.11 outcome.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        _admitted_outcome(lambda: fit_ols(levels, ols_spec))
+        _admitted_outcome(lambda: unit_root_test(levels, ur_spec))
