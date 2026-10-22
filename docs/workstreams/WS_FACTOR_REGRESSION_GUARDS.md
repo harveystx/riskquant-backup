@@ -2,7 +2,7 @@
 
 Path: docs/workstreams/WS_FACTOR_REGRESSION_GUARDS.md
 Class: HEAVY
-Status: FROZEN
+Status: CLOSED
 Revision: 2
 Revision note: Revision 2 (2026-10-21). Audit round 1 (R_FREEZE_RECONCILIATION_R1.md): B-1 and B-2 applied; owner rewording of the first sentence of O-2 (O-A-1). Revision 1 (2026-10-20): investigator draft from a PLAN CHANGE on defects N-1 and B-2.
 Date: 2026-10-21
@@ -13,7 +13,7 @@ Independent review: PASSED (commit=dbcb827 dirty=false content_hash=7461aad8accf
 1 and 2; B-3 fixed by the owner header edit at freeze.
 Audit rounds used: 2 of 2
 Code merged: no
-DECISIONS.md reconciled: NO
+DECISIONS.md reconciled: YES (no D record, O-4)
 Evidence limits: Sandbox only (Python 3.12.3, numpy 2.4.4, scipy 1.17.1), source rebuilt from the factor_regression,
 solutions_factor_regression and core profiles. No gate ran. No run on Python 3.11 or numpy 1.26.
 The tests profile has no SNAPSHOT line. scripts/ is not in the snapshot. The verbatim text of Owner decision 4 is not
@@ -215,8 +215,15 @@ Prohibited: a change to Exclusion, align_levels, _core_aligned_levels, the core 
 Attach: as S1
 Gates: as S1
 Exit: every S2 test and every existing test pass on both environments.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: S2 land 8a5db3e on ws/factor-regression-guards. Windows gates (gate_g2.txt; ruff format --check and
+mypy --strict rerun on all six files in gate_g2_rerun.txt, R-007); slice 586 passed; pytest full 7261 passed and 36
+skipped (7153 + 108 new tests). Floor gate (gate_g2_floor.txt): Python 3.11.9, numpy 1.26.4; 1495 passed; mypy on the
+three changed src files with the baseline errors only. Independent review ACCEPT (FULL) with five P2 findings (R-006 to
+R-010). Reviewer checks: s2_diff.txt applies cleanly to the snapshot; mutants M1 to M5, 6 owner mutants and 9 extra
+mutants killed; 6 C.9 reorder mutants survive (R-006, owner OD-1 = B); own C.11 fuzz with 4000 hand-built AlignedLevels
+and 7718 facade calls, 0 leaks (a sample). Owner OD-2: keep the levels memory-order sentence. Backlog lines in section 7.
+
 
 | Id | Case | Expected | Defect caught |
 |---|---|---|---|
@@ -273,7 +280,28 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - S1 review R-005: the floor mypy ran on wald.py only. The S2 floor gate prints its mypy command and covers every changed src file.
 - S1 U-5: the wald_core Raises text "Steps 6-10" does not name the step 9 cause.
 - S1 U-6: pyproject.toml does not declare pydantic, which tests import. This is outside this workstream.
+- S2 review R-006: tests pin only part of the C.9 order (a before d, d before e); 6 reorder mutants survive. Owner OD-1 = B: the order is documentation. A reorder changes only series and message when two faults occur together.
+- S2 review R-008: the Raises entries of fit_ols and unit_root_test say "a value fault of a ``levels`` field". They should say "an ``AlignedLevels`` field".
+- S2 review R-009: the AlignedLevels docstring states that levels keeps the input memory order (owner OD-2: keep). The combine_core C-order item stays open.
+- S2 review R-010: C.13 reading at closure: a C.8 message names the field and, where one exists, the exclusion index. A unit that is not str names no series.
 
 ## 8. Closure record
 
-Fill this section when the status becomes CLOSED. Leave no placeholder.
+| Item | Value |
+|---|---|
+| Final commit | <<S2 HASH>>, head of ws/factor-regression-guards before the closure commit |
+| Release tag | none (the owner tags the merge commit) |
+| Decisions locked | none. O-4: no D record; the change stays inside D104. |
+| Independent validation | Freeze audits R_FREEZE_RECONCILIATION_R1.md (NOT READY, B-1 and B-2) and R2.md (B-3, the snapshot line, fixed at freeze). S1 review ACCEPT WITH FIXES, then ACCEPT (QUICK) after the R-001 and R-003 tests. S2 review ACCEPT (FULL). Mutation runs: S1 9 mutants, all killed after the fix; S2 20 mutants killed, 6 C.9 reorder mutants survive (R-006). Reviewer C.11 fuzz: 0 leaks in 7718 facade calls (a sample). Owner runs: pytest full 7261 passed, 36 skipped; floor gate Python 3.11.9 and numpy 1.26.4: 1495 passed. |
+
+Delivered:
+- Core `wald.py`: a step 9 finiteness check of gap and m before the Cholesky step, and the symmetrization `0.5 * m + 0.5 * m.T` (O-1 = B). No new code constant and no new name. W is bit-identical for every finite gap and m.
+- Facade `contracts.py`: AlignedLevels admission. Type faults raise TypeError (C.8); value faults raise SeriesContractError (C.9, O-2). The bounds are stored as int. Docstrings in api.py and errors.py.
+- 144 new tests: S1 36 (test_wald.py 29, test_api.py 7) and S2 108 (test_contracts.py 60, test_api.py 44, test_unit_root.py 4). Full suite: 7117 passed before, 7261 passed after, 36 skipped.
+- Documents: this document; R_FREEZE_RECONCILIATION_R1.md and R2.md; the independent audit report (in WS_FACTOR_REGRESSION_COINTEGRATION/).
+
+Deferred:
+- E-1 to E-4 and N-3 of the independent audit report (section 7).
+- Exclusion-record consistency with date_ord; conditioning of cov in wald_core; the verbatim text of Owner decision 4.
+
+Open work: merge of ws/factor-regression-guards into prod (owner). No slice and no review finding is open; the P2 items are in section 7.
