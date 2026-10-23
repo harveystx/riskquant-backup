@@ -68,7 +68,11 @@ from riskquant.ingest_fixtures.factor_regression.case import (
     observe,
 )
 
-__all__ = ["PROXY_CALIBRATION_CASE", "population_loadings"]
+__all__ = [
+    "PROXY_CALIBRATION_CASE",
+    "population_lagged_loadings",
+    "population_loadings",
+]
 
 CASE_NAME: Final = "proxy_calibration"
 _CASE_SALT: Final = 2
@@ -232,6 +236,93 @@ def population_loadings(steps: npt.NDArray[np.int32]) -> npt.NDArray[np.float64]
     np.divide(m_us_us * r_eu - m_eu_us * r_us, det, out=out[:, 0])
     np.divide(m_eu_eu * r_us - m_eu_us * r_eu, det, out=out[:, 1])
     return out
+
+
+def population_lagged_loadings(us_lags: tuple[int, ...]) -> npt.NDArray[np.float64]:
+    """
+    Exact population loadings of the daily regression with lagged US terms.
+
+    The regression has no intercept. Its response is the daily target log
+    return; its regressors are the daily ``EQ_INDEX_EU`` log return (lag 0)
+    and the daily ``EQ_INDEX_US`` log return at each lag of ``us_lags``. This
+    is the Dimson (1979) correction for non-synchronous closes, applied with a
+    second, synchronous regressor.
+
+    Session bookkeeping
+    -------------------
+    Number the sessions so that session 1 of day ``t`` has index ``2t`` and
+    session 2 of day ``t`` has index ``2t + 1``. Relative to ``2t``:
+
+    * the target and ``EQ_INDEX_EU`` returns of day ``t`` cover the offsets
+      ``{-1, 0}`` (session 2 of day ``t - 1`` and session 1 of day ``t``);
+    * the ``EQ_INDEX_US`` return at lag ``l`` covers ``{-2l, -2l + 1}``.
+
+    Increments of different sessions are independent, so every second moment
+    is the sum of the per-session moments over the shared offsets. An even
+    offset is a session-1 increment, an odd offset a session-2 increment. The
+    drift terms are omitted, as in ``population_loadings``.
+
+    A lag ``l >= 2`` shares no session with the target, the EU index or a lag
+    below 2, so its population loading is exactly 0. The EU index covers the
+    target window exactly and is correlated ``RHO_INDICES`` with the US index,
+    so it absorbs part of the US effect: the lag-0 and lag-1 US loadings do
+    not sum to ``BETA_US``.
+
+    Parameters
+    ----------
+    us_lags
+        Distinct US lags, each ``>= 0``, at least one.
+
+    Returns
+    -------
+    ``(1 + len(us_lags),)`` float64: the EU loading, then one US loading per
+    lag in the order of ``us_lags``.
+
+    Raises
+    ------
+    ValueError
+        ``us_lags`` is empty, holds a negative lag or holds a lag twice.
+    """
+    lags = tuple(int(lag) for lag in us_lags)
+    if not lags:
+        raise ValueError("us_lags must hold at least one lag")
+    if min(lags) < 0:
+        raise ValueError(f"every US lag must be >= 0, got {lags}")
+    if len(set(lags)) != len(lags):
+        raise ValueError(f"every US lag must be distinct, got {lags}")
+    share = (SESSION_1_VARIANCE_SHARE, 1.0 - SESSION_1_VARIANCE_SHARE)
+    var_eu = [SIGMA_EQ_INDEX_EU * SIGMA_EQ_INDEX_EU * s * DAILY_DT for s in share]
+    var_us = [SIGMA_EQ_INDEX_US * SIGMA_EQ_INDEX_US * s * DAILY_DT for s in share]
+    cov_eu_us = [
+        RHO_INDICES * SIGMA_EQ_INDEX_EU * SIGMA_EQ_INDEX_US * s * DAILY_DT
+        for s in share
+    ]
+    target_window = frozenset((-1, 0))
+    windows = [("EU", target_window)] + [
+        ("US", frozenset((-2 * lag, -2 * lag + 1))) for lag in lags
+    ]
+
+    def moment(kind_a: str, kind_b: str, shared: frozenset[int]) -> float:
+        # Python's % maps a negative odd offset to 1: session 2.
+        table = {
+            ("EU", "EU"): var_eu,
+            ("US", "US"): var_us,
+            ("EU", "US"): cov_eu_us,
+            ("US", "EU"): cov_eu_us,
+        }[(kind_a, kind_b)]
+        return sum(table[offset % 2] for offset in shared)
+
+    k = len(windows)
+    m = np.empty((k, k), dtype=np.float64)
+    r = np.empty(k, dtype=np.float64)
+    for i, (kind_i, win_i) in enumerate(windows):
+        for j, (kind_j, win_j) in enumerate(windows):
+            m[i, j] = moment(kind_i, kind_j, win_i & win_j)
+        shared_y = win_i & target_window
+        r[i] = BETA_EU * moment(kind_i, "EU", shared_y) + BETA_US * moment(
+            kind_i, "US", shared_y
+        )
+    return np.linalg.solve(m, r).astype(np.float64, copy=False)
 
 
 PROXY_CALIBRATION_CASE: Final[FactorRegressionCase] = _build()

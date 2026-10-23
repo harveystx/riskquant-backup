@@ -1,9 +1,9 @@
-# notebooks/factor_regression_demo.py
+# notebooks/factor_regression/factor_regression_demo.py
 """
 Factor-regression library demo over the canonical fixture.
 
-Run: ``marimo edit notebooks/factor_regression_demo.py`` (interactive) or
-``marimo run notebooks/factor_regression_demo.py`` (app view).
+Run: ``marimo edit notebooks/factor_regression/factor_regression_demo.py`` (interactive) or
+``marimo run notebooks/factor_regression/factor_regression_demo.py`` (app view).
 
 The notebook is a terminal: it reads the canonical fixture, calls the public
 facade ``riskquant.solutions.factor_regression.api`` and shows the results.
@@ -26,10 +26,14 @@ def _():
 
     from riskquant.ingest_fixtures.factor_regression import analyses as fr_analyses
     from riskquant.ingest_fixtures.factor_regression import catalog as fr_catalog
+    from riskquant.ingest_fixtures.factor_regression import (
+        credit_factor_loadings as fr_credit,
+    )
     from riskquant.ingest_fixtures.factor_regression.observed import (
         aligned_levels_for_case,
     )
     from riskquant.ingest_fixtures.factor_regression.proxy_calibration import (
+        population_lagged_loadings,
         population_loadings,
     )
     from riskquant.solutions.factor_regression import api
@@ -39,10 +43,12 @@ def _():
         api,
         fr_analyses,
         fr_catalog,
+        fr_credit,
         mo,
         np,
         pl,
         plt,
+        population_lagged_loadings,
         population_loadings,
     )
 
@@ -53,13 +59,14 @@ def _(mo):
     # Factor regression in `riskquant`
 
     The library answers one kind of question: **how does one market series
-    move with others?** It has four public functions in
+    move with others?** It has five public functions in
     `riskquant.solutions.factor_regression.api`:
 
     | Function | What it does |
     |---|---|
     | `align_levels` | Keeps the dates common to all series in a window. Records every dropped observation. |
-    | `fit_ols` | Builds return or level rows, checks rank, fits OLS, reports diagnostics and digests. |
+    | `fit_ols` | Builds return or level rows, checks rank, fits OLS, reports diagnostics and digests. A regressor can carry a lag or a lead. |
+    | `rolling_fit` | Runs `fit_ols` on successive windows of one alignment. Records a fit or an error per window. |
     | `wald_test` | Tests a joint linear hypothesis `R @ coef = r` on one fit. |
     | `unit_root_test` | ADF test of a declared linear combination of levels (cointegration with a declared vector). |
 
@@ -549,6 +556,110 @@ def _(mo, pl, proxy_fit):
     return
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### 3b. Daily rows with lagged US terms (Dimson)
+
+    A lagged regressor is the other standard remedy for non-synchronous
+    closes. Keep daily rows, and add the US returns of earlier days as more
+    regressors (`Term(..., lag=1)`). The sum of the US coefficients estimates
+    the US loading. A declared `max_lag = 3` fixes the rows, so every choice
+    below fits the same days and the fits are comparable.
+
+    **On this process the lag corrects only part of the bias.** The EU index
+    covers exactly the target window and has correlation 0.75 with the US
+    index. It absorbs part of the US effect, so the EU loading stays too high
+    and the US sum stays too low. `population_lagged_loadings` in the fixture
+    gives the exact population values: the US sum is 0.10 without a lag and
+    0.19 with lag 1. Lags 2 and 3 change nothing: their population loadings
+    are exactly 0. The truth is 0.30. The Dimson correction is complete only
+    when no synchronous, correlated driver sits in the same regression. Here
+    the long step $h$ of the plot above is the route that converges, with a
+    bias that falls like $1/h$.
+
+    The fitted values of this sample path lie above the population values,
+    as in the plot above.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    dimson_lags = mo.ui.slider(0, 3, value=1, label="US lags 0 to k", show_value=True)
+    mo.hstack([dimson_lags], justify="start")
+    return (dimson_lags,)
+
+
+@app.cell
+def _(
+    api,
+    cases,
+    coef_table,
+    dimson_lags,
+    fr_analyses,
+    levels_by_case,
+    mo,
+    np,
+    pl,
+    population_lagged_loadings,
+    term,
+):
+    _lv = levels_by_case["proxy_calibration"]
+    _truth = cases["proxy_calibration"].truth
+    _log = api.Transform.LOG_RETURN
+
+    def _dimson_fit(k: int) -> api.OlsResult:
+        """Daily rows: EU at lag 0, US at lags 0..k, on the rows of max_lag 3."""
+        us_terms = tuple(
+            api.Term(series="EQ_INDEX_US", transform=_log, lag=lag)
+            for lag in range(k + 1)
+        )
+        return api.fit_ols(
+            _lv,
+            api.ModelSpec(
+                response=term("SMALLCAP_EQ_EU", _log),
+                regressors=(term("EQ_INDEX_EU", _log), *us_terms),
+                intercept=False,
+                step=1,
+                stride=1,
+                covariance=api.CovarianceSpec(kind=api.CovarianceKind.IID, lag=None),
+                rank_rtol=fr_analyses.RANK_RTOL,
+                condition_threshold=None,
+                max_lag=3,
+            ),
+        )
+
+    _rows = []
+    for _k in range(4):
+        _fit = _dimson_fit(_k)
+        # Weights that pick the US coefficients: their sum and its variance.
+        _w = np.concatenate([[0.0], np.ones(_k + 1)])
+        _population = population_lagged_loadings(tuple(range(_k + 1)))
+        _test = api.wald_test(_fit, _w[None, :], np.array([_truth["beta_EQ_INDEX_US"]]))
+        _rows.append({
+            "US lags": f"0..{_k}",
+            "rows": _fit.n_obs,
+            "beta_EU": float(_fit.coef[0]),
+            "population beta_EU": float(_population[0]),
+            "US sum": float(_w @ _fit.coef),
+            "se(US sum)": float(np.sqrt(_w @ _fit.cov @ _w)),
+            "population US sum": float(_population[1:].sum()),
+            "p(US sum = 0.30)": _test.chi2_pvalue,
+        })
+    _chosen = _dimson_fit(dimson_lags.value)
+    mo.vstack([
+        pl.DataFrame(_rows),
+        mo.md(
+            f"**Coefficients with US lags 0..{dimson_lags.value}.** A lagged "
+            "column carries the suffix `[-l]`. The Proxy V1 row has no lag "
+            "(D088), so the hand-off of a lagged fit is the US sum."
+        ),
+        coef_table(_chosen),
+    ])
+    return
+
+
 @app.cell
 def _(mo):
     mo.md(r"""
@@ -619,6 +730,119 @@ def _(mo):
     rows: about 13 of them fall in the stress regime and carry most of the
     variance.
     """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### 4b. Rolling loadings
+
+    `rolling_fit` runs the same fit on successive windows of one alignment.
+    A window counts aligned dates. `move = 5` moves it by one week. Each
+    window records its fit or its error, so one bad window does not stop the
+    run. Use it to see whether a loading is stable.
+
+    The plot shows the HC0 loadings of one obligor against the last date of
+    each window, with the $\pm 2$ se band. The grey band marks the stress
+    regime. The generating loadings are constant, so the movement of the path
+    is sampling noise. Windows that hold the stress weeks move most. The
+    windows overlap, so their estimates are dependent: do not read the path as
+    a series of independent tests.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    rolling_obligor = mo.ui.dropdown(
+        options=["OBLIGOR_EU_BANK", "OBLIGOR_EU_UTILITY", "OBLIGOR_US_INDUSTRIAL"],
+        value="OBLIGOR_EU_BANK",
+        label="Obligor",
+    )
+    rolling_window = mo.ui.slider(
+        100, 500, step=25, value=250, label="window (aligned dates)", show_value=True
+    )
+    mo.hstack([rolling_obligor, rolling_window], justify="start")
+    return rolling_obligor, rolling_window
+
+
+@app.cell
+def _(
+    api,
+    cases,
+    fr_analyses,
+    fr_credit,
+    levels_by_case,
+    mo,
+    np,
+    plt,
+    rolling_obligor,
+    rolling_window,
+    term,
+):
+    _lv = levels_by_case["credit_factor_loadings"]
+    _truth = cases["credit_factor_loadings"].truth
+    _log = api.Transform.LOG_RETURN
+    _obligor = rolling_obligor.value
+    _rolled = api.rolling_fit(
+        _lv,
+        api.ModelSpec(
+            response=term(_obligor, _log),
+            regressors=(
+                term("CREDIT_FACTOR_GLOBAL", _log),
+                term("CREDIT_FACTOR_EUROPE", _log),
+            ),
+            intercept=True,
+            step=5,
+            stride=5,
+            covariance=api.CovarianceSpec(kind=api.CovarianceKind.HC0, lag=None),
+            rank_rtol=fr_analyses.RANK_RTOL,
+            condition_threshold=None,
+        ),
+        window=rolling_window.value,
+        move=5,
+    )
+    _fits = [w.result for w in _rolled.windows if w.result is not None]
+    _ends = np.array([
+        w.end_ord - 1 for w in _rolled.windows if w.result is not None
+    ]).astype("datetime64[D]")
+    _fig, _axes = plt.subplots(1, 2, figsize=(10, 3.2), sharex=True)
+    for _ax, _column, _factor in zip(
+        _axes, (1, 2), ("CREDIT_FACTOR_GLOBAL", "CREDIT_FACTOR_EUROPE"), strict=True
+    ):
+        _b = np.array([f.coef[_column] for f in _fits])
+        _s = np.array([f.se[_column] for f in _fits])
+        _ax.axvspan(
+            np.datetime64(fr_credit.STRESS_START),
+            np.datetime64(fr_credit.STRESS_END),
+            color="grey",
+            alpha=0.15,
+            label="stress regime",
+        )
+        _ax.fill_between(_ends, _b - 2 * _s, _b + 2 * _s, alpha=0.25, label="+/- 2 se")
+        _ax.plot(_ends, _b, lw=1.2, label="rolling estimate")
+        _ax.axhline(
+            _truth[f"beta_{_factor}_{_obligor}"],
+            color="k",
+            lw=0.8,
+            ls="--",
+            label="truth",
+        )
+        _ax.set_title(f"beta {_factor}")
+        _ax.set_xlabel("last date of the window")
+        _ax.tick_params(axis="x", labelrotation=30)
+        _ax.legend(fontsize=7)
+    _fig.tight_layout()
+    _errors = len(_rolled.windows) - len(_fits)
+    mo.vstack([
+        mo.as_html(_fig),
+        mo.md(
+            f"{len(_rolled.windows)} windows of {rolling_window.value} aligned "
+            f"dates (about {(rolling_window.value - 5) // 5 + 1} weekly rows "
+            f"each): {len(_fits)} fits, {_errors} recorded errors."
+        ),
+    ])
     return
 
 
