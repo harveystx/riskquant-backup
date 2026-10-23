@@ -30,7 +30,7 @@ marimo = pytest.importorskip("marimo")
 matplotlib = pytest.importorskip("matplotlib")
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_NOTEBOOK = _REPO_ROOT / "notebooks" / "factor_regression_demo.py"
+_NOTEBOOK = _REPO_ROOT / "notebooks" / "factor_regression" / "factor_regression_demo.py"
 
 _SELF_CHECK_COLUMNS = ("kind", "name", "expected", "observed", "match")
 
