@@ -159,6 +159,7 @@ PARAMETER_ERROR_NAMES: Final[dict[int, str]] = {
     int(codes.PARAM_LAG_NOT_ALLOWED): "PARAM_LAG_NOT_ALLOWED",
     int(codes.PARAM_NEGATIVE_LAG): "PARAM_NEGATIVE_LAG",
     int(codes.PARAM_LAG_ABOVE_LIMIT): "PARAM_LAG_ABOVE_LIMIT",
+    int(codes.PARAM_LAG_OUTSIDE_WINDOW): "PARAM_LAG_OUTSIDE_WINDOW",
 }
 
 PARAMETER_ERROR_NAME_TO_CODE: Final[dict[str, np.int8]] = {
@@ -176,6 +177,7 @@ PARAMETER_ERROR_NAME_TO_CODE: Final[dict[str, np.int8]] = {
     "PARAM_LAG_NOT_ALLOWED": codes.PARAM_LAG_NOT_ALLOWED,
     "PARAM_NEGATIVE_LAG": codes.PARAM_NEGATIVE_LAG,
     "PARAM_LAG_ABOVE_LIMIT": codes.PARAM_LAG_ABOVE_LIMIT,
+    "PARAM_LAG_OUTSIDE_WINDOW": codes.PARAM_LAG_OUTSIDE_WINDOW,
 }
 
 # ---------------------------------------- CoreRankError reasons
