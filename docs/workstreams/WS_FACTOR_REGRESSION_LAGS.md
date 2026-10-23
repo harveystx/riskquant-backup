@@ -2,7 +2,7 @@
 
 Path: docs/workstreams/WS_FACTOR_REGRESSION_LAGS.md
 Class: LIGHT (owner decision 2026-10-22: HEAVY by WS_TEMPLATE.md 1.5, run on the LIGHT path)
-Status: FROZEN
+Status: CLOSED
 Revision: 1
 Code merged: no
 Date: 2026-10-22
@@ -108,11 +108,14 @@ Evidence format: raw output of each command, in the final report.
 - Rolling windows: a separate brief (rolling_fit), after v1 lands, because both change api.py.
 - Information criteria (AIC, BIC) on a fixed sample: the caller computes them from rss, n and k today.
 - Lags in unit_root_test, DOLS and ECM.
+- OlsResult carries no max_lag field: the caller holds the spec, and the spec digest binds it.
+- tests/factor_regression/test_combination.py: the test name ..._holds_fifty_constants now checks 51 constants.
 
 ## 7. Closure
 
 | Item | Value |
 |---|---|
-| Final commit | <hash, dirty=false> |
-| Date | <YYYY-MM-DD> |
-| Open work | none |
+| Final commit | f545bf9 |
+| Date | 2026-10-23 |
+| Review | ACCEPT: independent lstsq oracle; 7 of 7 mutants killed |
+| Open work | merge of ws/factor-regression-lags into prod (owner) |
