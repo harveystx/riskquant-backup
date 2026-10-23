@@ -8,6 +8,10 @@ lag-free spec reads as before (WS_FACTOR_REGRESSION_LAGS, owner decision
 2026-10-22).  Array-bearing types declare ``eq=False`` (D064).  The core holds no ``str``
 typed data; all names, units and labels live here (C.22).
 
+``RollingWindow`` and ``RollingFitResult`` are the records of ``rolling_fit``
+(WS_FACTOR_REGRESSION_ROLLING C.1).  They hold an ``OlsResult`` per window,
+so they also declare ``eq=False``.
+
 ``ENGINE_VERSION`` is the stable string identifier for this library's canonical
 bytes format (A.6).  It changes only when the canonical byte layout changes.
 """
@@ -1432,3 +1436,142 @@ class UnitRootResult:
                 "UnitRootResult", _name, getattr(self, _name), np.int32
             )
             object.__setattr__(self, _name, _arr_i)
+
+
+# ===================================================================== rolling
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
+class RollingWindow:
+    """
+    One window of ``rolling_fit``: its bounds and its fit or its error (C.1).
+
+    ``eq=False`` because ``result`` holds arrays (D064 precedent).
+
+    Parameters
+    ----------
+    start_ord, end_ord
+        Half-open window ``[start_ord, end_ord)`` of the fit: ``start_ord``
+        is the first aligned date of the window and ``end_ord`` is the last
+        aligned date plus one (C.3).  An ``int`` or a NumPy integer (not
+        ``bool``), stored as ``int``.
+    result
+        The ``OlsResult`` of the window, or ``None`` when the window failed.
+    error_type
+        The class name of the error that the window raised (C.5), or
+        ``None`` when the window holds a result.
+    error_message
+        ``str`` of that error, or ``None`` when the window holds a result.
+
+    Exactly one of ``result`` and ``error_type`` is ``None``;
+    ``error_message`` is ``None`` exactly when ``error_type`` is ``None``.
+
+    Raises
+    ------
+    TypeError
+        A bound is a ``bool`` or not an integer; ``result`` is not
+        ``OlsResult`` or ``None``; ``error_type`` or ``error_message`` is not
+        ``str`` or ``None``.
+    ValueError
+        ``start_ord >= end_ord``, both or neither of ``result`` and
+        ``error_type`` is ``None``, or ``error_message`` does not follow
+        ``error_type``.
+    """
+
+    start_ord: int
+    end_ord: int
+    result: OlsResult | None
+    error_type: str | None
+    error_message: str | None
+
+    def __post_init__(self) -> None:
+        start = _check_int_param("RollingWindow.start_ord", self.start_ord)
+        end = _check_int_param("RollingWindow.end_ord", self.end_ord)
+        if self.result is not None and not isinstance(self.result, OlsResult):
+            raise TypeError(
+                "RollingWindow.result must be OlsResult or None, "
+                f"got {type(self.result).__name__}"
+            )
+        for field, value in (
+            ("error_type", self.error_type),
+            ("error_message", self.error_message),
+        ):
+            if value is not None and not isinstance(value, str):
+                raise TypeError(
+                    f"RollingWindow.{field} must be str or None, "
+                    f"got {type(value).__name__}"
+                )
+        if start >= end:
+            raise ValueError(
+                f"RollingWindow.start_ord {start} must be below end_ord {end}"
+            )
+        if (self.result is None) == (self.error_type is None):
+            raise ValueError(
+                "RollingWindow: exactly one of result and error_type must be None"
+            )
+        if (self.error_type is None) != (self.error_message is None):
+            raise ValueError(
+                "RollingWindow: error_message must be None exactly when "
+                "error_type is None"
+            )
+        object.__setattr__(self, "start_ord", start)
+        object.__setattr__(self, "end_ord", end)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, eq=False)
+class RollingFitResult:
+    """
+    Result of ``rolling_fit``: the window definition and one record per
+    window (C.1).
+
+    ``eq=False`` because each record holds arrays (D064 precedent).
+
+    Parameters
+    ----------
+    window
+        Window length in aligned dates, at least ``1``.  An ``int`` or a
+        NumPy integer (not ``bool``), stored as ``int``.
+    move
+        Move between the starts of two consecutive windows, in aligned
+        dates, at least ``1``.  Stored as ``int``.
+    windows
+        Exactly ``tuple`` of ``RollingWindow``, at least one record, in
+        window order.
+
+    Raises
+    ------
+    TypeError
+        ``window`` or ``move`` is a ``bool`` or not an integer; ``windows``
+        is not exactly ``tuple``; a record is not ``RollingWindow``.
+    ModelSpecError
+        ``window < 1`` or ``move < 1``.
+    ValueError
+        ``windows`` is empty.
+    """
+
+    window: int
+    move: int
+    windows: tuple[RollingWindow, ...]
+
+    def __post_init__(self) -> None:
+        window = _check_int_param("RollingFitResult.window", self.window)
+        move = _check_int_param("RollingFitResult.move", self.move)
+        if type(self.windows) is not tuple:
+            raise TypeError(
+                "RollingFitResult.windows must be exactly tuple; "
+                f"got {type(self.windows).__name__}"
+            )
+        for i, record in enumerate(self.windows):
+            if not isinstance(record, RollingWindow):
+                raise TypeError(
+                    f"RollingFitResult.windows[{i}] must be RollingWindow; "
+                    f"got {type(record).__name__}"
+                )
+        if window < 1:
+            raise ModelSpecError(reason=f"window must be >= 1, got {window}")
+        if move < 1:
+            raise ModelSpecError(reason=f"move must be >= 1, got {move}")
+        if len(self.windows) == 0:
+            raise ValueError("RollingFitResult.windows must hold at least one record")
+        object.__setattr__(self, "window", window)
+        object.__setattr__(self, "move", move)
