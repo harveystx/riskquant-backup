@@ -2,7 +2,7 @@
 
 Path: docs/workstreams/WS_FACTOR_REGRESSION_ROLLING.md
 Class: LIGHT (owner decision 2026-10-23: HEAVY by WS_TEMPLATE.md 1.5, run on the LIGHT path)
-Status: FROZEN
+Status: CLOSED
 Revision: 1
 Code merged: no
 Date: 2026-10-23
@@ -101,12 +101,22 @@ Evidence format: raw output of each command, in the final report.
 - Rolling unit_root_test: low power on short windows; needs its own decision on how to present it.
 - A notebook section with rolling loadings on the credit and proxy fixtures: a demo change after v1 lands.
 - Tables across windows (coefficient paths as arrays): the caller builds them from the records today.
+- C.4 reading (owner ruling 2026-10-23): a window holds only the exclusions with date_ord inside the window
+  (owner decision 2). A fresh align_levels over the window also records OUTSIDE_WINDOW for every observation
+  outside it. All other fields, the three digests included, are equal bit for bit.
+- RollingWindow and RollingFitResult raise ValueError for an inconsistent hand-built record (precedent:
+  align_levels with an empty sequence). rolling_fit always builds valid records.
+- C.5: InsufficientObservationsError has no mixed case, because the row count depends only on the window
+  length. The other three recorded error classes have mixed cases.
+- test_rolling.py checks the dataclass flags through Field.kw_only and __slots__, because
+  _DataclassParams.kw_only exists only from Python 3.12 (found by the owner gate on Python 3.11.9).
+- The floor environment needs polars, because test_rolling.py uses the canonical fixture.
 
 ## 7. Closure
 
 | Item | Value |
 |---|---|
-| Final commit | <hash> |
-| Date | <YYYY-MM-DD> |
-| Review | <verdict> |
-| Open work | none |
+| Final commit | 6b7ebbd |
+| Date | 2026-10-23 |
+| Review | ACCEPT: re-aligned oracle on the credit fixture (38 windows in three settings, bit for bit with digests); 7 of 8 mutants killed, 1 equivalent |
+| Open work | merge of ws/factor-regression-rolling into prod (owner) |
