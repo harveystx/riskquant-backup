@@ -162,6 +162,9 @@ _DIGEST_NO_LAG: Final = -1
 # read it, because the apply flag is False (backlog R-011).
 _UNUSED_THRESHOLD: Final = 0.0
 
+# The response of fit_ols always has lag 0 (ModelSpec rule, C.2).
+_RESPONSE_LAG: Final = 0
+
 _CORE_ERRORS: Final = (
     CoreAlignmentError,
     CoreDegenerateFitError,
@@ -562,6 +565,20 @@ def _core_aligned_levels(levels: AlignedLevels) -> CoreAlignedLevels:
     )
 
 
+def _column_name(series: str, lag: int) -> str:
+    """
+    Design column name of a regressor (WS_FACTOR_REGRESSION_LAGS C.6).
+
+    Lag 0 keeps the series name. Lag ``l > 0`` appends ``[-l]`` (an earlier
+    interval); lag ``l < 0`` appends ``[+|l|]`` (a later interval).
+    """
+    if lag > 0:
+        return f"{series}[-{lag}]"
+    if lag < 0:
+        return f"{series}[+{-lag}]"
+    return series
+
+
 class _HasSeries(Protocol):
     """Any term type that carries a ``series`` attribute (``Term`` or ``CombinationTerm``).
 
@@ -615,7 +632,8 @@ def fit_ols(levels: AlignedLevels, spec: ModelSpec) -> OlsResult:
     TransformDomainError
         An aligned level is outside the domain of its transform (C.7).
     InsufficientObservationsError
-        No row exists (``h >= m``), or ``R < k + 1`` (C.12).
+        No row exists (``m - 1 < h + 2 * max_lag``), or ``R < k + 1``
+        (C.12).
     RankDeficiencyError
         A zero design column or ``rank < k`` (C.8, C.9).
     DegenerateFitError
@@ -638,8 +656,16 @@ def fit_ols(levels: AlignedLevels, spec: ModelSpec) -> OlsResult:
 
     ``OlsResult.exclusions`` holds the alignment exclusions only. The aligned
     dates that no row reads (``NOT_USED_BY_ROWS``) are not records of the
-    result: they are the aligned dates that are neither a row start date nor
-    a row end date, so they follow from ``levels.date_ord`` and the row dates.
+    result: they follow from ``levels.date_ord``, the row dates, the term
+    transforms and the term lags.
+
+    Lags (WS_FACTOR_REGRESSION_LAGS). Each regressor term reads its row
+    interval shifted by ``term.lag`` aligned dates; ``spec.max_lag`` fixes
+    the common sample (C.3). The row dates are those of the response. The
+    column name of a lagged regressor carries the lag (C.6);
+    ``OlsResult.transforms`` and ``units`` keep the term order. The spec
+    digest holds every non-zero lag and a positive ``max_lag`` (C.7); the
+    sample digest holds the column names.
     """
     if not isinstance(spec, ModelSpec):
         raise TypeError(f"spec must be ModelSpec, got {type(spec).__name__}")
@@ -654,7 +680,12 @@ def fit_ols(levels: AlignedLevels, spec: ModelSpec) -> OlsResult:
         index_of.setdefault(name, j)
     term_names = tuple(term.series for term in terms)
     term_index = tuple(index_of[name] for name in term_names)
-    regressor_names = term_names[1:]
+    regressor_lags = tuple(term.lag for term in spec.regressors)
+    # C.6: the series name carries the lag in the design column name; the
+    # spec digest keeps the series name and the lag as separate fields.
+    regressor_names = tuple(
+        _column_name(term.series, term.lag) for term in spec.regressors
+    )
     regressor_units = tuple(levels.units[j] for j in term_index[1:])
     regressor_transforms = tuple(term.transform for term in spec.regressors)
     if intercept:
@@ -676,6 +707,7 @@ def fit_ols(levels: AlignedLevels, spec: ModelSpec) -> OlsResult:
         [labels.TRANSFORM_NAME_TO_CODE[term.transform.name] for term in terms],
         dtype=np.int8,
     )
+    term_lags = np.array((_RESPONSE_LAG, *regressor_lags), dtype=np.int32)
     with _facade_errors(
         _ErrorContext(stage="rows", term_names=term_names, date_ord=levels.date_ord)
     ):
@@ -683,8 +715,10 @@ def fit_ols(levels: AlignedLevels, spec: ModelSpec) -> OlsResult:
             core_levels,
             term_series=term_series,
             term_transforms=term_transforms,
+            term_lags=term_lags,
             step=spec.step,
             stride=spec.stride,
+            max_lag=spec.max_lag,
         )
     y = rows.values[0]
     regressors = rows.values[1:]
@@ -785,7 +819,7 @@ def fit_ols(levels: AlignedLevels, spec: ModelSpec) -> OlsResult:
             response_name=term_names[0],
             response_unit=response_unit,
             response_transform=spec.response.transform.name,
-            regressor_names=regressor_names,
+            regressor_names=term_names[1:],
             regressor_units=regressor_units,
             regressor_transforms=tuple(t.name for t in regressor_transforms),
             intercept=intercept,
@@ -797,6 +831,8 @@ def fit_ols(levels: AlignedLevels, spec: ModelSpec) -> OlsResult:
             covariance_lag=_DIGEST_NO_LAG if spec_lag is None else spec_lag,
             rank_rtol=spec.rank_rtol,
             condition_threshold=threshold,
+            regressor_lags=regressor_lags,
+            max_lag=spec.max_lag,
         ),
         row_digest=digest.row_digest(rows.row_start_date_ord, rows.row_end_date_ord),
         engine_version=ENGINE_VERSION,

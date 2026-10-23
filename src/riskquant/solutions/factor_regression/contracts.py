@@ -2,8 +2,10 @@
 """
 Facade contract types for the factor-regression library (C.1, C.5, C.15, C.22).
 
-All types are frozen dataclasses with ``kw_only=True`` and no defaults (O-1a).
-Array-bearing types declare ``eq=False`` (D064).  The core holds no ``str``
+All types are frozen dataclasses with ``kw_only=True`` and no defaults (O-1a),
+except ``Term.lag`` and ``ModelSpec.max_lag``, which default to ``0`` so that a
+lag-free spec reads as before (WS_FACTOR_REGRESSION_LAGS, owner decision
+2026-10-22).  Array-bearing types declare ``eq=False`` (D064).  The core holds no ``str``
 typed data; all names, units and labels live here (C.22).
 
 ``ENGINE_VERSION`` is the stable string identifier for this library's canonical
@@ -135,7 +137,7 @@ class Exclusion:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Term:
     """
-    One regression term: a series name and its transform.
+    One regression term: a series name, its transform and its lag.
 
     Parameters
     ----------
@@ -143,10 +145,23 @@ class Term:
         Name of the series to use.
     transform
         ``Transform`` enum value.
+    lag
+        Signed lag in aligned dates, default ``0`` (WS_FACTOR_REGRESSION_LAGS
+        C.1).  Positive: the term reads an earlier interval.  Negative: a
+        later interval (a lead).  An ``int`` or a NumPy integer, stored as
+        ``int``.  ``ModelSpec`` bounds ``|lag|`` by its ``max_lag`` and
+        requires lag ``0`` on the response.
+
+    Raises
+    ------
+    TypeError
+        ``series`` is not ``str``; ``transform`` is not ``Transform``; ``lag``
+        is a ``bool``, ``numpy.bool_`` or not an integer.
     """
 
     series: str
     transform: Transform
+    lag: int = 0
 
     def __post_init__(self) -> None:
         if not isinstance(self.series, str):
@@ -157,6 +172,7 @@ class Term:
             raise TypeError(
                 f"Term.transform must be Transform, got {type(self.transform).__name__}"
             )
+        object.__setattr__(self, "lag", _check_int_param("Term.lag", self.lag))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -661,6 +677,13 @@ class ModelSpec:
         When not ``None``: flag the diagnostic
         ``CONDITION_ABOVE_THRESHOLD`` if ``kappa > condition_threshold``.
         Must be strictly above 1.
+    max_lag
+        Lag window ``L >= 0``, default ``0`` (WS_FACTOR_REGRESSION_LAGS C.2).
+        Every regressor lag must satisfy ``|lag| <= max_lag``; the response
+        lag must be ``0``.  ``L`` fixes the common sample: every spec with
+        the same ``L``, ``step`` and ``stride`` on the same levels uses the
+        same rows.  Stored as ``int``.  Bounded by the ``int32`` range: the
+        core reads the term lags as ``int32``.
 
     Raises
     ------
@@ -672,7 +695,14 @@ class ModelSpec:
         term, step > 0 with only LEVEL terms, ``rank_rtol`` outside (0, 1)
         or NaN, ``condition_threshold`` not None and not above 1 (NaN
         included), a lag with IID or HC0, ``HAC_BARTLETT`` without a lag, a
-        negative lag, or step/stride above the ``int64`` range.
+        negative lag, step/stride above the ``int64`` range, ``max_lag < 0``
+        or above the ``int32`` range, a regressor with ``|lag| > max_lag``,
+        or a response with a lag other than ``0``.
+
+    Notes
+    -----
+    The lag rules run after the existing domain rules, so a spec that fails
+    an existing rule raises the same error as before.
     """
 
     response: Term
@@ -683,6 +713,7 @@ class ModelSpec:
     covariance: CovarianceSpec
     rank_rtol: float
     condition_threshold: float | None
+    max_lag: int = 0
 
     def __post_init__(self) -> None:
         # ---- response -------------------------------------------------------
@@ -742,6 +773,10 @@ class ModelSpec:
         if ct is not None:
             ct_float = _check_float_param("condition_threshold", ct)
             object.__setattr__(self, "condition_threshold", ct_float)
+
+        # ---- max_lag ----------------------------------------------------------
+        max_lag = _check_int_param("max_lag", self.max_lag)
+        object.__setattr__(self, "max_lag", max_lag)
 
         # ---- domain rules (ModelSpecError) ----------------------------------
         _step = int(self.step)
@@ -807,6 +842,31 @@ class ModelSpec:
                     f"got {float(_ct)!r}"
                 )
             )
+
+        # Lag rules (WS_FACTOR_REGRESSION_LAGS C.2).  int32: the core reads
+        # the term lags as int32, and |lag| <= max_lag keeps every lag inside.
+        _max_lag = int(self.max_lag)
+        if _max_lag < 0:
+            raise ModelSpecError(reason=f"max_lag must be >= 0, got {_max_lag}")
+        if _max_lag > _INT32_MAX:
+            raise ModelSpecError(
+                reason=f"max_lag {_max_lag} exceeds int32 range ({_INT32_MAX})"
+            )
+        if self.response.lag != 0:
+            raise ModelSpecError(
+                reason=(
+                    f"response {self.response.series!r} must have lag 0, "
+                    f"got lag={self.response.lag}"
+                )
+            )
+        for i, reg in enumerate(_regs):
+            if abs(reg.lag) > _max_lag:
+                raise ModelSpecError(
+                    reason=(
+                        f"regressors[{i}] {reg.series!r} has lag={reg.lag} "
+                        f"outside [-max_lag, max_lag] = [{-_max_lag}, {_max_lag}]"
+                    )
+                )
 
 
 # ------------------------------------------------------------------ observed series

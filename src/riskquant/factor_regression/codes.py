@@ -115,6 +115,9 @@ PARAM_UNKNOWN_COVARIANCE: Final = np.int8(8)
 PARAM_LAG_NOT_ALLOWED: Final = np.int8(9)
 PARAM_NEGATIVE_LAG: Final = np.int8(10)
 PARAM_LAG_ABOVE_LIMIT: Final = np.int8(11)
+# A term lag with |lag| above the declared max_lag of build_rows
+# (WS_FACTOR_REGRESSION_LAGS C.9). Appended last: the values above are in use.
+PARAM_LAG_OUTSIDE_WINDOW: Final = np.int8(12)
 
 PARAMETER_ERROR_CODES: Final = (
     PARAM_EMPTY_DESIGN,
@@ -129,6 +132,7 @@ PARAMETER_ERROR_CODES: Final = (
     PARAM_LAG_NOT_ALLOWED,
     PARAM_NEGATIVE_LAG,
     PARAM_LAG_ABOVE_LIMIT,
+    PARAM_LAG_OUTSIDE_WINDOW,
 )
 
 # -------------------------------------------------- CoreRankError reasons

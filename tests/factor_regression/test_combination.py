@@ -381,6 +381,7 @@ _EXISTING_CONSTANTS = frozenset({
     "PARAM_LAG_NOT_ALLOWED",
     "PARAM_NEGATIVE_LAG",
     "PARAM_LAG_ABOVE_LIMIT",
+    "PARAM_LAG_OUTSIDE_WINDOW",
     "RANK_ZERO_COLUMN",
     "RANK_DEFICIENT",
     "SAMPLE_STEP_NOT_BELOW_COUNT",
@@ -405,7 +406,7 @@ _APPENDED = ("SAMPLE_ROWS_BELOW_TABLE_MINIMUM", 2)
 
 
 def test_t7_the_existing_set_holds_fifty_constants() -> None:
-    assert len(_EXISTING_CONSTANTS) == 50
+    assert len(_EXISTING_CONSTANTS) == 51
 
 
 @pytest.mark.parametrize("tuple_name", sorted(_NEW_GROUPS))
@@ -442,7 +443,7 @@ def test_t7_no_new_constant_reuses_an_existing_name() -> None:
     declared = {name for name, value in vars(codes).items() if type(value) is np.int8}
     # A clash would rebind an existing name, so the union would shrink.
     assert declared == _EXISTING_CONSTANTS | new_names
-    assert len(declared) == 57
+    assert len(declared) == 58
 
 
 # ============================================== checks (owner decision 2)

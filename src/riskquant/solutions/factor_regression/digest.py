@@ -26,12 +26,15 @@ Canonical byte layout summary (A.6)
     Arrays in this order: ``schema_version`` int64[1] (constant 1),
     ``engine_version`` uint8 (UTF-8), ``terms`` uint8 (one line
     ``Y\\x1f{name}\\x1f{unit}\\x1f{TRANSFORM}`` for the response, then
-    ``X\\x1f{name}\\x1f{unit}\\x1f{TRANSFORM}`` per regressor, joined by
-    ``\\x1e``), ``intercept`` int8[0 or 1], ``step`` int64[h],
-    ``stride`` int64[s], ``window`` int32[start_ord, end_ord],
-    ``covariance_kind`` int8[0/1/2], ``covariance_lag`` int64[L or -1],
-    ``rank_rtol`` float64[x], ``condition_threshold`` float64[x] or empty
-    float64 when None.
+    ``X\\x1f{name}\\x1f{unit}\\x1f{TRANSFORM}`` per regressor, with a
+    fifth field ``\\x1f{lag}`` (signed decimal) on a regressor line whose lag
+    is not 0, joined by ``\\x1e``), ``intercept`` int8[0 or 1],
+    ``step`` int64[h], ``stride`` int64[s], ``window`` int32[start_ord,
+    end_ord], ``covariance_kind`` int8[0/1/2], ``covariance_lag`` int64[L or
+    -1], ``rank_rtol`` float64[x], ``condition_threshold`` float64[x] or
+    empty float64 when None; then, only when ``max_lag > 0``, ``max_lag``
+    int64[max_lag] (WS_FACTOR_REGRESSION_LAGS C.7).  A lag-0 line and
+    ``max_lag = 0`` add no byte, so a lag-free spec digests as before.
 
 ``restriction_digest(restriction, rhs)``
     Arrays: ``restriction`` float64 C-order, ``rhs`` float64 C-order.
@@ -267,13 +270,15 @@ def spec_digest(
     covariance_lag: int,
     rank_rtol: float,
     condition_threshold: float | None,
+    regressor_lags: Sequence[int] | None = None,
+    max_lag: int = 0,
 ) -> str:
     """
     SHA-256 digest of the canonical specification bytes (A.6, C.16).
 
     Changes when the engine version, any name, unit, transform, intercept flag,
-    step, stride, window, covariance kind, lag, ``rank_rtol`` or
-    ``condition_threshold`` change.
+    step, stride, window, covariance kind, lag, ``rank_rtol``,
+    ``condition_threshold``, any regressor lag or ``max_lag`` change.
 
     Parameters
     ----------
@@ -298,6 +303,11 @@ def spec_digest(
     condition_threshold
         Declared threshold or ``None``.  ``None`` digests as an empty
         ``float64`` array.
+    regressor_lags
+        Signed lag per regressor in declared order, or ``None`` for lag 0
+        everywhere (WS_FACTOR_REGRESSION_LAGS C.7).
+    max_lag
+        Declared lag window ``L``.  ``0`` adds no array.
 
     Returns
     -------
@@ -307,34 +317,43 @@ def spec_digest(
     Raises
     ------
     ValueError
-        ``regressor_names``, ``regressor_units`` and ``regressor_transforms``
-        differ in length.  A shorter sequence would drop terms from the
-        digest without notice.
+        ``regressor_names``, ``regressor_units``, ``regressor_transforms`` and
+        ``regressor_lags`` (when given) differ in length.  A shorter sequence
+        would drop terms from the digest without notice.
 
     Notes
     -----
     The ``terms`` uint8 array encodes:
     ``Y\\x1f{name}\\x1f{unit}\\x1f{TRANSFORM}`` for the response, then one
-    ``X\\x1f{name}\\x1f{unit}\\x1f{TRANSFORM}`` line per regressor, all lines
-    joined by ``\\x1e``.
+    ``X\\x1f{name}\\x1f{unit}\\x1f{TRANSFORM}`` line per regressor, with
+    ``\\x1f{lag}`` appended when the lag is not 0, all lines joined by
+    ``\\x1e``.  The ``max_lag`` int64 array follows ``condition_threshold``
+    only when ``max_lag > 0``.
     """
+    lags: Sequence[int] = (
+        [0] * len(regressor_names) if regressor_lags is None else regressor_lags
+    )
     lengths = (
         len(regressor_names),
         len(regressor_units),
         len(regressor_transforms),
+        len(lags),
     )
     if len(set(lengths)) != 1:
         raise ValueError(
-            "regressor_names, regressor_units and regressor_transforms must "
-            f"have equal length; got {lengths}"
+            "regressor_names, regressor_units, regressor_transforms and "
+            f"regressor_lags must have equal length; got {lengths}"
         )
 
     # Build the terms text.
     lines = [f"Y\x1f{response_name}\x1f{response_unit}\x1f{response_transform}"]
-    for n, u, t in zip(
-        regressor_names, regressor_units, regressor_transforms, strict=True
+    for n, u, t, lag in zip(
+        regressor_names, regressor_units, regressor_transforms, lags, strict=True
     ):
-        lines.append(f"X\x1f{n}\x1f{u}\x1f{t}")
+        line = f"X\x1f{n}\x1f{u}\x1f{t}"
+        if lag != 0:
+            line = f"{line}\x1f{lag}"
+        lines.append(line)
     terms_arr = _text_uint8("\x1e".join(lines))
 
     engine_arr = _text_uint8(engine_version)
@@ -350,6 +369,21 @@ def spec_digest(
     else:
         ct_arr = np.array([condition_threshold], dtype=np.float64)
 
+    if max_lag == 0:
+        return digest_named_arrays(
+            schema_version=_SCHEMA_VERSION,
+            engine_version=engine_arr,
+            terms=terms_arr,
+            intercept=intercept_arr,
+            step=step_arr,
+            stride=stride_arr,
+            window=window_arr,
+            covariance_kind=cov_kind_arr,
+            covariance_lag=cov_lag_arr,
+            rank_rtol=rank_rtol_arr,
+            condition_threshold=ct_arr,
+        )
+    # C.7: the named array max_lag follows the existing arrays when L > 0.
     return digest_named_arrays(
         schema_version=_SCHEMA_VERSION,
         engine_version=engine_arr,
@@ -362,6 +396,7 @@ def spec_digest(
         covariance_lag=cov_lag_arr,
         rank_rtol=rank_rtol_arr,
         condition_threshold=ct_arr,
+        max_lag=np.array([max_lag], dtype=np.int64),
     )
 
 
