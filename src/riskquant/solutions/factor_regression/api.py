@@ -3,11 +3,13 @@
 Public surface of the factor regression library (C.23, D001).
 
 This module is the only public import surface of
-``riskquant.solutions.factor_regression``. It exposes four functions:
+``riskquant.solutions.factor_regression``. It exposes five functions:
 
 * ``align_levels``: integer alignment of named level series (C.2, C.3).
 * ``fit_ols``: rows, design, rank gate, OLS fit, diagnostics and digests
   (C.4 to C.17).
+* ``rolling_fit``: ``fit_ols`` on successive windows of one alignment, one
+  record per window (WS_FACTOR_REGRESSION_ROLLING C.1 to C.6).
 * ``wald_test``: joint Wald test on a fit (C.18).
 * ``unit_root_test``: ADF unit-root test of a linear combination of aligned
   levels (C.2 to C.10).
@@ -96,6 +98,8 @@ from riskquant.solutions.factor_regression.contracts import (
     ModelSpec,
     ObservedSeries,
     OlsResult,
+    RollingFitResult,
+    RollingWindow,
     Scale,
     Term,
     Transform,
@@ -133,6 +137,8 @@ __all__ = [
     "OlsResult",
     "RankDeficiencyError",
     "RestrictionError",
+    "RollingFitResult",
+    "RollingWindow",
     "Scale",
     "ScaleDomainError",
     "SeriesContractError",
@@ -144,6 +150,7 @@ __all__ = [
     "WaldResult",
     "align_levels",
     "fit_ols",
+    "rolling_fit",
     "unit_root_test",
     "wald_test",
 ]
@@ -189,6 +196,17 @@ _ScalarT = TypeVar("_ScalarT", bound=np.generic)
 # AlignmentError reason of a duplicate series name. No core code exists for
 # it: the facade checks the names before the core call (C.2, OD-12).
 _DUPLICATE_SERIES_NAME: Final = "DUPLICATE_SERIES_NAME"
+
+# The errors of fit_ols that rolling_fit records for a window instead of
+# raising (WS_FACTOR_REGRESSION_ROLLING, owner decision 2026-10-23): each one
+# states that the data of the window cannot carry the fit. Every other error
+# propagates unchanged.
+_ROLLING_RECORDED_ERRORS: Final = (
+    InsufficientObservationsError,
+    RankDeficiencyError,
+    DegenerateFitError,
+    TransformDomainError,
+)
 
 
 def _empty_dates() -> NDArray[np.int32]:
@@ -837,6 +855,144 @@ def fit_ols(levels: AlignedLevels, spec: ModelSpec) -> OlsResult:
         row_digest=digest.row_digest(rows.row_start_date_ord, rows.row_end_date_ord),
         engine_version=ENGINE_VERSION,
     )
+
+
+# ------------------------------------------------------------------ rolling_fit
+
+
+def rolling_fit(
+    levels: AlignedLevels, spec: ModelSpec, *, window: int, move: int
+) -> RollingFitResult:
+    """
+    Fit the declared model on successive windows of one alignment (C.1 to C.6).
+
+    Parameters
+    ----------
+    levels
+        Output of ``align_levels`` with ``m`` aligned dates.
+    spec
+        The declared model, as for ``fit_ols``.
+    window
+        Window length in aligned dates, ``1 <= window <= m``.
+    move
+        Move between the starts of two consecutive windows, in aligned dates,
+        ``move >= 1``.
+
+    Returns
+    -------
+    RollingFitResult
+        ``W = floor((m - window) / move) + 1`` records in window order (C.3).
+        Window ``i`` covers the aligned indices ``i * move`` to
+        ``i * move + window - 1``; a last, incomplete window is dropped. Each
+        record holds the half-open bounds ``[date_ord[i * move],
+        date_ord[i * move + window - 1] + 1)`` and either the ``OlsResult``
+        of ``fit_ols`` on that window or the error that the window raised
+        (C.5). No array holds NaN. No caller array is changed.
+
+    Raises
+    ------
+    TypeError
+        ``levels`` is not an ``AlignedLevels``, ``spec`` is not a
+        ``ModelSpec``, or ``window`` or ``move`` is a ``bool`` or not an
+        integer.
+    ModelSpecError
+        ``window < 1``, ``move < 1`` or ``window > m`` (no complete window);
+        or, from ``fit_ols`` on any window, a term that names a series
+        ``levels`` does not hold, or a core parameter check that fails.
+
+    Notes
+    -----
+    The checks run in this order, all before the first window: ``levels``
+    type, ``spec`` type, ``window`` and ``move`` type, then their values.
+
+    Each window is a slice of ``levels``: the dates and levels of the window,
+    the exclusions whose ``date_ord`` lies in the window, and the window
+    bounds. No re-alignment runs (owner decision 2026-10-23). Each window is
+    a full ``fit_ols`` call: the same checks, diagnostics and digests. A
+    lagged spec drops ``max_lag`` rows at both ends of each window, as a
+    single fit does (C.6).
+
+    A window that raises ``InsufficientObservationsError``,
+    ``RankDeficiencyError``, ``DegenerateFitError`` or
+    ``TransformDomainError`` is recorded with the class name and the message
+    of the error; the other windows continue. Any other error propagates
+    unchanged (C.5).
+
+    Parity with the loop "``align_levels`` and ``fit_ols`` per window" on the
+    original ``ObservedSeries`` (C.4): every number, date, digest and
+    diagnostic is equal bit for bit; the exclusions of a record are the
+    exclusions of that loop whose ``date_ord`` lies in the window, in the
+    same order. The re-alignment of the loop also records ``OUTSIDE_WINDOW``
+    for every observation outside the window; the slice does not.
+    """
+    if not isinstance(levels, AlignedLevels):
+        raise TypeError(f"levels must be AlignedLevels, got {type(levels).__name__}")
+    if not isinstance(spec, ModelSpec):
+        raise TypeError(f"spec must be ModelSpec, got {type(spec).__name__}")
+    window_len = _window_bound("window", window)
+    move_len = _window_bound("move", move)
+    m = int(levels.date_ord.shape[0])
+    if window_len < 1:
+        raise ModelSpecError(reason=f"window must be >= 1, got {window_len}")
+    if move_len < 1:
+        raise ModelSpecError(reason=f"move must be >= 1, got {move_len}")
+    if window_len > m:
+        raise ModelSpecError(
+            reason=(
+                f"window {window_len} exceeds the aligned date count {m}; "
+                "no complete window exists"
+            )
+        )
+
+    # One date per exclusion record, in record order: the window filter is
+    # one vector comparison per window, and the kept records keep the core
+    # order (series index, then input position).
+    exclusion_date_ord = np.array(
+        [record.date_ord for record in levels.exclusions], dtype=np.int64
+    )
+    date_ord = levels.date_ord
+    n_windows = (m - window_len) // move_len + 1
+    records: list[RollingWindow] = []
+    for i in range(n_windows):
+        first = i * move_len
+        stop = first + window_len
+        start_ord = int(date_ord[first])
+        end_ord = int(date_ord[stop - 1]) + 1
+        inside = np.flatnonzero(
+            (exclusion_date_ord >= start_ord) & (exclusion_date_ord < end_ord)
+        )
+        window_levels = AlignedLevels(
+            names=levels.names,
+            units=levels.units,
+            date_ord=date_ord[first:stop],
+            levels=levels.levels[:, first:stop],
+            exclusions=tuple(levels.exclusions[int(k)] for k in inside),
+            start_ord=start_ord,
+            end_ord=end_ord,
+        )
+        try:
+            result = fit_ols(window_levels, spec)
+        except _ROLLING_RECORDED_ERRORS as error:
+            records.append(
+                RollingWindow(
+                    start_ord=start_ord,
+                    end_ord=end_ord,
+                    result=None,
+                    error_type=type(error).__name__,
+                    error_message=str(error),
+                )
+            )
+            continue
+        records.append(
+            RollingWindow(
+                start_ord=start_ord,
+                end_ord=end_ord,
+                result=result,
+                error_type=None,
+                error_message=None,
+            )
+        )
+    return RollingFitResult(window=window_len, move=move_len, windows=tuple(records))
 
 
 # ------------------------------------------------------------------ wald_test

@@ -481,6 +481,7 @@ def test_t6_intercept_only_log_ratio_built_by_the_caller() -> None:
 _EXPECTED_PUBLIC = {
     "align_levels",
     "fit_ols",
+    "rolling_fit",
     "wald_test",
     "unit_root_test",
     "ObservedSeries",
@@ -494,6 +495,8 @@ _EXPECTED_PUBLIC = {
     "Diagnostic",
     "OlsResult",
     "WaldResult",
+    "RollingWindow",
+    "RollingFitResult",
     "CombinationTerm",
     "LinearCombination",
     "UnitRootSpec",
