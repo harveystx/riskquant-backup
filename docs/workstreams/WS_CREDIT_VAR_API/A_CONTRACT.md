@@ -1,9 +1,9 @@
 # WS_CREDIT_VAR_API / A_CONTRACT: target shapes of request and result
 
 Path: docs/workstreams/WS_CREDIT_VAR_API/A_CONTRACT.md
-Revision: 1
+Revision: 2
 Used by: S1, S2, S5
-Snapshot: SNAPSHOT commit=c060f06 dirty=false content_hash=fa836966c1293f33
+Snapshot: SNAPSHOT commit=925533b dirty=false content_hash=046ed5dddb6305d3
 
 Every row is [Proposed] unless the Change column says "none". "none" means the
 field keeps its c060f06 type, constraint and JSON form. An optional input field
@@ -13,11 +13,25 @@ field keeps its c060f06 type, constraint and JSON form. An optional input field
 
 | Group | ConfigDict |
 |---|---|
-| Request models (ObligorRow, LoadingRow, GroupRow, CreditVarRequest) | `extra="forbid"`, `frozen=True`, `allow_inf_nan=False`, `protected_namespaces=()`, `strict` per O-8 |
+| Request models (ObligorRow, LoadingRow, GroupRow, CreditVarRequest) | `extra="forbid"`, `frozen=True`, `allow_inf_nan=False`, `protected_namespaces=()`, `strict=True` (O-8) |
 | Result models (section 3) | `extra="forbid"`, `frozen=True`, `allow_inf_nan=False`, `protected_namespaces=()` |
 
 `frozen=True` blocks attribute assignment only (F-3). Sequence fields are tuples
 for that reason. Dict fields stay dicts; C.15 covers their mutation.
+
+Coercion of request input (O-8, C.18, F-34):
+
+| Field type | Accepts | Rejects (raises R) |
+|---|---|---|
+| `int` | int | bool, float, str, numpy integer |
+| `float` | float, int (stored as float) | bool, str |
+| `bool` | bool | int, str, numpy bool |
+| `str` | str | every other type |
+| sequence (`obligors`, `loadings`, `groups`, `alphas`) | list, tuple (stored as tuple) | every other type, including set, generator and str |
+
+The rows apply to top-level fields, to dict keys, to dict values and to sequence
+elements.
+`None` stays valid for each optional field.
 
 ## 2. Request
 
@@ -58,13 +72,14 @@ for that reason. Dict fields stay dicts; C.15 covers their mutation.
 | params | `dict[str, float]` | keys and ranges per catalog | object | none |
 | loadings | `tuple[LoadingRow, ...] \| None` | no duplicate (obligor_uid, factor); per obligor sum of loading^2 <= 1 + 1e-9 | array or null | list to tuple; 2 rules added |
 | groups | `tuple[GroupRow, ...] \| None` | as today | array or null | list to tuple |
-| n_scenarios | `int` | > 0; upper limit per O-12 | integer | limit per O-12 |
+| n_scenarios | `int` | > 0; no upper limit (O-12) | integer | none |
 | alphas | `tuple[float, ...]` | non-empty; each in (0, 1); pairwise distinct under `==` | array | list to tuple; distinct added |
 | seed | `int` | >= 0 | integer | lower bound added |
 
 The cross-field validators of c060f06 stay: model and params, unique uids,
 loadings coverage, groups, Marshall-Olkin PD >= systemic_pd, per-obligor rho.
-The request keeps the caller's alpha order. The result sorts (C.3).
+Section 2.5 gives the loc of each rule. The request keeps the caller's alpha
+order. The result sorts (C.3).
 
 Request JSON example:
 
@@ -76,6 +91,46 @@ Request JSON example:
  "params": {"rho": 0.15}, "loadings": null, "groups": null,
  "n_scenarios": 250000, "alphas": [0.99, 0.999], "seed": 12345}
 ```
+
+### 2.5 Request error locations (C.20, S2.T10)
+
+R is `pydantic.ValidationError`. Each rule below gives one `errors()` entry with
+the stated loc. i, j and g are 0-based row indices of `obligors`, `loadings` and
+`groups` in request order. k is a param key. "First" means the lowest index that
+has the fault. "Second occurrence" means the first index whose value occurs at a
+lower index.
+
+| # | Rule | loc |
+|---|---|---|
+| 1 | A field constraint of sections 2.1 to 2.4: type, range, finite, min_length, int64 range, seed >= 0, n_scenarios > 0 | the field path, for example ("obligors", i, "ead"), ("seed",) |
+| 2 | An alphas element outside (0, 1) | ("alphas", n), n the element index |
+| 3 | alphas empty | ("alphas",) |
+| 4 | Duplicate alphas under `==` | ("alphas", n), second occurrence |
+| 5 | model is not a MODEL_CATALOG key | ("model",) |
+| 6 | params key unknown to the model | ("params", k) |
+| 7 | params value out of the catalog range | ("params", k) |
+| 8 | Duplicate obligor_uid | ("obligors", i, "obligor_uid"), second occurrence |
+| 9 | loadings present for a model without loadings | ("loadings",) |
+| 10 | loadings absent or empty for a model that requires them | ("loadings",) |
+| 11 | A loadings obligor_uid not in obligors | ("loadings", j, "obligor_uid"), first |
+| 12 | An obligor without a loadings row | ("obligors", i, "obligor_uid"), first |
+| 13 | Duplicate (obligor_uid, factor) | ("loadings", j, "factor"), second occurrence |
+| 14 | Per-obligor sum of loading^2 > 1 + 1e-9 | ("loadings", j, "loading"), j the first row at which the running sum over the rows of that obligor, in request order, exceeds 1 + 1e-9 |
+| 15 | factor in the reserved set (below) | ("loadings", j, "factor"), first |
+| 16 | groups present for a model without groups | ("groups",) |
+| 17 | An obligor group set for a model without groups | ("obligors", i, "group"), first |
+| 18 | Request params present for a grouped model | ("params",) |
+| 19 | groups absent or empty for a grouped model | ("groups",) |
+| 20 | An obligor without a group, grouped model | ("obligors", i, "group"), first |
+| 21 | Duplicate group name | ("groups", g, "name"), second occurrence |
+| 22 | An obligor group not defined in groups | ("obligors", i, "group"), first |
+| 23 | A group param key unknown, missing or out of range | ("groups", g, "params", k), first g, then first k in catalog order |
+| 24 | marshall_olkin: obligor pd < systemic_pd | ("obligors", i, "pd"), first |
+| 25 | obligor rho set for a model without per-obligor rho | ("obligors", i, "rho"), first |
+
+Reserved set (rule 15, C.17, F-36): for mf_gaussian and mf_students_t, the name
+`IDIO_{uid:03d}` for each request obligor_uid, in the format of
+`recipes._mf_universe_and_bundle`; for mf_students_t, also `CHI_GLOBAL`.
 
 ## 3. Result
 
@@ -109,9 +164,10 @@ Request JSON example:
 | by_alpha | `tuple[AlphaRisk, ...]` | one per request alpha, ascending | array | new; replaces var, es, economic_capital_var, economic_capital_es |
 | expected_loss_by_model | `dict[str, float]` | keys are JtdModel names (C.7) | object | key vocabulary |
 
-Methods: `at(alpha: float) -> AlphaRisk` (new, C.4). Removed: `max_alpha`,
-`get_var`, `get_es`, `get_es_to_var_ratio`, `es_to_var_ratio`. O-5 decides
-whether a ratio member returns, and in which form.
+Methods: `at(alpha: float) -> AlphaRisk` (new, C.4). It raises KeyError for a
+level that the run did not compute (O-9). Removed: `max_alpha`, `get_var`,
+`get_es`, `get_es_to_var_ratio`, `es_to_var_ratio`. No ratio member returns
+(O-5).
 
 ### 3.3 AlphaRisk (new)
 
@@ -140,7 +196,7 @@ c060f06. `alpha` is a probability. The two names mark the two units.
 | var | `float` | finite | number | none |
 | es | `float` | finite | number | none |
 
-The `es_to_var_ratio` property follows O-5.
+The `es_to_var_ratio` property is removed (O-5).
 
 ### 3.6 ObligorContribution
 
@@ -176,7 +232,8 @@ The `es_to_var_ratio` property follows O-5.
 
 `RiskSummary.var`, `es`, `economic_capital_var`, `economic_capital_es`
 (replaced by `by_alpha`); the dict form of `loss_percentiles`; the
-"forced_default" overlay key (merged into "FORCED_DEFAULT").
+"forced_default" overlay key (merged into "FORCED_DEFAULT"); the ES/VaR ratio
+members of RiskSummary and ModelTail (O-5).
 
 ### 3.10 RunProvenance
 
@@ -240,6 +297,8 @@ computation.
 4. Return the lowercase SHA-256 hex digest.
 
 This is the D040 canonical form of `run_identity.schemas._canonicalize` (F-27).
+`float.hex()` keeps the sign of zero, so -0.0 and 0.0 give different hashes.
+C.10 therefore states equality as field-wise bit equality.
 
 ### 4.3 Reproducibility equality (C.13)
 

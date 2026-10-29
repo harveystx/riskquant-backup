@@ -1,9 +1,9 @@
 # WS_CREDIT_VAR_API / A_ORACLES: independent oracles per catalog key
 
 Path: docs/workstreams/WS_CREDIT_VAR_API/A_ORACLES.md
-Revision: 1
+Revision: 2
 Used by: S4
-Snapshot: SNAPSHOT commit=c060f06 dirty=false content_hash=fa836966c1293f33
+Snapshot: SNAPSHOT commit=925533b dirty=false content_hash=046ed5dddb6305d3
 
 ## 1. Rules
 
@@ -22,19 +22,29 @@ Snapshot: SNAPSHOT commit=c060f06 dirty=false content_hash=fa836966c1293f33
 4. Atom-gap rule. S = n_scenarios, d = 6 sqrt(a (1 - a) / S). Use a level a only
    if F(l_prev) <= a - d and F(VaR_a) >= a + d, where l_prev is the atom below
    VaR_a. The test asserts this condition on the oracle before the engine runs.
-   Under the rule, the engine VaR equals the oracle VaR whatever order-statistic
-   index the engine uses (F-30).
+   The engine VaR is the loss at 0-based index max(0, ceil(m) - 1) of the losses
+   in descending order, m = (1 - a) S (F-30). Under the rule, that loss equals
+   VaR_a unless the empirical CDF moves by 6 standard deviations.
 5. Assertions:
    ```text
    VaR: engine == oracle (exact)
-   EL:  |EL_mc - EL| <= 6 sd(L) / sqrt(S)
-   ES:  |ES_mc - ES| <= 6 s_ES / sqrt((1 - a) S)
-        s_ES^2 = ( E[L^2 1{L > VaR}] + VaR^2 (F(VaR) - a) ) / (1 - a) - ES^2
+   EL:  |EL_mc - EL| <= 6 sqrt( Var_L / S ) + tau
+   ES:  |ES_mc - ES| <= 6 sqrt( (s_ES^2 + a (ES - VaR_a)^2) / ((1 - a) S) ) + tau
+        Var_L  = max( E[L^2] - EL^2, 0 )
+        s_ES^2 = max( ( E[L^2 1{L > VaR_a}] + VaR_a^2 (F(VaR_a) - a) ) / (1 - a) - ES^2, 0 )
+        tau    = 1e-9
    ```
+   When the engine VaR equals VaR_a, the engine ES is
+   ES_mc = VaR_a + (1/m) sum_i (L_i - VaR_a)^+ (F-30). Its variance is
+   (s_ES^2 + a (ES - VaR_a)^2) / ((1 - a) S). s_ES^2 alone is the variance of L
+   under the tail measure. The clamp at 0 and tau absorb rounding at a
+   single-atom tail, for example K13 at 0.99. tau is in loss units; every loss
+   atom of K2 to K13 is an integer of at most 30.
 6. Oracle self-checks: the pmf sums to 1 within 1e-10. Where a closed-form mean
    exists, the oracle EL equals it within 1e-8 (for every copula key: N x PD).
 7. Seed 20261029. S = 100_000. Candidate levels: 0.95, 0.975, 0.99, 0.995,
-   0.999. Use each candidate that passes rule 4. The test fails if fewer than 2
+   0.999. Section 3 lists the candidates that pass rule 4 for each key. The test
+   uses those levels and asserts rule 4 at each. The test fails if fewer than 2
    pass; then change the book, not the rule.
 8. EL_mc is `summary.loss_mean`. VaR and ES come from `summary.at(a)`.
 
@@ -93,9 +103,11 @@ K9 `sf_students_t` (S4.T9)
   p(z, w)  = Phi( (t_nu^-1(PD) sqrt(w / nu) - sqrt(rho) z) / sqrt(1 - rho) )
   P(K = k) = double integral Bin(k; N, p(z, w)) phi(z) f_chi2(w; nu) dz dw
   ```
-  Quadrature: Gauss-Hermite 120 nodes in z; generalized Gauss-Laguerre 120
+  Quadrature: Gauss-Hermite 120 nodes in z; generalized Gauss-Laguerre 300
   nodes in u = w / 2 with exponent nu/2 - 1 (`scipy.special.roots_genlaguerre`),
-  weights divided by Gamma(nu/2). VERIFY FIRST in the kernel: default when
+  weights divided by Gamma(nu/2). With 300 nodes, |EL - N PD| = 8.6e-10
+  (sandbox). Do not use 380 or more nodes: scipy 1.17.1 returns non-finite
+  nodes there (sandbox). VERIFY FIRST in the kernel: default when
   T_i <= t_nu^-1(PD) with T_i = sqrt(nu / W) A_i.
 
 K10 `sf_students_t_basel` (S4.T10)
@@ -112,9 +124,10 @@ K11 `mf_gaussian` (S4.T11)
   `*` is discrete convolution. Quadrature: Gauss-Hermite 80 x 80.
 
 K12 `mf_students_t` (S4.T12)
-: K11 with nu = 7 and one shared W ~ chi2(nu): each threshold Phi^-1(PD) becomes
-  t_nu^-1(PD) sqrt(w / nu). Quadrature: 60 x 60 Gauss-Hermite x 60
-  generalized Gauss-Laguerre.
+: The K11 sectors and loadings, PD = 0.015 for all, EAD 1, nu = 7, and one
+  shared W ~ chi2(nu): each threshold Phi^-1(PD) becomes t_nu^-1(PD) sqrt(w / nu).
+  Quadrature: 60 x 60 Gauss-Hermite x 300 generalized Gauss-Laguerre, as K9.
+  Self-check: EL = 20 x 0.015 = 0.3.
 
 K13 `marshall_olkin` (S4.T13)
 : Book: N = 20, PD = 0.05, systemic_pd s = 0.02.
@@ -124,7 +137,27 @@ K13 `marshall_olkin` (S4.T13)
   ```
   Self-check: EL = N x PD.
 
-## 3. Coverage limits
+## 3. Rule 4 levels per key
+
+Sandbox, oracle only, S = 100_000. K1 uses all 5 candidates; rules 4 and 5 do
+not apply to it.
+
+| Key | Levels that pass rule 4 |
+|---|---|
+| K2 | 0.95, 0.975, 0.99, 0.995 |
+| K3 | 0.95, 0.975, 0.99 |
+| K4 | 0.95, 0.99 |
+| K5 | 0.95, 0.975, 0.99, 0.995 |
+| K6 | 0.95, 0.995 |
+| K7 | 0.95, 0.99, 0.995 |
+| K8 | 0.95, 0.995 |
+| K9 | 0.95, 0.99 |
+| K10 | 0.95, 0.99 |
+| K11 | 0.95, 0.975 |
+| K12 | 0.95, 0.975 |
+| K13 | 0.95, 0.99, 0.995, 0.999 |
+
+## 4. Coverage limits
 
 - The oracles cover EL, VaR and ES. Attribution fields are covered for
   forced_default only.
