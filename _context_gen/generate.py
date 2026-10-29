@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import shutil
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from _context_gen import (
     ast_model,
@@ -27,8 +27,9 @@ from _context_gen import (
     profiles,
     snapshot,
     source_writer,
+    suite_partition,
 )
-from _context_gen.ast_model import ModuleInfo
+from _context_gen.ast_model import ModuleInfo, RawImport
 from _context_gen.closure import compute_closure
 from _context_gen.depgraph import RepoGraph, domain_of
 from _context_gen.fs import TEXT_SUFFIXES
@@ -54,6 +55,10 @@ class RepoSnapshot:
     ]  # repo_relative -> exact text, for every file with no dotted identity
     #                            (tests/, scripts/, non-.py text). Read in the same single pass as
     #                            package source, so test/demo artifacts never re-read the disk.
+    test_imports: dict[
+        str, tuple[RawImport, ...]
+    ]  # repo_relative -> syntactic imports, for every parsed .py file under tests/.
+    #    Captured from the same parse, so the per-domain test split needs no re-parse.
     graph: RepoGraph
     identity: snapshot.RepositoryIdentity
 
@@ -72,7 +77,7 @@ def take_snapshot(repo_root: Path) -> RepoSnapshot:
     py_files.sort(key=lambda f: f.repo_relative)
 
     other_files: list[fs.DiscoveredFile] = []
-    for root in SRC_ROOTS + ("scripts", "tests"):
+    for root in (*SRC_ROOTS, "scripts", "tests"):
         other_files.extend(
             fs.sweep(
                 repo_root / root, repo_root, suffixes=frozenset(TEXT_SUFFIXES) - {".py"}
@@ -88,6 +93,8 @@ def take_snapshot(repo_root: Path) -> RepoSnapshot:
     read_failures: list[tuple[str, str]] = []
 
     aux_texts: dict[str, str] = {}
+    test_imports: dict[str, tuple[RawImport, ...]] = {}
+    tests_prefix = suite_partition.TESTS_ROOT + "/"
 
     for f in py_files:
         result = read_source(f.absolute, f.kind)
@@ -114,6 +121,13 @@ def take_snapshot(repo_root: Path) -> RepoSnapshot:
             # sweeps it, but it has no dotted identity and is not part of
             # the internal dependency graph.
             aux_texts[f.repo_relative] = result.text
+            test_dotted = ast_model.dotted_name_for(
+                f.repo_relative, tests_prefix, suite_partition.TESTS_PACKAGE
+            )
+            if test_dotted is not None:
+                test_imports[f.repo_relative] = ast_model.extract_raw_imports(
+                    result.tree, test_dotted
+                )
             continue
         info = ast_model.build_module_info(
             repo_relative=f.repo_relative,
@@ -142,6 +156,7 @@ def take_snapshot(repo_root: Path) -> RepoSnapshot:
         read_failures=read_failures,
         other_files=other_files,
         aux_texts=aux_texts,
+        test_imports=test_imports,
         graph=graph,
         identity=identity,
     )
@@ -331,7 +346,10 @@ def render_domain_profile(
     )
 
 
-TESTS_ROOT = "tests"
+TESTS_ROOT = suite_partition.TESTS_ROOT
+# Output subdirectory under _contexts/, owned wholesale by the per-domain test split.
+TESTS_SUBDIR = "tests"
+TESTS_PROFILE_PREFIX = "tests_"
 TESTS_ARTIFACT_NOTE = (
     "TESTS ONLY -- production source is not embedded here. Resolve imported "
     "riskquant.* symbols via context_riskquant_index.txt and the owning domain profile."
@@ -341,54 +359,110 @@ SCRIPTS_ARTIFACT_NOTE = (
     "SCRIPTS ONLY -- production source is not embedded here. Resolve imported "
     "riskquant.* symbols via context_riskquant_index.txt and the owning domain profile."
 )
+# Artifacts that earlier generator versions published and this version no
+# longer produces. `publish` deletes them from the staged output, so a stale
+# copy is never carried forward next to its replacement. The previous
+# published directory (`_contexts.previous`) still keeps one copy.
+RETIRED_ARTIFACTS: tuple[str, ...] = ("context_riskquant_tests.txt",)
 
 
-def render_tests_artifact(snap: RepoSnapshot, repo_root: Path) -> RenderedProfile:
-    """
-    One artifact containing every test file under tests/, verbatim.
-
-    Tests are evidence, not production dependencies, so no closure is
-    computed and no production source is embedded (embedding each test's
-    imports would re-create the whole repository). Completeness here means:
-    tests/ exists, and every file under it was read and, for .py, parsed.
-    """
-    swept = fs.sweep(
-        repo_root / TESTS_ROOT, repo_root, suffixes=frozenset(TEXT_SUFFIXES)
+def _tests_header(
+    bucket: suite_partition.SuiteBucket, domain_names: frozenset[str]
+) -> str:
+    owning = (
+        f"OWNING PROFILE: context_riskquant_{bucket.key}.txt"
+        if bucket.key in domain_names
+        else f"OWNING PROFILE: none (no src/riskquant domain profile named {bucket.key!r})"
     )
-    files = [
-        (f.repo_relative, snap.aux_texts[f.repo_relative])
-        for f in swept
-        if f.repo_relative in snap.aux_texts
-    ]
-    files.sort(key=lambda pc: pc[0])
+    lines = [TESTS_ARTIFACT_NOTE, f"TEST DIRECTORY: {bucket.directory}/", owning]
+    if bucket.support_files:
+        lines.append(
+            "TEST SUPPORT (embedded from outside the test directory: imported "
+            "tests.* helpers and ancestor conftest.py): "
+            + ", ".join(bucket.support_files)
+        )
+    return "\n".join(lines)
+
+
+def render_tests_artifacts(
+    snap: RepoSnapshot, repo_root: Path, *, domain_names: frozenset[str]
+) -> list[RenderedProfile]:
+    """
+    One artifact per test bucket, written to `_contexts/tests/`.
+
+    Replaces the single tests artifact, which grew past ~800K estimated
+    tokens and could no longer be attached as a whole. The bucket rule is
+    path-only (see suite_partition), so `tests_<domain>` pairs with the
+    `<domain>` source profile by name.
+
+    Tests are evidence, not production dependencies: no production closure
+    is computed and no production source is embedded. Each bucket does
+    embed its `tests.*` support closure (helpers and ancestor conftest.py
+    files outside its directory), because a split without them is not
+    self-sufficient. Every input comes from the snapshot; nothing is
+    re-read from disk.
+
+    Completeness per bucket: every embedded file was read and, for .py,
+    parsed; every `tests.*` import resolves to a snapshot file. If tests/
+    does not exist, one INCOMPLETE placeholder artifact reports it, so a
+    missing suite is never a silent empty output.
+    """
+    if not (repo_root / TESTS_ROOT).is_dir():
+        report = completeness.CompletenessReport(
+            profile_name="tests", missing_configured_paths=(TESTS_ROOT,)
+        )
+        content = source_writer.render_source_artifact(
+            profile_name="tests",
+            completeness=report,
+            header_note=TESTS_ARTIFACT_NOTE,
+            files=[],
+        )
+        return [
+            RenderedProfile(
+                name="tests",
+                filename=f"{TESTS_SUBDIR}/context_riskquant_tests.txt",
+                content=content,
+                completeness_report=report,
+                token_estimate=depgraph.estimate_tokens(content),
+            )
+        ]
 
     prefix = TESTS_ROOT + "/"
-    failures = [(p, r) for p, r in snap.read_failures if p.startswith(prefix)]
-    report = completeness.CompletenessReport(
-        profile_name="tests",
-        missing_configured_paths=()
-        if (repo_root / TESTS_ROOT).is_dir()
-        else (TESTS_ROOT,),
-        unreadable_files=tuple(
-            p for p, r in failures if r == ReadOutcome.UNREADABLE.value
-        ),
-        parse_failures=tuple(
-            p for p, r in failures if r == ReadOutcome.PARSE_FAILED.value
-        ),
-    )
-    content = source_writer.render_source_artifact(
-        profile_name="tests",
-        completeness=report,
-        header_note=TESTS_ARTIFACT_NOTE,
-        files=files,
-    )
-    return RenderedProfile(
-        name="tests",
-        filename="context_riskquant_tests.txt",
-        content=content,
-        completeness_report=report,
-        token_estimate=depgraph.estimate_tokens(content),
-    )
+    failures = {p: r for p, r in snap.read_failures if p.startswith(prefix)}
+    paths = {p for p in snap.aux_texts if p.startswith(prefix)} | set(failures)
+    buckets = suite_partition.plan_buckets(paths=paths, raw_imports=snap.test_imports)
+
+    rendered: list[RenderedProfile] = []
+    for bucket in buckets:
+        name = f"{TESTS_PROFILE_PREFIX}{bucket.key}"
+        embedded = sorted(bucket.own_files + bucket.support_files)
+        files = [(p, snap.aux_texts[p]) for p in embedded if p in snap.aux_texts]
+        report = completeness.CompletenessReport(
+            profile_name=name,
+            unreadable_files=tuple(
+                p for p in embedded if failures.get(p) == ReadOutcome.UNREADABLE.value
+            ),
+            parse_failures=tuple(
+                p for p in embedded if failures.get(p) == ReadOutcome.PARSE_FAILED.value
+            ),
+            missing_required_dependencies=bucket.unresolved_imports,
+        )
+        content = source_writer.render_source_artifact(
+            profile_name=name,
+            completeness=report,
+            header_note=_tests_header(bucket, domain_names),
+            files=files,
+        )
+        rendered.append(
+            RenderedProfile(
+                name=name,
+                filename=f"{TESTS_SUBDIR}/context_riskquant_{name}.txt",
+                content=content,
+                completeness_report=report,
+                token_estimate=depgraph.estimate_tokens(content),
+            )
+        )
+    return rendered
 
 
 def render_scripts_artifact(snap: RepoSnapshot, repo_root: Path) -> RenderedProfile:
@@ -495,8 +569,35 @@ def render_index_artifact(
     )
 
 
+def _safe_relative_parts(name: str, *, single_segment: bool) -> tuple[str, ...]:
+    """
+    Validate an output-relative POSIX name before any write or delete.
+
+    Fail loud on an empty name, an absolute path, a drive, a backslash, or
+    a `..` segment (`PurePosixPath` already drops `.` segments). `publish`
+    deletes and writes only below the staging directory, and this guard
+    makes that a checked property, not an assumption about caller input.
+    """
+    pure = PurePosixPath(name)
+    parts = pure.parts
+    if (
+        not parts
+        or pure.is_absolute()
+        or "\\" in name
+        or ":" in name
+        or any(part in {"", ".", ".."} for part in parts)
+        or (single_segment and len(parts) != 1)
+    ):
+        raise ValueError(f"unsafe output-relative name: {name!r}")
+    return parts
+
+
 def publish(
-    rendered: list[RenderedProfile], output_dir: Path, *, allow_incomplete: bool = False
+    rendered: list[RenderedProfile],
+    output_dir: Path,
+    *,
+    allow_incomplete: bool = False,
+    replace_subdirs: frozenset[str] = frozenset(),
 ) -> list[str]:
     """
     Atomic publication (implementation contract §29): render everything into
@@ -511,7 +612,22 @@ def publish(
     is carried forward untouched rather than deleted -- the atomic swap
     still guarantees that a failed run leaves the previously-published
     directory completely unchanged, byte for byte.
+
+    `replace_subdirs` names output subdirectories that this run owns
+    wholesale (the per-domain test split writes `tests/`). Each one is
+    emptied in staging before the new artifacts are written, so a bucket
+    whose test directory was deleted or renamed does not survive as a
+    stale file. Every name in `RETIRED_ARTIFACTS` is removed from staging
+    on every run. All deletes stay inside the staging directory.
     """
+    subdirs = sorted(
+        _safe_relative_parts(d, single_segment=True)[0] for d in replace_subdirs
+    )
+    destinations = [
+        _safe_relative_parts(rp.filename, single_segment=False) for rp in rendered
+    ]
+    retired = [_safe_relative_parts(n, single_segment=False) for n in RETIRED_ARTIFACTS]
+
     incomplete = [rp for rp in rendered if not rp.completeness_report.is_complete]
     if incomplete and not allow_incomplete:
         names = ", ".join(rp.name for rp in incomplete)
@@ -528,8 +644,22 @@ def publish(
         shutil.copytree(output_dir, staging)
     else:
         staging.mkdir(parents=True)
-    for rp in rendered:
-        (staging / rp.filename).write_text(rp.content, encoding="utf-8")
+
+    for sub in subdirs:
+        target = staging / sub
+        if target.is_dir():
+            shutil.rmtree(target)
+        elif target.exists():
+            raise RuntimeError(
+                f"Refusing to publish: {target} is a file, expected a directory."
+            )
+    for parts in retired:
+        staging.joinpath(*parts).unlink(missing_ok=True)
+
+    for rp, parts in zip(rendered, destinations, strict=True):
+        dest = staging.joinpath(*parts)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(rp.content, encoding="utf-8")
 
     if output_dir.exists():
         backup = output_dir.with_name(output_dir.name + ".previous")

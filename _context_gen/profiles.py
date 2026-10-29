@@ -12,11 +12,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from _context_gen import fs
+from _context_gen import fs, suite_partition
 
 ROOT_PACKAGE = "riskquant"
 SRC_PREFIX = f"src/{ROOT_PACKAGE}/"
-SECONDARY_PACKAGES: tuple[tuple[str, str], ...] = (("riskquant_lab", f"src/riskquant_lab/"),)
+SECONDARY_PACKAGES: tuple[tuple[str, str], ...] = (
+    ("riskquant_lab", "src/riskquant_lab/"),
+)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -24,22 +26,27 @@ class Profile:
     """
     Declarative composition. `production_package_dirs` is one or more
     directories under src/<pkg>/ whose sweep defines this domain's OWN
-    production source (§4) — resolved by rglob at generation time, never
-    a hand-typed file list.
+    production source (§4), resolved by rglob at generation time,
+    never a hand-typed file list.
     """
 
     name: str
-    production_package_dirs: tuple[str, ...]  # repo-relative dirs, e.g. ("src/riskquant/valuation",)
+    production_package_dirs: tuple[
+        str, ...
+    ]  # repo-relative dirs, e.g. ("src/riskquant/valuation",)
     include_core: bool = True
-    include_tests: bool = True  # tests off by default is a policy choice made per-invocation, not here
+    include_tests: bool = True  # per-invocation policy, not fixed here
     include_demos: bool = True
-    extra_production_files: tuple[str, ...] = field(default_factory=tuple)  # single explicit files
+    extra_production_files: tuple[str, ...] = field(
+        default_factory=tuple
+    )  # single explicit files
 
 
 def with_flags(profile: Profile, *, tests: bool, demos: bool) -> Profile:
     """Compose a variant of a profile with different optional-material flags,
     never a second hand-maintained profile (this directly replaces the
-    `_light` / `_static_config` pattern, §12 of the implementation contract)."""
+    `_light` / `_static_config` pattern, §12 of the implementation
+    contract)."""
     return Profile(
         name=profile.name,
         production_package_dirs=profile.production_package_dirs,
@@ -50,10 +57,14 @@ def with_flags(profile: Profile, *, tests: bool, demos: bool) -> Profile:
     )
 
 
-def resolve_production_files(profile: Profile, repo_root: Path) -> list[fs.DiscoveredFile]:
+def resolve_production_files(
+    profile: Profile, repo_root: Path
+) -> list[fs.DiscoveredFile]:
     found: list[fs.DiscoveredFile] = []
     for rel_dir in profile.production_package_dirs:
-        found.extend(fs.sweep(repo_root / rel_dir, repo_root, suffixes=frozenset({".py"})))
+        found.extend(
+            fs.sweep(repo_root / rel_dir, repo_root, suffixes=frozenset({".py"}))
+        )
     for rel_file in profile.extra_production_files:
         single = fs.single_file(repo_root / rel_file, repo_root)
         if single is not None:
@@ -63,9 +74,18 @@ def resolve_production_files(profile: Profile, repo_root: Path) -> list[fs.Disco
 
 
 def resolve_test_files(profile: Profile, repo_root: Path) -> list[fs.DiscoveredFile]:
+    """
+    Sweep the tests/ directory that belongs to this profile.
+
+    The directory comes from `suite_partition.suite_dir_for`, the same rule
+    that names the per-domain test artifacts. A `solutions_<name>` profile
+    therefore reads tests/solutions/<name>/, not the non-existent
+    tests/solutions_<name>/ that a bare `tests/<profile.name>` join gives.
+    """
     if not profile.include_tests:
         return []
-    return fs.sweep(repo_root / "tests" / profile.name, repo_root, suffixes=frozenset({".py"}))
+    test_dir = suite_partition.suite_dir_for(profile.name)
+    return fs.sweep(repo_root / test_dir, repo_root, suffixes=frozenset({".py"}))
 
 
 def resolve_demo_files(profile: Profile, repo_root: Path) -> list[fs.DiscoveredFile]:
@@ -73,6 +93,12 @@ def resolve_demo_files(profile: Profile, repo_root: Path) -> list[fs.DiscoveredF
         return []
     found: list[fs.DiscoveredFile] = []
     for kind in ("demos", "solutions"):
-        found.extend(fs.sweep(repo_root / "scripts" / kind / profile.name, repo_root, suffixes=frozenset({".py"})))
+        found.extend(
+            fs.sweep(
+                repo_root / "scripts" / kind / profile.name,
+                repo_root,
+                suffixes=frozenset({".py"}),
+            )
+        )
     found.sort(key=lambda f: f.repo_relative)
     return found

@@ -8,6 +8,11 @@ registry, and was unreachable besides -- see the audit trail). Every
 `--profile` value this CLI accepts is derived from the live domain
 registry at argument-parse time, so it is structurally impossible for the
 CLI to advertise a profile name that does not exist.
+
+`tests` regenerates the whole per-domain test split under
+`_contexts/tests/` in one pass. There is no per-bucket choice: the split
+owns that subdirectory wholesale, so all of its files always come from
+one snapshot.
 """
 
 from __future__ import annotations
@@ -15,8 +20,11 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import datetime
+from pathlib import PurePosixPath
 
 from _context_gen import fs, generate
+
+SPECIAL_PROFILES: tuple[str, ...] = ("all", "index", "core", "tests", "scripts")
 
 
 def _build_parser(available_domains: list[str]) -> argparse.ArgumentParser:
@@ -25,11 +33,13 @@ def _build_parser(available_domains: list[str]) -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--profile",
-        choices=["all", "index", "core", "tests", *available_domains],
+        choices=[*SPECIAL_PROFILES, *available_domains],
         default="all",
         help=(
-            "Which artifact(s) to generate. 'all' generates index + core + every domain + tests. "
-            "'tests' generates only context_riskquant_tests.txt (every file under tests/)."
+            "Which artifact(s) to generate. 'all' generates index + core + every "
+            "domain + tests + scripts. 'tests' generates the per-domain test split "
+            "under _contexts/tests/ (one context_riskquant_tests_<bucket>.txt per "
+            "tests/ directory). 'scripts' generates context_riskquant_scripts.txt."
         ),
     )
     parser.add_argument(
@@ -55,14 +65,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser = _build_parser(domains)
     args = parser.parse_args(argv)
+    domain_names = frozenset(domains)
 
     snap = generate.take_snapshot(repo_root)
-    special = {"all", "index", "core", "tests", "scripts"}
     targets = (
         domains
         if args.profile == "all"
         else [args.profile]
-        if args.profile not in special
+        if args.profile not in SPECIAL_PROFILES
         else []
     )
 
@@ -78,8 +88,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.profile in {"all", "core"}:
         rendered.append(generate.render_core_artifact(snap))
 
+    replace_subdirs: frozenset[str] = frozenset()
     if args.profile in {"all", "tests"}:
-        rendered.append(generate.render_tests_artifact(snap, repo_root))
+        rendered.extend(
+            generate.render_tests_artifacts(snap, repo_root, domain_names=domain_names)
+        )
+        replace_subdirs = frozenset({generate.TESTS_SUBDIR})
 
     if args.profile in {"all", "scripts"}:
         rendered.append(generate.render_scripts_artifact(snap, repo_root))
@@ -90,26 +104,34 @@ def main(argv: list[str] | None = None) -> int:
         # run is index-only, still summarise the full domain set so the
         # index is never generated in isolation from what it describes.
         summary_source = rendered or [
-            generate.render_domain_profile(
-                generate.build_profile(d, repo_root),
-                snap,
-                repo_root,
-                tests=False,
-                demos=False,
-            )
-            for d in domains
-        ] + [
+            *(
+                generate.render_domain_profile(
+                    generate.build_profile(d, repo_root),
+                    snap,
+                    repo_root,
+                    tests=False,
+                    demos=False,
+                )
+                for d in domains
+            ),
             generate.render_core_artifact(snap),
-            generate.render_tests_artifact(snap, repo_root),
+            *generate.render_tests_artifacts(
+                snap, repo_root, domain_names=domain_names
+            ),
         ]
         rendered.append(generate.render_index_artifact(snap, repo_root, summary_source))
 
     output_dir = repo_root / "_contexts"
     written = generate.publish(
-        rendered, output_dir, allow_incomplete=args.allow_incomplete
+        rendered,
+        output_dir,
+        allow_incomplete=args.allow_incomplete,
+        replace_subdirs=replace_subdirs,
     )
+    tokens_by_name = {rp.filename: rp.token_estimate for rp in rendered}
     for name in written:
-        print(f"WROTE {output_dir / name}")
+        path = output_dir.joinpath(*PurePosixPath(name).parts)
+        print(f"WROTE {path}  tokens~={tokens_by_name[name]}")
 
     print("\n" + "-" * 40)
     print(f"DONE: {datetime.now()}")
