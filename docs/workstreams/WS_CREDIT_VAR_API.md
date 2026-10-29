@@ -10,7 +10,7 @@ Branch: ws/credit-var-api
 Snapshot: SNAPSHOT commit=c060f06 dirty=false content_hash=fa836966c1293f33
 Drafted by: investigator
 Independent review: PENDING
-Audit rounds used: 0 of 2
+Audit rounds used: 1 of 2
 Code merged: no
 DECISIONS.md reconciled: NO
 Evidence limits: No gate, test or benchmark ran. Code facts come from the c060f06 profiles. Test facts come from a filtered extract of the 90e2498 tests profile (18 files, all under tests/credit/). tests/ did not change to c060f06 (snapshot_delta.txt). Facts marked "sandbox" ran in the investigator sandbox with pydantic 2.14.1 and numpy 2.4.4, not on the owner machine. Not read: credit/jtd/evaluators/*, credit/jtd/bridge.py, scripts/tests/run_all_tests_solutions_credit_var.py, scripts/solutions/credit_var/demo_e2e_*.py, and the Emissary and riskquant-excel repositories.
