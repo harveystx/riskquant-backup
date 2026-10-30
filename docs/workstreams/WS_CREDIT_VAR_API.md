@@ -2,17 +2,17 @@
 
 Path: docs/workstreams/WS_CREDIT_VAR_API.md
 Class: HEAVY
-Status: REVIEW
+Status: FROZEN
 Revision: 2
 Revision note: Applies R_FREEZE_RECONCILIATION_R1 (audit round 1 of 2, one round in two sessions): BLOCKING findings, owner decisions O-4 to O-13, promoted refinements.
 Date: 2026-10-29
 Branch: ws/credit-var-api
 Snapshot: SNAPSHOT commit=925533b dirty=false content_hash=046ed5dddb6305d3
 Drafted by: investigator
-Independent review: PENDING
-Audit rounds used: 1 of 2
+Independent review: PASSED (SNAPSHOT commit=925533b dirty=false content_hash=046ed5dddb6305d3)
+Audit rounds used: 2 of 2
 Code merged: no
-DECISIONS.md reconciled: NO
+DECISIONS.md reconciled: YES (2026-10-29)
 Evidence limits: No repository gate, test or benchmark ran. Code facts were read at c060f06. snapshot_delta_c060f06_925533b.txt lists only _context_gen/ and docs/ paths, so each F-n holds at 925533b. F-12, F-30, F-34, F-35 and F-36 were read or run at 925533b. Test facts come from context_riskquant_tests_credit.txt, the 925533b tests bucket (PROFILE tests_credit, TEST DIRECTORY tests/credit/, 18 files), not from the filtered extract. Facts marked "sandbox" ran in an investigator sandbox (Python 3.12.3, pydantic 2.14.1, numpy 2.4.4, scipy 1.17.1, pandas 3.0.2, numba 0.68.1, threading layer omp), not on the owner machine. The A_ORACLES revision 2 check ran the engine from a scratch copy of the 925533b profile source in that sandbox; it is sandbox evidence only. The text of src/riskquant/credit/STABLE_API.md was not attached; F-28 and R1 A-06 are the evidence for its content. Not read: credit/jtd/evaluators/*, credit/jtd/bridge.py, scripts/tests/run_all_tests_solutions_credit_var.py, scripts/solutions/credit_var/demo_e2e_*.py, tests/e2e/test_demo_scripts_are_runnable.py, and the Emissary and riskquant-excel repositories.
 
 ## 1. Goal and scope
@@ -452,6 +452,7 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - S1 FIRST: search the whole repository, including `src/riskquant_lab/plotting/credit_var.py` and `tests/e2e/` (R1 R-13).
 - C.21: the `loadings_table` docstring also says `uid` (R1 R-19).
 - C.13, C.24: state whether BLAS thread settings are inside the contract (`_attribution.obligor_ul_contribution`) (R1 R-20).
+- R2-02: the audit did not verify K12 rule 6 at 60x60x300 nodes; S4 runs the rule 6 self-check before any K12 assertion.
 
 ## 8. Closure record
 
