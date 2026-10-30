@@ -61,7 +61,9 @@ OVERLAY_EXCLUDE: set[str] = {"forced_default"}
 _IG_RATINGS = ["AAA", "AA", "A", "BBB"]
 
 
-def _alpha_key(alpha: float) -> str:
+def _alpha_label(alpha: float) -> str:
+    """Display label of a confidence level. Not a lookup key: the result carries
+    each level as its alpha float and `RiskSummary.at` looks it up (O-1)."""
     return f"{alpha * 100:.2f}%"
 
 
@@ -141,8 +143,6 @@ def _build_request(
 
 
 def _print_comparison_table(results: dict) -> None:
-    k99 = _alpha_key(0.99)
-    k999 = _alpha_key(0.999)
     width = 122
     print("-" * width)
     print("Credit VaR — Model Comparison (identical obligor portfolio)")
@@ -154,11 +154,14 @@ def _print_comparison_table(results: dict) -> None:
     print("-" * width)
     for key, res in results.items():
         s = res.summary
+        # at() raises KeyError for a level the run did not compute; 0.99 and
+        # 0.999 are in ALPHAS.
+        at_99, at_999 = s.at(0.99), s.at(0.999)
         print(
             f"{key:32} {s.loss_mean:>13,.0f} {s.loss_std_dev:>13,.0f} "
             f"{s.loss_skewness:>7.2f} {s.loss_excess_kurtosis:>8.2f} "
-            f"{s.var.get(k99, float('nan')):>14,.0f} {s.es.get(k99, float('nan')):>14,.0f} "
-            f"{s.var.get(k999, float('nan')):>14,.0f}"
+            f"{at_99.var:>14,.0f} {at_99.es:>14,.0f} "
+            f"{at_999.var:>14,.0f}"
         )
     print("-" * width)
 
@@ -212,10 +215,11 @@ def main():
         title="Empirical CDF — All Models, Shared Portfolio",
     )
 
-    headline = _alpha_key(max(ALPHAS))
+    headline_alpha = max(ALPHAS)
+    headline = _alpha_label(headline_alpha)
     labels = list(results)
-    var_values = [results[k].summary.var.get(headline, float("nan")) for k in labels]
-    es_values = [results[k].summary.es.get(headline, float("nan")) for k in labels]
+    var_values = [results[k].summary.at(headline_alpha).var for k in labels]
+    es_values = [results[k].summary.at(headline_alpha).es for k in labels]
     plot_var_es_comparison(
         labels,
         var_values,

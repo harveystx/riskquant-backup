@@ -92,18 +92,22 @@ def main():
         current_losses = simulate_portfolio_losses(req)
 
         current_el = current_result.summary.loss_mean
-        current_var99 = current_result.summary.get_var(alpha=0.99)
-        current_es99 = current_result.summary.get_es(alpha=0.99)
-        current_es_to_var_ratio = (
-            current_es99 / current_var99 if current_var99 != 0 else float("nan")
-        )
+        current_at99 = current_result.summary.at(0.99)
+        current_var99 = current_at99.var
+        current_es99 = current_at99.es
+        # The result has no ES/VaR ratio (O-5). The ratio is undefined at
+        # VaR = 0; print "n/a" there, never a NaN.
+        if current_var99 == 0.0:
+            current_es_to_var_ratio = "n/a"
+        else:
+            current_es_to_var_ratio = f"{current_es99 / current_var99:3.2f}"
 
         current_model_label += (
             f" | "
             f"EL={current_el:12,.0f}, "
             f"VaR 99%={current_var99:12,.0f}, "
             f"ES 99%={current_es99:12,.0f}, "
-            f"ES/VaR Ratio={current_es_to_var_ratio:3.2f}"
+            f"ES/VaR Ratio={current_es_to_var_ratio}"
         )
 
         results.append(current_result)

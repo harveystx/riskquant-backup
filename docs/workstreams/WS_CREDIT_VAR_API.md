@@ -453,6 +453,11 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - C.21: the `loadings_table` docstring also says `uid` (R1 R-19).
 - C.13, C.24: state whether BLAS thread settings are inside the contract (`_attribution.obligor_ul_contribution`) (R1 R-20).
 - R2-02: the audit did not verify K12 rule 6 at 60x60x300 nodes; S4 runs the rule 6 self-check before any K12 assertion.
+- riskquant-excel: not checked against the S1 result contract. Owner decision 2026-10-30: out of scope, no current users. Check it before any Excel tool work.
+- S1 U-a: demo_e2e_all_models.py has no marshall_olkin entry in MODEL_PARAMS and raises KeyError. Existed before S1. Owner decides the systemic_pd value or excludes the key.
+- S1 U-b: demo_e2e_stress_regime_bernoulli_grouped.py has the parameter key " " in GROUP_PARAMS["CYCLICAL"]. Existed before S1.
+- S1 U-c: tests/e2e does not run the credit_var demos to completion, so U-a and U-b were not detected.
+- S1 U-d: scripts/solutions/credit_var/demo_e2e_*.py fail ruff check and mypy for reasons that existed before S1. Separate cleanup.
 
 ## 8. Closure record
 
