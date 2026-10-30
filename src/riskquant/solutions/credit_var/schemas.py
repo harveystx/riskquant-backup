@@ -8,26 +8,46 @@ cross-field validation; its `ValidationError.errors()` already carries `loc`
 paths (e.g. ``("obligors", 2, "ead")``) that a front-end maps straight to a cell,
 so this doubles as the structured, cell-addressable validation layer.
 
-Dict-keyed-by-confidence fields (`var`, `es`, `loss_percentiles`) use STRING keys
-because JSON object keys are strings — e.g. ``{"0.99": 1234.5}`` — so the result
-round-trips through JSON without surprise float-key coercion.
+Result contract (WS_CREDIT_VAR_API S1, result schema version 1.0)
+-----------------------------------------------------------------
+* No result field is a dict keyed by a confidence level. A level is data: each
+  `AlphaRisk` carries the requested ``alpha`` float bit for bit, and each
+  `PercentileLoss` carries its ``percentile`` float. A display label such as
+  ``"99.90%"`` rounds, collides (0.9999 and 0.99991) and saturates ("100.00%"
+  for 0.99995), so it is never a key (O-1).
+* Every result model is frozen, forbids extra fields and rejects NaN and
+  +/-inf in every float, including a float inside a dict or a tuple. A
+  non-finite number cannot reach JSON as ``null``.
+* Sequence fields are tuples: ``frozen=True`` blocks assignment only, not the
+  in-place mutation of a list.
+* Ordered sequences are strictly ascending by their key (alpha, percentile,
+  obligor_uid) and the models reject any other order, so a lookup such as
+  `RiskSummary.at` has exactly one answer.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Final, Literal
 
 import pandas as pd
 
 __all__ = [
+    "RESULT_SCHEMA_VERSION",
+    "AlphaRisk",
     "CreditVarRequest",
     "CreditVarResult",
     "GroupRow",
     "LoadingRow",
+    "LossHistogram",
     "ModelTail",
+    "ObligorContribution",
     "ObligorRow",
+    "PercentileLoss",
+    "ResultSchemaVersion",
     "RiskSummary",
     "RunProvenance",
+    "StressTestObligor",
+    "StressTestResult",
 ]
 
 from pydantic import (
@@ -39,6 +59,7 @@ from pydantic import (
 )
 
 from riskquant.solutions.credit_var.catalog import MODEL_CATALOG, model_entry
+from riskquant.solutions.credit_var.provenance import ScenarioConstructionId
 
 _STRICT = ConfigDict(extra="forbid", protected_namespaces=())
 
@@ -104,7 +125,9 @@ class GroupRow(BaseModel):
     name: str = Field(min_length=1)
     params: dict[str, float] = Field(default_factory=dict)
 
+
 _PREVIEW = 10  # bounded offender preview in validation errors
+
 
 class CreditVarRequest(BaseModel):
     """A single credit-VaR run, as a JSON payload."""
@@ -401,6 +424,69 @@ class CreditVarRequest(BaseModel):
         return cls(**kwargs)
 
 
+# ===========================================================================
+# Result (WS_CREDIT_VAR_API S1, A_CONTRACT section 3)
+# ===========================================================================
+
+ResultSchemaVersion = Literal["1.0"]
+
+#: MAJOR.MINOR of the serialized result (P-CREDIT_VAR_API-001 clause 4). MAJOR
+#: increments on a breaking change of the serialized form, MINOR on an added
+#: optional field. A reader validates only the version it declares.
+RESULT_SCHEMA_VERSION: Final[ResultSchemaVersion] = "1.0"
+
+_RESULT = ConfigDict(
+    extra="forbid",
+    frozen=True,
+    allow_inf_nan=False,
+    protected_namespaces=(),
+)
+
+
+def _require_strictly_ascending(keys: tuple[float, ...], what: str) -> None:
+    """Reject an order other than strictly ascending (which also rejects a
+    duplicate key). Raised as ``ValueError`` inside a model validator, so
+    pydantic reports it as a ``ValidationError``.
+
+    Integer keys (obligor_uid) are passed as ``int``, never cast to ``float``:
+    the int64 uid range exceeds 2**53, where two uids could compare equal as
+    floats.
+    """
+    for position in range(1, len(keys)):
+        if not keys[position - 1] < keys[position]:
+            raise ValueError(
+                f"{what} must be strictly ascending: position {position - 1} holds "
+                f"{keys[position - 1]!r}, position {position} holds "
+                f"{keys[position]!r}."
+            )
+
+
+class AlphaRisk(BaseModel):
+    """Tail risk of the portfolio loss at one requested confidence level."""
+
+    model_config = _RESULT
+
+    alpha: float  # the request float, bit for bit (probability, not percent)
+    var: float  # VaR at alpha
+    es: float  # ES at alpha
+    economic_capital_var: float  # var - expected loss
+    economic_capital_es: float  # es - expected loss
+
+
+class PercentileLoss(BaseModel):
+    """One point of the portfolio-loss percentile grid.
+
+    `percentile` is in PERCENT units (99.9, not 0.999) so that it stays bitwise
+    equal to the grid of earlier releases; `AlphaRisk.alpha` is a probability.
+    The two names mark the two units.
+    """
+
+    model_config = _RESULT
+
+    percentile: float  # percent units
+    loss: float  # np.percentile (linear) of the portfolio loss
+
+
 class RiskSummary(BaseModel):
     """
     Summary statistics of the simulated portfolio loss distribution.
@@ -408,9 +494,13 @@ class RiskSummary(BaseModel):
     All metrics are computed from the simulated loss distribution. Losses are
     assumed to be positive quantities, where larger values correspond to worse
     portfolio outcomes.
+
+    There is no ES/VaR ratio member (O-5): the ratio is undefined at VaR = 0,
+    and a consumer that needs it divides `AlphaRisk.es` by `AlphaRisk.var` with
+    its own policy for a zero VaR.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = _RESULT
 
     # ------------------------------------------------------------------
     # Distribution moments
@@ -431,106 +521,87 @@ class RiskSummary(BaseModel):
     coefficient_of_variation: float  # loss_std_dev / loss_mean (0 if loss_mean=0)
 
     # ------------------------------------------------------------------
-    # Tail risk
+    # Tail risk and economic capital: one record per requested alpha,
+    # strictly ascending by alpha.
     # ------------------------------------------------------------------
 
-    var: dict[str, float]
-    es: dict[str, float]
+    by_alpha: tuple[AlphaRisk, ...]
 
     # ------------------------------------------------------------------
-    # Economic capital
-    # ------------------------------------------------------------------
-
-    economic_capital_var: dict[str, float]
-    economic_capital_es: dict[str, float]
-
-    # ------------------------------------------------------------------
-    # Attribution
+    # Attribution: keyed by JtdModel member name (e.g. "FORCED_DEFAULT").
     # ------------------------------------------------------------------
 
     expected_loss_by_model: dict[str, float]
 
-    @property
-    def es_to_var_ratio(self) -> dict[str, float]:
-        """The ratio of ES to VaR at each confidence level."""
-        return {
-            alpha: self.es.get(alpha, float("nan")) / self.var.get(alpha, float("nan"))
-            for alpha in self.var
-        }
+    @model_validator(mode="after")
+    def _by_alpha_strictly_ascending(self) -> RiskSummary:
+        _require_strictly_ascending(
+            tuple(record.alpha for record in self.by_alpha), "by_alpha alpha"
+        )
+        return self
 
-    @property
-    def max_alpha(self) -> float:
-        """The highest confidence level requested in the run."""
-        return max(float(a) for a in self.var)
+    def at(self, alpha: float) -> AlphaRisk:
+        """The record whose ``alpha`` equals `alpha` under ``==``.
 
-    def get_var(self, alpha: float) -> float:
-        """Get the Value-at-Risk at a given confidence level."""
-        alpha_pct = round(alpha * 100, 2)
-        alpha_pct = f"{alpha_pct:.2f}%"
-        if alpha_pct not in self.var:
-            raise ValueError(
-                f"confidence level '{alpha_pct}' not in run; available: {sorted(self.var)}"
-            )
-        return self.var.get(alpha_pct, float("nan"))
+        No rounding and no nearest match: a level the run did not compute is a
+        caller error, not a value to approximate.
 
-    def get_es(self, alpha: float) -> float:
-        """Get the Expected Shortfall at a given confidence level."""
-        alpha_pct = round(alpha * 100, 2)
-        alpha_pct = f"{alpha_pct:.2f}%"
-        if alpha_pct not in self.es:
-            raise ValueError(
-                f"confidence level '{alpha_pct}' not in run; available: {sorted(self.es)}"
-            )
-        return self.es.get(alpha_pct, float("nan"))
-
-    def get_es_to_var_ratio(self, alpha: float) -> float:
-        """Get the ES/VaR ratio at a given confidence level."""
-        alpha_pct = round(alpha * 100, 2)
-        alpha_pct = f"{alpha_pct:.2f}%"
-        es_to_var_map = self.es_to_var_ratio
-        if alpha_pct not in es_to_var_map:
-            raise ValueError(
-                f"confidence level '{alpha_pct}' not in run; available: {sorted(es_to_var_map)}"
-            )
-        return es_to_var_map.get(alpha_pct, float("nan"))
+        Raises
+        ------
+        KeyError
+            No record has ``record.alpha == alpha``.
+        """
+        for record in self.by_alpha:
+            if record.alpha == alpha:
+                return record
+        raise KeyError(
+            f"confidence level {alpha!r} was not computed in this run; computed "
+            f"levels: {[record.alpha for record in self.by_alpha]}."
+        )
 
 
 class ModelTail(BaseModel):
     """Standalone tail risk for one model at the headline confidence level."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = _RESULT
 
     var: float
     es: float
 
-    @property
-    def es_to_var_ratio(self) -> float:
-        return self.es / self.var if self.var != 0 else float("nan")
-
 
 class RunProvenance(BaseModel):
-    """Audit stamp: enough to reproduce a number."""
+    """Audit stamp: enough to reproduce a number (D-C15, D040).
 
-    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+    Two results are reproducibility-equal when their `model_dump_json` bytes are
+    equal after removal of `generated_at`. The comparison is meaningful only
+    when `engine_version`, `scenario_construction_id` and the three library
+    versions are equal: reproducibility is environment-relative (D-C15).
+    """
 
-    engine_version: str
+    model_config = _RESULT
+
+    engine_version: str = Field(pattern=r"^[^+]+\+src\.[0-9a-f]{64}$")
+    scenario_construction_id: ScenarioConstructionId
+    numpy_version: str
+    scipy_version: str
+    numba_version: str
     model: str
     params: dict[str, float]
     n_obligors: int
     n_scenarios: int
     seed: int
-    alphas: list[float]
-    input_hash: str
-    generated_at: str
+    alphas: tuple[float, ...]  # request alphas, in request order
+    input_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    generated_at: str  # ISO 8601 UTC; outside reproducibility equality
 
 
 class ObligorContribution(BaseModel):
     """One obligor's share of portfolio risk, at the headline confidence level."""
 
-    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+    model_config = _RESULT
 
     obligor_uid: int
-    ead: float
+    ead: float  # the request ead of this obligor
     expected_loss: float
     es_contribution: float  # Euler ES contribution; sums to portfolio ES
     es_pct: float  # share of portfolio ES (the contributions sum to 1.0)
@@ -543,10 +614,10 @@ class ObligorContribution(BaseModel):
 class LossHistogram(BaseModel):
     """Binned portfolio loss for a distribution plot."""
 
-    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+    model_config = _RESULT
 
-    bin_edges: list[float]  # length nbins + 1
-    counts: list[int]  # length nbins; last bin folds in the > p99.9 overflow
+    bin_edges: tuple[float, ...]  # length nbins + 1
+    counts: tuple[int, ...]  # length nbins; last bin folds in the > p99.9 overflow
 
 
 class KernelDistribution(BaseModel):
@@ -560,7 +631,7 @@ class KernelDistribution(BaseModel):
 class StressTestObligor(BaseModel):
     """One name in the standalone hard-default stress test."""
 
-    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+    model_config = _RESULT
 
     obligor_uid: int
     ead: float
@@ -576,24 +647,44 @@ class StressTestResult(BaseModel):
     least one obligor is flagged.
     """
 
-    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+    model_config = _RESULT
 
     n_obligors: int
     total_loss: float  # sum of EAD * LGD over the flagged names
-    obligors: list[StressTestObligor]
+    obligors: tuple[StressTestObligor, ...]  # strictly ascending obligor_uid
+
+    @model_validator(mode="after")
+    def _obligors_strictly_ascending(self) -> StressTestResult:
+        _require_strictly_ascending(
+            tuple(o.obligor_uid for o in self.obligors), "obligors obligor_uid"
+        )
+        return self
 
 
 class CreditVarResult(BaseModel):
-    """A completed credit-VaR run, JSON-native."""
+    """A completed credit-VaR run, JSON-native (result schema version 1.0)."""
 
-    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+    model_config = _RESULT
 
+    result_schema_version: ResultSchemaVersion
     model: str
     headline_alpha: float
     summary: RiskSummary
-    per_model_tail: dict[str, ModelTail]
-    loss_percentiles: dict[str, float]  # percentile (as string) -> loss
-    obligor_contributions: list[ObligorContribution]
+    per_model_tail: dict[str, ModelTail]  # keyed by JtdModel member name
+    loss_percentiles: tuple[PercentileLoss, ...]  # strictly ascending percentile
+    obligor_contributions: tuple[ObligorContribution, ...]  # ascending obligor_uid
     loss_histogram: LossHistogram
     stress_test: StressTestResult | None = None
     provenance: RunProvenance
+
+    @model_validator(mode="after")
+    def _sequences_strictly_ascending(self) -> CreditVarResult:
+        _require_strictly_ascending(
+            tuple(p.percentile for p in self.loss_percentiles),
+            "loss_percentiles percentile",
+        )
+        _require_strictly_ascending(
+            tuple(c.obligor_uid for c in self.obligor_contributions),
+            "obligor_contributions obligor_uid",
+        )
+        return self
