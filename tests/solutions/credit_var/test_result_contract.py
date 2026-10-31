@@ -5,7 +5,8 @@ WS_CREDIT_VAR_API S1: result contract of `run_credit_var` (C.1 to C.11).
 Tests S1.T1 to S1.T12 of the workstream document. Each test states the clause
 it pins. The oracles are independent of the code under test:
 
-* expected orderings, keys and versions are written out here;
+* expected orderings, keys, versions and the sequence fields of each result
+  model (A_CONTRACT section 3) are written out here;
 * the build identity (S1.T10) and the input hash (S1.T11) are recomputed here
   from the text of P-CREDIT_VAR_API-001 clause 5 and A_CONTRACT section 4.2,
   not by a call of the production helper.
@@ -24,9 +25,10 @@ import json
 import math
 import re
 import typing
+from collections.abc import Collection, Mapping, Sequence, Set
 from importlib import metadata
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 import numba
 import numpy as np
@@ -313,6 +315,136 @@ def test_s1_t1_non_finite_float_is_rejected(
     with pytest.raises(ValidationError) as excinfo:
         model.model_validate(payload)
     assert [e["type"] for e in excinfo.value.errors()] == ["finite_number"]
+
+
+# ---------------------------------------------------------------------------
+# S1.T1 (C.1, R-002): frozen, no extra field, sequence fields are tuples
+# ---------------------------------------------------------------------------
+
+#: A_CONTRACT section 3, written out from the text: the sequence fields of each
+#: result model. No other field of the model holds a sequence.
+_SEQUENCE_FIELDS: dict[type[BaseModel], frozenset[str]] = {
+    CreditVarResult: frozenset({"loss_percentiles", "obligor_contributions"}),
+    RiskSummary: frozenset({"by_alpha"}),
+    AlphaRisk: frozenset(),
+    PercentileLoss: frozenset(),
+    ModelTail: frozenset(),
+    ObligorContribution: frozenset(),
+    LossHistogram: frozenset({"bin_edges", "counts"}),
+    StressTestObligor: frozenset(),
+    StressTestResult: frozenset({"obligors"}),
+    RunProvenance: frozenset({"alphas"}),
+}
+
+_MODEL_IDS = [m.__name__ for m in _RESULT_MODELS]
+_UNKNOWN_FIELD = "not_a_result_field"
+
+
+def _is_sequence(value: object) -> TypeGuard[Collection[object]]:
+    """A list, a tuple, a set or another sequence. A str, bytes or a mapping is
+    not a sequence here."""
+    return isinstance(value, (Sequence, Set)) and not isinstance(value, (str, bytes))
+
+
+def _model_instances(
+    result: CreditVarResult,
+) -> dict[type[BaseModel], list[BaseModel]]:
+    """Each model instance in `result`, grouped by type, in walk order.
+
+    The walk enters model fields, dict values and the elements of every
+    sequence, so a sequence field of the wrong type does not hide the models
+    that it holds.
+    """
+    found: dict[type[BaseModel], list[BaseModel]] = {}
+
+    def walk(value: object) -> None:
+        if isinstance(value, BaseModel):
+            found.setdefault(type(value), []).append(value)
+            for name in type(value).model_fields:
+                walk(getattr(value, name))
+        elif isinstance(value, Mapping):
+            for item in value.values():
+                walk(item)
+        elif _is_sequence(value):
+            for item in value:
+                walk(item)
+
+    walk(result)
+    return found
+
+
+def test_s1_t1_real_result_holds_every_result_model(
+    sf_result: CreditVarResult,
+) -> None:
+    """Guard of the guard: the real result that the three C.1 tests below read
+    holds at least one instance of each of the 10 result models and of no other
+    model, and the sequence-field oracle names each of the 10 models."""
+    assert len(_RESULT_MODELS) == 10
+    assert set(_model_instances(sf_result)) == set(_RESULT_MODELS)
+    assert set(_SEQUENCE_FIELDS) == set(_RESULT_MODELS)
+
+
+@pytest.mark.parametrize("model", _RESULT_MODELS, ids=_MODEL_IDS)
+def test_s1_t1_attribute_assignment_is_rejected(
+    sf_result: CreditVarResult, model: type[BaseModel]
+) -> None:
+    """`frozen=True`: assignment to each field of a real instance raises.
+
+    The test assigns the current value of the field. If the model is not
+    frozen, the assignment succeeds and the test fails, but the module-scoped
+    result does not change, so no other test sees a changed fixture.
+    """
+    instance = _model_instances(sf_result)[model][0]
+    before = instance.model_dump_json()
+    accepted: list[str] = []
+    for name in model.model_fields:
+        try:
+            setattr(instance, name, getattr(instance, name))
+        except ValidationError as exc:
+            errors = [(e["type"], e["loc"]) for e in exc.errors()]
+            assert errors == [("frozen_instance", (name,))], name
+        else:
+            accepted.append(name)
+    assert accepted == [], f"{model.__name__}: assignment accepted for {accepted}"
+    assert instance.model_dump_json() == before
+
+
+@pytest.mark.parametrize("model", _RESULT_MODELS, ids=_MODEL_IDS)
+def test_s1_t1_unknown_field_is_rejected(
+    sf_result: CreditVarResult, model: type[BaseModel]
+) -> None:
+    """`extra="forbid"`: one unknown key in a valid payload raises one
+    extra_forbidden error at that key, from Python input and from JSON input."""
+    assert _UNKNOWN_FIELD not in model.model_fields
+    payload = copy.deepcopy(_payload_for(model, sf_result.model_dump(mode="json")))
+    model.model_validate(payload)  # the unmodified payload is valid
+    payload[_UNKNOWN_FIELD] = 0.0
+    with pytest.raises(ValidationError) as from_python:
+        model.model_validate(payload)
+    with pytest.raises(ValidationError) as from_json:
+        model.model_validate_json(json.dumps(payload))
+    expected = [("extra_forbidden", (_UNKNOWN_FIELD,))]
+    for excinfo in (from_python, from_json):
+        assert [(e["type"], e["loc"]) for e in excinfo.value.errors()] == expected
+
+
+@pytest.mark.parametrize("model", _RESULT_MODELS, ids=_MODEL_IDS)
+def test_s1_t1_sequence_fields_are_tuples(
+    sf_result: CreditVarResult, model: type[BaseModel]
+) -> None:
+    """Each sequence field of each instance in a real `run_credit_var` result is
+    a `tuple`. `frozen=True` blocks assignment only, so a list field stays
+    mutable in place (A_CONTRACT section 1)."""
+    for instance in _model_instances(sf_result)[model]:
+        values = {name: getattr(instance, name) for name in model.model_fields}
+        sequences = {name for name, value in values.items() if _is_sequence(value)}
+        assert sequences == _SEQUENCE_FIELDS[model], model.__name__
+        wrong = {
+            name: type(values[name]).__name__
+            for name in sorted(sequences)
+            if type(values[name]) is not tuple
+        }
+        assert wrong == {}, f"{model.__name__}: sequence fields not tuple: {wrong}"
 
 
 # ---------------------------------------------------------------------------
