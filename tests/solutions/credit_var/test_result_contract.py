@@ -2,8 +2,9 @@
 """
 WS_CREDIT_VAR_API S1: result contract of `run_credit_var` (C.1 to C.11).
 
-Tests S1.T1 to S1.T12 of the workstream document. Each test states the clause
-it pins. The oracles are independent of the code under test:
+Tests S1.T1 to S1.T12, the S1.T16 bounds and S1.T17 of the workstream
+document. Each test states the clause it pins. The oracles are independent of
+the code under test:
 
 * expected orderings, keys, versions and the sequence fields of each result
   model (A_CONTRACT section 3) are written out here;
@@ -25,7 +26,7 @@ import json
 import math
 import re
 import typing
-from collections.abc import Collection, Mapping, Sequence, Set
+from collections.abc import Callable, Collection, Mapping, Sequence, Set
 from importlib import metadata
 from pathlib import Path
 from typing import Any, TypeGuard
@@ -970,3 +971,181 @@ def test_zv_forced_default_moments_are_exact_zero() -> None:
     assert summary.loss_std_dev == 0.0
     assert summary.loss_skewness == 0.0
     assert summary.loss_excess_kurtosis == 0.0
+
+
+# ===========================================================================
+# S1.T16 cases 4 to 6, the C.7 per_model_tail keys and S1.T17 (A_CONTRACT
+# sections 3.1 and 3.2; owner decisions OD-1, ZV, OD-B; closure review R-004
+# to R-007). The fault cases reuse `_od1_payload` and `_od1_single_error`:
+# each payload is the dump of one valid run with exactly one changed value,
+# and `test_od1_base_payload_is_valid` is the control.
+# ===========================================================================
+
+
+def _od1_summary(payload: dict[str, object]) -> dict[str, object]:
+    summary = payload["summary"]
+    assert isinstance(summary, dict)
+    return summary
+
+
+def _od1_provenance(payload: dict[str, object]) -> dict[str, object]:
+    stamp = payload["provenance"]
+    assert isinstance(stamp, dict)
+    return stamp
+
+
+def _od1_tuple(value: object) -> tuple[object, ...]:
+    assert isinstance(value, tuple)
+    return value
+
+
+def test_s1_t16_case4_by_alpha_not_strictly_ascending_raises() -> None:
+    """S1.T16 case 4: by_alpha with its two records swapped is rejected.
+
+    The swap keeps the alpha set, so only the order rule of RiskSummary can
+    fire. `test_s1_t5_by_alpha_must_be_strictly_ascending` validates a
+    RiskSummary payload alone and does not count the errors, so it does not
+    meet the S1.T16 one-fault form.
+    """
+    payload = _od1_payload()
+    summary = _od1_summary(payload)
+    records = _od1_tuple(summary["by_alpha"])
+    assert len(records) == 2
+    summary["by_alpha"] = (records[1], records[0])
+    error = _od1_single_error(payload)
+    assert error["loc"] == ("summary",)
+    assert error["type"] == "value_error"
+    assert "by_alpha alpha must be strictly ascending" in str(error["msg"])
+
+
+def _replace_one_provenance_alpha(payload: dict[str, object]) -> None:
+    stamp = _od1_provenance(payload)
+    alphas = list(_od1_tuple(stamp["alphas"]))
+    assert 0.995 not in alphas
+    alphas[-1] = 0.995
+    stamp["alphas"] = tuple(alphas)
+
+
+def _add_one_provenance_alpha(payload: dict[str, object]) -> None:
+    stamp = _od1_provenance(payload)
+    alphas = _od1_tuple(stamp["alphas"])
+    assert 0.9999 not in alphas
+    stamp["alphas"] = (*alphas, 0.9999)
+
+
+def _drop_last_by_alpha_record(payload: dict[str, object]) -> None:
+    summary = _od1_summary(payload)
+    summary["by_alpha"] = _od1_tuple(summary["by_alpha"])[:-1]
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        _replace_one_provenance_alpha,
+        _add_one_provenance_alpha,
+        _drop_last_by_alpha_record,
+    ],
+    ids=["provenance-alpha-replaced", "provenance-alpha-added", "by-alpha-dropped"],
+)
+def test_s1_t16_case5_by_alpha_set_differs_from_provenance_alphas_raises(
+    mutate: Callable[[dict[str, object]], None],
+) -> None:
+    """S1.T16 case 5: the by_alpha alpha set differs from provenance.alphas.
+
+    Each variant keeps by_alpha strictly ascending, so only the set rule of
+    CreditVarResult can fire.
+    """
+    payload = _od1_payload()
+    mutate(payload)
+    error = _od1_single_error(payload)
+    assert error["loc"] == ()
+    assert error["type"] == "value_error"
+    assert "summary.by_alpha alpha set must equal" in str(error["msg"])
+
+
+def _rename_model_key_to_lowercase(by_model: dict[str, object]) -> None:
+    # Same concept, non-JtdModel spelling (the F-11 defect class).
+    by_model["independent_bernoulli"] = by_model.pop("INDEPENDENT_BERNOULLI")
+
+
+def _add_unknown_model_key(by_model: dict[str, object]) -> None:
+    by_model["NOT_A_JTD_MODEL"] = 0.0
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [_rename_model_key_to_lowercase, _add_unknown_model_key],
+    ids=["lowercase-name", "unknown-name-added"],
+)
+def test_s1_t16_case6_expected_loss_key_not_a_jtd_model_name_raises(
+    mutate: Callable[[dict[str, object]], None],
+) -> None:
+    """S1.T16 case 6: an expected_loss_by_model key that is not a JtdModel name."""
+    payload = _od1_payload()
+    by_model = _od1_summary(payload)["expected_loss_by_model"]
+    assert isinstance(by_model, dict)
+    assert set(by_model) == {"INDEPENDENT_BERNOULLI"}
+    mutate(by_model)
+    error = _od1_single_error(payload)
+    assert error["loc"] == ("summary", "expected_loss_by_model")
+    assert error["type"] == "value_error"
+    assert "expected_loss_by_model keys must be JtdModel member names" in str(
+        error["msg"]
+    )
+
+
+def test_c7_per_model_tail_key_not_a_jtd_model_name_raises() -> None:
+    """A_CONTRACT 3.1 / C.7: a per_model_tail key that is not a JtdModel name."""
+    payload = _od1_payload()
+    tails = payload["per_model_tail"]
+    assert isinstance(tails, dict)
+    assert set(tails) == {"INDEPENDENT_BERNOULLI"}
+    tails["independent_bernoulli"] = tails.pop("INDEPENDENT_BERNOULLI")
+    error = _od1_single_error(payload)
+    assert error["loc"] == ("per_model_tail",)
+    assert error["type"] == "value_error"
+    assert "per_model_tail keys must be JtdModel member names" in str(error["msg"])
+
+
+# S1.T17 row: forced_default, one obligor, ead 450000.3, lgd 1.0, S = 2_000.
+# Every scenario loses 450000.3. The floating-point mean of 2_000 equal values
+# is not exactly 450000.3, so a direct moment computation gives a nonzero std
+# and skewness (WS S1.T17, sandbox numpy 2.4.4: std 1.16e-10, skewness 0.999).
+_ZV_REQUEST: dict[str, Any] = {
+    "model": "forced_default",
+    "obligors": [{"obligor_uid": 1, "ead": 450000.3, "pd": 0.01, "lgd": 1.0}],
+    "n_scenarios": 2_000,
+    "seed": 12345,
+}
+
+
+@pytest.fixture(scope="module")
+def zv_result() -> CreditVarResult:
+    """The valid S1.T17 run result."""
+    return run_credit_var(_ZV_REQUEST)
+
+
+def test_s1_t17_constant_loss_run_gives_zero_moments(
+    zv_result: CreditVarResult,
+) -> None:
+    """S1.T17 case 1: the S1.T17 run reports exact zero moments (ZV)."""
+    summary = zv_result.summary
+    assert summary.loss_min == summary.loss_max == 450000.3 * 1.0
+    assert summary.loss_std_dev == 0.0
+    assert summary.loss_skewness == 0.0
+    assert summary.loss_excess_kurtosis == 0.0
+
+
+def test_s1_t17_zero_variance_payload_with_nonzero_skewness_raises(
+    zv_result: CreditVarResult,
+) -> None:
+    """S1.T17 case 2: loss_min == loss_max and loss_skewness 0.5 is rejected."""
+    payload: dict[str, object] = copy.deepcopy(zv_result.model_dump(mode="python"))
+    CreditVarResult.model_validate(payload)  # the unmodified payload is valid
+    summary = _od1_summary(payload)
+    assert summary["loss_min"] == summary["loss_max"]
+    summary["loss_skewness"] = 0.5
+    error = _od1_single_error(payload)
+    assert error["loc"] == ("summary",)
+    assert error["type"] == "value_error"
+    assert "zero-variance rule (ZV)" in str(error["msg"])

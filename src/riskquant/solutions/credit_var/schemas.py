@@ -20,19 +20,38 @@ Result contract (WS_CREDIT_VAR_API S1, result schema version 1.0)
   non-finite number cannot reach JSON as ``null``.
 * Sequence fields are tuples: ``frozen=True`` blocks assignment only, not the
   in-place mutation of a list.
-* Ordered sequences are strictly ascending by their key (alpha, percentile,
-  obligor_uid) and the models reject any other order, so a lookup such as
-  `RiskSummary.at` has exactly one answer.
-* The result models enforce the bounds of A_CONTRACT sections 3.2 and 3.8
-  (owner decision OD-1 (b)): ``loss_std_dev >= 0``, ``loss_probability`` in
-  [0, 1], ``len(bin_edges) == len(counts) + 1``, strictly ascending
-  ``bin_edges``, and ``sum(counts) == provenance.n_scenarios``. The engine
-  cannot produce a violation; a violation is therefore an engine fault, and
-  the bound makes it raise at construction instead of reaching a consumer.
+* Ordered sequences are strictly ascending by their key and the models reject
+  any other order, so a lookup such as `RiskSummary.at` has exactly one
+  answer: ``summary.by_alpha`` by alpha, ``loss_percentiles`` by percentile,
+  ``obligor_contributions`` and ``stress_test.obligors`` by obligor_uid
+  (owner decision OD-2).
+
+Enforced rules (A_CONTRACT sections 3.2 and 3.8, owner decision OD-1 (b))
+-------------------------------------------------------------------------
+Validation raises ``pydantic.ValidationError`` for each of these rules:
+
+* `RiskSummary`: ``loss_std_dev >= 0``; ``0 <= loss_probability <= 1``.
+* `RiskSummary`, zero variance (owner decision ZV): when ``loss_min ==
+  loss_max``, ``loss_std_dev``, ``loss_skewness`` and
+  ``loss_excess_kurtosis`` each equal 0.0 under ``==``.
+* `RiskSummary`: each ``expected_loss_by_model`` key is a `JtdModel` member
+  name (C.7).
+* `CreditVarResult`: each ``per_model_tail`` key is a `JtdModel` member name
+  (C.7).
+* `LossHistogram`: ``len(bin_edges) == len(counts) + 1``; ``bin_edges``
+  strictly ascending.
+* `CreditVarResult`: ``sum(loss_histogram.counts) == provenance.n_scenarios``.
+* `CreditVarResult`: the set of ``summary.by_alpha`` alpha values equals the
+  set of ``provenance.alphas``.
+
+The engine cannot produce a violation. A violation is therefore an engine
+fault, and the rule makes it raise at construction instead of reaching a
+consumer.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, Final, Literal
 
 import pandas as pd
@@ -64,6 +83,7 @@ from pydantic import (
     model_validator,
 )
 
+from riskquant.credit.jtd.models import VALID_JTD_MODEL_NAMES
 from riskquant.solutions.credit_var.catalog import MODEL_CATALOG, model_entry
 from riskquant.solutions.credit_var.provenance import ScenarioConstructionId
 
@@ -467,6 +487,22 @@ def _require_strictly_ascending(keys: tuple[float, ...], what: str) -> None:
             )
 
 
+def _require_jtd_model_names(keys: Iterable[str], what: str) -> None:
+    """Reject a key that is not a `JtdModel` member name (C.7).
+
+    One concept has one key. The retired overlay key ``"forced_default"`` and
+    any display label fail here, so a consumer never merges two keys for one
+    model. Raised as ``ValueError`` inside a field validator, so pydantic
+    reports it as a ``ValidationError`` at the field.
+    """
+    unknown = sorted(set(keys) - VALID_JTD_MODEL_NAMES)
+    if unknown:
+        raise ValueError(
+            f"{what} keys must be JtdModel member names: unknown key(s) "
+            f"{unknown[:_PREVIEW]}; valid names {sorted(VALID_JTD_MODEL_NAMES)}."
+        )
+
+
 class AlphaRisk(BaseModel):
     """Tail risk of the portfolio loss at one requested confidence level."""
 
@@ -514,10 +550,11 @@ class RiskSummary(BaseModel):
 
     loss_mean: float  # mean of portfolio loss (Expected Loss)
     # Standard deviation of portfolio loss. Exactly 0.0 when loss_min ==
-    # loss_max (owner decision ZV, applied in run.py).
+    # loss_max (owner decision ZV: run.py sets it, _zero_variance_moments
+    # rejects any other value).
     loss_std_dev: float = Field(ge=0.0)
-    loss_skewness: float  # right-skew of the loss distribution
-    loss_excess_kurtosis: float  # excess kurtosis (fat-tailedness)
+    loss_skewness: float  # right-skew of the loss distribution; 0.0 under ZV
+    loss_excess_kurtosis: float  # excess kurtosis (fat-tailedness); 0.0 under ZV
 
     # ------------------------------------------------------------------
     # Distribution characteristics
@@ -542,11 +579,43 @@ class RiskSummary(BaseModel):
 
     expected_loss_by_model: dict[str, float]
 
+    @field_validator("expected_loss_by_model")
+    @classmethod
+    def _keys_are_jtd_model_names(cls, v: dict[str, float]) -> dict[str, float]:
+        _require_jtd_model_names(v, "expected_loss_by_model")
+        return v
+
     @model_validator(mode="after")
     def _by_alpha_strictly_ascending(self) -> RiskSummary:
         _require_strictly_ascending(
             tuple(record.alpha for record in self.by_alpha), "by_alpha alpha"
         )
+        return self
+
+    @model_validator(mode="after")
+    def _zero_variance_moments(self) -> RiskSummary:
+        """Owner decision ZV: a constant loss has zero central moments.
+
+        When ``loss_min == loss_max``, every scenario has the same loss. The
+        floating-point mean of equal values can differ from that value by
+        rounding, which gives a nonzero std and a skewness near +/-1. The
+        moments are therefore exact 0.0 by rule, not by computation. The
+        comparison is ``==``, so -0.0 also satisfies the rule.
+        """
+        if self.loss_min != self.loss_max:
+            return self
+        moments = {
+            "loss_std_dev": self.loss_std_dev,
+            "loss_skewness": self.loss_skewness,
+            "loss_excess_kurtosis": self.loss_excess_kurtosis,
+        }
+        nonzero = {name: value for name, value in moments.items() if value != 0.0}
+        if nonzero:
+            raise ValueError(
+                f"zero-variance rule (ZV): loss_min == loss_max == "
+                f"{self.loss_min!r}, so loss_std_dev, loss_skewness and "
+                f"loss_excess_kurtosis must equal 0.0; nonzero: {nonzero}."
+            )
         return self
 
     def at(self, alpha: float) -> AlphaRisk:
@@ -632,7 +701,7 @@ class LossHistogram(BaseModel):
     model_config = _RESULT
 
     bin_edges: tuple[float, ...]  # length nbins + 1
-    counts: tuple[int, ...]  # length nbins; last bin folds in the > p99.9 overflow
+    counts: tuple[int, ...]  # length nbins; every scenario in exactly one bin
 
     @model_validator(mode="after")
     def _edges_match_counts(self) -> LossHistogram:
@@ -702,6 +771,14 @@ class CreditVarResult(BaseModel):
     stress_test: StressTestResult | None = None
     provenance: RunProvenance
 
+    @field_validator("per_model_tail")
+    @classmethod
+    def _tail_keys_are_jtd_model_names(
+        cls, v: dict[str, ModelTail]
+    ) -> dict[str, ModelTail]:
+        _require_jtd_model_names(v, "per_model_tail")
+        return v
+
     @model_validator(mode="after")
     def _sequences_strictly_ascending(self) -> CreditVarResult:
         _require_strictly_ascending(
@@ -718,14 +795,37 @@ class CreditVarResult(BaseModel):
     def _histogram_counts_every_scenario(self) -> CreditVarResult:
         """Every scenario lands in exactly one bin (A_CONTRACT section 3.8).
 
-        The last bin folds in the overflow above the display percentile, so a
-        count total other than n_scenarios means a dropped or a double-counted
-        scenario.
+        No overflow above the display percentile occurs:
+        `_attribution.loss_histogram` sets the last edge to
+        ``max(p99.9, max loss, 1.0)``, which is at least the maximum loss, and
+        ``np.histogram`` includes the last edge in the last bin. The first
+        edge is 0.0 and a credit loss is >= 0. A count total other than
+        n_scenarios therefore means a dropped or a double-counted scenario.
         """
         total = sum(self.loss_histogram.counts)
         if total != self.provenance.n_scenarios:
             raise ValueError(
                 f"loss_histogram counts must sum to provenance.n_scenarios: sum = "
                 f"{total}, n_scenarios = {self.provenance.n_scenarios}."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _by_alpha_matches_request_alphas(self) -> CreditVarResult:
+        """The run reports exactly the requested levels (C.3).
+
+        ``summary.by_alpha`` holds one record per request alpha and
+        ``provenance.alphas`` holds the request alphas, so the two alpha sets
+        are equal. Each request alpha is finite and in (0, 1), and ``==``
+        equality of two such floats is bit equality. A missing level or a
+        level that the request did not ask for is an engine fault.
+        """
+        computed = {record.alpha for record in self.summary.by_alpha}
+        requested = set(self.provenance.alphas)
+        if computed != requested:
+            raise ValueError(
+                f"summary.by_alpha alpha set must equal the provenance.alphas "
+                f"set: in by_alpha only {sorted(computed - requested)}; in "
+                f"provenance.alphas only {sorted(requested - computed)}."
             )
         return self
