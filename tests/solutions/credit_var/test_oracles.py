@@ -128,7 +128,7 @@ def _k3() -> _Case:
         (0.95, 0.975, 0.99),
         lambda: oracle.beta_binomial(n, a, b),
         n * a / (a + b),
-        # Master PD 0.30 is ignored by contract (D-C18 adjudication, C-18).
+        # Master PD 0.30 is ignored by contract (test_beta_binomial_contract.py; D-C18 and C-18 are in the O-13 triage).
         {"obligors": _homogeneous(n, 0.30), "params": {"alpha": a, "beta": b}},
     )
 
