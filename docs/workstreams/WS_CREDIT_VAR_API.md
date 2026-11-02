@@ -78,6 +78,7 @@ Owner decisions in force:
 - 2026-11-02 (OD-B): S1 code implements the FROZEN S1.T16 (cases 4 to 6) and S1.T17 (cases 1 and 2) rules (S1 closure review R-004 to R-007).
 - 2026-11-02 (OD-A): A_CONTRACT 3.8 bin_edges is strictly ascending, as the code enforces. Revision 4 by explicit owner decision under the tripwire; editorial only.
 - 2026-11-02 (OD-C): U-a uses systemic_pd = 5e-05 (confirmed).
+- 2026-11-02 (ZV comparison, S1 closure review R-011): the ZV rule compares with ==, so -0.0 satisfies it. run.py emits +0.0. "0.0" in A_CONTRACT 3.2 means numeric equality, not bit equality.
 
 Depends on: none.
 Blocks: consumer releases that pin `credit_var.api`. `api.py` names the notebook, Emissary and the xlwings tool as consumers (F-31).
@@ -286,8 +287,8 @@ Prohibited: src/riskquant/credit/**; src/riskquant/scenario_metrics/**; src/risk
 Attach: docs/workstreams/WS_CREDIT_VAR_API.md ; docs/workstreams/WS_CREDIT_VAR_API/A_CONTRACT.md ; docs/CLAUDE.md ; docs/DECISIONS.md ; context_riskquant_index.txt ; context_riskquant_solutions_credit_var.txt ; context_riskquant_credit.txt ; context_riskquant_solutions_run_identity.txt ; context_riskquant_tests_credit.txt
 Gates: gate block; `$t = "tests/solutions/credit_var", "tests/credit/factors/test_batch_size_reproducibility.py", "tests/credit/jtd/test_beta_binomial_contract.py"`; then the 15 demos (U-c): `Get-ChildItem scripts/solutions/credit_var/demo_e2e_*.py | ForEach-Object { python $_.FullName; "$($_.Name) exit=$LASTEXITCODE" }`, each with exit=0
 Exit: every S1 test passes; full suite passes; no NaN, no level-keyed dict and no "0+unknown" path remains in credit_var.
-Status: IN_PROGRESS
-Evidence: S1 review ACCEPT 2026-10-31 (R-001, R-002 closed) for the code at f03f09f; closure open: S1.T16 (OD-1), S1.T17 (ZV), U-a, U-b, U-d.
+Status: VALIDATED
+Evidence: S1 closure review ACCEPT 2026-11-02: R-001 to R-010 closed; R-003 closed (15 of 15 demos exit=0); R-011 closed by owner decision (ZV comparison). Owner gate at bf64906 (clean): ruff, format, mypy exit=0; pytest slice 213 passed; full 7690 passed, 36 skipped; 15 of 15 demos exit=0.
 
 | Id | Case | Expected | Defect caught |
 |---|---|---|---|
@@ -468,6 +469,11 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - C.13, C.24: state whether BLAS thread settings are inside the contract (`_attribution.obligor_ul_contribution`) (R1 R-20).
 - R2-02: the audit did not verify K12 rule 6 at 60x60x300 nodes; S4 runs the rule 6 self-check before any K12 assertion.
 - riskquant-excel: not checked against the S1 result contract. Owner decision 2026-10-30: out of scope, no current users. Check it before any Excel tool work.
+- A_CONTRACT 3.1 headline_alpha "max of request alphas" has no validator (S1 closure review, adjacent).
+- A_CONTRACT 3.1 obligor_contributions "one per request obligor" has no check against provenance.n_obligors (S1 closure review, adjacent).
+- A_CONTRACT 3.8 has no counts >= 0 rule (S1 closure review, adjacent).
+- _attribution.py:loss_histogram: xmax = max(p99.9, losses.max(), 1.0), so the overflow branch and the display-percentile clip never act; the docstring is wrong (S1 closure review, adjacent).
+- src/riskquant_lab/__init__.py is not empty, against D002 (S1 closure review, adjacent).
 
 ## 8. Closure record
 
