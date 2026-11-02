@@ -18,13 +18,13 @@ MODEL_KEY: str = "stress_regime_bernoulli_grouped"
 ALPHAS: list[float] = [0.9500, 0.9750, 0.9900, 0.9990]
 MODEL_PARAMS: dict[str, float] = {}
 GROUP_PARAMS: dict[str, dict[str, float]] = {
-    "CYCLICAL": {"stress_prob": 0.30, " ": 5.0},
+    "CYCLICAL": {"stress_prob": 0.30, "stress_pd_multiplier": 5.0},
     "DEFENSIVE": {"stress_prob": 0.05, "stress_pd_multiplier": 2.0},
 }
 KDE_DISPLAY_PERCENTILE: float = 99.90
 
 
-def main():
+def main() -> None:
     """
     End-to-end demonstration of the `stress_regime_bernoulli_grouped` model.
 

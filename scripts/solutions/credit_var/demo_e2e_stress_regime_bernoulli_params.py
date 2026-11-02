@@ -4,7 +4,11 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 
-from riskquant.solutions.credit_var.api import CreditVarRequest, run_credit_var
+from riskquant.solutions.credit_var.api import (
+    CreditVarRequest,
+    CreditVarResult,
+    run_credit_var,
+)
 from riskquant.solutions.credit_var.run import simulate_portfolio_losses
 from riskquant.utils.printer import print_calling_file, print_success_message
 from riskquant_lab.fixtures.credit_var import (
@@ -41,11 +45,9 @@ GROUP_PARAMS: dict[str, dict[str, float]] = {}
 KDE_DISPLAY_PERCENTILE: float = 99.90
 
 
-def main():
+def main() -> None:
 
     print_calling_file()
-
-    clean_model_key_str = MODEL_KEY.upper().replace("_", " ")
 
     # 1. Generate random obligor data (Generated ONCE for consistency)
     # ----------------------------------------------------------------------------------
@@ -58,7 +60,7 @@ def main():
         )
     )
 
-    results: list = []
+    results: list[CreditVarResult] = []
     losses_dict: dict[str, np.ndarray] = {}
     model_labels: list[str] = []
 
@@ -119,7 +121,7 @@ def main():
 
     # 3. Plot the comparative distributions
     # ---------------------------------------------------------------------------------
-    fig, ax = plot_loss_distribution_comparison(
+    _fig, ax = plot_loss_distribution_comparison(
         losses_dict,
         title=f"Credit Loss KDE Distributions (Constant Stress Prob: {CONSTANT_STRESS_PROB * 100:.1f}%)",
         log_y=True,

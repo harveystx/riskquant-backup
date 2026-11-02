@@ -23,6 +23,12 @@ Result contract (WS_CREDIT_VAR_API S1, result schema version 1.0)
 * Ordered sequences are strictly ascending by their key (alpha, percentile,
   obligor_uid) and the models reject any other order, so a lookup such as
   `RiskSummary.at` has exactly one answer.
+* The result models enforce the bounds of A_CONTRACT sections 3.2 and 3.8
+  (owner decision OD-1 (b)): ``loss_std_dev >= 0``, ``loss_probability`` in
+  [0, 1], ``len(bin_edges) == len(counts) + 1``, strictly ascending
+  ``bin_edges``, and ``sum(counts) == provenance.n_scenarios``. The engine
+  cannot produce a violation; a violation is therefore an engine fault, and
+  the bound makes it raise at construction instead of reaching a consumer.
 """
 
 from __future__ import annotations
@@ -507,7 +513,9 @@ class RiskSummary(BaseModel):
     # ------------------------------------------------------------------
 
     loss_mean: float  # mean of portfolio loss (Expected Loss)
-    loss_std_dev: float  # standard deviation of portfolio loss
+    # Standard deviation of portfolio loss. Exactly 0.0 when loss_min ==
+    # loss_max (owner decision ZV, applied in run.py).
+    loss_std_dev: float = Field(ge=0.0)
     loss_skewness: float  # right-skew of the loss distribution
     loss_excess_kurtosis: float  # excess kurtosis (fat-tailedness)
 
@@ -515,7 +523,8 @@ class RiskSummary(BaseModel):
     # Distribution characteristics
     # ------------------------------------------------------------------
 
-    loss_probability: float  # fraction of scenarios with any loss
+    # Fraction of scenarios with any loss.
+    loss_probability: float = Field(ge=0.0, le=1.0)
     loss_min: float  # best simulated scenario loss
     loss_max: float  # worst simulated scenario loss
     coefficient_of_variation: float  # loss_std_dev / loss_mean (0 if loss_mean=0)
@@ -612,12 +621,28 @@ class ObligorContribution(BaseModel):
 
 
 class LossHistogram(BaseModel):
-    """Binned portfolio loss for a distribution plot."""
+    """Binned portfolio loss for a distribution plot.
+
+    The model checks the rules that it can see (A_CONTRACT section 3.8):
+    ``len(bin_edges) == len(counts) + 1`` and strictly ascending ``bin_edges``.
+    The rule ``sum(counts) == n_scenarios`` needs the scenario count, so
+    `CreditVarResult` checks it against ``provenance.n_scenarios``.
+    """
 
     model_config = _RESULT
 
     bin_edges: tuple[float, ...]  # length nbins + 1
     counts: tuple[int, ...]  # length nbins; last bin folds in the > p99.9 overflow
+
+    @model_validator(mode="after")
+    def _edges_match_counts(self) -> LossHistogram:
+        if len(self.bin_edges) != len(self.counts) + 1:
+            raise ValueError(
+                f"bin_edges must hold len(counts) + 1 values: len(bin_edges) = "
+                f"{len(self.bin_edges)}, len(counts) = {len(self.counts)}."
+            )
+        _require_strictly_ascending(self.bin_edges, "bin_edges")
+        return self
 
 
 class KernelDistribution(BaseModel):
@@ -687,4 +712,20 @@ class CreditVarResult(BaseModel):
             tuple(c.obligor_uid for c in self.obligor_contributions),
             "obligor_contributions obligor_uid",
         )
+        return self
+
+    @model_validator(mode="after")
+    def _histogram_counts_every_scenario(self) -> CreditVarResult:
+        """Every scenario lands in exactly one bin (A_CONTRACT section 3.8).
+
+        The last bin folds in the overflow above the display percentile, so a
+        count total other than n_scenarios means a dropped or a double-counted
+        scenario.
+        """
+        total = sum(self.loss_histogram.counts)
+        if total != self.provenance.n_scenarios:
+            raise ValueError(
+                f"loss_histogram counts must sum to provenance.n_scenarios: sum = "
+                f"{total}, n_scenarios = {self.provenance.n_scenarios}."
+            )
         return self

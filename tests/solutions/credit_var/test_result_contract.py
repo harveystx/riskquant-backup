@@ -824,3 +824,149 @@ def test_s1_t12_json_round_trip_is_lossless(model: str) -> None:
     restored = CreditVarResult.model_validate_json(first)
     assert restored == result
     assert restored.model_dump_json() == first
+
+
+# ===========================================================================
+# OD-1 (b) result bounds and the ZV zero-variance rule (owner decisions
+# 2026-10-31). Each case starts from a valid run result, changes one field
+# in its python dump, and validates again, so the payload holds exactly one
+# fault. The imports are local so that this block does not depend on the
+# import block of the module.
+# ===========================================================================
+
+_OD1_BASE_PAYLOAD: dict[str, object] = {}
+
+
+def _od1_payload() -> dict[str, object]:
+    """A deep copy of the python dump of one valid independent_bernoulli run."""
+    import copy
+
+    from riskquant.solutions.credit_var.api import run_credit_var
+
+    if not _OD1_BASE_PAYLOAD:
+        result = run_credit_var({
+            "model": "independent_bernoulli",
+            "obligors": [
+                {"obligor_uid": 1, "ead": 1.0, "pd": 0.05, "lgd": 1.0},
+                {"obligor_uid": 2, "ead": 2.0, "pd": 0.10, "lgd": 1.0},
+                {"obligor_uid": 3, "ead": 4.0, "pd": 0.20, "lgd": 1.0},
+            ],
+            "n_scenarios": 2_000,
+            "alphas": [0.95, 0.99],
+            "seed": 20261031,
+        })
+        _OD1_BASE_PAYLOAD.update(result.model_dump(mode="python"))
+    return copy.deepcopy(_OD1_BASE_PAYLOAD)
+
+
+def _od1_single_error(payload: dict[str, object]) -> dict[str, object]:
+    """Validate `payload` and return its only ValidationError entry."""
+    import pydantic
+    import pytest
+
+    from riskquant.solutions.credit_var.api import CreditVarResult
+
+    with pytest.raises(pydantic.ValidationError) as exc_info:
+        CreditVarResult.model_validate(payload)
+    errors = exc_info.value.errors(include_url=False)
+    assert len(errors) == 1, errors
+    return dict(errors[0])
+
+
+def test_od1_base_payload_is_valid() -> None:
+    from riskquant.solutions.credit_var.api import CreditVarResult
+
+    CreditVarResult.model_validate(_od1_payload())
+
+
+def test_od1_loss_std_dev_below_zero_raises() -> None:
+    import math
+
+    payload = _od1_payload()
+    summary = payload["summary"]
+    assert isinstance(summary, dict)
+    summary["loss_std_dev"] = math.nextafter(0.0, -1.0)
+    error = _od1_single_error(payload)
+    assert error["loc"] == ("summary", "loss_std_dev")
+    assert error["type"] == "greater_than_equal"
+
+
+def test_od1_loss_probability_below_zero_raises() -> None:
+    import math
+
+    payload = _od1_payload()
+    summary = payload["summary"]
+    assert isinstance(summary, dict)
+    summary["loss_probability"] = math.nextafter(0.0, -1.0)
+    error = _od1_single_error(payload)
+    assert error["loc"] == ("summary", "loss_probability")
+    assert error["type"] == "greater_than_equal"
+
+
+def test_od1_loss_probability_above_one_raises() -> None:
+    import math
+
+    payload = _od1_payload()
+    summary = payload["summary"]
+    assert isinstance(summary, dict)
+    summary["loss_probability"] = math.nextafter(1.0, 2.0)
+    error = _od1_single_error(payload)
+    assert error["loc"] == ("summary", "loss_probability")
+    assert error["type"] == "less_than_equal"
+
+
+def test_od1_histogram_edge_count_mismatch_raises() -> None:
+    payload = _od1_payload()
+    histogram = payload["loss_histogram"]
+    assert isinstance(histogram, dict)
+    histogram["bin_edges"] = tuple(histogram["bin_edges"])[:-1]
+    error = _od1_single_error(payload)
+    assert error["loc"] == ("loss_histogram",)
+    assert "len(counts) + 1" in str(error["msg"])
+
+
+def test_od1_histogram_edges_not_ascending_raises() -> None:
+    payload = _od1_payload()
+    histogram = payload["loss_histogram"]
+    assert isinstance(histogram, dict)
+    edges = list(histogram["bin_edges"])
+    edges[1], edges[2] = edges[2], edges[1]
+    histogram["bin_edges"] = tuple(edges)
+    error = _od1_single_error(payload)
+    assert error["loc"] == ("loss_histogram",)
+    assert "bin_edges must be strictly ascending" in str(error["msg"])
+
+
+def test_od1_histogram_counts_sum_not_n_scenarios_raises() -> None:
+    payload = _od1_payload()
+    histogram = payload["loss_histogram"]
+    assert isinstance(histogram, dict)
+    counts = list(histogram["counts"])
+    counts[0] += 1
+    histogram["counts"] = tuple(counts)
+    error = _od1_single_error(payload)
+    assert error["loc"] == ()
+    assert "sum to provenance.n_scenarios" in str(error["msg"])
+
+
+def test_zv_forced_default_moments_are_exact_zero() -> None:
+    """ZV: a constant loss vector gives exactly 0.0 moments.
+
+    The book is one obligor with ead 1.0 and lgd 0.1 over 2000 scenarios: the
+    floating-point mean of 2000 copies of 0.1 is 1.4e-17 away from 0.1, so
+    without the rule the std is about 1.4e-17 and the skewness about -1.
+    """
+    from riskquant.solutions.credit_var.api import run_credit_var
+
+    result = run_credit_var({
+        "model": "forced_default",
+        "obligors": [{"obligor_uid": 1, "ead": 1.0, "pd": 0.01, "lgd": 0.1}],
+        "n_scenarios": 2_000,
+        "alphas": [0.95],
+        "seed": 7,
+    })
+    summary = result.summary
+    assert summary.loss_min == summary.loss_max
+    assert summary.loss_std_dev == 0.0
+    assert summary.loss_skewness == 0.0
+    assert summary.loss_excess_kurtosis == 0.0

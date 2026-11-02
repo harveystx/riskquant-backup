@@ -74,6 +74,7 @@ Owner decisions in force:
 - 2026-10-31 (U-b): In demo_e2e_stress_regime_bernoulli_grouped.py, the " " key is replaced by the missing accepted key.
 - 2026-10-31 (U-c): Closed by decision. The credit_var demos are not regression gates. The S1 gate runs them.
 - 2026-10-31 (U-d): The 15 demos `scripts/solutions/credit_var/demo_e2e_*.py` pass ruff check and mypy.
+- 2026-11-02 (U-a amended): demo_e2e_all_models.py uses systemic_pd = 5e-05 for marshall_olkin. The 2026-10-31 formula gives 0.0 for this book (min PD 7.344e-05), and with 0.0 the common shock never fires. Demo value only; no contract clause changes.
 
 Depends on: none.
 Blocks: consumer releases that pin `credit_var.api`. `api.py` names the notebook, Emissary and the xlwings tool as consumers (F-31).

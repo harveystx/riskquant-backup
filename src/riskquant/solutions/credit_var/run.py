@@ -140,17 +140,32 @@ def _distribution_metrics(losses: _F64, expected_loss: float) -> dict[str, float
 
     A forced-default overlay only shifts losses by a constant, so dispersion/shape
     here are unaffected; the constant lands in expected_loss/VaR/ES only.
+
+    Zero-variance rule (owner decision ZV): when ``loss_min == loss_max`` every
+    scenario has the same loss, so the standard deviation, the skewness and the
+    excess kurtosis are exactly 0.0. The floating-point mean of S equal values
+    can differ from that value by 1 ulp (S = 2000 copies of 0.1 give a mean
+    1.4e-17 away), which gives a nonzero std and a skewness near -1 from
+    rounding noise only. The exact test on the extremes removes that noise; the
+    coefficient of variation then follows from the zero std.
     """
-    n = int(losses.size)
     mean = float(losses.mean())
-    std = float(losses.std(ddof=1)) if n > 1 else 0.0
-    if std > 0.0:
-        z = (losses - mean) / std
-        skewness = float((z**3).mean())
-        kurtosis = float((z**4).mean() - 3.0)  # excess kurtosis (Gaussian = 0)
-    else:
+    loss_min = float(losses.min())
+    loss_max = float(losses.max())
+    if loss_min == loss_max:
+        std = 0.0
         skewness = 0.0
         kurtosis = 0.0
+    else:
+        # loss_min < loss_max implies n >= 2, so ddof=1 is defined.
+        std = float(losses.std(ddof=1))
+        if std > 0.0:
+            z = (losses - mean) / std
+            skewness = float((z**3).mean())
+            kurtosis = float((z**4).mean() - 3.0)  # excess kurtosis (Gaussian = 0)
+        else:
+            skewness = 0.0
+            kurtosis = 0.0
     return {
         "loss_mean": mean,
         "loss_std_dev": std,
@@ -158,8 +173,8 @@ def _distribution_metrics(losses: _F64, expected_loss: float) -> dict[str, float
         "loss_skewness": skewness,
         "loss_excess_kurtosis": kurtosis,
         "loss_probability": float((losses > 0.0).mean()),
-        "loss_min": float(losses.min()),
-        "loss_max": float(losses.max()),
+        "loss_min": loss_min,
+        "loss_max": loss_max,
     }
 
 

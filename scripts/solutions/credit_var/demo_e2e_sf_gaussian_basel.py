@@ -24,7 +24,7 @@ GROUP_PARAMS: dict[str, dict[str, float]] = {}
 KDE_DISPLAY_PERCENTILE: float = 99.90
 
 
-def main():
+def main() -> None:
     """
     End-to-end demonstration of the `sf_gaussian_basel` model.
 

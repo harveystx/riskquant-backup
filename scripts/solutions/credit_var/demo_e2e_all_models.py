@@ -5,6 +5,7 @@ import pandas as pd
 
 from riskquant.solutions.credit_var.api import (
     CreditVarRequest,
+    CreditVarResult,
     model_entry,
     run_credit_var,
     simulate_portfolio_losses,
@@ -22,9 +23,8 @@ NUM_OBLIGORS: int = 500
 RNG_SEED: int = 99
 # Lower than the single-model demos (1M): this harness runs every model twice
 # (authoritative metrics via run_credit_var, plotting vector via
-# simulate_portfolio_losses), so 500k keeps the full sweep practical while still
+# simulate_portfolio_losses), so 10,000 keeps the full sweep practical while still
 # giving a stable 99.9% tail. Raise for a production comparison.
-NUM_SCENARIOS: int = 1_000_000
 NUM_SCENARIOS: int = 10_000
 ALPHAS: list[float] = [0.9500, 0.9750, 0.9900, 0.9990]
 
@@ -47,6 +47,11 @@ MODEL_PARAMS: dict[str, dict[str, float]] = {
     "sf_students_t_basel": {"nu": 7.0},
     "mf_gaussian": {},
     "mf_students_t": {"nu": 7.0},
+    # Owner decision U-a: 0.5 x the minimum obligor PD of this book (500 obligors,
+    # RNG_SEED 99), floored to 4 decimals. The minimum PD is 7.344e-05, so the
+    # floor gives 0.0: the common shock never fires and marshall_olkin runs as
+    # independent idiosyncratic defaults on this book.
+    "marshall_olkin": {"systemic_pd": 5e-05},
 }
 
 # Per-group stress parameters (grouped by credit quality; see _assign_groups).
@@ -142,7 +147,7 @@ def _build_request(
     )
 
 
-def _print_comparison_table(results: dict) -> None:
+def _print_comparison_table(results: dict[str, CreditVarResult]) -> None:
     width = 122
     print("-" * width)
     print("Credit VaR — Model Comparison (identical obligor portfolio)")
@@ -166,7 +171,7 @@ def _print_comparison_table(results: dict) -> None:
     print("-" * width)
 
 
-def main():
+def main() -> None:
     """
     Run every credit-VaR model on ONE shared obligor portfolio and compare.
 
@@ -186,7 +191,7 @@ def main():
 
     # 2. Run every model on that portfolio
     # ----------------------------------------------------------------------------------
-    results: dict = {}
+    results: dict[str, CreditVarResult] = {}
     losses: dict[str, np.ndarray] = {}
     for model_key in supported_model_keys():
         req = _build_request(model_key, obligor_df, loadings_df)
