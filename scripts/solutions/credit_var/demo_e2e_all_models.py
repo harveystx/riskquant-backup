@@ -47,10 +47,8 @@ MODEL_PARAMS: dict[str, dict[str, float]] = {
     "sf_students_t_basel": {"nu": 7.0},
     "mf_gaussian": {},
     "mf_students_t": {"nu": 7.0},
-    # Owner decision U-a: 0.5 x the minimum obligor PD of this book (500 obligors,
-    # RNG_SEED 99), floored to 4 decimals. The minimum PD is 7.344e-05, so the
-    # floor gives 0.0: the common shock never fires and marshall_olkin runs as
-    # independent idiosyncratic defaults on this book.
+    # systemic_pd = 5e-05 (owner decision 2026-11-02): below the minimum book
+    # PD 7.344e-05, so the request rule holds and the common shock can fire.
     "marshall_olkin": {"systemic_pd": 5e-05},
 }
 

@@ -1,7 +1,7 @@
 # WS_CREDIT_VAR_API / A_CONTRACT: target shapes of request and result
 
 Path: docs/workstreams/WS_CREDIT_VAR_API/A_CONTRACT.md
-Revision: 3
+Revision: 4
 Used by: S1, S2, S5
 Snapshot: SNAPSHOT commit=925533b dirty=false content_hash=046ed5dddb6305d3
 
@@ -225,7 +225,7 @@ The `es_to_var_ratio` property is removed (O-5).
 
 | Field | Python type | Constraint | JSON | Change |
 |---|---|---|---|---|
-| bin_edges | `tuple[float, ...]` | length nbins + 1, ascending | array | list to tuple; validator added in S1 |
+| bin_edges | `tuple[float, ...]` | length nbins + 1, strictly ascending | array | list to tuple; validator added in S1 |
 | counts | `tuple[int, ...]` | length nbins; sum = n_scenarios | array | list to tuple; validator added in S1 |
 
 ### 3.9 Removed from the result surface

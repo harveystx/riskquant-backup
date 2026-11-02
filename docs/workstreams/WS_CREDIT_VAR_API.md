@@ -3,8 +3,8 @@
 Path: docs/workstreams/WS_CREDIT_VAR_API.md
 Class: HEAVY
 Status: FROZEN
-Revision: 3
-Revision note: Applies owner decisions of 2026-10-31 (tripwire option 1, OD-1 (b), OD-2, ZV, U-a to U-d) to close S1 with no carried item; no audit round 3.
+Revision: 4
+Revision note: Owner decision of 2026-11-02 (OD-A): A_CONTRACT 3.8 bin_edges is strictly ascending. Editorial; no audit round.
 Date: 2026-10-29
 Branch: ws/credit-var-api
 Snapshot: SNAPSHOT commit=925533b dirty=false content_hash=046ed5dddb6305d3
@@ -75,6 +75,9 @@ Owner decisions in force:
 - 2026-10-31 (U-c): Closed by decision. The credit_var demos are not regression gates. The S1 gate runs them.
 - 2026-10-31 (U-d): The 15 demos `scripts/solutions/credit_var/demo_e2e_*.py` pass ruff check and mypy.
 - 2026-11-02 (U-a amended): demo_e2e_all_models.py uses systemic_pd = 5e-05 for marshall_olkin. The 2026-10-31 formula gives 0.0 for this book (min PD 7.344e-05), and with 0.0 the common shock never fires. Demo value only; no contract clause changes.
+- 2026-11-02 (OD-B): S1 code implements the FROZEN S1.T16 (cases 4 to 6) and S1.T17 (cases 1 and 2) rules (S1 closure review R-004 to R-007).
+- 2026-11-02 (OD-A): A_CONTRACT 3.8 bin_edges is strictly ascending, as the code enforces. Revision 4 by explicit owner decision under the tripwire; editorial only.
+- 2026-11-02 (OD-C): U-a uses systemic_pd = 5e-05 (confirmed).
 
 Depends on: none.
 Blocks: consumer releases that pin `credit_var.api`. `api.py` names the notebook, Emissary and the xlwings tool as consumers (F-31).
