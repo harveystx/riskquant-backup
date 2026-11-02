@@ -377,8 +377,8 @@ Attach: docs/workstreams/WS_CREDIT_VAR_API.md ; docs/workstreams/WS_CREDIT_VAR_A
 VERIFY FIRST: the default direction and the Student-t scaling in each kernel. Read the kernel. Do not take them from STABLE_API.md text.
 Gates: gate block; `$t = "tests/solutions/credit_var/test_oracles.py"`
 Exit: 14 tests pass; a deliberate change of one model parameter in the oracle makes the matching test fail (report the output).
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: S4 review ACCEPT 2026-11-02 at 6b98935 (gate_output_S4.txt, RERUN section: ruff, format, mypy exit=0; 14 passed against the real engine; Exit mutation fails S4.T5). OD-S4-1 (a): pytest full waived to the S2 gate, which runs on a tree that contains 6b98935.
 
 | Id | Case | Expected | Defect caught |
 |---|---|---|---|
@@ -474,6 +474,7 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - A_CONTRACT 3.8 has no counts >= 0 rule (S1 closure review, adjacent).
 - _attribution.py:loss_histogram: xmax = max(p99.9, losses.max(), 1.0), so the overflow branch and the display-percentile clip never act; the docstring is wrong (S1 closure review, adjacent).
 - src/riskquant_lab/__init__.py is not empty, against D002 (S1 closure review, adjacent).
+- Tooling: upgrade ruff (preview = true) after WS_CREDIT_VAR_API merges; one repository-wide format commit on its own branch (S4 review R-002).
 
 ## 8. Closure record
 
