@@ -1,7 +1,7 @@
 # WS_CREDIT_VAR_API / A_CONTRACT: target shapes of request and result
 
 Path: docs/workstreams/WS_CREDIT_VAR_API/A_CONTRACT.md
-Revision: 2
+Revision: 3
 Used by: S1, S2, S5
 Snapshot: SNAPSHOT commit=925533b dirty=false content_hash=046ed5dddb6305d3
 
@@ -143,8 +143,8 @@ Reserved set (rule 15, C.17, F-36): for mf_gaussian and mf_students_t, the name
 | headline_alpha | `float` | max of request alphas | number | none |
 | summary | `RiskSummary` | section 3.2 | object | changed |
 | per_model_tail | `dict[str, ModelTail]` | keys are JtdModel names (C.7) | object | key vocabulary |
-| loss_percentiles | `tuple[PercentileLoss, ...]` | 16 records, ascending percentile | array | dict to records |
-| obligor_contributions | `tuple[ObligorContribution, ...]` | one per request obligor, ascending obligor_uid | array | tuple; order defined |
+| loss_percentiles | `tuple[PercentileLoss, ...]` | 16 records, strictly ascending percentile | array | dict to records |
+| obligor_contributions | `tuple[ObligorContribution, ...]` | one per request obligor, strictly ascending obligor_uid | array | tuple; order defined |
 | loss_histogram | `LossHistogram` | section 3.8 | object | tuples |
 | stress_test | `StressTestResult \| None` | None when no obligor has in_stress_test | object or null | none |
 | provenance | `RunProvenance` | section 3.10 | object | changed |
@@ -154,15 +154,15 @@ Reserved set (rule 15, C.17, F-36): for mf_gaussian and mf_students_t, the name
 | Field | Python type | Constraint | JSON | Change |
 |---|---|---|---|---|
 | loss_mean | `float` | finite | number | none |
-| loss_std_dev | `float` | finite, >= 0 | number | none |
-| loss_skewness | `float` | finite | number | none |
-| loss_excess_kurtosis | `float` | finite | number | none |
-| loss_probability | `float` | 0 <= v <= 1 | number | none |
+| loss_std_dev | `float` | finite, >= 0; 0.0 when loss_min == loss_max (ZV) | number | ZV rule added; validator added in S1 |
+| loss_skewness | `float` | finite; 0.0 when loss_min == loss_max (ZV) | number | ZV rule added; validator added in S1 |
+| loss_excess_kurtosis | `float` | finite; 0.0 when loss_min == loss_max (ZV) | number | ZV rule added; validator added in S1 |
+| loss_probability | `float` | 0 <= v <= 1 | number | validator added in S1 |
 | loss_min | `float` | finite | number | none |
 | loss_max | `float` | finite | number | none |
 | coefficient_of_variation | `float` | finite | number | none |
-| by_alpha | `tuple[AlphaRisk, ...]` | one per request alpha, ascending | array | new; replaces var, es, economic_capital_var, economic_capital_es |
-| expected_loss_by_model | `dict[str, float]` | keys are JtdModel names (C.7) | object | key vocabulary |
+| by_alpha | `tuple[AlphaRisk, ...]` | one per request alpha, strictly ascending | array | new; replaces var, es, economic_capital_var, economic_capital_es; validator added in S1 |
+| expected_loss_by_model | `dict[str, float]` | keys are JtdModel names (C.7) | object | key vocabulary; validator added in S1 |
 
 Methods: `at(alpha: float) -> AlphaRisk` (new, C.4). It raises KeyError for a
 level that the run did not compute (O-9). Removed: `max_alpha`, `get_var`,
@@ -219,14 +219,14 @@ The `es_to_var_ratio` property is removed (O-5).
 | StressTestObligor | obligor_uid, ead, lgd, loss | `int`, `float`, `float`, `float` | none |
 | StressTestResult | n_obligors | `int` | none |
 | StressTestResult | total_loss | `float` | none |
-| StressTestResult | obligors | `tuple[StressTestObligor, ...]`, ascending obligor_uid | tuple; order defined |
+| StressTestResult | obligors | `tuple[StressTestObligor, ...]`, strictly ascending obligor_uid | tuple; order defined |
 
 ### 3.8 LossHistogram
 
 | Field | Python type | Constraint | JSON | Change |
 |---|---|---|---|---|
-| bin_edges | `tuple[float, ...]` | length nbins + 1, ascending | array | list to tuple |
-| counts | `tuple[int, ...]` | length nbins; sum = n_scenarios | array | list to tuple |
+| bin_edges | `tuple[float, ...]` | length nbins + 1, ascending | array | list to tuple; validator added in S1 |
+| counts | `tuple[int, ...]` | length nbins; sum = n_scenarios | array | list to tuple; validator added in S1 |
 
 ### 3.9 Removed from the result surface
 

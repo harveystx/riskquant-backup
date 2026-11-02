@@ -3,8 +3,8 @@
 Path: docs/workstreams/WS_CREDIT_VAR_API.md
 Class: HEAVY
 Status: FROZEN
-Revision: 2
-Revision note: Applies R_FREEZE_RECONCILIATION_R1 (audit round 1 of 2, one round in two sessions): BLOCKING findings, owner decisions O-4 to O-13, promoted refinements.
+Revision: 3
+Revision note: Applies owner decisions of 2026-10-31 (tripwire option 1, OD-1 (b), OD-2, ZV, U-a to U-d) to close S1 with no carried item; no audit round 3.
 Date: 2026-10-29
 Branch: ws/credit-var-api
 Snapshot: SNAPSHOT commit=925533b dirty=false content_hash=046ed5dddb6305d3
@@ -66,6 +66,14 @@ Owner decisions in force:
 - 2026-10-29 (R1 A-08): `input_hash` keeps the D040 canonical form. C.10 states equality as field-wise bit-equal models.
 - 2026-10-29 (R1 R-05): A factor-name collision is a request error (C.17).
 - 2026-10-29: Audit round 1 ran in two sessions and counts as one round.
+- 2026-10-31 (TRIPWIRE, option 1): Build v1 now from the current text. Revision 3 closes S1 with no carried item. No audit round 3: the S1 closure FULL review checks the changed text against the code.
+- 2026-10-31 (OD-1, option (b)): S1 enforces the constraint columns of A_CONTRACT sections 3.2 and 3.8 by validation (S1.T16).
+- 2026-10-31 (OD-2): Result record order is strictly ascending (A_CONTRACT sections 3.1, 3.2, 3.7).
+- 2026-10-31 (ZV): When loss_min == loss_max, loss_std_dev, loss_skewness and loss_excess_kurtosis are 0.0 (A_CONTRACT section 3.2, S1.T17).
+- 2026-10-31 (U-a): demo_e2e_all_models.py gets marshall_olkin params: systemic_pd = 0.5 x min book PD, floored to 4 decimals.
+- 2026-10-31 (U-b): In demo_e2e_stress_regime_bernoulli_grouped.py, the " " key is replaced by the missing accepted key.
+- 2026-10-31 (U-c): Closed by decision. The credit_var demos are not regression gates. The S1 gate runs them.
+- 2026-10-31 (U-d): The 15 demos `scripts/solutions/credit_var/demo_e2e_*.py` pass ruff check and mypy.
 
 Depends on: none.
 Blocks: consumer releases that pin `credit_var.api`. `api.py` names the notebook, Emissary and the xlwings tool as consumers (F-31).
@@ -268,18 +276,18 @@ Depends on: none. S1 creates CreditVarEngineError; S2 applies the error mapping.
 Files:
 - create: src/riskquant/solutions/credit_var/errors.py; src/riskquant/solutions/credit_var/provenance.py; tests/solutions/credit_var/test_result_contract.py; tests/solutions/credit_var/test_reproducibility.py
 - modify: src/riskquant/solutions/credit_var/schemas.py; src/riskquant/solutions/credit_var/run.py; tests/credit/factors/test_batch_size_reproducibility.py
-- modify, if the FIRST step finds a reader of a removed field: scripts/solutions/credit_var/demo_e2e_*.py
+- modify: scripts/solutions/credit_var/demo_e2e_*.py (15 files): each reader of a removed field that the FIRST step finds; U-a; U-b; U-d
 FIRST: Search `src/`, `scripts/` and `tests/` for `summary.var`, `summary.es`, `economic_capital_`, `loss_percentiles`, `get_var`, `get_es`, `max_alpha`, `es_to_var_ratio`, `per_model_tail`. Report every hit. STOP AND ASK for a hit outside the Files list.
 Prohibited: src/riskquant/credit/**; src/riskquant/scenario_metrics/**; src/riskquant/jit.py; src/riskquant/solutions/run_identity/**; catalog.py; recipes.py; request models; pyproject.toml; DECISIONS.md.
 Attach: docs/workstreams/WS_CREDIT_VAR_API.md ; docs/workstreams/WS_CREDIT_VAR_API/A_CONTRACT.md ; docs/CLAUDE.md ; docs/DECISIONS.md ; context_riskquant_index.txt ; context_riskquant_solutions_credit_var.txt ; context_riskquant_credit.txt ; context_riskquant_solutions_run_identity.txt ; context_riskquant_tests_credit.txt
-Gates: gate block; `$t = "tests/solutions/credit_var", "tests/credit/factors/test_batch_size_reproducibility.py", "tests/credit/jtd/test_beta_binomial_contract.py"`
+Gates: gate block; `$t = "tests/solutions/credit_var", "tests/credit/factors/test_batch_size_reproducibility.py", "tests/credit/jtd/test_beta_binomial_contract.py"`; then the 15 demos (U-c): `Get-ChildItem scripts/solutions/credit_var/demo_e2e_*.py | ForEach-Object { python $_.FullName; "$($_.Name) exit=$LASTEXITCODE" }`, each with exit=0
 Exit: every S1 test passes; full suite passes; no NaN, no level-keyed dict and no "0+unknown" path remains in credit_var.
-Status: NOT_STARTED
-Evidence: none
+Status: IN_PROGRESS
+Evidence: S1 review ACCEPT 2026-10-31 (R-001, R-002 closed) for the code at f03f09f; closure open: S1.T16 (OD-1), S1.T17 (ZV), U-a, U-b, U-d.
 
 | Id | Case | Expected | Defect caught |
 |---|---|---|---|
-| S1.T1 | NaN, +inf, -inf in each float field of each result model | ValidationError (finite_number) | NaN or inf reaching JSON as null (F-13) |
+| S1.T1 | Each result model: NaN, +inf and -inf in each float field, including a float value in a dict field; assignment to each field; an extra key in the payload; each sequence field built from a list | ValidationError (finite_number); ValidationError (frozen_instance); ValidationError (extra_forbidden); the field holds a tuple | NaN or inf reaching JSON as null (F-13); mutable result (F-3); silent extra key; in-place mutation of a list field (S1 review R-002) |
 | S1.T2 | Result payload with result_schema_version "0.9" and "1.1" | ValidationError | silent acceptance of a foreign version |
 | S1.T3 | alphas (0.999, 0.95, 0.9999, 0.99991) | 4 records, ascending, alpha.hex() equal to input | collision, reorder, rounding (F-4) |
 | S1.T4 | alphas (0.99995, 0.999999) | 2 records; neither equals 1.0 | "100.00%" label (F-4) |
@@ -294,6 +302,8 @@ Evidence: none
 | S1.T13 | LF-normalized SHA-256 of mixed.py | equals recorded value | unrecorded construction change |
 | S1.T14 | One request: twice in process, once in a fresh subprocess | byte-equal JSON without generated_at | D-C15 reproducibility |
 | S1.T15 | Batch-invariance test rewritten on by_alpha | bitwise equality across `_FACTOR_BATCH` values | test drift (F-24) |
+| S1.T16 | One result payload per bound of A_CONTRACT 3.2 and 3.8, each with exactly one fault: loss_std_dev -1.0; loss_probability -0.1; loss_probability 1.1; by_alpha not strictly ascending; by_alpha alpha set not equal to provenance.alphas; an expected_loss_by_model key that is not a JtdModel name; bin_edges not ascending; len(bin_edges) != len(counts) + 1; sum(counts) != provenance.n_scenarios | ValidationError in each case | a result that breaks a declared constraint and still serializes (OD-1) |
+| S1.T17 | Run: forced_default, one obligor, ead 450000.3, lgd 1.0, S = 2_000 (constant loss); payload with loss_min == loss_max and loss_skewness 0.5 | loss_std_dev, loss_skewness and loss_excess_kurtosis equal 0.0; ValidationError | non-zero moments from rounding of the mean at zero variance (sandbox, numpy 2.4.4: a constant 450000.3 vector of length 2_000 gives std 1.16e-10, skewness 0.999) (ZV) |
 
 Appendix: A_CONTRACT.md
 
@@ -414,8 +424,8 @@ Book: deterministic synthetic book from a fixed seed, PD in [0.005, 0.05], LGD 0
 Record: exact command, CPU model, core count, RAM, OS, Python, NumPy, SciPy, Numba versions, `numba.threading_layer()`, NUMBA_NUM_THREADS, riskquant commit.
 Gates: `$f = "scripts/solutions/credit_var/bench_credit_var_api.py"`; ruff check and ruff format --check on `$f`; then `python scripts/solutions/credit_var/bench_credit_var_api.py *>&1 | Tee-Object -FilePath bench_output.txt`
 Exit: owner machine output saved as docs/workstreams/WS_CREDIT_VAR_API/R_BENCHMARK_R1.md. A sandbox run is sandbox evidence only.
-Status: NOT_STARTED
-Evidence: none
+Status: IN_PROGRESS
+Evidence: Script committed at db92afc; gates and smoke run pass on the owner machine; full run and QUICK review pending.
 
 ## 7. Risks and deferred
 
@@ -454,10 +464,6 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - C.13, C.24: state whether BLAS thread settings are inside the contract (`_attribution.obligor_ul_contribution`) (R1 R-20).
 - R2-02: the audit did not verify K12 rule 6 at 60x60x300 nodes; S4 runs the rule 6 self-check before any K12 assertion.
 - riskquant-excel: not checked against the S1 result contract. Owner decision 2026-10-30: out of scope, no current users. Check it before any Excel tool work.
-- S1 U-a: demo_e2e_all_models.py has no marshall_olkin entry in MODEL_PARAMS and raises KeyError. Existed before S1. Owner decides the systemic_pd value or excludes the key.
-- S1 U-b: demo_e2e_stress_regime_bernoulli_grouped.py has the parameter key " " in GROUP_PARAMS["CYCLICAL"]. Existed before S1.
-- S1 U-c: tests/e2e does not run the credit_var demos to completion, so U-a and U-b were not detected.
-- S1 U-d: scripts/solutions/credit_var/demo_e2e_*.py fail ruff check and mypy for reasons that existed before S1. Separate cleanup.
 
 ## 8. Closure record
 
