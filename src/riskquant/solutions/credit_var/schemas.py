@@ -4,9 +4,35 @@ Pydantic schemas for the credit-VaR solution.
 
 The wire contract for Emissary (and any JSON client): a request payload in, a
 result payload out, both validated and JSON-native. Pydantic does the field- and
-cross-field validation; its `ValidationError.errors()` already carries `loc`
-paths (e.g. ``("obligors", 2, "ead")``) that a front-end maps straight to a cell,
-so this doubles as the structured, cell-addressable validation layer.
+cross-field validation; its `ValidationError.errors()` carries `loc` paths
+(e.g. ``("obligors", 2, "ead")``) that a front-end maps straight to a cell, so
+this doubles as the structured, cell-addressable validation layer.
+
+Request contract (WS_CREDIT_VAR_API S2, A_CONTRACT sections 1 and 2)
+--------------------------------------------------------------------
+* Every request model is frozen, forbids extra fields and rejects NaN and
+  +/-inf in every float, including a float inside a dict or a tuple.
+* Coercion is strict (O-8). An int field accepts an int only (not a bool, a
+  float, a str or a numpy integer). A float field accepts a float or an int
+  and stores a float. A bool field accepts a bool only. A str field accepts a
+  str only. The rules apply to dict keys, dict values and sequence elements.
+  Silent coercion would let ``"100"`` or ``7.0`` reach the engine as a value
+  that the author did not write.
+* A sequence field (``obligors``, ``loadings``, ``groups``, ``alphas``)
+  accepts a list or a tuple and stores a tuple. A set, a generator or a str
+  raises. ``frozen=True`` blocks assignment only, so the tuple is what stops
+  in-place mutation of a sequence. Dict fields stay dicts; the entry points
+  validate the request state again at call time (C.15).
+* Every request-content rule that the engine enforces is also a request rule,
+  so a request that validates does not fail in the engine for its content
+  (C.17): seed >= 0, obligor_uid in the int64 range, no duplicate
+  (obligor_uid, factor) loading, a per-obligor sum of loading^2 <= 1 + 1e-9,
+  and no loadings factor name in the reserved set of the multi-factor recipes.
+* There is no size limit other than the field constraints (O-12).
+* Each rule raises ``pydantic.ValidationError`` with exactly one entry at the
+  loc of A_CONTRACT section 2.5. A cross-row rule addresses the offending row
+  and field, not the request root: `_request_fault` builds the error with its
+  own loc, which pydantic passes through from a model validator (F-35).
 
 Result contract (WS_CREDIT_VAR_API S1, result schema version 1.0)
 -----------------------------------------------------------------
@@ -51,12 +77,15 @@ consumer.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from typing import Any, Final, Literal
+import math
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Annotated, Any, Final, Literal
 
 import pandas as pd
 
 __all__ = [
+    "DEFAULT_N_SCENARIOS",
+    "LOADING_SUM_SQ_TOLERANCE",
     "RESULT_SCHEMA_VERSION",
     "AlphaRisk",
     "CreditVarRequest",
@@ -76,27 +105,147 @@ __all__ = [
 ]
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
+    ValidationError,
     field_validator,
     model_validator,
 )
+from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from riskquant.credit.jtd.models import VALID_JTD_MODEL_NAMES
 from riskquant.solutions.credit_var.catalog import MODEL_CATALOG, model_entry
 from riskquant.solutions.credit_var.provenance import ScenarioConstructionId
+from riskquant.solutions.credit_var.recipes import (
+    CHI_FACTOR_NAME,
+    idiosyncratic_factor_name,
+)
 
-_STRICT = ConfigDict(extra="forbid", protected_namespaces=())
+# ===========================================================================
+# Request (WS_CREDIT_VAR_API S2, A_CONTRACT section 2)
+# ===========================================================================
+
+_REQUEST = ConfigDict(
+    extra="forbid",
+    frozen=True,
+    allow_inf_nan=False,
+    protected_namespaces=(),
+    strict=True,
+)
+
+_PREVIEW = 10  # bounded offender preview in validation errors
+
+#: int64 range of `obligor_uid`. The engine holds uids in int64 arrays; a uid
+#: outside the range would wrap silently or raise OverflowError there (F-12).
+_INT64_MIN: Final[int] = -(2**63)
+_INT64_MAX: Final[int] = 2**63 - 1
+
+#: Tolerance of the per-obligor rule sum(loading^2) <= 1 + tolerance. It is the
+#: tolerance of the engine check `credit.jtd.ingest.validate._semantic_mf_gaussian`,
+#: so the request rule and the engine rule accept the same loadings.
+LOADING_SUM_SQ_TOLERANCE: Final[float] = 1e-9
+
+#: Default scenario count of a request. `CreditVarRequest.from_dataframe` uses
+#: the same name, so the two defaults cannot differ (C.21).
+DEFAULT_N_SCENARIOS: Final[int] = 250_000
+
+#: Multi-factor recipes and whether each adds the shared chi-square factor. The
+#: recipe adds one idiosyncratic factor per obligor to the universe beside the
+#: loadings factors, so a loadings factor with one of these names collides in
+#: the factor universe (F-36, A_CONTRACT section 2.5 rule 15).
+_MF_RECIPE_HAS_CHI: Final[Mapping[str, bool]] = {
+    "mf_gaussian": False,
+    "mf_students_t": True,
+}
+
+
+def _list_or_tuple(value: object) -> object:
+    """Admit a list or a tuple as a tuple (O-8, C.18).
+
+    ``None`` passes through: the field type then decides (an optional field
+    accepts it, a required field rejects it). Every other type raises, also a
+    set (no defined order), a generator (consumed once) and a str (a sequence
+    of characters, never an intended sequence of rows).
+    """
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple)):
+        return tuple(value)
+    raise PydanticCustomError(
+        "list_or_tuple_type",
+        "Input should be a list or a tuple, not {input_type}",
+        {"input_type": type(value).__name__},
+    )
+
+
+def _non_empty(value: tuple[Any, ...]) -> tuple[Any, ...]:
+    """Reject an empty sequence.
+
+    An after-validator and not ``Field(min_length=1)``: pydantic adds a second
+    ``too_short`` entry to an element fault when the only element fails, which
+    breaks the one-entry-per-fault rule of A_CONTRACT section 2.5. An
+    after-validator runs only when every element is valid.
+    """
+    if not value:
+        raise PydanticCustomError(
+            "too_short", "Input should have at least 1 item, not 0"
+        )
+    return value
+
+
+_AsTuple = BeforeValidator(_list_or_tuple)
+_NonEmpty = AfterValidator(_non_empty)
+#: JSON-schema statement of the non-empty rule that `_NonEmpty` enforces.
+_NON_EMPTY_SCHEMA: Final[dict[str, Any]] = {"minItems": 1}
+
+_Alpha = Annotated[float, Field(gt=0.0, lt=1.0)]
+_ObligorUid = Annotated[int, Field(ge=_INT64_MIN, le=_INT64_MAX)]
+
+_Loc = tuple[str | int, ...]
+
+
+def _request_fault(loc: _Loc, reason: str, value: object) -> ValidationError:
+    """A request error with one entry at `loc` (A_CONTRACT section 2.5).
+
+    Raised inside a model validator, a ``ValidationError`` reaches the caller
+    with its own loc; a ``ValueError`` would get the loc ``()`` (F-35). The
+    reason goes through the ``{reason}`` template slot, so braces in it are
+    text, not template fields.
+    """
+    return ValidationError.from_exception_data(
+        title="CreditVarRequest",
+        line_errors=[
+            InitErrorDetails(
+                type=PydanticCustomError(
+                    "credit_var_request", "{reason}", {"reason": reason}
+                ),
+                loc=loc,
+                input=value,
+            )
+        ],
+    )
+
+
+def _second_occurrence(values: Sequence[object]) -> int | None:
+    """Index of the first value that occurs at a lower index, else ``None``."""
+    seen: set[object] = set()
+    for index, value in enumerate(values):
+        if value in seen:
+            return index
+        seen.add(value)
+    return None
 
 
 class ObligorRow(BaseModel):
     """One obligor: the flat desk row."""
 
-    model_config = _STRICT
+    model_config = _REQUEST
 
-    obligor_uid: int
-    ead: float = Field(ge=0.0, description="Exposure at default (>= 0).")
+    obligor_uid: _ObligorUid
+    ead: float = Field(ge=0.0, description="Exposure at default (finite, >= 0).")
     pd: float = Field(ge=0.0, le=1.0, description="Probability of default in [0, 1].")
     lgd: float = Field(ge=0.0, le=1.0, description="Loss given default in [0, 1].")
     in_stress_test: bool = Field(
@@ -131,9 +280,9 @@ class LoadingRow(BaseModel):
     defines the model's systemic factors; per-obligor idiosyncratic weight is the
     engine residual sqrt(1 - sum loading^2)."""
 
-    model_config = _STRICT
+    model_config = _REQUEST
 
-    obligor_uid: int
+    obligor_uid: _ObligorUid
     factor: str = Field(min_length=1)
     loading: float = Field(ge=-1.0, le=1.0)
 
@@ -146,165 +295,298 @@ class GroupRow(BaseModel):
     BETA_PD / STRESS_INDICATOR factor, so defaults correlate within a group and are
     independent across groups."""
 
-    model_config = _STRICT
+    model_config = _REQUEST
 
     name: str = Field(min_length=1)
     params: dict[str, float] = Field(default_factory=dict)
 
 
-_PREVIEW = 10  # bounded offender preview in validation errors
-
-
 class CreditVarRequest(BaseModel):
-    """A single credit-VaR run, as a JSON payload."""
+    """A single credit-VaR run, as a JSON payload.
 
-    model_config = _STRICT
+    The request keeps the caller's alpha order; the result sorts (C.3). The
+    cross-field rules run in the order of A_CONTRACT section 2.5, and the first
+    fault raises. A request with one fault therefore gives one error entry.
+    """
+
+    model_config = _REQUEST
 
     model: str = Field(description="Model key, e.g. 'sf_gaussian'.")
-    obligors: list[ObligorRow] = Field(min_length=1)
+    obligors: Annotated[tuple[ObligorRow, ...], _AsTuple, _NonEmpty] = Field(
+        json_schema_extra=_NON_EMPTY_SCHEMA
+    )
     params: dict[str, float] = Field(default_factory=dict)
-    loadings: list[LoadingRow] | None = Field(
+    loadings: Annotated[tuple[LoadingRow, ...] | None, _AsTuple] = Field(
         default=None,
         description="Systemic loadings for multi-factor models; omit otherwise.",
     )
-    groups: list[GroupRow] | None = Field(
+    groups: Annotated[tuple[GroupRow, ...] | None, _AsTuple] = Field(
         default=None,
         description="Per-group factor parameters for grouped models; omit otherwise.",
     )
-    n_scenarios: int = Field(default=250_000, gt=0)
-    alphas: list[float] = Field(
-        default_factory=lambda: [0.9500, 0.9750, 0.9900, 0.9990]
+    n_scenarios: int = Field(default=DEFAULT_N_SCENARIOS, gt=0)
+    alphas: Annotated[tuple[_Alpha, ...], _AsTuple, _NonEmpty] = Field(
+        default=(0.9500, 0.9750, 0.9900, 0.9990),
+        json_schema_extra=_NON_EMPTY_SCHEMA,
     )
-    seed: int = 12345
+    seed: int = Field(default=12345, ge=0)
 
     @property
     def n_obligors(self) -> int:
         return len(self.obligors)
 
-    @field_validator("alphas")
-    @classmethod
-    def _alphas_unit_interval(cls, v: list[float]) -> list[float]:
-        if not v:
-            raise ValueError("at least one confidence level is required.")
-        for a in v:
-            if not (0.0 < a < 1.0):
-                raise ValueError(f"confidence level {a} must be in (0, 1).")
-        return v
-
     @model_validator(mode="after")
-    def _validate_model_and_params(self) -> CreditVarRequest:
+    def _admission_rules(self) -> CreditVarRequest:
+        """Cross-field rules of A_CONTRACT section 2.5, rules 4 to 25, in order.
+
+        Field rules (1 to 3) ran before this validator; it runs only when every
+        field is valid. One validator, not several: pydantic stops at the first
+        validator that raises, and a fixed rule order makes the reported fault
+        deterministic.
+        """
+        self._check_alphas_distinct()
+        self._check_model_and_params()
+        self._check_unique_uids()
+        self._check_loadings()
+        self._check_groups()
+        self._check_marshall_olkin_systemic_pd()
+        self._check_obligor_rho()
+        return self
+
+    def _check_alphas_distinct(self) -> None:
+        """Rule 4. The result holds one record per alpha, and `RiskSummary.at`
+        looks a level up under ``==``; two equal alphas would give two records
+        for one level (O-1). Distinct floats, even 1 ulp apart, are distinct
+        levels."""
+        index = _second_occurrence(self.alphas)
+        if index is not None:
+            raise _request_fault(
+                ("alphas", index),
+                f"duplicate confidence level {self.alphas[index]!r}; each alpha "
+                "must be distinct under ==.",
+                self.alphas[index],
+            )
+
+    def _check_model_and_params(self) -> None:
+        """Rules 5, 6 and 7."""
         if self.model not in MODEL_CATALOG:
-            raise ValueError(
-                f"unknown model '{self.model}'. Supported: {sorted(MODEL_CATALOG)}."
+            raise _request_fault(
+                ("model",),
+                f"unknown model '{self.model}'. Supported: {sorted(MODEL_CATALOG)}.",
+                self.model,
             )
         entry = model_entry(self.model)
         known = {p.key for p in entry.params}
-        unknown = set(self.params) - known
-        if unknown:
-            raise ValueError(
-                f"model '{self.model}' does not accept param(s) {sorted(unknown)}. "
-                f"Accepted: {sorted(known)}."
-            )
-        for p in entry.params:
-            if p.key in self.params and not p.contains(self.params[p.key]):
-                raise ValueError(
-                    f"param '{p.key}' = {self.params[p.key]} out of range "
-                    f"{p.interval_repr}."
+        for key in self.params:
+            if key not in known:
+                raise _request_fault(
+                    ("params", key),
+                    f"model '{self.model}' does not accept param '{key}'. "
+                    f"Accepted: {sorted(known)}.",
+                    self.params[key],
                 )
-        return self
+        for spec in entry.params:
+            if spec.key in self.params and not spec.contains(self.params[spec.key]):
+                raise _request_fault(
+                    ("params", spec.key),
+                    f"param '{spec.key}' = {self.params[spec.key]} out of range "
+                    f"{spec.interval_repr}.",
+                    self.params[spec.key],
+                )
 
-    @model_validator(mode="after")
-    def _unique_uids(self) -> CreditVarRequest:
-        uids = [o.obligor_uid for o in self.obligors]
-        if len(uids) != len(set(uids)):
-            raise ValueError("duplicate obligor uid(s).")
-        return self
+    def _check_unique_uids(self) -> None:
+        """Rule 8."""
+        index = _second_occurrence([o.obligor_uid for o in self.obligors])
+        if index is not None:
+            uid = self.obligors[index].obligor_uid
+            raise _request_fault(
+                ("obligors", index, "obligor_uid"),
+                f"duplicate obligor uid {uid}.",
+                uid,
+            )
 
-    @model_validator(mode="after")
-    def _validate_loadings(self) -> CreditVarRequest:
-        if self.model not in MODEL_CATALOG:
-            return self  # unknown model already reported
-        requires = model_entry(self.model).requires_loadings
-        if not requires:
+    def _check_loadings(self) -> None:
+        """Rules 9 to 15."""
+        if not model_entry(self.model).requires_loadings:
             if self.loadings:
-                raise ValueError(f"model '{self.model}' does not use a loadings table.")
-            return self
-        if not self.loadings:
-            raise ValueError(
-                f"model '{self.model}' requires a non-empty 'loadings' table "
-                "(one row per obligor x systemic factor)."
-            )
-        obligor_uids = {o.obligor_uid for o in self.obligors}
-        stray = sorted({lo.obligor_uid for lo in self.loadings} - obligor_uids)
-        if stray:
-            raise ValueError(f"loadings reference uid(s) not in obligors: {stray}.")
-        uncovered = sorted(obligor_uids - {lo.obligor_uid for lo in self.loadings})
-        if uncovered:
-            raise ValueError(f"obligor(s) have no systemic loadings: {uncovered}.")
-        return self
-
-    @model_validator(mode="after")
-    def _validate_groups(self) -> CreditVarRequest:
-        if self.model not in MODEL_CATALOG:
-            return self  # unknown model already reported
-        requires = model_entry(self.model).requires_groups
-        has_obligor_groups = any(o.group is not None for o in self.obligors)
-        if not requires:
-            if self.groups:
-                raise ValueError(f"model '{self.model}' does not use obligor groups.")
-            if has_obligor_groups:
-                raise ValueError(
-                    f"model '{self.model}' does not use obligor groups; remove the "
-                    "'group' column."
+                raise _request_fault(
+                    ("loadings",),
+                    f"model '{self.model}' does not use a loadings table.",
+                    len(self.loadings),
                 )
-            return self
+            return
+        if not self.loadings:
+            raise _request_fault(
+                ("loadings",),
+                f"model '{self.model}' requires a non-empty 'loadings' table "
+                "(one row per obligor x systemic factor).",
+                self.loadings,
+            )
+        loadings = self.loadings
+        obligor_uids = {o.obligor_uid for o in self.obligors}
+        for j, row in enumerate(loadings):
+            if row.obligor_uid not in obligor_uids:
+                raise _request_fault(
+                    ("loadings", j, "obligor_uid"),
+                    f"loadings reference uid {row.obligor_uid}, which is not in "
+                    "obligors.",
+                    row.obligor_uid,
+                )
+        loaded_uids = {row.obligor_uid for row in loadings}
+        for i, obligor in enumerate(self.obligors):
+            if obligor.obligor_uid not in loaded_uids:
+                raise _request_fault(
+                    ("obligors", i, "obligor_uid"),
+                    f"obligor {obligor.obligor_uid} has no systemic loadings.",
+                    obligor.obligor_uid,
+                )
+        index = _second_occurrence([(row.obligor_uid, row.factor) for row in loadings])
+        if index is not None:
+            row = loadings[index]
+            raise _request_fault(
+                ("loadings", index, "factor"),
+                f"obligor {row.obligor_uid} loads on systemic factor "
+                f"'{row.factor}' twice.",
+                row.factor,
+            )
+        self._check_loading_sum_sq(loadings)
+        self._check_reserved_factor_names(loadings)
+
+    @staticmethod
+    def _check_loading_sum_sq(loadings: tuple[LoadingRow, ...]) -> None:
+        """Rule 14: per obligor, sum(loading^2) <= 1 + LOADING_SUM_SQ_TOLERANCE.
+
+        The idiosyncratic weight is sqrt(1 - sum loading^2); above 1 there is
+        no real residual. Each prefix sum is ``math.fsum`` of the squares in
+        request order: the exactly rounded sum, so the decision does not depend
+        on the summation order, and the engine's compensated group sum agrees
+        with it except within a few ulp of the threshold. The squares are
+        ``x * x``, the value of the engine's float64 ``x ** 2``. The loc is the
+        first row at which the running sum exceeds the bound.
+        """
+        bound = 1.0 + LOADING_SUM_SQ_TOLERANCE
+        squares: dict[int, list[float]] = {}
+        for j, row in enumerate(loadings):
+            terms = squares.setdefault(row.obligor_uid, [])
+            terms.append(row.loading * row.loading)
+            total = math.fsum(terms)
+            if total > bound:
+                raise _request_fault(
+                    ("loadings", j, "loading"),
+                    f"obligor {row.obligor_uid}: sum of squared loadings "
+                    f"{total!r} exceeds 1 + {LOADING_SUM_SQ_TOLERANCE!r} at this "
+                    "row; the idiosyncratic weight sqrt(1 - sum) is undefined.",
+                    row.loading,
+                )
+
+    def _check_reserved_factor_names(self, loadings: tuple[LoadingRow, ...]) -> None:
+        """Rule 15: no loadings factor takes a name that the recipe adds.
+
+        The reserved set is the recipe's own names: one idiosyncratic factor
+        per request obligor_uid (`recipes.idiosyncratic_factor_name`) and, for
+        mf_students_t, the shared chi-square factor (`recipes.CHI_FACTOR_NAME`).
+        """
+        has_chi = _MF_RECIPE_HAS_CHI.get(self.model)
+        if has_chi is None:
+            return
+        reserved = {idiosyncratic_factor_name(o.obligor_uid) for o in self.obligors}
+        if has_chi:
+            reserved.add(CHI_FACTOR_NAME)
+        for j, row in enumerate(loadings):
+            if row.factor in reserved:
+                raise _request_fault(
+                    ("loadings", j, "factor"),
+                    f"factor name '{row.factor}' is reserved for model "
+                    f"'{self.model}': the recipe adds a factor of that name to "
+                    "the factor universe.",
+                    row.factor,
+                )
+
+    def _check_groups(self) -> None:
+        """Rules 16 to 23."""
+        entry = model_entry(self.model)
+        if not entry.requires_groups:
+            if self.groups:
+                raise _request_fault(
+                    ("groups",),
+                    f"model '{self.model}' does not use obligor groups.",
+                    len(self.groups),
+                )
+            for i, obligor in enumerate(self.obligors):
+                if obligor.group is not None:
+                    raise _request_fault(
+                        ("obligors", i, "group"),
+                        f"model '{self.model}' does not use obligor groups; "
+                        "remove the 'group' column.",
+                        obligor.group,
+                    )
+            return
         # Grouped model: per-group params live in 'groups', not request-level params.
         if self.params:
-            raise ValueError(
+            raise _request_fault(
+                ("params",),
                 f"model '{self.model}' takes per-group params (in 'groups'), not "
-                "request-level 'params'."
+                "request-level 'params'.",
+                dict(self.params),
             )
         if not self.groups:
-            raise ValueError(
+            raise _request_fault(
+                ("groups",),
                 f"model '{self.model}' requires a non-empty 'groups' table "
-                "(one row per pool/regime with its parameters)."
+                "(one row per pool/regime with its parameters).",
+                self.groups,
             )
-        ungrouped = sorted(o.obligor_uid for o in self.obligors if o.group is None)
-        if ungrouped:
-            raise ValueError(f"obligor(s) have no group: {ungrouped}.")
-        names = [g.name for g in self.groups]
-        if len(names) != len(set(names)):
-            raise ValueError("duplicate group name(s) in 'groups'.")
-        defined = set(names)
-        used = {o.group for o in self.obligors}
-        undefined = used - defined
-        if undefined:
-            raise ValueError(f"obligor group(s) not defined in 'groups': {undefined}.")
-        # Validate each group's params against the model's per-group spec.
-        entry = model_entry(self.model)
-        spec_keys = {p.key for p in entry.params}
-        for g in self.groups:
-            unknown = set(g.params) - spec_keys
-            if unknown:
-                raise ValueError(
-                    f"group '{g.name}' has unknown param(s) {sorted(unknown)}. "
-                    f"Accepted: {sorted(spec_keys)}."
+        groups = self.groups
+        for i, obligor in enumerate(self.obligors):
+            if obligor.group is None:
+                raise _request_fault(
+                    ("obligors", i, "group"),
+                    f"obligor {obligor.obligor_uid} has no group.",
+                    obligor.group,
                 )
-            for p in entry.params:
-                if p.key not in g.params:
-                    raise ValueError(
-                        f"group '{g.name}' is missing required param '{p.key}'."
+        index = _second_occurrence([g.name for g in groups])
+        if index is not None:
+            raise _request_fault(
+                ("groups", index, "name"),
+                f"duplicate group name '{groups[index].name}' in 'groups'.",
+                groups[index].name,
+            )
+        defined = {g.name for g in groups}
+        for i, obligor in enumerate(self.obligors):
+            if obligor.group not in defined:
+                raise _request_fault(
+                    ("obligors", i, "group"),
+                    f"obligor group '{obligor.group}' is not defined in 'groups'.",
+                    obligor.group,
+                )
+        # Each group's params against the model's per-group spec.
+        spec_keys = {p.key for p in entry.params}
+        for g, group in enumerate(groups):
+            for key in group.params:
+                if key not in spec_keys:
+                    raise _request_fault(
+                        ("groups", g, "params", key),
+                        f"group '{group.name}' has unknown param '{key}'. "
+                        f"Accepted: {sorted(spec_keys)}.",
+                        group.params[key],
                     )
-                if not p.contains(g.params[p.key]):
-                    raise ValueError(
-                        f"group '{g.name}' param '{p.key}' = {g.params[p.key]} out of "
-                        f"range {p.interval_repr}."
+            for spec in entry.params:
+                if spec.key not in group.params:
+                    raise _request_fault(
+                        ("groups", g, "params", spec.key),
+                        f"group '{group.name}' is missing required param '{spec.key}'.",
+                        dict(group.params),
                     )
-        return self
+                if not spec.contains(group.params[spec.key]):
+                    raise _request_fault(
+                        ("groups", g, "params", spec.key),
+                        f"group '{group.name}' param '{spec.key}' = "
+                        f"{group.params[spec.key]} out of range {spec.interval_repr}.",
+                        group.params[spec.key],
+                    )
 
-    @model_validator(mode="after")
-    def _validate_marshall_olkin_systemic_pd(self) -> CreditVarRequest:
-        """Reject a common-shock probability no obligor can carry (P2-07).
+    def _check_marshall_olkin_systemic_pd(self) -> None:
+        """Rule 24: reject a common-shock probability no obligor can carry (P2-07).
 
         Marshall-Olkin decouples each obligor's total PD into an idiosyncratic
         and a systemic leg::
@@ -320,42 +602,47 @@ class CreditVarRequest(BaseModel):
         obligor PDs and the shock probability, so the failure lands on the
         request the author wrote rather than after factor-universe and master
         construction. Scoped to the Marshall-Olkin key: no other model carries
-        this constraint.
+        this constraint. The loc is the first offender; the message counts all
+        offenders and previews a bounded number of them.
         """
         if self.model != "marshall_olkin":
-            return self
+            return
 
         spec = next(
             (p for p in model_entry(self.model).params if p.key == "systemic_pd"),
             None,
         )
         if spec is None:  # pragma: no cover - catalog would have to change
-            return self
+            return
         systemic_pd = float(self.params.get("systemic_pd", spec.default))
 
-        offenders = [o for o in self.obligors if o.pd < systemic_pd]
+        offenders = [(i, o) for i, o in enumerate(self.obligors) if o.pd < systemic_pd]
         if offenders:
             preview = ", ".join(
-                f"uid {o.obligor_uid} (PD={o.pd})" for o in offenders[:_PREVIEW]
+                f"uid {o.obligor_uid} (PD={o.pd})" for _, o in offenders[:_PREVIEW]
             )
-            raise ValueError(
+            first_index, first = offenders[0]
+            raise _request_fault(
+                ("obligors", first_index, "pd"),
                 f"model 'marshall_olkin': {len(offenders)} obligor(s) have a total "
                 f"PD below systemic_pd={systemic_pd}: {preview}. The common shock "
                 "cannot be more likely than an obligor's own default: the "
                 "decoupling 1 - (1 - PD) / (1 - systemic_pd) would be negative. "
-                "Lower systemic_pd or remove the obligor(s)."
+                "Lower systemic_pd or remove the obligor(s).",
+                first.pd,
             )
-        return self
 
-    @model_validator(mode="after")
-    def _validate_obligor_rho(self) -> CreditVarRequest:
-        if self.model not in MODEL_CATALOG:
-            return self
-        if not model_entry(self.model).accepts_obligor_rho and any(
-            o.rho is not None for o in self.obligors
-        ):
-            raise ValueError(f"model '{self.model}' does not use a per-obligor 'rho'.")
-        return self
+    def _check_obligor_rho(self) -> None:
+        """Rule 25."""
+        if model_entry(self.model).accepts_obligor_rho:
+            return
+        for i, obligor in enumerate(self.obligors):
+            if obligor.rho is not None:
+                raise _request_fault(
+                    ("obligors", i, "rho"),
+                    f"model '{self.model}' does not use a per-obligor 'rho'.",
+                    obligor.rho,
+                )
 
     @classmethod
     def from_dataframe(
@@ -365,32 +652,38 @@ class CreditVarRequest(BaseModel):
         model: str,
         loadings_table: pd.DataFrame | None = None,
         group_params: dict[str, dict[str, float]] | None = None,
-        n_scenarios: int = 100_000,
+        n_scenarios: int = DEFAULT_N_SCENARIOS,
         alphas: list[float] | None = None,
         seed: int = 12345,
         **params: float,
     ) -> CreditVarRequest:
         """Build a request from a flat obligor DataFrame (notebook ergonomics).
 
-        The DataFrame needs `uid, ead, pd, lgd`; extra columns are ignored except
-        an optional `group` column (used by grouped models). Model params are
-        passed as keywords, e.g.::
+        Outside the stable surface (P-CREDIT_VAR_API-001 clause 1, O-7).
+
+        `obligor_table` needs the columns ``obligor_uid, ead, pd, lgd``. Extra
+        columns are ignored, except an optional ``group`` column (grouped
+        models) and an optional ``rho`` column (single-factor copulas). Model
+        params are passed as keywords, e.g.::
 
             CreditVarRequest.from_dataframe(df, model="sf_gaussian", rho=0.20)
 
-        For multi-factor models, pass `loadings_table` with `uid, factor, loading`::
+        For multi-factor models, pass `loadings_table` with the columns
+        ``obligor_uid, factor, loading``::
 
             CreditVarRequest.from_dataframe(df, model="mf_gaussian", loadings_table=ld)
 
-        For grouped models, put a `group` column on `df` and pass per-group params::
+        For grouped models, put a ``group`` column on `df` and pass per-group
+        params::
 
             CreditVarRequest.from_dataframe(
                 df, model="beta_binomial_grouped",
                 group_params={"IG": {"alpha": 1.0, "beta": 80.0},
                               "HY": {"alpha": 2.0, "beta": 18.0}})
 
-        Validation is identical to the dict/JSON path — a bad cell still raises a
-        `ValidationError` with a `loc` into `obligors` / `loadings` / `groups`.
+        The default `n_scenarios` is the request default, `DEFAULT_N_SCENARIOS`.
+        Each cell is cast with ``int``, ``float`` or ``str`` before validation;
+        the request rules then apply as on the dict/JSON path.
         """
         required = ("obligor_uid", "ead", "pd", "lgd")
         missing = [c for c in required if c not in obligor_table.columns]

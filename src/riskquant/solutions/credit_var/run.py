@@ -24,6 +24,21 @@ Result assembly (result schema version 1.0)
   the key the engine itself uses for the forced_default model.
 * The build identity and the input hash are computed BEFORE the simulation: an
   engine that cannot state its build fails before it spends the run time.
+
+Request admission and errors (WS_CREDIT_VAR_API S2, C.15, C.20)
+---------------------------------------------------------------
+* Each entry point validates the request state at call time, also for a
+  `CreditVarRequest` instance: ``frozen=True`` blocks assignment but not the
+  in-place mutation of a dict field such as ``params`` (F-3), so the instance
+  is dumped and validated again. The run uses the validated copy, never the
+  caller's object.
+* A request fault raises ``pydantic.ValidationError`` (R), and only from
+  admission, before the first engine call. A bad ``max_samples`` argument of
+  `simulate_portfolio_losses` is a caller fault too: it raises R at loc
+  ``("max_samples",)`` in the same admission step. After admission, every
+  ``Exception`` becomes `CreditVarEngineError` (E) with ``__cause__`` set
+  (`errors.engine_fault`), including a ``ValidationError`` from the
+  construction of a result model.
 """
 
 from __future__ import annotations
@@ -32,14 +47,15 @@ __all__ = [
     "run_credit_var",
 ]
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Final
+from typing import Annotated, Any, Final
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from riskquant.credit.aggregate.summary import (
     model_tail_var_es,
@@ -55,7 +71,7 @@ from riskquant.solutions.credit_var._attribution import (
     loss_histogram,
     obligor_tail_attribution,
 )
-from riskquant.solutions.credit_var.errors import CreditVarEngineError
+from riskquant.solutions.credit_var.errors import CreditVarEngineError, engine_fault
 from riskquant.solutions.credit_var.provenance import (
     NUMBA_VERSION,
     NUMPY_VERSION,
@@ -416,18 +432,104 @@ def _obligor_contributions(
     )
 
 
+def _admit_request(
+    request: CreditVarRequest | Mapping[str, Any], *, entry_point: str
+) -> CreditVarRequest:
+    """Validate the request state at call time (C.15); raise R or E only.
+
+    A `CreditVarRequest` instance is dumped and validated again: a dict field
+    of a frozen model can change in place after construction (F-3), and the
+    instance state at call time is what the run would use. ``warnings=False``
+    keeps the dump silent for a value of the wrong type; validation then
+    reports it as R. Any other input goes to ``model_validate`` as given, so a
+    non-mapping raises R as well.
+
+    Raises
+    ------
+    pydantic.ValidationError
+        The request content breaks a rule of A_CONTRACT section 2.
+    CreditVarEngineError
+        Admission itself failed with another exception type. A rule must
+        report a fault as R; any other exception is a defect of the solution.
+    """
+    try:
+        if isinstance(request, CreditVarRequest):
+            return CreditVarRequest.model_validate(
+                request.model_dump(mode="python", warnings=False)
+            )
+        return CreditVarRequest.model_validate(request)
+    except ValidationError:
+        raise
+    except Exception as exc:
+        raise engine_fault(entry_point, exc) from exc
+
+
+class _SampleLimit(BaseModel):
+    """Admission rule of the `max_samples` argument of `simulate_portfolio_losses`.
+
+    ``None`` (no subsampling) or an int >= 0, strict as the request fields
+    (O-8): a bool, a float or a str raises. 0 stays valid: it gives an empty
+    sample, as before this rule. A model and not a bare check, so that the
+    fault is R with the loc ``("max_samples",)`` and one entry (owner decision
+    on S2, O-9 (a)).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    max_samples: Annotated[int, Field(ge=0)] | None
+
+
+def _admit_max_samples(max_samples: object, *, entry_point: str) -> int | None:
+    """Validate `max_samples` before the engine runs; raise R or E only.
+
+    Raises
+    ------
+    pydantic.ValidationError
+        `max_samples` is not ``None`` and not an int >= 0.
+    CreditVarEngineError
+        Admission itself failed with another exception type.
+    """
+    try:
+        return _SampleLimit.model_validate({"max_samples": max_samples}).max_samples
+    except ValidationError:
+        raise
+    except Exception as exc:
+        raise engine_fault(entry_point, exc) from exc
+
+
 def simulate_portfolio_losses(
     request: CreditVarRequest | dict[str, Any],
     *,
     max_samples: int | None = 100_000,
 ) -> _F64:
+    """Simulated portfolio loss per scenario, a Python-only member (O-6).
 
-    req = (
-        request
-        if isinstance(request, CreditVarRequest)
-        else CreditVarRequest.model_validate(request)
-    )
+    Returns the column sums of the run's obligor loss matrix, float64 and
+    C-contiguous. Above `max_samples` scenarios it returns `max_samples`
+    losses drawn without replacement by ``default_rng(seed).choice``.
 
+    Raises
+    ------
+    pydantic.ValidationError
+        The request content is invalid, or `max_samples` is not ``None`` and
+        not an int >= 0 (R, loc ``("max_samples",)``). Raised before the first
+        engine call; the request is checked first.
+    CreditVarEngineError
+        Any fault after admission (E), the original exception as
+        ``__cause__``.
+    """
+    entry_point = "simulate_portfolio_losses"
+    req = _admit_request(request, entry_point=entry_point)
+    limit = _admit_max_samples(max_samples, entry_point=entry_point)
+    try:
+        return _portfolio_losses(req, max_samples=limit)
+    except CreditVarEngineError:
+        raise
+    except Exception as exc:
+        raise engine_fault(entry_point, exc) from exc
+
+
+def _portfolio_losses(req: CreditVarRequest, *, max_samples: int | None) -> _F64:
     portfolio_losses = _build_loss_matrix(req, tuple(req.alphas)).loss.sum(axis=0)
     portfolio_losses = np.ascontiguousarray(portfolio_losses, dtype=np.float64)
 
@@ -458,16 +560,26 @@ def run_credit_var(request: CreditVarRequest | dict[str, Any]) -> CreditVarResul
 
     Raises
     ------
+    pydantic.ValidationError
+        The request content is invalid (R), before the first engine call.
     CreditVarEngineError
-        The build identity cannot be established (C.9), or the loss-matrix rows
-        do not match the request obligors one to one (C.6).
+        Any fault after admission (E): for example the build identity cannot be
+        established (C.9), the loss-matrix rows do not match the request
+        obligors one to one (C.6), or a result model rejects an engine value.
+        The original exception, where one exists, is ``__cause__``.
     """
-    req = (
-        request
-        if isinstance(request, CreditVarRequest)
-        else CreditVarRequest.model_validate(request)
-    )
+    entry_point = "run_credit_var"
+    req = _admit_request(request, entry_point=entry_point)
+    try:
+        return _run(req)
+    except CreditVarEngineError:
+        raise
+    except Exception as exc:
+        raise engine_fault(entry_point, exc) from exc
 
+
+def _run(req: CreditVarRequest) -> CreditVarResult:
+    """The engine path of `run_credit_var` for an admitted request."""
     build = engine_version()
     input_hash = request_input_hash(req)
 
