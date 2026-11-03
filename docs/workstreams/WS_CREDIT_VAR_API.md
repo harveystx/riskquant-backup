@@ -3,8 +3,8 @@
 Path: docs/workstreams/WS_CREDIT_VAR_API.md
 Class: HEAVY
 Status: FROZEN
-Revision: 3
-Revision note: Applies owner decisions of 2026-10-31 (tripwire option 1, OD-1 (b), OD-2, ZV, U-a to U-d) to close S1 with no carried item; no audit round 3.
+Revision: 6
+Revision note: Owner decision of 2026-11-03 (OD-S2-1 (a)): third R-001 site added to S2 Files. No audit round.
 Date: 2026-10-29
 Branch: ws/credit-var-api
 Snapshot: SNAPSHOT commit=925533b dirty=false content_hash=046ed5dddb6305d3
@@ -74,6 +74,15 @@ Owner decisions in force:
 - 2026-10-31 (U-b): In demo_e2e_stress_regime_bernoulli_grouped.py, the " " key is replaced by the missing accepted key.
 - 2026-10-31 (U-c): Closed by decision. The credit_var demos are not regression gates. The S1 gate runs them.
 - 2026-10-31 (U-d): The 15 demos `scripts/solutions/credit_var/demo_e2e_*.py` pass ruff check and mypy.
+- 2026-11-02 (U-a amended): demo_e2e_all_models.py uses systemic_pd = 5e-05 for marshall_olkin. The 2026-10-31 formula gives 0.0 for this book (min PD 7.344e-05), and with 0.0 the common shock never fires. Demo value only; no contract clause changes.
+- 2026-11-02 (OD-B): S1 code implements the FROZEN S1.T16 (cases 4 to 6) and S1.T17 (cases 1 and 2) rules (S1 closure review R-004 to R-007).
+- 2026-11-02 (OD-A): A_CONTRACT 3.8 bin_edges is strictly ascending, as the code enforces. Revision 4 by explicit owner decision under the tripwire; editorial only.
+- 2026-11-02 (OD-C): U-a uses systemic_pd = 5e-05 (confirmed).
+- 2026-11-02 (ZV comparison, S1 closure review R-011): the ZV rule compares with ==, so -0.0 satisfies it. run.py emits +0.0. "0.0" in A_CONTRACT 3.2 means numeric equality, not bit equality.
+- 2026-11-02 (OD-S2-1 (b)): the np.diff int64 wrap in credit/masters/obligors/validate.py and credit/masters/netting_set/validate.py is fixed in S2 (S2 review R-001). The request contract does not change. Revision 5 by explicit owner decision under the tripwire.
+- 2026-11-02 (OD-S2-2 (a)): LoadingRow.factor, ObligorRow.group and GroupRow.name contain no NUL character (S2 review R-002). The fault loc is the field path (rule 1).
+- 2026-11-03 (OD-S2-1, scope): R-001 needs a third site, credit/exposure/obligor_ead/compiled.py (CompiledObligorEad.__post_init__). Added to S2 Files. Revision 6 by explicit owner decision under the tripwire.
+- 2026-11-03 (R-006 erratum, S2 re-review): the A_CONTRACT 2.1 obligor_uid constraint cell is restored to its Revision 4 text. The "$...$" wrapper of Revision 5 was an editing error. No contract meaning changes, so no revision.
 
 Depends on: none.
 Blocks: consumer releases that pin `credit_var.api`. `api.py` names the notebook, Emissary and the xlwings tool as consumers (F-31).
@@ -282,8 +291,8 @@ Prohibited: src/riskquant/credit/**; src/riskquant/scenario_metrics/**; src/risk
 Attach: docs/workstreams/WS_CREDIT_VAR_API.md ; docs/workstreams/WS_CREDIT_VAR_API/A_CONTRACT.md ; docs/CLAUDE.md ; docs/DECISIONS.md ; context_riskquant_index.txt ; context_riskquant_solutions_credit_var.txt ; context_riskquant_credit.txt ; context_riskquant_solutions_run_identity.txt ; context_riskquant_tests_credit.txt
 Gates: gate block; `$t = "tests/solutions/credit_var", "tests/credit/factors/test_batch_size_reproducibility.py", "tests/credit/jtd/test_beta_binomial_contract.py"`; then the 15 demos (U-c): `Get-ChildItem scripts/solutions/credit_var/demo_e2e_*.py | ForEach-Object { python $_.FullName; "$($_.Name) exit=$LASTEXITCODE" }`, each with exit=0
 Exit: every S1 test passes; full suite passes; no NaN, no level-keyed dict and no "0+unknown" path remains in credit_var.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: S1 closure review ACCEPT 2026-11-02: R-001 to R-010 closed; R-003 closed (15 of 15 demos exit=0); R-011 closed by owner decision (ZV comparison). Owner gate at bf64906 (clean): ruff, format, mypy exit=0; pytest slice 213 passed; full 7690 passed, 36 skipped; 15 of 15 demos exit=0.
 
 | Id | Case | Expected | Defect caught |
 |---|---|---|---|
@@ -316,12 +325,15 @@ Files:
 - create: tests/solutions/credit_var/test_request_contract.py; tests/solutions/credit_var/test_errors.py
 - modify: src/riskquant/solutions/credit_var/schemas.py; src/riskquant/solutions/credit_var/run.py; src/riskquant/solutions/credit_var/errors.py
 - modify, only to give the C.17 reserved-name rule the recipe factor-name format: src/riskquant/solutions/credit_var/recipes.py
-Prohibited: src/riskquant/credit/**; result models; catalog.py; pyproject.toml; DECISIONS.md.
+- src/riskquant/credit/masters/obligors/validate.py (modify: R-001 overflow-free ascending check)
+- src/riskquant/credit/masters/netting_set/validate.py (modify: same)
+- src/riskquant/credit/exposure/obligor_ead/compiled.py (modify: R-001 overflow-free ascending check)
+Prohibited: src/riskquant/credit/**; except the two validate.py files above and src/riskquant/credit/exposure/obligor_ead/compiled.py above; result models; catalog.py; pyproject.toml; DECISIONS.md.
 Attach: docs/workstreams/WS_CREDIT_VAR_API.md ; docs/workstreams/WS_CREDIT_VAR_API/A_CONTRACT.md ; docs/CLAUDE.md ; docs/DECISIONS.md ; context_riskquant_index.txt ; context_riskquant_solutions_credit_var.txt ; context_riskquant_credit.txt ; context_riskquant_tests_credit.txt
 Gates: gate block; `$t = "tests/solutions/credit_var", "tests/credit/solutions"`
 Exit: every S2 test passes; full suite passes; no request-content fault reaches the engine.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: S2 re-review ACCEPT 2026-11-03: R-001 to R-005 closed (int64 wrap fixed at 3 sites; NUL rule; rule 14 equals the engine Kahan sum; linear rule 14; engine-message helper); R-006 closed as an owner erratum. Owner gate at 081bc45 (clean): ruff, format, mypy exit=0; pytest slice 412 passed; full 7864 passed, 36 skipped; 15 of 15 demos exit=0.
 
 | Id | Case | Expected | Defect caught |
 |---|---|---|---|
@@ -372,8 +384,8 @@ Attach: docs/workstreams/WS_CREDIT_VAR_API.md ; docs/workstreams/WS_CREDIT_VAR_A
 VERIFY FIRST: the default direction and the Student-t scaling in each kernel. Read the kernel. Do not take them from STABLE_API.md text.
 Gates: gate block; `$t = "tests/solutions/credit_var/test_oracles.py"`
 Exit: 14 tests pass; a deliberate change of one model parameter in the oracle makes the matching test fail (report the output).
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: S4 review ACCEPT 2026-11-02 at 6b98935 (gate_output_S4.txt, RERUN section: ruff, format, mypy exit=0; 14 passed against the real engine; Exit mutation fails S4.T5). OD-S4-1 (a): pytest full waived to the S2 gate, which runs on a tree that contains 6b98935. OD-S4-1 closed: the S2 gate at 2faebbe (contains 6b98935) gave pytest full 7845 passed, 36 skipped.
 
 | Id | Case | Expected | Defect caught |
 |---|---|---|---|
@@ -424,8 +436,8 @@ Book: deterministic synthetic book from a fixed seed, PD in [0.005, 0.05], LGD 0
 Record: exact command, CPU model, core count, RAM, OS, Python, NumPy, SciPy, Numba versions, `numba.threading_layer()`, NUMBA_NUM_THREADS, riskquant commit.
 Gates: `$f = "scripts/solutions/credit_var/bench_credit_var_api.py"`; ruff check and ruff format --check on `$f`; then `python scripts/solutions/credit_var/bench_credit_var_api.py *>&1 | Tee-Object -FilePath bench_output.txt`
 Exit: owner machine output saved as docs/workstreams/WS_CREDIT_VAR_API/R_BENCHMARK_R1.md. A sandbox run is sandbox evidence only.
-Status: NOT_STARTED
-Evidence: none
+Status: IN_PROGRESS
+Evidence: Script committed at db92afc; gates and smoke run pass on the owner machine; full run and QUICK review pending.
 
 ## 7. Risks and deferred
 
@@ -462,8 +474,16 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - S1 FIRST: search the whole repository, including `src/riskquant_lab/plotting/credit_var.py` and `tests/e2e/` (R1 R-13).
 - C.21: the `loadings_table` docstring also says `uid` (R1 R-19).
 - C.13, C.24: state whether BLAS thread settings are inside the contract (`_attribution.obligor_ul_contribution`) (R1 R-20).
-- R2-02: the audit did not verify K12 rule 6 at 60x60x300 nodes; S4 runs the rule 6 self-check before any K12 assertion.
+- R2-02: closed by S4. The K12 rule 6 self-check at 60x60x300 nodes gives |EL - 0.3| = 9.284e-10 (S4 implementer report; S4 review ACCEPT).
 - riskquant-excel: not checked against the S1 result contract. Owner decision 2026-10-30: out of scope, no current users. Check it before any Excel tool work.
+- A_CONTRACT 3.1 headline_alpha "max of request alphas" has no validator (S1 closure review, adjacent).
+- A_CONTRACT 3.1 obligor_contributions "one per request obligor" has no check against provenance.n_obligors (S1 closure review, adjacent).
+- A_CONTRACT 3.8 has no counts >= 0 rule (S1 closure review, adjacent).
+- _attribution.py:loss_histogram: xmax = max(p99.9, losses.max(), 1.0), so the overflow branch and the display-percentile clip never act; the docstring is wrong (S1 closure review, adjacent).
+- src/riskquant_lab/__init__.py is not empty, against D002 (S1 closure review, adjacent).
+- Tooling: upgrade ruff (preview = true) after WS_CREDIT_VAR_API merges; one repository-wide format commit on its own branch (S4 review R-002).
+- from_dataframe (`schemas.py:_dataframe_uid`): a bool cell becomes 1 and a Decimal cell is truncated by int(); a str cell such as "7.9" raises ValueError, not R. The member is outside the stable surface (O-7 (b)) (S2 re-review, adjacent).
+- np.diff int64 wrap not analyzed at credit/exposure/add_on/compiled.py:47 and credit/exposure/saccr/config.py:50. Not on the credit_var path; belongs to credit_exposure (S2 review, adjacent).
 
 ## 8. Closure record
 
