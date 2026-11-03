@@ -39,7 +39,7 @@ elements.
 
 | Field | Python type | Constraint | JSON | Change |
 |---|---|---|---|---|
-| obligor_uid | `int` | $-2**63 <= v <= 2**63 - 1$ | integer | int64 range added (C.17) |
+| obligor_uid | `int` | -2**63 <= v <= 2**63 - 1 | integer | int64 range added (C.17) |
 | ead | `float` | finite, >= 0 | number | finite added |
 | pd | `float` | 0 <= v <= 1 | number | none |
 | lgd | `float` | 0 <= v <= 1 | number | none |
