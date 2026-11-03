@@ -14,7 +14,7 @@ Why a module and not the package `__init__`: in `src/riskquant`, every
 line gets it from a named `api` module instead, so the "one stable surface" need
 is met without weakening the empty-init rule.
 
-Surface (WS_CREDIT_VAR_API C.28, P-CREDIT_VAR_API-001 clause 1)
+Surface (WS_CREDIT_VAR_API C.28, D106 clause 1)
 ---------------------------------------------------------------
 The 22 names of `__all__` are the stable surface. The package version follows
 SemVer over these names; before 1.0.0 a minor bump marks a breaking change.

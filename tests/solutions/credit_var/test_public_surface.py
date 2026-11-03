@@ -2,7 +2,7 @@
 """
 WS_CREDIT_VAR_API S5: stability declaration, surface test and pins (C.28 to C.31).
 
-S5.T1 (C.28): `sorted(api.__all__)` equals the 22 names of P-CREDIT_VAR_API-001
+S5.T1 (C.28): `sorted(api.__all__)` equals the 22 names of D106
 clause 1. The expected list is written out here, not read from `api`, so a
 change of the surface fails until the owner makes a version decision.
 
@@ -13,7 +13,7 @@ change between an int, a float and a bool bound. The text form is
 ``json.dumps(schema, indent=2, sort_keys=True) + "\\n"``. CRLF in the golden
 file becomes LF before the comparison, so a git checkout with autocrlf does not
 fail the test. A failure needs a new golden file and a version decision under
-P-CREDIT_VAR_API-001; do not regenerate the file only to make the test pass.
+D106; do not regenerate the file only to make the test pass.
 
 S5.T3 (C.30, O-11): `tomllib` reads `pyproject.toml`. The version is "0.2.0".
 The numpy, scipy and pydantic entries are exact strings. The numba entry is
@@ -52,7 +52,7 @@ _PYPROJECT: Final[Path] = _REPO_ROOT / "pyproject.toml"
 _CREDIT_DIR: Final[Path] = _REPO_ROOT / "src" / "riskquant" / "credit"
 _STABLE_API: Final[Path] = _CREDIT_DIR / "STABLE_API.md"
 
-# P-CREDIT_VAR_API-001 clause 1, written out in clause order.
+# D106 clause 1, written out in clause order.
 _SURFACE: Final[tuple[str, ...]] = (
     "AlphaRisk",
     "CreditVarEngineError",
@@ -139,7 +139,7 @@ def test_s5_t2_json_schema_equals_golden_file(
     assert _schema_text(model) == golden, (
         f"{model.__name__}.model_json_schema() differs from golden/{golden_name}. "
         "A schema change needs a new golden file and a version decision under "
-        "P-CREDIT_VAR_API-001 (WS_CREDIT_VAR_API C.29)."
+        "D106 (WS_CREDIT_VAR_API C.29)."
     )
 
 

@@ -83,7 +83,9 @@ Owner decisions in force:
 - 2026-11-02 (OD-S2-2 (a)): LoadingRow.factor, ObligorRow.group and GroupRow.name contain no NUL character (S2 review R-002). The fault loc is the field path (rule 1).
 - 2026-11-03 (OD-S2-1, scope): R-001 needs a third site, credit/exposure/obligor_ead/compiled.py (CompiledObligorEad.__post_init__). Added to S2 Files. Revision 6 by explicit owner decision under the tripwire.
 - 2026-11-03 (R-006 erratum, S2 re-review): the A_CONTRACT 2.1 obligor_uid constraint cell is restored to its Revision 4 text. The "$...$" wrapper of Revision 5 was an editing error. No contract meaning changes, so no revision.
-- 2026-11-03 (pandas cap, S5): pyproject.toml caps pandas at the next minor above the tested version (pandas>=2.0,<3.1). The engine loading sum uses pandas groupby().sum(); pandas 3.1.0 changes its rounding, so rule 14 can drift from the engine (S5 implementer, Observed: two S2.T6 tests fail on 3.1.0). Same reason as the numba cap under O-11. Backlog: one shared core loading-sum function for the engine and rule 14.
+- 2026-11-03 (pandas cap, S5): pyproject.toml caps pandas at the next minor above the tested version (pandas>=2.0,<3.1). The engine loading sum uses pandas groupby().sum(); pandas 3.1.0 changes its rounding, so rule 14 can drift from the engine (S5 implementer, Observed: two S2.T6 tests fail on 3.1.0). Same reason as the numba cap under O-11. WS_CREDIT_POLARS replaces the pandas group sum with one shared core loading-sum function and removes the cap.
+- 2026-11-03 (OD-S5-1 (a)): the pandas cap has no direct test (S5 review R-002). S2.T6 fails loudly on the drift that the cap prevents. The cap goes with the pandas removal in WS_CREDIT_POLARS.
+- 2026-11-03 (D106): the owner promotes P-CREDIT_VAR_API-001 as D106 (LOCKED). The citations in api.py and test_public_surface.py name D106.
 
 Depends on: none.
 Blocks: consumer releases that pin `credit_var.api`. `api.py` names the notebook, Emissary and the xlwings tool as consumers (F-31).
@@ -183,7 +185,7 @@ Decisions relied on: D001, D-C15, D-C04, D-C03, D039, D040, D041, D104. Each che
 
 D104.3 gives "pydantic is not declared in pyproject.toml" as one reason. That reason is stale at c060f06 (F-22). This workstream does not change D104. The owner decides whether D104 needs a note.
 
-### P-CREDIT_VAR_API-001: Stable public surface of riskquant.solutions.credit_var.api (PROPOSED)
+### P-CREDIT_VAR_API-001: Stable public surface of riskquant.solutions.credit_var.api (PROMOTED as D106, 2026-11-03)
 
 ```text
 Related: D001, D002, D-C15, D039, D040, D041, D104
@@ -407,8 +409,8 @@ Prohibited: every other src/ file; DECISIONS.md. The owner promotes P-CREDIT_VAR
 Attach: docs/workstreams/WS_CREDIT_VAR_API.md ; docs/workstreams/WS_CREDIT_VAR_API/A_CONTRACT.md ; docs/CLAUDE.md ; docs/DECISIONS.md ; context_riskquant_index.txt ; context_riskquant_solutions_credit_var.txt ; context_riskquant_credit.txt ; pyproject.toml ; src/riskquant/credit/STABLE_API.md
 Gates: gate block; `$t = "tests/solutions/credit_var"`; then `pip install -e .` and `python -c "import importlib.metadata as m; print(m.version('riskquant'))"`
 Exit: every S5 test passes; full suite passes; installed version prints 0.2.0; the final report records `numba.__version__`, and N in C.30 equals its minor version + 1.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: S5 review ACCEPT 2026-11-03. Owner gate at 64a531e (clean): ruff, format, mypy exit=0; S5 file 5 passed; slice 423 passed; full 7875 passed, 36 skipped; numba 0.66.0, N = 67; installed 0.2.0. R-001 to R-003 (P2) backlog. P-CREDIT_VAR_API-001 promoted as D106.
 
 | Id | Case | Expected | Defect caught |
 |---|---|---|---|
@@ -453,7 +455,7 @@ Evidence: Script committed at db92afc; gates and smoke run pass on the owner mac
 | A caller mutates a nested dict during a call on another thread | Undefined input | Outside the contract: C.15 covers state at call time |
 
 Deferred:
-- Removal of pandas from the import path (F-23): opens when the pandas-to-Polars migration reaches credit ingest.
+- Removal of pandas from riskquant (F-23, the pandas cap, from_dataframe): WS_CREDIT_POLARS, after this workstream closes.
 - Oracles for attribution fields other than forced_default: opens after S4.
 - `python_version` in RunProvenance (present in D041 EngineIdentity, absent from O-2): opens on owner request.
 
@@ -470,7 +472,7 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - P-CREDIT_VAR_API-001 clause 3: define "fixed numerical environment" (R1 R-07).
 - C.12 hashes `mixed.py` only; factor order from `recipes._universe`, the universe compile and `base.py` also define the stream (R1 R-08).
 - C.29: `model_json_schema()` output can change between pydantic 2.x minor versions (R1 R-09).
-- pandas has no upper bound and is on the `api` import path (R1 R-11).
+- pandas is on the `api` import path (R1 R-11). The upper bound is set in S5 (pandas>=2.0,<3.1); removal: WS_CREDIT_POLARS.
 - A_CONTRACT 4.3 compares JSON bytes; the pydantic-core serializer version is not recorded (R1 R-12).
 - S1 FIRST: search the whole repository, including `src/riskquant_lab/plotting/credit_var.py` and `tests/e2e/` (R1 R-13).
 - C.21: the `loadings_table` docstring also says `uid` (R1 R-19).
@@ -488,6 +490,10 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - simulate_portfolio_losses computes summarize_jtd_loss and model_tail_var_es and then discards them; this costs lock time (S3 owner decision, performance only).
 - schemas.py:_MF_RECIPE_HAS_CHI is typed Final[Mapping[str, bool]] but is a plain dict at run time; private, outside C.22 (S3 review, adjacent).
 - Process: every implementer prompt states "Read DECISIONS.md before you write code" (S3 review R-001).
+- The S5 gate log has no raw output of "pip install -e ."; later gate logs keep the install command (S5 review R-001).
+- S5.T3 does not check the pandas cap; OD-S5-1 (a) (S5 review R-002).
+- test_public_surface.py:_literal_all does not detect __all__.extend() or .append(); detect any attribute call on __all__ at module level, or narrow the docstring (S5 review R-003).
+- Stale src/riskquant.egg-info (0.1.0) gave V = 0.1.0 under pytest and 4 identity failures in risk_run and run_identity (S5 gate, Observed). Evidence for R1 R-06: V is not bound to the imported code. Fail loudly when two riskquant metadata records disagree, or record the metadata path in provenance.
 
 ## 8. Closure record
 
