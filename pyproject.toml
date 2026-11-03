@@ -4,23 +4,23 @@ build-backend = "hatchling.build"
 
 [project]
 name = "riskquant"
-version = "0.1.0"
+version = "0.2.0"
 description = "Quantitative risk management library"
 readme = "README.md"
 requires-python = ">=3.11"
 
 dependencies = [
-    "numpy>=1.26",
-    "pandas>=2.0",
+    "numpy>=1.26,<3",
+    "pandas>=2.0,<3.1",
     "openpyxl>=3.1",
-    "scipy>=1.15",
+    "scipy>=1.15,<2",
     "scikit-learn>=1.9",
-    "numba>=0.59",
+    "numba>=0.59,<0.67",
     "pandas-stubs>=2.0",
     "polars>=1.0",
     "fastexcel>=0.7.0",
     "xlsxwriter>=3.1",
-    "pydantic>=2.0",
+    "pydantic>=2.0,<3",
 ]
 
 [project.optional-dependencies]

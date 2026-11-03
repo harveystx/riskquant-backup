@@ -1,0 +1,442 @@
+{
+  "$defs": {
+    "AlphaRisk": {
+      "additionalProperties": false,
+      "description": "Tail risk of the portfolio loss at one requested confidence level.",
+      "properties": {
+        "alpha": {
+          "title": "Alpha",
+          "type": "number"
+        },
+        "economic_capital_es": {
+          "title": "Economic Capital Es",
+          "type": "number"
+        },
+        "economic_capital_var": {
+          "title": "Economic Capital Var",
+          "type": "number"
+        },
+        "es": {
+          "title": "Es",
+          "type": "number"
+        },
+        "var": {
+          "title": "Var",
+          "type": "number"
+        }
+      },
+      "required": [
+        "alpha",
+        "var",
+        "es",
+        "economic_capital_var",
+        "economic_capital_es"
+      ],
+      "title": "AlphaRisk",
+      "type": "object"
+    },
+    "LossHistogram": {
+      "additionalProperties": false,
+      "description": "Binned portfolio loss for a distribution plot.\n\nThe model checks the rules that it can see (A_CONTRACT section 3.8):\n``len(bin_edges) == len(counts) + 1`` and strictly ascending ``bin_edges``.\nThe rule ``sum(counts) == n_scenarios`` needs the scenario count, so\n`CreditVarResult` checks it against ``provenance.n_scenarios``.",
+      "properties": {
+        "bin_edges": {
+          "items": {
+            "type": "number"
+          },
+          "title": "Bin Edges",
+          "type": "array"
+        },
+        "counts": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Counts",
+          "type": "array"
+        }
+      },
+      "required": [
+        "bin_edges",
+        "counts"
+      ],
+      "title": "LossHistogram",
+      "type": "object"
+    },
+    "ModelTail": {
+      "additionalProperties": false,
+      "description": "Standalone tail risk for one model at the headline confidence level.",
+      "properties": {
+        "es": {
+          "title": "Es",
+          "type": "number"
+        },
+        "var": {
+          "title": "Var",
+          "type": "number"
+        }
+      },
+      "required": [
+        "var",
+        "es"
+      ],
+      "title": "ModelTail",
+      "type": "object"
+    },
+    "ObligorContribution": {
+      "additionalProperties": false,
+      "description": "One obligor's share of portfolio risk, at the headline confidence level.",
+      "properties": {
+        "ead": {
+          "title": "Ead",
+          "type": "number"
+        },
+        "es_contribution": {
+          "title": "Es Contribution",
+          "type": "number"
+        },
+        "es_pct": {
+          "title": "Es Pct",
+          "type": "number"
+        },
+        "expected_loss": {
+          "title": "Expected Loss",
+          "type": "number"
+        },
+        "incremental_es": {
+          "title": "Incremental Es",
+          "type": "number"
+        },
+        "incremental_var": {
+          "title": "Incremental Var",
+          "type": "number"
+        },
+        "obligor_uid": {
+          "title": "Obligor Uid",
+          "type": "integer"
+        },
+        "ul_contribution": {
+          "title": "Ul Contribution",
+          "type": "number"
+        },
+        "ul_pct": {
+          "title": "Ul Pct",
+          "type": "number"
+        }
+      },
+      "required": [
+        "obligor_uid",
+        "ead",
+        "expected_loss",
+        "es_contribution",
+        "es_pct",
+        "incremental_var",
+        "incremental_es",
+        "ul_contribution",
+        "ul_pct"
+      ],
+      "title": "ObligorContribution",
+      "type": "object"
+    },
+    "PercentileLoss": {
+      "additionalProperties": false,
+      "description": "One point of the portfolio-loss percentile grid.\n\n`percentile` is in PERCENT units (99.9, not 0.999) so that it stays bitwise\nequal to the grid of earlier releases; `AlphaRisk.alpha` is a probability.\nThe two names mark the two units.",
+      "properties": {
+        "loss": {
+          "title": "Loss",
+          "type": "number"
+        },
+        "percentile": {
+          "title": "Percentile",
+          "type": "number"
+        }
+      },
+      "required": [
+        "percentile",
+        "loss"
+      ],
+      "title": "PercentileLoss",
+      "type": "object"
+    },
+    "RiskSummary": {
+      "additionalProperties": false,
+      "description": "Summary statistics of the simulated portfolio loss distribution.\n\nAll metrics are computed from the simulated loss distribution. Losses are\nassumed to be positive quantities, where larger values correspond to worse\nportfolio outcomes.\n\nThere is no ES/VaR ratio member (O-5): the ratio is undefined at VaR = 0,\nand a consumer that needs it divides `AlphaRisk.es` by `AlphaRisk.var` with\nits own policy for a zero VaR.",
+      "properties": {
+        "by_alpha": {
+          "items": {
+            "$ref": "#/$defs/AlphaRisk"
+          },
+          "title": "By Alpha",
+          "type": "array"
+        },
+        "coefficient_of_variation": {
+          "title": "Coefficient Of Variation",
+          "type": "number"
+        },
+        "expected_loss_by_model": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Expected Loss By Model",
+          "type": "object"
+        },
+        "loss_excess_kurtosis": {
+          "title": "Loss Excess Kurtosis",
+          "type": "number"
+        },
+        "loss_max": {
+          "title": "Loss Max",
+          "type": "number"
+        },
+        "loss_mean": {
+          "title": "Loss Mean",
+          "type": "number"
+        },
+        "loss_min": {
+          "title": "Loss Min",
+          "type": "number"
+        },
+        "loss_probability": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Loss Probability",
+          "type": "number"
+        },
+        "loss_skewness": {
+          "title": "Loss Skewness",
+          "type": "number"
+        },
+        "loss_std_dev": {
+          "minimum": 0.0,
+          "title": "Loss Std Dev",
+          "type": "number"
+        }
+      },
+      "required": [
+        "loss_mean",
+        "loss_std_dev",
+        "loss_skewness",
+        "loss_excess_kurtosis",
+        "loss_probability",
+        "loss_min",
+        "loss_max",
+        "coefficient_of_variation",
+        "by_alpha",
+        "expected_loss_by_model"
+      ],
+      "title": "RiskSummary",
+      "type": "object"
+    },
+    "RunProvenance": {
+      "additionalProperties": false,
+      "description": "Audit stamp: enough to reproduce a number (D-C15, D040).\n\nTwo results are reproducibility-equal when their `model_dump_json` bytes are\nequal after removal of `generated_at`. The comparison is meaningful only\nwhen `engine_version`, `scenario_construction_id` and the three library\nversions are equal: reproducibility is environment-relative (D-C15).",
+      "properties": {
+        "alphas": {
+          "items": {
+            "type": "number"
+          },
+          "title": "Alphas",
+          "type": "array"
+        },
+        "engine_version": {
+          "pattern": "^[^+]+\\+src\\.[0-9a-f]{64}$",
+          "title": "Engine Version",
+          "type": "string"
+        },
+        "generated_at": {
+          "title": "Generated At",
+          "type": "string"
+        },
+        "input_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Input Hash",
+          "type": "string"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "n_obligors": {
+          "title": "N Obligors",
+          "type": "integer"
+        },
+        "n_scenarios": {
+          "title": "N Scenarios",
+          "type": "integer"
+        },
+        "numba_version": {
+          "title": "Numba Version",
+          "type": "string"
+        },
+        "numpy_version": {
+          "title": "Numpy Version",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Params",
+          "type": "object"
+        },
+        "scenario_construction_id": {
+          "const": "MixedCreditFactorGenerator/D-C15",
+          "title": "Scenario Construction Id",
+          "type": "string"
+        },
+        "scipy_version": {
+          "title": "Scipy Version",
+          "type": "string"
+        },
+        "seed": {
+          "title": "Seed",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "engine_version",
+        "scenario_construction_id",
+        "numpy_version",
+        "scipy_version",
+        "numba_version",
+        "model",
+        "params",
+        "n_obligors",
+        "n_scenarios",
+        "seed",
+        "alphas",
+        "input_hash",
+        "generated_at"
+      ],
+      "title": "RunProvenance",
+      "type": "object"
+    },
+    "StressTestObligor": {
+      "additionalProperties": false,
+      "description": "One name in the standalone hard-default stress test.",
+      "properties": {
+        "ead": {
+          "title": "Ead",
+          "type": "number"
+        },
+        "lgd": {
+          "title": "Lgd",
+          "type": "number"
+        },
+        "loss": {
+          "title": "Loss",
+          "type": "number"
+        },
+        "obligor_uid": {
+          "title": "Obligor Uid",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "obligor_uid",
+        "ead",
+        "lgd",
+        "loss"
+      ],
+      "title": "StressTestObligor",
+      "type": "object"
+    },
+    "StressTestResult": {
+      "additionalProperties": false,
+      "description": "Deterministic 'what if these names all default' result.\n\nIndependent of the chosen model and of the simulation \u2014 the answer to the\nflagged obligors (`in_stress_test`) defaulting together. Present only when at\nleast one obligor is flagged.",
+      "properties": {
+        "n_obligors": {
+          "title": "N Obligors",
+          "type": "integer"
+        },
+        "obligors": {
+          "items": {
+            "$ref": "#/$defs/StressTestObligor"
+          },
+          "title": "Obligors",
+          "type": "array"
+        },
+        "total_loss": {
+          "title": "Total Loss",
+          "type": "number"
+        }
+      },
+      "required": [
+        "n_obligors",
+        "total_loss",
+        "obligors"
+      ],
+      "title": "StressTestResult",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A completed credit-VaR run, JSON-native (result schema version 1.0).",
+  "properties": {
+    "headline_alpha": {
+      "title": "Headline Alpha",
+      "type": "number"
+    },
+    "loss_histogram": {
+      "$ref": "#/$defs/LossHistogram"
+    },
+    "loss_percentiles": {
+      "items": {
+        "$ref": "#/$defs/PercentileLoss"
+      },
+      "title": "Loss Percentiles",
+      "type": "array"
+    },
+    "model": {
+      "title": "Model",
+      "type": "string"
+    },
+    "obligor_contributions": {
+      "items": {
+        "$ref": "#/$defs/ObligorContribution"
+      },
+      "title": "Obligor Contributions",
+      "type": "array"
+    },
+    "per_model_tail": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ModelTail"
+      },
+      "title": "Per Model Tail",
+      "type": "object"
+    },
+    "provenance": {
+      "$ref": "#/$defs/RunProvenance"
+    },
+    "result_schema_version": {
+      "const": "1.0",
+      "title": "Result Schema Version",
+      "type": "string"
+    },
+    "stress_test": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/StressTestResult"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "summary": {
+      "$ref": "#/$defs/RiskSummary"
+    }
+  },
+  "required": [
+    "result_schema_version",
+    "model",
+    "headline_alpha",
+    "summary",
+    "per_model_tail",
+    "loss_percentiles",
+    "obligor_contributions",
+    "loss_histogram",
+    "provenance"
+  ],
+  "title": "CreditVarResult",
+  "type": "object"
+}

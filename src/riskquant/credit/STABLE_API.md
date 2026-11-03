@@ -1,56 +1,100 @@
-# `riskquant.credit` — Stable Public API
+Status: internal contract of `riskquant.credit`. It binds riskquant code only.
 
-This is the frozen public surface of the credit modelling core. Everything listed
-here is supported and versioned: **changing a public name or signature is a
-breaking change.** Everything not listed is internal — it may move, rename, or
-change shape at any time without notice.
+# `riskquant.credit`: internal contract
 
-## Policy
+## Status
 
-- **Public** = listed below = enforced by that module's `__all__`. Stable
-  signatures.
-- **Internal** = everything else (no `__all__` membership). No stability promise.
-- **Import convention.** `__init__.py` are empty by constitution; there is no
-  re-export hub. Import public names from their owning module by full path
-  (`from riskquant.credit.jtd.engine import run_jtd`). `__all__` on each public
-  module is the machine-checkable record of that module's surface. This keeps the
-  Numba-free ingest modules free of the kernel import tax.
+- `riskquant.credit` is a core package. D001 makes core packages private: code
+  outside riskquant imports from `riskquant.solutions.*` only. The credit-VaR
+  entry point for such code is `riskquant.solutions.credit_var.api`.
+- This file gives no promise to code outside riskquant. A name, a signature
+  or a module path in this file can change in any commit.
+- The list below records the names that each module of `riskquant.credit`
+  exports to other riskquant packages. The list equals the union of the
+  `__all__` lists of the `riskquant.credit` modules, each name at the module
+  that owns it. Test S5.T4 of WS_CREDIT_VAR_API checks this equality. A change
+  of an `__all__` list needs a change of this list in the same commit.
+- Import convention. Each `__init__.py` is empty (D002); no re-export hub
+  exists. Import a listed name from its owning module by full path, for
+  example `from riskquant.credit.jtd.engine import run_jtd`. This keeps the
+  Numba-free ingest modules free of the kernel import cost.
 
-## Public surface
+## Listed names
 
-### Masters — ingest (edge; pandas in)
-- `masters.obligors.ingest.compile_obligor_master`
-- `masters.netting_set.ingest.compile_netting_set_master`
-- `masters.factor_universe.ingest.compile_credit_factor_universe`
+### _scenario_coverage
 
-### Masters — compiled values (SoA; inspectable)
-- `masters.obligors.compiled.CompiledObligorCredit`
-- `masters.netting_set.compiled.CompiledNettingSetMaster`
-- `masters.factor_universe.compiled.CompiledCreditFactorUniverse`
-- `masters.cross_master.compiled.CompiledCreditMasters`
+- `riskquant.credit._scenario_coverage.assert_scenario_coverage_complete`
+- `riskquant.credit._scenario_coverage.new_scenario_coverage`
+- `riskquant.credit._scenario_coverage.record_scenario_span`
 
-### Factor simulation
-- `factors.simulate.base.build_credit_factor_matrix`
-- `factors.simulate.mixed.MixedCreditFactorGenerator` (`.from_universe`)
-- `factors.state.CreditFactorMatrix` (the latent-factor value `run_jtd` consumes)
+### aggregate
 
-### JTD ingest + execution
-- `jtd.ingest.bundle.JtdIngestBundle` (incl. `from_instrument_frame`)
-- `jtd.ingest.compile.compile_jtd_portfolio`
-- `jtd.compiled.CompiledJtdPortfolio`
-- `jtd.engine.run_jtd`
-- `jtd.results.JtdLossResult`
+- `riskquant.credit.aggregate.loss_metrics.PortfolioLossDistribution`
+- `riskquant.credit.aggregate.loss_metrics.expected_loss`
+- `riskquant.credit.aggregate.loss_metrics.expected_shortfall`
+- `riskquant.credit.aggregate.loss_metrics.loss_quantiles`
+- `riskquant.credit.aggregate.loss_metrics.loss_var_es`
+- `riskquant.credit.aggregate.loss_metrics.loss_var_es_contribution`
+- `riskquant.credit.aggregate.loss_metrics.tail_var_es_by_group`
+- `riskquant.credit.aggregate.loss_metrics.value_at_risk`
+- `riskquant.credit.aggregate.summary.JtdRiskSummary`
+- `riskquant.credit.aggregate.summary.build_portfolio_loss_distribution`
+- `riskquant.credit.aggregate.summary.model_tail_var_es`
+- `riskquant.credit.aggregate.summary.streaming_model_tail_var_es`
+- `riskquant.credit.aggregate.summary.summarize_jtd_loss`
+- `riskquant.credit.aggregate.summary.summarize_streaming_jtd_loss`
 
-### Aggregation / risk metrics
-- `aggregate.summary`: `build_portfolio_loss_distribution`, `summarize_jtd_loss`,
-  `JtdRiskSummary`, `model_tail_var_es`
-- `aggregate.loss_metrics`: `expected_loss`, `loss_var_es`, `value_at_risk`,
-  `expected_shortfall`, `tail_var_es_by_group`, `loss_quantiles`,
-  `PortfolioLossDistribution`
+### exposure
 
-### Taxonomy (stable integer enums)
-- `jtd.models.JtdModel`
-- `masters.eums.credit_factor_kind.CreditFactorKind`
+- `riskquant.credit.exposure.add_on.compiled.CompiledAddOnFactors`
+- `riskquant.credit.exposure.add_on.ingest.compile_add_on_factors`
+- `riskquant.credit.exposure.add_on.resolve.SACCR_MF_ONE_YEAR_CAP`
+- `riskquant.credit.exposure.add_on.resolve.SACCR_MF_TEN_BUSINESS_DAY_FLOOR`
+- `riskquant.credit.exposure.add_on.resolve.resolve_quantity_price_effective_notional`
+- `riskquant.credit.exposure.add_on.resolve.resolve_saccr_effective_notional`
+- `riskquant.credit.exposure.add_on.resolve.resolve_supervisory_factors`
+- `riskquant.credit.exposure.obligor_ead.align.align_obligor_ead_to_portfolio`
+- `riskquant.credit.exposure.obligor_ead.compiled.CompiledObligorEad`
+- `riskquant.credit.exposure.obligor_ead.ingest.compile_obligor_ead`
+- `riskquant.credit.exposure.saccr.aggregate.compute_saccr_add_on`
+- `riskquant.credit.exposure.saccr.config.CompiledSaccrConfig`
+- `riskquant.credit.exposure.saccr.ingest.compile_saccr_config`
+
+### factors
+
+- `riskquant.credit.factors.simulate.base.build_credit_factor_matrix`
+- `riskquant.credit.factors.simulate.mixed.MixedCreditFactorGenerator`
+- `riskquant.credit.factors.simulate.parametric_beta.BetaGenerator`
+- `riskquant.credit.factors.simulate.parametric_copula_gaussian.GaussianCopulaGenerator`
+- `riskquant.credit.factors.simulate.parametric_copula_t.TCopulaGenerator`
+- `riskquant.credit.factors.simulate.parametric_uniform.IndependentUniformGenerator`
+- `riskquant.credit.factors.state.CreditFactorMatrix`
+
+### jtd
+
+- `riskquant.credit.jtd.bridge.aggregate_ead_to_obligor`
+- `riskquant.credit.jtd.compiled.CompiledJtdPortfolio`
+- `riskquant.credit.jtd.engine.run_jtd`
+- `riskquant.credit.jtd.engine.run_jtd_for_obligor_ead`
+- `riskquant.credit.jtd.ingest.bundle.JtdIngestBundle`
+- `riskquant.credit.jtd.ingest.compile.compile_jtd_portfolio`
+- `riskquant.credit.jtd.models.JtdModel`
+- `riskquant.credit.jtd.results.JtdLossResult`
+- `riskquant.credit.jtd.results.StreamingJtdResult`
+- `riskquant.credit.jtd.streaming.constant_ead_provider`
+- `riskquant.credit.jtd.streaming.run_jtd_streaming`
+- `riskquant.credit.jtd.streaming.run_jtd_streaming_from_generator`
+
+### masters
+
+- `riskquant.credit.masters.cross_master.compiled.CompiledCreditMasters`
+- `riskquant.credit.masters.enums.credit_factor_kind.CreditFactorKind`
+- `riskquant.credit.masters.factor_universe.compiled.CompiledCreditFactorUniverse`
+- `riskquant.credit.masters.factor_universe.ingest.compile_credit_factor_universe`
+- `riskquant.credit.masters.netting_set.compiled.CompiledNettingSetMaster`
+- `riskquant.credit.masters.netting_set.ingest.compile_netting_set_master`
+- `riskquant.credit.masters.obligors.compiled.CompiledObligorCredit`
+- `riskquant.credit.masters.obligors.ingest.compile_obligor_master`
 
 ## Model parameter contracts
 
@@ -128,20 +172,13 @@ strictly. This is the t-copula's tail dependence and it is intended. Genuine
 independence between two cohorts under Student-t requires BOTH disjoint systemic
 loadings AND distinct `chi_squared_factor` columns.
 
-## Deprecated (removed next release)
+## Not listed
 
-Importable but warn on call; not in `__all__`. Migrate to the new name.
-
-None.
-
-## Explicitly internal (NOT part of the contract)
-
-`jtd.registry` (model wiring; the supported way to *extend*, not a stability
-promise), `jtd.ingest.builders.*`, `jtd.ingest._shared`, `jtd.ingest.contracts`
-(`JtdModelContract`, `FACTOR_COLUMN_KIND`), `jtd.ingest.validate` predicates, all
-`jtd.kernels.*` and `jtd.evaluators.*`, block classes / constructors
-(`jtd.blocks.*`), the derived constants in `jtd.models` (`NUM_JTD_MODELS`,
-`*_ID`, `MF_COPULA_MODELS`), and `scenario_metrics`
-(a separate shared tail-stats package with its own surface).
-
-## Resolved decisions
+Each name that is in no `__all__` list is outside this contract. Examples:
+`jtd.registry` (model wiring; the supported way to extend the model set),
+`jtd.ingest.builders.*`, `jtd.ingest._shared`, `jtd.ingest.contracts`
+(`JtdModelContract`, `FACTOR_COLUMN_KIND`), the `jtd.ingest.validate`
+predicates, all `jtd.kernels.*` and `jtd.evaluators.*`, block classes and
+constructors (`jtd.blocks.*`), and the derived constants in `jtd.models`
+(`NUM_JTD_MODELS`, `*_ID`, `MF_COPULA_MODELS`). `scenario_metrics` is a
+separate shared tail-statistics package with its own contract.

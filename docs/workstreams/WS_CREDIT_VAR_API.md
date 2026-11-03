@@ -83,6 +83,7 @@ Owner decisions in force:
 - 2026-11-02 (OD-S2-2 (a)): LoadingRow.factor, ObligorRow.group and GroupRow.name contain no NUL character (S2 review R-002). The fault loc is the field path (rule 1).
 - 2026-11-03 (OD-S2-1, scope): R-001 needs a third site, credit/exposure/obligor_ead/compiled.py (CompiledObligorEad.__post_init__). Added to S2 Files. Revision 6 by explicit owner decision under the tripwire.
 - 2026-11-03 (R-006 erratum, S2 re-review): the A_CONTRACT 2.1 obligor_uid constraint cell is restored to its Revision 4 text. The "$...$" wrapper of Revision 5 was an editing error. No contract meaning changes, so no revision.
+- 2026-11-03 (pandas cap, S5): pyproject.toml caps pandas at the next minor above the tested version (pandas>=2.0,<3.1). The engine loading sum uses pandas groupby().sum(); pandas 3.1.0 changes its rounding, so rule 14 can drift from the engine (S5 implementer, Observed: two S2.T6 tests fail on 3.1.0). Same reason as the numba cap under O-11. Backlog: one shared core loading-sum function for the engine and rule 14.
 
 Depends on: none.
 Blocks: consumer releases that pin `credit_var.api`. `api.py` names the notebook, Emissary and the xlwings tool as consumers (F-31).
