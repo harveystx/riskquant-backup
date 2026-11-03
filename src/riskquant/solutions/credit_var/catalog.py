@@ -7,6 +7,15 @@ request schema validates against. This is deliberately solution-side: it carries
 human display labels and the authoring contract, which the core engine has no
 business knowing. It lists only models this solution can run; the underlying
 construction lives in `riskquant.solutions.credit_var.recipe`.
+
+Process state (WS_CREDIT_VAR_API C.22)
+--------------------------------------
+`MODEL_CATALOG` is a read-only mapping (``types.MappingProxyType``) over a dict
+that no name in this module keeps. `api` re-exports it, so a plain dict would
+let one consumer change the menu, the parameter rules and the request
+validation of every other caller in the process (F-16). Item assignment and
+deletion raise ``TypeError``. The values are frozen dataclasses with tuple
+fields, so no level of the catalog is mutable.
 """
 
 from __future__ import annotations
@@ -19,7 +28,10 @@ __all__ = [
     "supported_model_keys",
 ]
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Final
 
 from riskquant.solutions.credit_var.constants import (
     SF_BETA_BINOMIAL_ALPHA,
@@ -138,7 +150,8 @@ _SYSTEMIC_PD = ParamSpec(
 )
 
 
-MODEL_CATALOG: dict[str, ModelEntry] = {
+# Read-only view (C.22). The literal is the only reference to the backing dict.
+MODEL_CATALOG: Final[Mapping[str, ModelEntry]] = MappingProxyType({
     "forced_default": ModelEntry(
         key="forced_default",
         display_name="Forced Default",
@@ -253,7 +266,7 @@ MODEL_CATALOG: dict[str, ModelEntry] = {
         params=(_NU,),
         requires_loadings=True,
     ),
-}
+})
 
 # No-drift guard: the catalog must not advertise a model the core can't assemble.
 _missing = set(MODEL_CATALOG) - set(SUPPORTED_RECIPES)

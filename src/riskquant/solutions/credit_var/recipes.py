@@ -33,6 +33,7 @@ __all__ = [
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Final
 
 import numpy as np
@@ -669,7 +670,10 @@ def _assemble_marshall_olkin(
     )
 
 
-SUPPORTED_RECIPES: dict[str, object] = {
+# Read-only view (WS_CREDIT_VAR_API C.22, F-16): the recipe table is process
+# state that every caller dispatches on, so no caller may add, replace or remove
+# an assembler. The literal is the only reference to the backing dict.
+SUPPORTED_RECIPES: Final[Mapping[str, object]] = MappingProxyType({
     "forced_default": _assemble_forced_default,
     "independent_bernoulli": _assemble_independent_bernoulli,
     "stress_regime_bernoulli": _assemble_stress_regime_bernoulli,
@@ -683,7 +687,7 @@ SUPPORTED_RECIPES: dict[str, object] = {
     "mf_gaussian": _assemble_mf_gaussian,
     "mf_students_t": _assemble_mf_students_t,
     "marshall_olkin": _assemble_marshall_olkin,
-}
+})
 
 
 def assemble_inputs(

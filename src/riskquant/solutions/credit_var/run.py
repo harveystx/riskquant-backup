@@ -39,6 +39,23 @@ Request admission and errors (WS_CREDIT_VAR_API S2, C.15, C.20)
   ``Exception`` becomes `CreditVarEngineError` (E) with ``__cause__`` set
   (`errors.engine_fault`), including a ``ValidationError`` from the
   construction of a result model.
+
+Concurrent calls (WS_CREDIT_VAR_API S3, C.23 to C.25, O-10)
+-----------------------------------------------------------
+* The engine path enters 11 parallel Numba kernels: the 9 JTD kernels (through
+  `run_jtd_for_obligor_ead`) and the 2 tail kernels of ``scenario_metrics``
+  (through `summarize_jtd_loss`, `model_tail_var_es` and
+  `obligor_tail_attribution`). Each of these calls runs while the thread holds
+  `_PARALLEL_KERNEL_LOCK`, one process-wide lock of this module.
+* Why: concurrent entry into parallel regions from several Python threads is
+  safe only under some Numba threading layers, and Numba selects the layer at
+  run time per host (F-18). The lock makes the run independent of that choice.
+* The lock covers the parallel-kernel calls only. Request admission, input
+  assembly, factor generation and result assembly stay concurrent.
+* The lock serializes the parallel kernels of credit_var only. It does not
+  serialize parallel kernels that other riskquant modules enter.
+* Calls on separate threads share no mutable state of this module, so each
+  gives the result of a serial call.
 """
 
 from __future__ import annotations
@@ -47,6 +64,7 @@ __all__ = [
     "run_credit_var",
 ]
 
+import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -130,6 +148,12 @@ _FORCED_DEFAULT_KEY: Final[str] = JtdModel.FORCED_DEFAULT.name
 
 # Bounded offender preview in engine-fault messages.
 _PREVIEW: Final[int] = 10
+
+# One process-wide lock for the entry into the parallel Numba kernels of
+# credit_var (O-10, C.25). A plain Lock and not an RLock: no locked section
+# calls another, so a re-entry is a defect and deadlocks loudly instead of
+# nesting silently. Hold it only around the calls that enter a parallel kernel.
+_PARALLEL_KERNEL_LOCK: Final[threading.Lock] = threading.Lock()
 
 
 def _obligor_frame(obligors: Sequence[ObligorRow]) -> pd.DataFrame:
@@ -271,18 +295,23 @@ def _simulate(request: CreditVarRequest, obligors: list[ObligorRow]) -> _Simulat
         num_factors=universe.n_factors,
         num_scenarios=request.n_scenarios,
     )
-    result = run_jtd_for_obligor_ead(
-        jtd_portfolio=portfolio,
-        obligor_ead=inputs.obligor_ead,
-        credit_factors=credit_factors,
-    )
     alphas = tuple(request.alphas)
-    summary = summarize_jtd_loss(result=result, jtd_portfolio=portfolio, alphas=alphas)
-    per_model = model_tail_var_es(
-        result=result,
-        jtd_portfolio=portfolio,
-        alpha=max(alphas),
-    )
+    # C.25: the JTD kernels and the tail kernels run under the process lock.
+    # Factor generation above stays outside it; it enters no parallel kernel.
+    with _PARALLEL_KERNEL_LOCK:
+        result = run_jtd_for_obligor_ead(
+            jtd_portfolio=portfolio,
+            obligor_ead=inputs.obligor_ead,
+            credit_factors=credit_factors,
+        )
+        summary = summarize_jtd_loss(
+            result=result, jtd_portfolio=portfolio, alphas=alphas
+        )
+        per_model = model_tail_var_es(
+            result=result,
+            jtd_portfolio=portfolio,
+            alpha=max(alphas),
+        )
     return _Simulated(
         loss=result.loss,
         uids=result.uid,
@@ -603,11 +632,13 @@ def _run(req: CreditVarRequest) -> CreditVarResult:
     var = {a: base_var[a] + forced_total for a in alphas}
     es = {a: base_es[a] + forced_total for a in alphas}
 
-    attribution = obligor_tail_attribution(
-        obligor_loss=loss,
-        portfolio_losses=portfolio_losses,
-        confidence_level=headline_alpha,
-    )
+    # C.25: the attribution enters both tail kernels (VaR/ES and contribution).
+    with _PARALLEL_KERNEL_LOCK:
+        attribution = obligor_tail_attribution(
+            obligor_loss=loss,
+            portfolio_losses=portfolio_losses,
+            confidence_level=headline_alpha,
+        )
     contributions = _obligor_contributions(req, uids, attribution)
 
     hist_edges, hist_counts = loss_histogram(portfolio_losses)
