@@ -1,7 +1,7 @@
 # WS_CREDIT_VAR_API / A_CONTRACT: target shapes of request and result
 
 Path: docs/workstreams/WS_CREDIT_VAR_API/A_CONTRACT.md
-Revision: 4
+Revision: 5
 Used by: S1, S2, S5
 Snapshot: SNAPSHOT commit=925533b dirty=false content_hash=046ed5dddb6305d3
 
@@ -39,13 +39,13 @@ elements.
 
 | Field | Python type | Constraint | JSON | Change |
 |---|---|---|---|---|
-| obligor_uid | `int` | -2**63 <= v <= 2**63 - 1 | integer | int64 range added (C.17) |
+| obligor_uid | `int` | $-2**63 <= v <= 2**63 - 1$ | integer | int64 range added (C.17) |
 | ead | `float` | finite, >= 0 | number | finite added |
 | pd | `float` | 0 <= v <= 1 | number | none |
 | lgd | `float` | 0 <= v <= 1 | number | none |
 | in_stress_test | `bool` | default False | boolean | none |
 | force_default | `bool` | default False | boolean | none |
-| group | `str \| None` | min_length 1; default None | string or null | none |
+| group | `str \| None` | min_length 1; default None; contains no NUL character ("\x00") | string or null | none |
 | rho | `float \| None` | 0 <= v < 1; default None | number or null | none |
 
 ### 2.2 LoadingRow
@@ -53,14 +53,14 @@ elements.
 | Field | Python type | Constraint | JSON | Change |
 |---|---|---|---|---|
 | obligor_uid | `int` | int64 range | integer | int64 range added |
-| factor | `str` | min_length 1 | string | collision rule (C.17) |
+| factor | `str` | min_length 1; contains no NUL character ("\x00") | string | collision rule (C.17) |
 | loading | `float` | -1 <= v <= 1 | number | none |
 
 ### 2.3 GroupRow
 
 | Field | Python type | Constraint | JSON | Change |
 |---|---|---|---|---|
-| name | `str` | min_length 1 | string | none |
+| name | `str` | min_length 1; contains no NUL character ("\x00") | string | none |
 | params | `dict[str, float]` | keys and ranges per catalog | object | none |
 
 ### 2.4 CreditVarRequest

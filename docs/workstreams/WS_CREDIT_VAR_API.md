@@ -3,8 +3,8 @@
 Path: docs/workstreams/WS_CREDIT_VAR_API.md
 Class: HEAVY
 Status: FROZEN
-Revision: 4
-Revision note: Owner decision of 2026-11-02 (OD-A): A_CONTRACT 3.8 bin_edges is strictly ascending. Editorial; no audit round.
+Revision: 5
+Revision note: Owner decisions of 2026-11-02 (OD-S2-1, OD-S2-2): S2 scope and A_CONTRACT 2.1 to 2.3 NUL rule. No audit round.
 Date: 2026-10-29
 Branch: ws/credit-var-api
 Snapshot: SNAPSHOT commit=925533b dirty=false content_hash=046ed5dddb6305d3
@@ -79,6 +79,8 @@ Owner decisions in force:
 - 2026-11-02 (OD-A): A_CONTRACT 3.8 bin_edges is strictly ascending, as the code enforces. Revision 4 by explicit owner decision under the tripwire; editorial only.
 - 2026-11-02 (OD-C): U-a uses systemic_pd = 5e-05 (confirmed).
 - 2026-11-02 (ZV comparison, S1 closure review R-011): the ZV rule compares with ==, so -0.0 satisfies it. run.py emits +0.0. "0.0" in A_CONTRACT 3.2 means numeric equality, not bit equality.
+- 2026-11-02 (OD-S2-1 (b)): the np.diff int64 wrap in credit/masters/obligors/validate.py and credit/masters/netting_set/validate.py is fixed in S2 (S2 review R-001). The request contract does not change. Revision 5 by explicit owner decision under the tripwire.
+- 2026-11-02 (OD-S2-2 (a)): LoadingRow.factor, ObligorRow.group and GroupRow.name contain no NUL character (S2 review R-002). The fault loc is the field path (rule 1).
 
 Depends on: none.
 Blocks: consumer releases that pin `credit_var.api`. `api.py` names the notebook, Emissary and the xlwings tool as consumers (F-31).
@@ -321,7 +323,9 @@ Files:
 - create: tests/solutions/credit_var/test_request_contract.py; tests/solutions/credit_var/test_errors.py
 - modify: src/riskquant/solutions/credit_var/schemas.py; src/riskquant/solutions/credit_var/run.py; src/riskquant/solutions/credit_var/errors.py
 - modify, only to give the C.17 reserved-name rule the recipe factor-name format: src/riskquant/solutions/credit_var/recipes.py
-Prohibited: src/riskquant/credit/**; result models; catalog.py; pyproject.toml; DECISIONS.md.
+- src/riskquant/credit/masters/obligors/validate.py (modify: R-001 overflow-free ascending check)
+- src/riskquant/credit/masters/netting_set/validate.py (modify: same)
+Prohibited: src/riskquant/credit/**; except the two validate.py files above; result models; catalog.py; pyproject.toml; DECISIONS.md.
 Attach: docs/workstreams/WS_CREDIT_VAR_API.md ; docs/workstreams/WS_CREDIT_VAR_API/A_CONTRACT.md ; docs/CLAUDE.md ; docs/DECISIONS.md ; context_riskquant_index.txt ; context_riskquant_solutions_credit_var.txt ; context_riskquant_credit.txt ; context_riskquant_tests_credit.txt
 Gates: gate block; `$t = "tests/solutions/credit_var", "tests/credit/solutions"`
 Exit: every S2 test passes; full suite passes; no request-content fault reaches the engine.
