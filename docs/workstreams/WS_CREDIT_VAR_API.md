@@ -362,8 +362,8 @@ Prohibited: src/riskquant/credit/**; src/riskquant/jit.py; schemas.py; pyproject
 Attach: docs/workstreams/WS_CREDIT_VAR_API.md ; docs/CLAUDE.md ; docs/DECISIONS.md ; context_riskquant_index.txt ; context_riskquant_solutions_credit_var.txt ; context_riskquant_tests_credit.txt
 Gates: gate block; `$t = "tests/solutions/credit_var", "tests/credit/solutions"`. The final report records `numba.threading_layer()`, `NUMBA_NUM_THREADS` and `os.cpu_count()` from the owner machine.
 Exit: every S3 test passes on a multi-core owner machine; full suite passes.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: S3 review ACCEPT 2026-11-03. Owner gate at d150990 (clean; omp, NUMBA_NUM_THREADS unset, 12 threads, 12 CPUs): ruff, format, mypy exit=0; S3 file 6 passed; slice 418 passed; full 7870 passed, 36 skipped; 15 of 15 demos exit=0. R-001 (P2) backlog.
 
 | Id | Case | Expected | Defect caught |
 |---|---|---|---|
@@ -484,6 +484,9 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - Tooling: upgrade ruff (preview = true) after WS_CREDIT_VAR_API merges; one repository-wide format commit on its own branch (S4 review R-002).
 - from_dataframe (`schemas.py:_dataframe_uid`): a bool cell becomes 1 and a Decimal cell is truncated by int(); a str cell such as "7.9" raises ValueError, not R. The member is outside the stable surface (O-7 (b)) (S2 re-review, adjacent).
 - np.diff int64 wrap not analyzed at credit/exposure/add_on/compiled.py:47 and credit/exposure/saccr/config.py:50. Not on the credit_var path; belongs to credit_exposure (S2 review, adjacent).
+- simulate_portfolio_losses computes summarize_jtd_loss and model_tail_var_es and then discards them; this costs lock time (S3 owner decision, performance only).
+- schemas.py:_MF_RECIPE_HAS_CHI is typed Final[Mapping[str, bool]] but is a plain dict at run time; private, outside C.22 (S3 review, adjacent).
+- Process: every implementer prompt states "Read DECISIONS.md before you write code" (S3 review R-001).
 
 ## 8. Closure record
 
