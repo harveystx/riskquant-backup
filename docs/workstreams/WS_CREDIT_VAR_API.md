@@ -94,6 +94,7 @@ Owner decisions in force:
 - 2026-11-03 (audit OD-2 (b)): the api.py docstring states the numeric domain. R-004 and R-005 go to the backlog.
 - 2026-11-03 (audit R-006, R-007): backlog. O-8 strictness and the lax result models of A_CONTRACT 1 stay.
 - 2026-11-03 (audit OD-4): the owner records D107 "S7 pre-release defect fixes" at S7 closure, so that 0.1.0 users can trace the ul_* value change (D106.3).
+- 2026-11-03 (S6 OD-1 (a)): "core count" in the S6 Record means os.cpu_count() (logical processors). R1 is the pre-S7 baseline; after S7 is VALIDATED, the owner commits R_BENCHMARK_R2.md as the release figures, with no second review.
 
 Depends on: none.
 Blocks: consumer releases that pin `credit_var.api`. `api.py` names the notebook, Emissary and the xlwings tool as consumers (F-31).
@@ -455,8 +456,8 @@ Book: deterministic synthetic book from a fixed seed, PD in [0.005, 0.05], LGD 0
 Record: exact command, CPU model, core count, RAM, OS, Python, NumPy, SciPy, Numba versions, `numba.threading_layer()`, NUMBA_NUM_THREADS, riskquant commit.
 Gates: `$f = "scripts/solutions/credit_var/bench_credit_var_api.py"`; ruff check and ruff format --check on `$f`; then `python scripts/solutions/credit_var/bench_credit_var_api.py *>&1 | Tee-Object -FilePath bench_output.txt`
 Exit: owner machine output saved as docs/workstreams/WS_CREDIT_VAR_API/R_BENCHMARK_R1.md. A sandbox run is sandbox evidence only.
-Status: IN_PROGRESS
-Evidence: Script committed at db92afc; gates and smoke run pass on the owner machine; full run and QUICK review pending.
+Status: VALIDATED
+Evidence: Script committed at db92afc (1 file, scripts/ only). Owner-machine run at e8d5d8d (clean tree), report R_BENCHMARK_R1.md, all cases ok; ruff check and ruff format --check exit 0. "Core count" in Record = os.cpu_count() (OD-1 (a), 2026-11-03). QUICK review: R-001 to R-003 closed; R-004 backlog (P2). R1 is the pre-S7 baseline; R_BENCHMARK_R2.md after S7 VALIDATED, no second review (owner decision 2026-11-03).
 
 ### S7: Pre-release audit fixes
 
@@ -546,6 +547,7 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - errors.py docstring: "E: the caller cannot fix it by a change of the request" is not true for R-004 and R-005 (audit).
 - credit/jtd/streaming.py:217 uses the same broadcast_to pattern as R-002; not on the api path (audit, adjacent).
 - Audit probe: PROBE-ERROR prints SKIP when zero probe exceptions occur; a reporting defect of _gates/audit_credit_var.py only (audit).
+- bench_credit_var_api.py M2 column "First - second s (median)" is the median of per-repetition differences, not the difference of medians; make the label state that (S6 review R-004).
 
 ## 8. Closure record
 
