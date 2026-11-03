@@ -15,10 +15,13 @@ predicate and the engine predicate fails here.
 
 from __future__ import annotations
 
+import gc
 import inspect
 import json
 import math
 import re
+import time
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -26,7 +29,14 @@ import pandas as pd
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from riskquant.credit.exposure.obligor_ead.compiled import CompiledObligorEad
 from riskquant.credit.jtd.ingest.compile import compile_jtd_portfolio
+from riskquant.credit.masters.netting_set.validate import (
+    validate_uid_sorted_unique as validate_netting_set_uids,
+)
+from riskquant.credit.masters.obligors.validate import (
+    validate_uid_sorted_unique as validate_obligor_uids,
+)
 from riskquant.solutions.credit_var import run as credit_var_run
 from riskquant.solutions.credit_var.api import (
     CreditVarRequest,
@@ -263,6 +273,62 @@ def test_s2_t5_int64_bounds_are_accepted(uid: int) -> None:
     assert np.int64(uid) == uid  # representable without wrap
 
 
+#: Ascending uid pairs whose int64 difference exceeds the int64 range: np.diff
+#: wraps to a negative value (S2 review R-001, OD-S2-1).
+_WRAPPING_ASCENDING_UIDS: list[tuple[int, int]] = [
+    (-1, _INT64_MAX),
+    (-(2**62), 2**62),
+]
+
+
+@pytest.mark.parametrize("uids", _WRAPPING_ASCENDING_UIDS)
+@pytest.mark.parametrize(
+    ("model", "params"),
+    [("sf_gaussian", {"rho": 0.15}), ("independent_bernoulli", {})],
+)
+def test_s2_t5_wrapping_uid_pair_runs_end_to_end(
+    uids: tuple[int, int], model: str, params: dict[str, float]
+) -> None:
+    """R-001: a request with valid int64 uids runs; the engine ascending
+    checks (obligor master, CompiledObligorEad) do not wrap."""
+    book: dict[str, Any] = {
+        "model": model,
+        "obligors": [
+            {"obligor_uid": uid, "ead": 1.0e6, "pd": 0.03, "lgd": 0.45} for uid in uids
+        ],
+        "params": params,
+        "n_scenarios": 1_000,
+        "alphas": [0.99],
+        "seed": 7,
+    }
+    result = run_credit_var(book)
+    assert result.provenance.n_obligors == 2
+
+
+@pytest.mark.parametrize("validate", [validate_obligor_uids, validate_netting_set_uids])
+def test_s2_t5_uid_ascending_check_does_not_wrap(
+    validate: Callable[[np.ndarray], None],
+) -> None:
+    """R-001: the master validators accept a wrapping ascending pair and
+    reject a descending pair whose np.diff wraps to a positive value. The
+    netting-set master is not on the credit_var path, so the end-to-end test
+    does not reach it."""
+    for uids in _WRAPPING_ASCENDING_UIDS:
+        validate(np.array(uids, dtype=np.int64))
+    with pytest.raises(ValueError, match="not sorted ascending"):
+        validate(np.array([_INT64_MAX, -2], dtype=np.int64))
+
+
+def test_s2_t5_compiled_obligor_ead_ascending_check_does_not_wrap() -> None:
+    """R-001: CompiledObligorEad accepts a wrapping ascending pair and rejects
+    a descending pair whose np.diff wraps to a positive value."""
+    ead = np.array([1.0, 2.0], dtype=np.float64)
+    for uids in _WRAPPING_ASCENDING_UIDS:
+        CompiledObligorEad(uid=np.array(uids, dtype=np.int64), ead=ead)
+    with pytest.raises(ValueError, match="ascending-sorted and unique"):
+        CompiledObligorEad(uid=np.array([_INT64_MAX, -2], dtype=np.int64), ead=ead)
+
+
 # ---------------------------------------------------------------------------
 # S2.T6 (C.17): loadings rules agree with the engine predicate
 # ---------------------------------------------------------------------------
@@ -281,9 +347,25 @@ def _book_with_obligor_20_loadings(first: float, second: float) -> dict[str, Any
     return book
 
 
-def _engine_accepts(book: dict[str, Any]) -> bool:
+#: Engine rejection messages (fragments) of the rules that S2.T6 and S2.T7
+#: compare with the engine.
+_ENGINE_DUPLICATE_LOADING_20 = "obligor(s) [20] load on the same systemic factor twice."
+_ENGINE_SUM_SQ_20 = "sum of squared loadings exceeds 1 for obligor(s) [20]."
+
+
+def _engine_duplicate_factor_name(factor: str) -> str:
+    return f"credit factor universe: duplicate factor_name(s) [{factor!r}]."
+
+
+def _engine_accepts(book: dict[str, Any], *, target: str) -> bool:
     """The engine's own loadings check (`credit.jtd.ingest.validate`), run on
-    the recipe frames of `book`, without the request validator."""
+    the recipe frames of `book`, without the request validator.
+
+    Returns False only for a ValueError whose message contains `target`, the
+    engine message of the rule under test. Any other ValueError fails the
+    test: an engine rejection for a different reason is not evidence that the
+    engine applies the rule (S2 review R-005).
+    """
     obligor_table = pd.DataFrame({
         "uid": [row["obligor_uid"] for row in book["obligors"]],
         "ead": [row["ead"] for row in book["obligors"]],
@@ -303,7 +385,12 @@ def _engine_accepts(book: dict[str, Any]) -> bool:
             loadings_table=loadings_table,
         )
         compile_jtd_portfolio(bundle=inputs.bundle, masters=inputs.masters)
-    except ValueError:
+    except ValueError as exc:
+        if target not in str(exc):
+            pytest.fail(
+                f"engine raised a ValueError without the target message "
+                f"{target!r}: {exc}"
+            )
         return False
     return True
 
@@ -314,7 +401,7 @@ def test_s2_t6_duplicate_uid_factor_raises_as_in_the_engine() -> None:
     with pytest.raises(ValidationError) as excinfo:
         CreditVarRequest.model_validate(book)
     assert _single_error(excinfo)["loc"] == ("loadings", 3, "factor")
-    assert not _engine_accepts(book)
+    assert not _engine_accepts(book, target=_ENGINE_DUPLICATE_LOADING_20)
 
 
 def test_s2_t6_sum_of_squares_above_tolerance_raises_as_in_the_engine() -> None:
@@ -324,7 +411,7 @@ def test_s2_t6_sum_of_squares_above_tolerance_raises_as_in_the_engine() -> None:
     with pytest.raises(ValidationError) as excinfo:
         CreditVarRequest.model_validate(book)
     assert _single_error(excinfo)["loc"] == ("loadings", 3, "loading")
-    assert not _engine_accepts(book)
+    assert not _engine_accepts(book, target=_ENGINE_SUM_SQ_20)
 
 
 def test_s2_t6_sum_of_squares_inside_tolerance_is_accepted_as_in_the_engine() -> None:
@@ -335,7 +422,7 @@ def test_s2_t6_sum_of_squares_inside_tolerance_is_accepted_as_in_the_engine() ->
     request = CreditVarRequest.model_validate(book)
     assert request.loadings is not None
     assert len(request.loadings) == 4
-    assert _engine_accepts(book)
+    assert _engine_accepts(book, target=_ENGINE_SUM_SQ_20)
 
 
 def test_s2_t6_loc_is_the_row_where_the_running_sum_first_exceeds() -> None:
@@ -348,6 +435,128 @@ def test_s2_t6_loc_is_the_row_where_the_running_sum_first_exceeds() -> None:
     with pytest.raises(ValidationError) as excinfo:
         CreditVarRequest.model_validate(book)
     assert _single_error(excinfo)["loc"] == ("loadings", 4, "loading")
+
+
+#: Loadings of obligor 20 (20 rows each, exact as float.hex) where
+#: ``math.fsum`` of the squares and the engine grouped sum round to adjacent
+#: floats on the two sides of 1 + 1e-9. Source: a seeded search
+#: (numpy default_rng(20261103)) over unit-norm vectors scaled by
+#: sqrt(1 + 1e-9) and shifted by k * 2.2e-16, k in -4..4. In each vector only
+#: the full sum can exceed the bound, so a rejection has its loc at the last
+#: row.
+_FSUM_OVER_ENGINE_WITHIN: tuple[str, ...] = (
+    "0x1.894d071d29e45p-2", "0x1.f1ceb9b5eae51p-5", "-0x1.a40fb3a265e57p-2",
+    "0x1.627aedb1ed591p-4", "0x1.2e802aa1c7859p-4", "-0x1.c8465e4a18d83p-3",
+    "-0x1.081577ef9eef8p-4", "-0x1.04772fcc287adp-1", "0x1.32075f6209449p-2",
+    "-0x1.576e1b522ee46p-6", "0x1.768ad8b7136ccp-4", "0x1.d33ea977b1e21p-4",
+    "0x1.336671ad08239p-3", "-0x1.20d46da08aecdp-3", "0x1.7261dd889a405p-4",
+    "0x1.e473c743c6247p-4", "0x1.e044fd6c72427p-3", "-0x1.18f412d91f253p-2",
+    "-0x1.9c25bcb8dc35fp-4", "-0x1.93c19f642a7b2p-3",
+)  # fmt: skip
+_FSUM_WITHIN_ENGINE_OVER: tuple[str, ...] = (
+    "-0x1.6cc5827925b65p-4", "0x1.0f5116a0b32b9p-2", "-0x1.000634a2f7561p-3",
+    "-0x1.56b19925e80cfp-5", "0x1.25ff2bb345a49p-2", "-0x1.7cccc8d73e5a7p-4",
+    "-0x1.46ee6d8fcbe5ep-5", "0x1.9cffee69712a8p-3", "-0x1.65ea934b88a58p-5",
+    "0x1.a68d0e828b47ap-4", "0x1.7c9ff34151068p-2", "-0x1.12b5b4ba27978p-1",
+    "0x1.818b06c57d125p-3", "-0x1.3aa90242953d8p-5", "-0x1.6f0f16288f8ebp-2",
+    "-0x1.52d4a472950b7p-4", "0x1.a366ceff4cfeap-7", "0x1.5fdf2eb0a7616p-2",
+    "0x1.5d30e064cb28ap-5", "-0x1.9ae843f492d1fp-3",
+)  # fmt: skip
+_SUM_SQ_BOUND = 1.0 + 1e-9
+
+
+def _book_with_obligor_20_vector(hex_loadings: tuple[str, ...]) -> dict[str, Any]:
+    """Rows 0 and 1 load obligors 10 and 30; rows 2 onward are the vector on
+    obligor 20, one systemic factor per row."""
+    book = _mf_book()
+    del book["loadings"][1]
+    book["loadings"] += [
+        {"obligor_uid": 20, "factor": f"G{n:02d}", "loading": float.fromhex(h)}
+        for n, h in enumerate(hex_loadings, start=1)
+    ]
+    return book
+
+
+def _engine_grouped_sum(loadings: list[float]) -> float:
+    """The engine expression of `_semantic_mf_gaussian` on one obligor:
+    float64 squares, then a pandas group sum."""
+    squares = np.asarray(loadings, dtype=np.float64) ** 2
+    uids = np.full(len(loadings), 20, dtype=np.int64)
+    return float(pd.Series(squares).groupby(uids).sum().iloc[0])
+
+
+def test_s2_t6_fsum_over_engine_within_is_accepted_as_in_the_engine() -> None:
+    """R-003: math.fsum says above 1 + 1e-9, the engine says within. The
+    request decision follows the engine."""
+    loadings = [float.fromhex(h) for h in _FSUM_OVER_ENGINE_WITHIN]
+    squares = [x * x for x in loadings]
+    assert math.fsum(squares) > _SUM_SQ_BOUND
+    assert _engine_grouped_sum(loadings) <= _SUM_SQ_BOUND
+    book = _book_with_obligor_20_vector(_FSUM_OVER_ENGINE_WITHIN)
+    assert _engine_accepts(book, target=_ENGINE_SUM_SQ_20)
+    request = CreditVarRequest.model_validate(book)
+    assert request.loadings is not None
+    assert len(request.loadings) == 2 + len(loadings)
+
+
+def test_s2_t6_fsum_within_engine_over_raises_as_in_the_engine() -> None:
+    """R-003: math.fsum says within 1 + 1e-9, the engine says above. The
+    request decision follows the engine; the loc is the last row of obligor
+    20, the first row at which the running sum exceeds the bound."""
+    loadings = [float.fromhex(h) for h in _FSUM_WITHIN_ENGINE_OVER]
+    squares = [x * x for x in loadings]
+    assert math.fsum(squares) <= _SUM_SQ_BOUND
+    assert _engine_grouped_sum(loadings) > _SUM_SQ_BOUND
+    book = _book_with_obligor_20_vector(_FSUM_WITHIN_ENGINE_OVER)
+    assert not _engine_accepts(book, target=_ENGINE_SUM_SQ_20)
+    with pytest.raises(ValidationError) as excinfo:
+        CreditVarRequest.model_validate(book)
+    assert _single_error(excinfo)["loc"] == ("loadings", 1 + len(loadings), "loading")
+
+
+def _single_obligor_loadings(n_rows: int) -> tuple[LoadingRow, ...]:
+    """`n_rows` loadings of 0.001 on obligor 20: sum of squares n_rows * 1e-6,
+    inside the bound for every size used below."""
+    return tuple(
+        LoadingRow(obligor_uid=20, factor=f"F{n}", loading=0.001) for n in range(n_rows)
+    )
+
+
+def _best_time(loadings: tuple[LoadingRow, ...], repeats: int = 5) -> float:
+    check = CreditVarRequest._check_loading_sum_sq
+    best = math.inf
+    gc_was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        for _ in range(repeats):
+            start = time.perf_counter()
+            check(loadings)
+            best = min(best, time.perf_counter() - start)
+    finally:
+        if gc_was_enabled:
+            gc.enable()
+    return best
+
+
+def test_s2_t6_rule_14_time_is_linear_in_the_row_count() -> None:
+    """R-004: 16 times the rows of one obligor take about 16 times the time
+    (linear), not about 256 times (a prefix re-sum per row). The limit 64 is
+    the geometric mean of the two, so the test does not depend on the speed
+    of the machine."""
+    small = _single_obligor_loadings(2_000)
+    large = _single_obligor_loadings(32_000)
+    _best_time(small, repeats=1)  # warm-up
+    ratio = _best_time(large) / _best_time(small)
+    assert ratio < 64.0, ratio
+
+
+def test_s2_t6_engine_helper_rejects_a_different_engine_message() -> None:
+    """R-005: an engine ValueError without the target message fails the
+    caller; it is not counted as the target rejection."""
+    book = _mf_book()
+    book["loadings"].append({"obligor_uid": 20, "factor": "F1", "loading": 0.1})
+    with pytest.raises(pytest.fail.Exception, match="without the target message"):
+        _engine_accepts(book, target=_ENGINE_SUM_SQ_20)
 
 
 # ---------------------------------------------------------------------------
@@ -372,7 +581,7 @@ def test_s2_t7_reserved_factor_name_raises_before_the_engine(
 ) -> None:
     book = _reserved_name_book(model, factor)
     # Without the request rule, the engine fails on the same input (F-36).
-    assert not _engine_accepts(book)
+    assert not _engine_accepts(book, target=_engine_duplicate_factor_name(factor))
 
     reached: list[str] = []
 
@@ -393,13 +602,61 @@ def test_s2_t7_chi_name_is_not_reserved_for_mf_gaussian() -> None:
     book = _mf_book("mf_gaussian")
     book["loadings"][2]["factor"] = "CHI_GLOBAL"
     assert CreditVarRequest.model_validate(book).model == "mf_gaussian"
-    assert _engine_accepts(book)
+    assert _engine_accepts(book, target=_engine_duplicate_factor_name("CHI_GLOBAL"))
 
 
 def test_s2_t7_idio_name_of_an_absent_uid_is_not_reserved() -> None:
     book = _mf_book("mf_gaussian")
     book["loadings"][2]["factor"] = "IDIO_001"  # no obligor has uid 1
     assert CreditVarRequest.model_validate(book).model == "mf_gaussian"
+
+
+# ---------------------------------------------------------------------------
+# OD-S2-2 (a), A_CONTRACT sections 2.1 to 2.3: no NUL character in a label
+# ---------------------------------------------------------------------------
+
+
+def _nul_in_loading_factor() -> tuple[dict[str, Any], tuple[str | int, ...]]:
+    book = _mf_book()
+    book["loadings"][2]["factor"] = "F\x001"
+    return book, ("loadings", 2, "factor")
+
+
+def _nul_in_obligor_group() -> tuple[dict[str, Any], tuple[str | int, ...]]:
+    book = _grouped_book()
+    book["obligors"][1]["group"] = "B\x00"
+    return book, ("obligors", 1, "group")
+
+
+def _nul_in_group_name() -> tuple[dict[str, Any], tuple[str | int, ...]]:
+    book = _grouped_book()
+    book["groups"][0]["name"] = "\x00A"
+    return book, ("groups", 0, "name")
+
+
+_NulCase = Callable[[], tuple[dict[str, Any], tuple[str | int, ...]]]
+
+
+@pytest.mark.parametrize(
+    "build",
+    [_nul_in_loading_factor, _nul_in_obligor_group, _nul_in_group_name],
+    ids=["LoadingRow.factor", "ObligorRow.group", "GroupRow.name"],
+)
+@pytest.mark.parametrize("path", ["dict", "json"])
+def test_od_s2_2_nul_character_in_a_label_raises_at_the_field_path(
+    build: _NulCase, path: str
+) -> None:
+    """S2 review R-002: one errors() entry at the field path (rule 1), on the
+    dict path and on the JSON path."""
+    book, loc = build()
+    with pytest.raises(ValidationError) as excinfo:
+        if path == "dict":
+            CreditVarRequest.model_validate(book)
+        else:
+            CreditVarRequest.model_validate_json(json.dumps(book))
+    error = _single_error(excinfo)
+    assert error["loc"] == loc
+    assert error["type"] == "string_pattern_mismatch"
 
 
 # ---------------------------------------------------------------------------
@@ -610,3 +867,41 @@ def test_s2_t12_from_dataframe_docstring_names_the_required_columns() -> None:
             CreditVarRequest.from_dataframe(
                 table, model="mf_gaussian", loadings_table=loadings.drop(columns=[name])
             )
+
+
+def test_s2_t12_from_dataframe_non_integral_uid_raises() -> None:
+    """A float uid with a fractional part raises R; it is not cast to 7. An
+    integral float uid (a float column) is still accepted as an int."""
+    table = pd.DataFrame({
+        "obligor_uid": [1.0, 7.9],
+        "ead": [1.0, 1.0],
+        "pd": [0.01, 0.01],
+        "lgd": [1.0, 1.0],
+    })
+    with pytest.raises(ValidationError) as excinfo:
+        CreditVarRequest.from_dataframe(table, model="independent_bernoulli")
+    error = _single_error(excinfo)
+    assert error["loc"] == ("obligor_uid",)
+    assert error["input"] == 7.9
+
+    table.loc[1, "obligor_uid"] = 7.0
+    request = CreditVarRequest.from_dataframe(table, model="independent_bernoulli")
+    assert [o.obligor_uid for o in request.obligors] == [1, 7]
+    assert all(type(o.obligor_uid) is int for o in request.obligors)
+
+
+def test_s2_t12_from_dataframe_non_integral_loadings_uid_raises() -> None:
+    """The same rule for the loadings_table obligor_uid column."""
+    table = pd.DataFrame({"obligor_uid": [1], "ead": [1.0], "pd": [0.01], "lgd": [1.0]})
+    loadings = pd.DataFrame({
+        "obligor_uid": [1.5],
+        "factor": ["F1"],
+        "loading": [0.5],
+    })
+    with pytest.raises(ValidationError) as excinfo:
+        CreditVarRequest.from_dataframe(
+            table, model="mf_gaussian", loadings_table=loadings, n_scenarios=1_000
+        )
+    error = _single_error(excinfo)
+    assert error["loc"] == ("obligor_uid",)
+    assert error["input"] == 1.5

@@ -28,6 +28,8 @@ Request contract (WS_CREDIT_VAR_API S2, A_CONTRACT sections 1 and 2)
   (C.17): seed >= 0, obligor_uid in the int64 range, no duplicate
   (obligor_uid, factor) loading, a per-obligor sum of loading^2 <= 1 + 1e-9,
   and no loadings factor name in the reserved set of the multi-factor recipes.
+* ``LoadingRow.factor``, ``ObligorRow.group`` and ``GroupRow.name`` contain
+  no NUL character (OD-S2-2 (a)). The fault loc is the field path (rule 1).
 * There is no size limit other than the field constraints (O-12).
 * Each rule raises ``pydantic.ValidationError`` with exactly one entry at the
   loc of A_CONTRACT section 2.5. A cross-row rule addresses the offending row
@@ -77,7 +79,6 @@ consumer.
 
 from __future__ import annotations
 
-import math
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Annotated, Any, Final, Literal
 
@@ -144,7 +145,8 @@ _INT64_MIN: Final[int] = -(2**63)
 _INT64_MAX: Final[int] = 2**63 - 1
 
 #: Tolerance of the per-obligor rule sum(loading^2) <= 1 + tolerance. It is the
-#: tolerance of the engine check `credit.jtd.ingest.validate._semantic_mf_gaussian`,
+#: tolerance of the engine check `credit.jtd.ingest.validate._semantic_mf_gaussian`.
+#: `CreditVarRequest._check_loading_sum_sq` also uses the arithmetic of that check,
 #: so the request rule and the engine rule accept the same loadings.
 LOADING_SUM_SQ_TOLERANCE: Final[float] = 1e-9
 
@@ -202,6 +204,13 @@ _NonEmpty = AfterValidator(_non_empty)
 _NON_EMPTY_SCHEMA: Final[dict[str, Any]] = {"minItems": 1}
 
 _Alpha = Annotated[float, Field(gt=0.0, lt=1.0)]
+
+#: A str field that contains no NUL character (OD-S2-2 (a), A_CONTRACT sections
+#: 2.1 to 2.3). A NUL in a label is not data that an author writes; it reaches
+#: the engine's string arrays and frames as an invisible character. A pattern,
+#: not a validator function: the JSON schema states the rule, and pydantic
+#: reports one ``string_pattern_mismatch`` entry at the field path (rule 1).
+_NO_NUL_PATTERN: Final[str] = r"^[^\x00]*$"
 _ObligorUid = Annotated[int, Field(ge=_INT64_MIN, le=_INT64_MAX)]
 
 _Loc = tuple[str | int, ...]
@@ -239,6 +248,20 @@ def _second_occurrence(values: Sequence[object]) -> int | None:
     return None
 
 
+def _dataframe_uid(value: Any) -> Any:
+    """An ``obligor_uid`` cell of a `from_dataframe` table, cast to int.
+
+    A float column holds an integral uid as, for example, ``7.0``; the cast
+    keeps it. A float that is not integral (``7.9``, NaN, +/-inf) is returned
+    unchanged, so the strict int field raises R. ``int(7.9)`` would give 7: a
+    uid that the author did not write. The types are ``Any`` because a cell
+    has no static type and the non-integral case returns the cell unchanged.
+    """
+    if isinstance(value, float) and not value.is_integer():
+        return value
+    return int(value)
+
+
 class ObligorRow(BaseModel):
     """One obligor: the flat desk row."""
 
@@ -261,6 +284,7 @@ class ObligorRow(BaseModel):
     group: str | None = Field(
         default=None,
         min_length=1,
+        pattern=_NO_NUL_PATTERN,
         description="Pool/regime label for grouped models (beta_binomial_grouped, "
         "stress_regime_bernoulli_grouped): obligors sharing a group share that "
         "group's factor. Omit for non-grouped models.",
@@ -283,7 +307,7 @@ class LoadingRow(BaseModel):
     model_config = _REQUEST
 
     obligor_uid: _ObligorUid
-    factor: str = Field(min_length=1)
+    factor: str = Field(min_length=1, pattern=_NO_NUL_PATTERN)
     loading: float = Field(ge=-1.0, le=1.0)
 
 
@@ -297,7 +321,7 @@ class GroupRow(BaseModel):
 
     model_config = _REQUEST
 
-    name: str = Field(min_length=1)
+    name: str = Field(min_length=1, pattern=_NO_NUL_PATTERN)
     params: dict[str, float] = Field(default_factory=dict)
 
 
@@ -457,27 +481,58 @@ class CreditVarRequest(BaseModel):
         """Rule 14: per obligor, sum(loading^2) <= 1 + LOADING_SUM_SQ_TOLERANCE.
 
         The idiosyncratic weight is sqrt(1 - sum loading^2); above 1 there is
-        no real residual. Each prefix sum is ``math.fsum`` of the squares in
-        request order: the exactly rounded sum, so the decision does not depend
-        on the summation order, and the engine's compensated group sum agrees
-        with it except within a few ulp of the threshold. The squares are
-        ``x * x``, the value of the engine's float64 ``x ** 2``. The loc is the
-        first row at which the running sum exceeds the bound.
+        no real residual.
+
+        The decision uses the arithmetic of the engine check
+        `credit.jtd.ingest.validate._semantic_mf_gaussian`, not a more accurate
+        sum. Near the bound, two summations of the same squares can round to
+        adjacent floats on the two sides of 1 + 1e-9 (``math.fsum`` and the
+        engine sum differ in both directions), so only the same arithmetic
+        gives the same decision. The engine arithmetic is:
+
+        * each square is the float64 ``x ** 2``, equal to ``x * x``;
+        * the sum is ``pandas.Series.groupby(uid).sum()``, which pandas
+          evaluates as a Kahan compensated sum over the rows of each group,
+          in row order, from ``sum = compensation = 0.0``;
+        * the rows arrive in request order: `run._loadings_frame` and
+          `recipes._mf_universe_and_bundle` keep the order and only drop the
+          rows of other obligors, which does not change a group's sum.
+
+        One pass over the rows, linear in the row count: per obligor, the
+        Kahan state and the first row at which the running sum exceeds the
+        bound. The decision uses the final sum of each obligor. The loc is,
+        over the rejected obligors, the lowest such row. A rejected obligor
+        always has such a row, because its last row holds the final sum.
         """
         bound = 1.0 + LOADING_SUM_SQ_TOLERANCE
-        squares: dict[int, list[float]] = {}
+        # uid -> [running sum, compensation]: the state of pandas group_sum.
+        state: dict[int, list[float]] = {}
+        first_over: dict[int, int] = {}
         for j, row in enumerate(loadings):
-            terms = squares.setdefault(row.obligor_uid, [])
-            terms.append(row.loading * row.loading)
-            total = math.fsum(terms)
-            if total > bound:
-                raise _request_fault(
-                    ("loadings", j, "loading"),
-                    f"obligor {row.obligor_uid}: sum of squared loadings "
-                    f"{total!r} exceeds 1 + {LOADING_SUM_SQ_TOLERANCE!r} at this "
-                    "row; the idiosyncratic weight sqrt(1 - sum) is undefined.",
-                    row.loading,
-                )
+            uid = row.obligor_uid
+            kahan = state.get(uid)
+            if kahan is None:
+                kahan = state[uid] = [0.0, 0.0]
+            total, compensation = kahan
+            y = row.loading * row.loading - compensation
+            t = total + y
+            kahan[1] = (t - total) - y
+            kahan[0] = t
+            if t > bound and uid not in first_over:
+                first_over[uid] = j
+        rejected = [j for uid, j in first_over.items() if state[uid][0] > bound]
+        if rejected:
+            j = min(rejected)
+            row = loadings[j]
+            raise _request_fault(
+                ("loadings", j, "loading"),
+                f"obligor {row.obligor_uid}: sum of squared loadings "
+                f"{state[row.obligor_uid][0]!r} exceeds 1 + "
+                f"{LOADING_SUM_SQ_TOLERANCE!r}; the running sum first exceeds "
+                "the bound at this row. The idiosyncratic weight sqrt(1 - sum) "
+                "is undefined.",
+                row.loading,
+            )
 
     def _check_reserved_factor_names(self, loadings: tuple[LoadingRow, ...]) -> None:
         """Rule 15: no loadings factor takes a name that the recipe adds.
@@ -683,7 +738,10 @@ class CreditVarRequest(BaseModel):
 
         The default `n_scenarios` is the request default, `DEFAULT_N_SCENARIOS`.
         Each cell is cast with ``int``, ``float`` or ``str`` before validation;
-        the request rules then apply as on the dict/JSON path.
+        the request rules then apply as on the dict/JSON path. An
+        ``obligor_uid`` cell that is a float with a fractional part (or NaN or
+        +/-inf) is not cast: it reaches the strict int field and raises
+        ``pydantic.ValidationError``.
         """
         required = ("obligor_uid", "ead", "pd", "lgd")
         missing = [c for c in required if c not in obligor_table.columns]
@@ -700,7 +758,7 @@ class CreditVarRequest(BaseModel):
         )
         obligors = [
             ObligorRow(
-                obligor_uid=int(rec["obligor_uid"]),
+                obligor_uid=_dataframe_uid(rec["obligor_uid"]),
                 ead=float(rec["ead"]),
                 pd=float(rec["pd"]),
                 lgd=float(rec["lgd"]),
@@ -732,7 +790,7 @@ class CreditVarRequest(BaseModel):
                 )
             kwargs["loadings"] = [
                 LoadingRow(
-                    obligor_uid=int(rec["obligor_uid"]),
+                    obligor_uid=_dataframe_uid(rec["obligor_uid"]),
                     factor=str(rec["factor"]),
                     loading=float(rec["loading"]),
                 )

@@ -20,14 +20,18 @@ _PREVIEW = 10
 
 
 def _bad_uids(uid: npt.NDArray[np.int64], mask: npt.NDArray[np.bool_]) -> list[int]:
-    return uid[mask][:_PREVIEW].tolist()
+    return [int(u) for u in uid[mask][:_PREVIEW]]
 
 
 def validate_uid_sorted_unique(uid: npt.NDArray[np.int64]) -> None:
-    """`uid` (netting-set id) must be strictly ascending."""
+    """`uid` (netting-set id) must be strictly ascending.
+
+    Compares neighbours directly, not through ``np.diff``: the int64
+    difference of two valid uids can exceed the int64 range and wrap.
+    """
     if uid.shape[0] == 0:
         raise ValueError("netting set master: empty uid array.")
-    if not (np.diff(uid) > 0).all():
+    if not (uid[1:] > uid[:-1]).all():
         unique, counts = np.unique(uid, return_counts=True)
         dups = unique[counts > 1][:_PREVIEW].tolist()
         if dups:
