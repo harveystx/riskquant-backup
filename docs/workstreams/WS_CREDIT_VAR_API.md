@@ -3,8 +3,8 @@
 Path: docs/workstreams/WS_CREDIT_VAR_API.md
 Class: HEAVY
 Status: FROZEN
-Revision: 6
-Revision note: Owner decision of 2026-11-03 (OD-S2-1 (a)): third R-001 site added to S2 Files. No audit round.
+Revision: 7
+Revision note: Owner decision of 2026-11-03 (pre-release consumer audit): slice S7 added; scope extended to src/riskquant/credit/jtd/engine.py (OD-1 (a)); C.33 to C.37 added. No audit round.
 Date: 2026-10-29
 Branch: ws/credit-var-api
 Snapshot: SNAPSHOT commit=925533b dirty=false content_hash=046ed5dddb6305d3
@@ -86,6 +86,14 @@ Owner decisions in force:
 - 2026-11-03 (pandas cap, S5): pyproject.toml caps pandas at the next minor above the tested version (pandas>=2.0,<3.1). The engine loading sum uses pandas groupby().sum(); pandas 3.1.0 changes its rounding, so rule 14 can drift from the engine (S5 implementer, Observed: two S2.T6 tests fail on 3.1.0). Same reason as the numba cap under O-11. WS_CREDIT_POLARS replaces the pandas group sum with one shared core loading-sum function and removes the cap.
 - 2026-11-03 (OD-S5-1 (a)): the pandas cap has no direct test (S5 review R-002). S2.T6 fails loudly on the drift that the cap prevents. The cap goes with the pandas removal in WS_CREDIT_POLARS.
 - 2026-11-03 (D106): the owner promotes P-CREDIT_VAR_API-001 as D106 (LOCKED). The citations in api.py and test_public_surface.py name D106.
+- 2026-11-03 (audit R-001, R-009): obligor UL attribution is 0.0 on a zero-variance book, foots to loss_std_dev, and makes no BLAS call (one fixed summation order). Fix in S7.
+- 2026-11-03 (audit OD-3 (a)): the R-001 fix changes the attribution only. RiskSummary moments do not change. The footing clause C.34 holds for a dynamic range max|constant obligor loss| / loss_std_dev <= 1e10.
+- 2026-11-03 (audit R-002, OD-1 (a)): n_scenarios = 1 is fixed in credit/jtd/engine.py. Fix in S7. Revision 7 by explicit owner decision under the tripwire.
+- 2026-11-03 (audit R-003): float request fields admit float (including subclasses) and int (not bool) only. Golden schemas do not change. Fix in S7.
+- 2026-11-03 (audit R-008): provenance.params uses one canonical key order. Fix in S7.
+- 2026-11-03 (audit OD-2 (b)): the api.py docstring states the numeric domain. R-004 and R-005 go to the backlog.
+- 2026-11-03 (audit R-006, R-007): backlog. O-8 strictness and the lax result models of A_CONTRACT 1 stay.
+- 2026-11-03 (audit OD-4): the owner records D107 "S7 pre-release defect fixes" at S7 closure, so that 0.1.0 users can trace the ul_* value change (D106.3).
 
 Depends on: none.
 Blocks: consumer releases that pin `credit_var.api`. `api.py` names the notebook, Emissary and the xlwings tool as consumers (F-31).
@@ -179,6 +187,14 @@ Stability (S5):
 Benchmark (S6):
 - C.32 The benchmark script produces every measurement of S6 with its environment record. No `src/` file changes. [Proposed] Test: S6 gate (script run)
 
+Audit fixes (S7):
+- C.18 is enforced for every float request field (ead, pd, lgd, rho, loading, GroupRow.params values, CreditVarRequest.params values, alphas elements). [Proposed] Test: S7.T5
+- C.33 When summary.loss_min == summary.loss_max, every ObligorContribution.ul_contribution and ul_pct is 0.0. An obligor whose loss is constant over the scenarios has ul_contribution 0.0. [Proposed] Test: S7.T1
+- C.34 |sum(ul_contribution) - loss_std_dev| <= 1e-9 x loss_std_dev when loss_min != loss_max and max|constant obligor loss| / loss_std_dev <= 1e10 (OD-3 (a)). [Proposed] Test: S7.T2
+- C.35 ul_contribution and ul_pct are bitwise invariant to the BLAS and OpenMP thread settings. obligor_ul_contribution makes no BLAS call and sums in one fixed order. [Proposed] Test: S7.T3
+- C.36 n_scenarios = 1 gives a result through run_credit_var and simulate_portfolio_losses for every MODEL_CATALOG key. [Proposed] Test: S7.T4
+- C.37 provenance.params holds the request params in ascending key order (Python str order, the order of the input_hash serialization). input_hash bytes do not change. [Proposed] Test: S7.T6
+
 ## 4. Decisions
 
 Decisions relied on: D001, D-C15, D-C04, D-C03, D039, D040, D041, D104. Each checked against DECISIONS.md: yes.
@@ -264,9 +280,9 @@ Status values: OPEN, CLOSED.
 
 ## 6. Slices
 
-Order: S1, then S2, then S3, then S5. S4 starts after S1 and may run in parallel with S2 and S3. S6 may run in parallel with any slice. S5 starts after S1 to S4 are VALIDATED.
+Order: S1, then S2, then S3, then S5. S4 starts after S1 and may run in parallel with S2 and S3. S6 may run in parallel with any slice. S5 starts after S1 to S4 are VALIDATED. S7 starts after S1 to S5 are VALIDATED.
 
-Review depth: FULL for S1 to S5 (src contract changes or independent oracles). QUICK for S6 only.
+Review depth: FULL for S1 to S5 and S7 (src contract changes or independent oracles). QUICK for S6 only.
 
 Gate block (PowerShell, repository root, `WORKFLOW.md` section 6). Each slice sets `$f` to its Files and `$t` to its test paths:
 
@@ -442,6 +458,34 @@ Exit: owner machine output saved as docs/workstreams/WS_CREDIT_VAR_API/R_BENCHMA
 Status: IN_PROGRESS
 Evidence: Script committed at db92afc; gates and smoke run pass on the owner machine; full run and QUICK review pending.
 
+### S7: Pre-release audit fixes
+
+Objective: Fix R-001, R-009, R-002, R-003 and R-008 of the pre-release consumer audit, and state the numeric domain in api.py (OD-2 (b)), before the 0.2.0 release.
+Contract: C.18, C.33 to C.37
+Depends on: S1 to S5 VALIDATED
+Files:
+- modify: src/riskquant/solutions/credit_var/_attribution.py (R-001, R-009)
+- modify: src/riskquant/credit/jtd/engine.py (R-002, OD-1 (a))
+- modify: src/riskquant/solutions/credit_var/schemas.py (R-003)
+- modify: src/riskquant/solutions/credit_var/run.py (R-008)
+- modify: src/riskquant/solutions/credit_var/api.py (docstring only: numeric domain, OD-2 (b))
+- create: tests/solutions/credit_var/test_audit_fixes.py
+Prohibited: every other src/ file; tests/solutions/credit_var/golden/*; the field set of every request and result model; provenance.py; catalog.py; recipes.py; scenario_metrics/**; src/riskquant/jit.py; any new Numba kernel; the C.25 lock sites; the computation of RiskSummary moments (OD-3 (a)); pyproject.toml; DECISIONS.md.
+Attach: docs/workstreams/WS_CREDIT_VAR_API.md ; docs/workstreams/WS_CREDIT_VAR_API/A_CONTRACT.md ; docs/CLAUDE.md ; docs/DECISIONS.md ; context_riskquant_index.txt ; context_riskquant_solutions_credit_var.txt ; context_riskquant_credit.txt ; context_riskquant_tests_solutions_credit_var.txt ; context_riskquant_tests_credit.txt ; _gates/audit_credit_var.py
+Gates: gate block with $f = the six S7 files and $t = "tests/solutions/credit_var", "tests/credit/jtd", "tests/credit/solutions"; then the demo import smoke; then python _gates/audit_credit_var.py --skip G (raw output saved). No full demo run (owner rule: demos only when imperative; no demo reads an S7 field).
+Exit: S7.T1 to S7.T6 pass; full suite passes; each S7 mutation is run once and fails its test (output reported); probe lines A2 (all float lines), B1 "n_scenarios = 1", RES-ZV-UL and the D2 BLAS line PASS; the D3 params-order line reads "byte-equal results True"; every remaining RES-UL-FOOT failure has max|constant obligor loss| / loss_std_dev > 1e10 (listed); golden files unchanged.
+Status: NOT_STARTED
+Evidence: none
+
+| Id | Case | Expected | Mutation that must fail it |
+|---|---|---|---|
+| S7.T1 | forced_default 1 obligor ead 450000.3 lgd 1 S 2000; forced_default ead (1,2,3) lgd 0.45 S 2000; sf_gaussian PD-0 obligor ead 0.3 + forced obligor ead 0.1 S 2000 | every ul_contribution and ul_pct == 0.0 | remove the zero-variance branch |
+| S7.T2 | API: independent_bernoulli, forced ead 1e9+0.3 + modelled ead 1.0 pd 0.02, S 20000 seed 3; sf_gaussian forced ead 5e8 + 50 x ead 1e6 pd 0.02 lgd 0.45, S 20000. Unit: obligor_ul_contribution on a synthetic (N, S) matrix with one constant row 1e9 | sum(ul) within 1e-9 rel of loss_std_dev; unit values within 1e-12 rel of a math.fsum oracle on centred rows | restore the half-centred product L_i . pf_c |
+| S7.T3 | AST of obligor_ul_contribution; fresh subprocesses, default env and OPENBLAS/MKL/OMP_NUM_THREADS=1, book of probe D2 (independent_bernoulli N=8 S=20000) | no @, np.dot, np.matmul, np.inner, np.vdot, np.tensordot, np.einsum; byte-equal model_dump_json without generated_at | restore obligor_loss @ pf_centered |
+| S7.T4 | n_scenarios = 1, alphas (0.95, 0.99), each of 13 keys, both entry points | result; loss_min == loss_max; ul_* 0.0; histogram counts sum 1; simulate returns shape (1,) | restore np.ascontiguousarray(np.broadcast_to(...)) |
+| S7.T5 | the 10 rejected input types of probe A2 at the 8 float field positions; float, int, numpy.float64 controls; JSON payloads of S2.T8 | R, one entry, loc = field path (rule 1); controls accepted and stored as float; S5.T2 still passes | remove the rule from the alphas element |
+| S7.T6 | sf_students_t params {"rho": 0.2, "nu": 5.0} and {"nu": 5.0, "rho": 0.2} | equal input_hash, equal to the A_CONTRACT 4.2 recomputation; byte-equal results without generated_at; list(provenance.params) == ["nu", "rho"] | restore params=dict(req.params) |
+
 ## 7. Risks and deferred
 
 | Risk | Consequence | Mitigation |
@@ -494,6 +538,14 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - S5.T3 does not check the pandas cap; OD-S5-1 (a) (S5 review R-002).
 - test_public_surface.py:_literal_all does not detect __all__.extend() or .append(); detect any attribute call on __all__ at module level, or narrow the docstring (S5 review R-003).
 - Stale src/riskquant.egg-info (0.1.0) gave V = 0.1.0 under pytest and 4 identity failures in risk_run and run_identity (S5 gate, Observed). Evidence for R1 R-06: V is not bound to the imported code. Fail loudly when two riskquant metadata records disagree, or record the metadata path in provenance.
+- R-004 (audit): admitted values outside the engine numeric domain give E (n_scenarios >= 2**63 - 1, seed >= 10**4300 on the dict path, EAD >= ~1e156). OD-2 (b): documented in api.py.
+- R-005 (audit): alpha with (1 - alpha) x n_scenarios < 16 eps gives E (NaN ES contribution). OD-2 (b): documented in api.py.
+- R-006 (audit): the golden request schema accepts integer-valued floats that the strict model rejects.
+- R-007 (audit): the lax result models accept numeric strings and booleans that the golden result schema rejects (A_CONTRACT 1, kept).
+- riskquant-emissary (audit class G): about 32 B per obligor x scenario cell (median 31.8); the consumer sets its own request size limit (O-12).
+- errors.py docstring: "E: the caller cannot fix it by a change of the request" is not true for R-004 and R-005 (audit).
+- credit/jtd/streaming.py:217 uses the same broadcast_to pattern as R-002; not on the api path (audit, adjacent).
+- Audit probe: PROBE-ERROR prints SKIP when zero probe exceptions occur; a reporting defect of _gates/audit_credit_var.py only (audit).
 
 ## 8. Closure record
 
