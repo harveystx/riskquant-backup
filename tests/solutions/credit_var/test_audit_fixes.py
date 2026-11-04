@@ -4,7 +4,8 @@ WS_CREDIT_VAR_API S7: pre-release audit fixes (C.18, C.33 to C.37).
 
 One test group per audit finding:
 
-* S7.T1 (R-001, C.33): UL attribution is 0.0 on a zero-variance book.
+* S7.T1 (R-001, C.33): UL attribution is 0.0 on a zero-variance book, and
+  0.0 for a constant obligor in a varying book.
 * S7.T2 (R-001, C.34, Revision 8): UL attribution foots to ``loss_std_dev``
   within ``1e-9 x loss_std_dev + sd(delta)``, with delta the rounding error of
   the summed portfolio loss; the unit values equal a ``math.fsum`` oracle on
@@ -12,7 +13,8 @@ One test group per audit finding:
 * S7.T3 (R-009, C.35): `obligor_ul_contribution` makes no BLAS call, and the
   result bytes do not depend on the BLAS and OpenMP thread settings.
 * S7.T4 (R-002, C.36): ``n_scenarios = 1`` gives a result for every catalog
-  key through both entry points.
+  key through both entry points; a scalar EAD that is not float64 raises
+  and is not cast.
 * S7.T5 (R-003, C.18): a float field admits a float or an int only.
 * S7.T6 (R-008, C.37): ``provenance.params`` is in ascending key order.
 
@@ -28,6 +30,7 @@ import ast
 import decimal
 import fractions
 import hashlib
+import importlib
 import inspect
 import json
 import math
@@ -45,6 +48,8 @@ import pytest
 from pydantic import ValidationError
 
 import riskquant
+from riskquant.credit.exposure.obligor_ead.compiled import CompiledObligorEad
+from riskquant.credit.jtd.engine import run_jtd_for_obligor_ead
 from riskquant.solutions.credit_var import _attribution
 from riskquant.solutions.credit_var._attribution import obligor_ul_contribution
 from riskquant.solutions.credit_var.api import (
@@ -178,6 +183,40 @@ def test_s7_t1_constant_row_gives_zero_total() -> None:
     )
     assert total == 0.0
     assert contribution.tolist() == [0.0]
+
+
+_CONSTANT_LOSS = 450000.3  # forced default, lgd 1.0: loss 450000.3 in each scenario
+_CONSTANT_UID = 1
+
+
+def test_s7_t1_constant_obligor_in_varying_book_has_zero_ul() -> None:
+    """C.33 sentence 2 through run_credit_var: loss_min != loss_max.
+
+    The forced obligor has the constant loss 450000.3 in each of 2000
+    scenarios. The float64 mean of that row is not 450000.3, so the centred
+    row is not exactly zero and its covariance with L is rounding noise. Only
+    the constant-row rule gives 0.0. The precondition below checks the inexact
+    mean with numpy, independent of the code under test.
+    """
+    scenarios = 2000
+    row = np.full(scenarios, _CONSTANT_LOSS, dtype=np.float64)
+    assert float(row.mean()) != _CONSTANT_LOSS  # the centred row is not zero
+    book = {
+        "model": "sf_gaussian",
+        "obligors": [
+            _obligor(_CONSTANT_UID, _CONSTANT_LOSS, 0.02, 1.0, forced=True),
+            *[_obligor(2 + i, 1.0 + i, 0.02, 0.45) for i in range(5)],
+        ],
+        "n_scenarios": scenarios,
+        "alphas": [0.95, 0.99],
+        "seed": 7,
+    }
+    result = run_credit_var(book)
+    assert result.summary.loss_min != result.summary.loss_max
+    by_uid = {c.obligor_uid: c for c in result.obligor_contributions}
+    constant = by_uid[_CONSTANT_UID]
+    assert constant.ul_contribution == 0.0
+    assert constant.ul_pct == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -438,6 +477,42 @@ def test_s7_t4_one_scenario_gives_a_result(model: str) -> None:
     losses = simulate_portfolio_losses(book)
     assert losses.shape == (1,)
     assert losses.dtype == np.float64
+
+
+_RUN_MODULE = importlib.import_module("riskquant.solutions.credit_var.run")
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.longdouble, np.int64])
+def test_s7_t4_scalar_ead_that_is_not_float64_raises(
+    dtype: type[np.generic], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R-002: an (N,) EAD with another dtype raises; no cast to float64 occurs.
+
+    The engine inputs are the real ones of a run_credit_var call at
+    n_scenarios = 1, taken at the run_jtd_for_obligor_ead call. Only the EAD
+    dtype changes; uid and values stay the same.
+    """
+    captured: dict[str, Any] = {}
+
+    def capture(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return run_jtd_for_obligor_ead(**kwargs)
+
+    monkeypatch.setattr(_RUN_MODULE, "run_jtd_for_obligor_ead", capture)
+    run_credit_var(_catalog_book("sf_gaussian", n_scenarios=1))
+
+    obligor_ead: CompiledObligorEad = captured["obligor_ead"]
+    assert obligor_ead.ead.ndim == 1
+    assert obligor_ead.ead.dtype == np.float64  # the api caller gives float64
+    narrowed = CompiledObligorEad(
+        uid=obligor_ead.uid, ead=obligor_ead.ead.astype(dtype)
+    )
+    with pytest.raises(ValueError, match=r"expected float64\. No cast occurs"):
+        run_jtd_for_obligor_ead(
+            jtd_portfolio=captured["jtd_portfolio"],
+            obligor_ead=narrowed,
+            credit_factors=captured["credit_factors"],
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -116,13 +116,21 @@ def run_jtd_for_obligor_ead(
     n_scenarios = credit_factors.num_scenarios
 
     if aligned.ndim == 1:
+        # The fill below would cast any other dtype to float64 without a
+        # message (float32 widens, longdouble rounds, int converts). Reject it:
+        # no silent coercion (WS_CREDIT_VAR_API S7 review R-002).
+        if aligned.dtype != np.float64:
+            raise ValueError(
+                f"run_jtd_for_obligor_ead: scalar EAD dtype is {aligned.dtype}, "
+                "expected float64. No cast occurs; give float64 EAD."
+            )
         # Scalar per-obligor EAD -> materialise (N, S) for the bare-array core.
         # Allocate and fill; do not wrap a broadcast view. For S = 1 the
         # broadcast view of shape (N, 1) already counts as C-contiguous, so
         # np.ascontiguousarray returns the read-only view itself, and the
         # kernels have no signature for a read-only array (WS_CREDIT_VAR_API
-        # S7, R-002, C.36). The fill copies each EAD value unchanged, so the
-        # values for S >= 2 stay bitwise equal.
+        # S7, R-002, C.36). The fill copies each float64 EAD value unchanged,
+        # so the values for S >= 2 stay bitwise equal.
         ead_by_obligor = np.empty(
             (aligned.shape[0], n_scenarios), dtype=np.float64, order="C"
         )

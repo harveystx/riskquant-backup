@@ -58,10 +58,15 @@ class ObligorAttribution:
     es_contribution: _F64  # (N,)  Euler ES contribution; sums to es_total
     incremental_var: _F64  # (N,)  VaR(L) - VaR(L - L_i), leave-one-out
     incremental_es: _F64  # (N,)  ES(L)  - ES(L - L_i),  leave-one-out
-    ul_contribution: _F64  # (N,)  Cov(L_i, L) / sigma_L; sums to ul_total
+    # (N,)  Cov(L_i, L) / sigma_L. The sum foots to ul_total within the C.34
+    # bound 1e-9 x loss_std_dev + sd(delta), not exactly.
+    ul_contribution: _F64
     es_total: float  # portfolio ES at the headline level (foots es_contribution)
     var_total: float  # portfolio VaR at the headline level
-    ul_total: float  # portfolio UL (std dev of loss); foots ul_contribution
+    # Portfolio UL: L.std(ddof=1), the RiskSummary.loss_std_dev value. The
+    # ul_contribution sum foots to it within the C.34 bound
+    # 1e-9 x loss_std_dev + sd(delta); delta is the rounding error of L.
+    ul_total: float
 
 
 def obligor_ul_contribution(
