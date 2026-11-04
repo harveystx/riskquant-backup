@@ -3,8 +3,8 @@
 Path: docs/workstreams/WS_CREDIT_VAR_API.md
 Class: HEAVY
 Status: FROZEN
-Revision: 7
-Revision note: Owner decision of 2026-11-03 (pre-release consumer audit): slice S7 added; scope extended to src/riskquant/credit/jtd/engine.py (OD-1 (a)); C.33 to C.37 added. No audit round.
+Revision: 8
+Revision note: Owner decision of 2026-11-04 (S7 implementer finding): C.34 footing bound tied to the rounding of the summed portfolio loss vector. No audit round.
 Date: 2026-10-29
 Branch: ws/credit-var-api
 Snapshot: SNAPSHOT commit=925533b dirty=false content_hash=046ed5dddb6305d3
@@ -88,6 +88,7 @@ Owner decisions in force:
 - 2026-11-03 (D106): the owner promotes P-CREDIT_VAR_API-001 as D106 (LOCKED). The citations in api.py and test_public_surface.py name D106.
 - 2026-11-03 (audit R-001, R-009): obligor UL attribution is 0.0 on a zero-variance book, foots to loss_std_dev, and makes no BLAS call (one fixed summation order). Fix in S7.
 - 2026-11-03 (audit OD-3 (a)): the R-001 fix changes the attribution only. RiskSummary moments do not change. The footing clause C.34 holds for a dynamic range max|constant obligor loss| / loss_std_dev <= 1e10.
+- 2026-11-04 (OD-3 amended, Revision 8): the C.34 footing bound is 1e-9 x loss_std_dev + sd(delta), with delta the rounding error of the summed portfolio loss vector. Reason (S7 implementer, Observed): at max|constant| / loss_std_dev of 8.2e8 and 6.7e9 the footing error is 6.6e-9 and 5.1e-8 relative, because loss_std_dev contains the rounding of L = sum of the obligor rows and no centred obligor row contains it. By Cauchy-Schwarz that part of the error is at most sd(delta). The 1e10 range bound of Revision 7 is removed from C.34; the UL definition does not change.
 - 2026-11-03 (audit R-002, OD-1 (a)): n_scenarios = 1 is fixed in credit/jtd/engine.py. Fix in S7. Revision 7 by explicit owner decision under the tripwire.
 - 2026-11-03 (audit R-003): float request fields admit float (including subclasses) and int (not bool) only. Golden schemas do not change. Fix in S7.
 - 2026-11-03 (audit R-008): provenance.params uses one canonical key order. Fix in S7.
@@ -191,7 +192,7 @@ Benchmark (S6):
 Audit fixes (S7):
 - C.18 is enforced for every float request field (ead, pd, lgd, rho, loading, GroupRow.params values, CreditVarRequest.params values, alphas elements). [Proposed] Test: S7.T5
 - C.33 When summary.loss_min == summary.loss_max, every ObligorContribution.ul_contribution and ul_pct is 0.0. An obligor whose loss is constant over the scenarios has ul_contribution 0.0. [Proposed] Test: S7.T1
-- C.34 |sum(ul_contribution) - loss_std_dev| <= 1e-9 x loss_std_dev when loss_min != loss_max and max|constant obligor loss| / loss_std_dev <= 1e10 (OD-3 (a)). [Proposed] Test: S7.T2
+- C.34 When loss_min != loss_max: |sum(ul_contribution) - loss_std_dev| <= 1e-9 x loss_std_dev + sd(delta), where delta_s = L_s - (exact sum over obligors of the obligor losses of scenario s) is the rounding error of the summed portfolio loss vector L, which loss_std_dev itself contains. sd uses ddof = 1, as loss_std_dev does (OD-3 (a), amended 2026-11-04). [Proposed] Test: S7.T2
 - C.35 ul_contribution and ul_pct are bitwise invariant to the BLAS and OpenMP thread settings. obligor_ul_contribution makes no BLAS call and sums in one fixed order. [Proposed] Test: S7.T3
 - C.36 n_scenarios = 1 gives a result through run_credit_var and simulate_portfolio_losses for every MODEL_CATALOG key. [Proposed] Test: S7.T4
 - C.37 provenance.params holds the request params in ascending key order (Python str order, the order of the input_hash serialization). input_hash bytes do not change. [Proposed] Test: S7.T6
