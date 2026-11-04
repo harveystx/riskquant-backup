@@ -482,7 +482,20 @@ def test_s7_t4_one_scenario_gives_a_result(model: str) -> None:
 _RUN_MODULE = importlib.import_module("riskquant.solutions.credit_var.run")
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.longdouble, np.int64])
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        np.float32,
+        pytest.param(
+            np.longdouble,
+            marks=pytest.mark.skipif(
+                np.dtype(np.longdouble) == np.dtype(np.float64),
+                reason="longdouble is float64 on this platform (for example Windows); no cast exists",
+            ),
+        ),
+        np.int64,
+    ],
+)
 def test_s7_t4_scalar_ead_that_is_not_float64_raises(
     dtype: type[np.generic], monkeypatch: pytest.MonkeyPatch
 ) -> None:
