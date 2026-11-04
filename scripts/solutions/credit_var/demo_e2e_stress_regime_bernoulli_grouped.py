@@ -18,13 +18,13 @@ MODEL_KEY: str = "stress_regime_bernoulli_grouped"
 ALPHAS: list[float] = [0.9500, 0.9750, 0.9900, 0.9990]
 MODEL_PARAMS: dict[str, float] = {}
 GROUP_PARAMS: dict[str, dict[str, float]] = {
-    "CYCLICAL": {"stress_prob": 0.30, " ": 5.0},
+    "CYCLICAL": {"stress_prob": 0.30, "stress_pd_multiplier": 5.0},
     "DEFENSIVE": {"stress_prob": 0.05, "stress_pd_multiplier": 2.0},
 }
 KDE_DISPLAY_PERCENTILE: float = 99.90
 
 
-def main():
+def main() -> None:
     """
     End-to-end demonstration of the `stress_regime_bernoulli_grouped` model.
 
@@ -90,9 +90,10 @@ def main():
     print(f"Loss Max:               {result.summary.loss_max:,.2f}")
     print("-" * 81)
 
-    for alpha, var in result.summary.var.items():
-        es = result.summary.es[alpha]
-        print(f"VaR ({alpha}):  {var:>18,.0f} | ES: {es:>18,.0f}")
+    for record in result.summary.by_alpha:
+        print(
+            f"VaR ({record.alpha:.2%}):  {record.var:>18,.0f} | ES: {record.es:>18,.0f}"
+        )
     print("-" * 81)
 
     # 5. Simulate losses for the request
@@ -101,11 +102,17 @@ def main():
 
     # 6. Plot loss distribution with KDE overlay
     # ----------------------------------------------------------------------------------
+    # The plot takes dict[str, float] keyed by a display label. The label is for
+    # display only; the result carries each level as its alpha float (O-1).
+    # Two levels with one label would drop a level from the plot: raise.
+    var_levels = {f"{r.alpha:.2%}": r.var for r in result.summary.by_alpha}
+    if len(var_levels) != len(result.summary.by_alpha):
+        raise ValueError(f"confidence levels share a display label: {ALPHAS}")
     plot_credit_loss_distribution(
-        hist_bin_edges=result.loss_histogram.bin_edges,
-        hist_counts=result.loss_histogram.counts,
+        hist_bin_edges=list(result.loss_histogram.bin_edges),
+        hist_counts=list(result.loss_histogram.counts),
         expected_loss=result.summary.loss_mean,
-        var_levels=result.summary.var,
+        var_levels=var_levels,
         losses=portfolio_losses,
         model_name=req.model,
         n_obligors=req.n_obligors,

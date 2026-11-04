@@ -53,7 +53,9 @@ class CompiledObligorEad:
                 f"CompiledObligorEad: ead rows {self.ead.shape[0]} != uid count "
                 f"{self.uid.shape[0]}."
             )
-        if self.uid.shape[0] > 1 and not bool((np.diff(self.uid) > 0).all()):
+        # Neighbour comparison, not np.diff: the int64 difference of two valid
+        # uids can wrap (2**63 - 1 - (-1)) and make an ascending pair fail.
+        if self.uid.shape[0] > 1 and not bool((self.uid[1:] > self.uid[:-1]).all()):
             raise ValueError(
                 "CompiledObligorEad: uid must be ascending-sorted and unique "
                 "(the searchsorted join key)."
@@ -61,7 +63,7 @@ class CompiledObligorEad:
 
     @property
     def num_obligors(self) -> int:
-        return self.uid.shape[0]
+        return int(self.uid.shape[0])
 
     @property
     def is_scenario_varying(self) -> bool:

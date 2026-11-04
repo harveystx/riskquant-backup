@@ -129,7 +129,11 @@ def test_public_credit_var_is_invariant_to_the_internal_factor_batch(
 ) -> None:
     """The contract that actually matters: `_FACTOR_BATCH` is a tuning knob, not
     a risk parameter. `independent_bernoulli` drives a uniform column, the kind
-    the old generator broke."""
+    the old generator broke.
+
+    WS_CREDIT_VAR_API S1.T15: read on `summary.by_alpha` (one record per alpha)
+    and compared as `float.hex`, so the equality is bitwise, not `==` (which
+    would equate 0.0 and -0.0)."""
     obligors = pd.DataFrame({
         "obligor_uid": [1, 2, 3, 4, 5],
         "ead": [1e6, 2e6, 3e6, 1.5e6, 5e5],
@@ -148,6 +152,13 @@ def test_public_credit_var_is_invariant_to_the_internal_factor_batch(
     for factor_batch in (5_000, 1_024, 97):
         monkeypatch.setattr(credit_var_run, "_FACTOR_BATCH", factor_batch)
         summary = run_credit_var(request).summary
-        results.append((dict(summary.var), dict(summary.es), summary.loss_mean))
+        assert [record.alpha for record in summary.by_alpha] == [0.99, 0.999]
+        results.append((
+            tuple(
+                (record.alpha.hex(), record.var.hex(), record.es.hex())
+                for record in summary.by_alpha
+            ),
+            summary.loss_mean.hex(),
+        ))
 
     assert results[0] == results[1] == results[2]

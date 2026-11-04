@@ -1,0 +1,231 @@
+{
+  "$defs": {
+    "GroupRow": {
+      "additionalProperties": false,
+      "description": "One pool/regime for a grouped model: a named group with its own factor\nparameters. For `beta_binomial_grouped`, `params` carries `alpha`, `beta`;\nfor `stress_regime_bernoulli_grouped`, `stress_prob`, `stress_pd_multiplier`.\nObligors are assigned to a group via `ObligorRow.group`; each group becomes one\nBETA_PD / STRESS_INDICATOR factor, so defaults correlate within a group and are\nindependent across groups.",
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "pattern": "^[^\\x00]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Params",
+          "type": "object"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "GroupRow",
+      "type": "object"
+    },
+    "LoadingRow": {
+      "additionalProperties": false,
+      "description": "One systemic-factor loading for a multi-factor model: obligor `obligor_uid` loads\non systemic `factor` with `loading`. The set of distinct `factor` values\ndefines the model's systemic factors; per-obligor idiosyncratic weight is the\nengine residual sqrt(1 - sum loading^2).",
+      "properties": {
+        "factor": {
+          "minLength": 1,
+          "pattern": "^[^\\x00]*$",
+          "title": "Factor",
+          "type": "string"
+        },
+        "loading": {
+          "maximum": 1.0,
+          "minimum": -1.0,
+          "title": "Loading",
+          "type": "number"
+        },
+        "obligor_uid": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
+          "title": "Obligor Uid",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "obligor_uid",
+        "factor",
+        "loading"
+      ],
+      "title": "LoadingRow",
+      "type": "object"
+    },
+    "ObligorRow": {
+      "additionalProperties": false,
+      "description": "One obligor: the flat desk row.",
+      "properties": {
+        "ead": {
+          "description": "Exposure at default (finite, >= 0).",
+          "minimum": 0.0,
+          "title": "Ead",
+          "type": "number"
+        },
+        "force_default": {
+          "default": false,
+          "description": "Force this obligor to default inside the simulation; the selected model runs on the rest. Ignored when the model is forced_default.",
+          "title": "Force Default",
+          "type": "boolean"
+        },
+        "group": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[^\\x00]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Pool/regime label for grouped models (beta_binomial_grouped, stress_regime_bernoulli_grouped): obligors sharing a group share that group's factor. Omit for non-grouped models.",
+          "title": "Group"
+        },
+        "in_stress_test": {
+          "default": false,
+          "description": "Include in the standalone hard-default stress test (does not affect the simulation).",
+          "title": "In Stress Test",
+          "type": "boolean"
+        },
+        "lgd": {
+          "description": "Loss given default in [0, 1].",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Lgd",
+          "type": "number"
+        },
+        "obligor_uid": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
+          "title": "Obligor Uid",
+          "type": "integer"
+        },
+        "pd": {
+          "description": "Probability of default in [0, 1].",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Pd",
+          "type": "number"
+        },
+        "rho": {
+          "anyOf": [
+            {
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Bespoke per-obligor asset correlation for single-factor copulas; overrides the global/regulatory fill. Omit to use the fill.",
+          "title": "Rho"
+        }
+      },
+      "required": [
+        "obligor_uid",
+        "ead",
+        "pd",
+        "lgd"
+      ],
+      "title": "ObligorRow",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A single credit-VaR run, as a JSON payload.\n\nThe request keeps the caller's alpha order; the result sorts (C.3). The\ncross-field rules run in the order of A_CONTRACT section 2.5, and the first\nfault raises. A request with one fault therefore gives one error entry.",
+  "properties": {
+    "alphas": {
+      "default": [
+        0.95,
+        0.975,
+        0.99,
+        0.999
+      ],
+      "items": {
+        "exclusiveMaximum": 1.0,
+        "exclusiveMinimum": 0.0,
+        "type": "number"
+      },
+      "minItems": 1,
+      "title": "Alphas",
+      "type": "array"
+    },
+    "groups": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/GroupRow"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Per-group factor parameters for grouped models; omit otherwise.",
+      "title": "Groups"
+    },
+    "loadings": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/LoadingRow"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Systemic loadings for multi-factor models; omit otherwise.",
+      "title": "Loadings"
+    },
+    "model": {
+      "description": "Model key, e.g. 'sf_gaussian'.",
+      "title": "Model",
+      "type": "string"
+    },
+    "n_scenarios": {
+      "default": 250000,
+      "exclusiveMinimum": 0,
+      "title": "N Scenarios",
+      "type": "integer"
+    },
+    "obligors": {
+      "items": {
+        "$ref": "#/$defs/ObligorRow"
+      },
+      "minItems": 1,
+      "title": "Obligors",
+      "type": "array"
+    },
+    "params": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Params",
+      "type": "object"
+    },
+    "seed": {
+      "default": 12345,
+      "minimum": 0,
+      "title": "Seed",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "model",
+    "obligors"
+  ],
+  "title": "CreditVarRequest",
+  "type": "object"
+}

@@ -5099,6 +5099,44 @@ Historical snapshot references are retained for evidence lineage. The final cert
 
 ---
 
+## D106 - Stable public surface of riskquant.solutions.credit_var.api
+**Status:** LOCKED (2026-11-03, owner approval). Implemented in `docs/workstreams/WS_CREDIT_VAR_API.md`, slices S1 to S5. Promoted from the proposal P-CREDIT_VAR_API-001 (WS section 4, text reviewed in two freeze audits).
+**Related:** D001, D002, D-C15, D039, D040, D041, D104.
+**Scope:** the public surface, the versioning, the build identity and the error and concurrency contract of riskquant.solutions.credit_var.api.
+**Decision:**
+* **D106.1 Surface.** The stable surface is the 22 names of api.__all__ that S5.T1 freezes: AlphaRisk, CreditVarEngineError, CreditVarRequest, CreditVarResult, GroupRow, LoadingRow, LossHistogram, MODEL_CATALOG, ModelEntry, ModelTail, ObligorContribution, ObligorRow, ParamSpec, PercentileLoss, RiskSummary, RunProvenance, StressTestObligor, StressTestResult, model_entry, run_credit_var, simulate_portfolio_losses, supported_model_keys. The member CreditVarRequest.from_dataframe is outside the stable surface; clause 3 does not apply to it. simulate_portfolio_losses is a Python-only member: its np.ndarray return has no JSON form, no result schema version and no golden file. A consumer imports riskquant names only from riskquant.solutions.credit_var.api. The request error type comes from pydantic; api does not re-export it. All other modules of riskquant.solutions.credit_var and riskquant.credit are internal.
+* **D106.2 Version.** The package version follows SemVer over the surface of clause 1. Before 1.0.0, a minor bump marks a breaking change; a patch bump marks a compatible change.
+* **D106.3 Breaking change.** Each item is breaking: removal or rename of a surface name; an incompatible signature change; a request schema change that rejects a payload that was valid; a result schema change other than an added optional field; a change of a published error type; a change of a result value at a fixed request and a fixed numerical environment, unless a D entry records it as a defect fix.
+* **D106.4 Result schema version.** CreditVarResult.result_schema_version is "MAJOR.MINOR". MAJOR increments on a breaking change of the serialized form. MINOR increments on an added optional field. A reader validates only the version it declares.
+* **D106.5 Build identity.** RunProvenance.engine_version is "<V>+src.<H>". V is the distribution version from package metadata and has no local segment. H is the lowercase SHA-256 hex over each *.py file under the directory of the imported riskquant package, ordered by POSIX relative path. Each file contributes its UTF-8 path, one NUL byte, its content with CRLF replaced by LF, and one NUL byte. Missing metadata raises. No fallback string exists.
+* **D106.6 Numerical environment.** RunProvenance records scenario_construction_id, numpy_version, scipy_version and numba_version. Reproducibility stays environment-relative as D-C15 states. The text of D-C15 does not change.
+* **D106.7 Pins.** pyproject.toml keeps NumPy and SciPy ranges with an upper bound on the next major version. Each consuming environment locks exact versions.
+* **D106.8 Errors.** The public entry points raise only pydantic.ValidationError for a request fault and CreditVarEngineError(RiskQuantError) for an engine fault. RiskSummary.at raises KeyError for a level that the run did not compute.
+* **D106.9 Concurrency.** credit_var serializes entry into its parallel kernels with one process lock. Calls on separate threads of one process give the results of serial calls. The lock does not serialize parallel kernels that other riskquant modules enter.
+**Pins in force (C.30, O-11, owner decision 2026-11-03):** numpy>=1.26,<3; scipy>=1.15,<2; pydantic>=2.0,<3; numba>=0.59,<0.67 (tested 0.66.0); pandas>=2.0,<3.1 (temporary, removed with pandas in WS_CREDIT_POLARS).
+**Reason:** one public import surface lets the engine change without a change for callers (same principle as D104.2). SemVer, a result schema version and a build identity let a consumer state which contract and which build produced a result. The error and concurrency clauses make faults and threaded calls predictable at the API boundary.
+**Implementation:** `src/riskquant/solutions/credit_var/` (`api`, `schemas`, `run`, `errors`, `provenance`, `catalog`, `recipes`); `pyproject.toml` (version 0.2.0, pins); `src/riskquant/credit/STABLE_API.md` (internal status, O-4).
+**Evidence:** S1.T1 to S1.T15, S2.T1 to S2.T12, S3.T1 to S3.T4, S4.T1 to S4.T14, S5.T1 to S5.T4 in `tests/solutions/credit_var/`. Owner gate at 64a531e: full suite 7875 passed, 36 skipped.
+**Evidence limits:** reproducibility is environment-relative (D-C15). The build identity V reads package metadata; stale metadata on sys.path changes it (WS backlog, R1 R-06).
+
+---
+
+## D107 - S7 pre-release defect fixes of riskquant.solutions.credit_var.api
+**Status:** LOCKED (2026-11-04, owner approval). Implemented in `docs/workstreams/WS_CREDIT_VAR_API.md`, slice S7 (Revisions 7 to 10). Owner decision OD-4.
+**Related:** D106 (clause 3), D-C15, D040, D041.
+**Scope:** defect fixes found by the pre-release consumer audit of the credit_var api, made before release 0.2.0.
+**Decision:** these changes are defect fixes under D106.3, not breaking changes:
+* **D107.1 UL attribution (audit R-001, R-009).** `ul_contribution` and `ul_pct` are 0.0 when loss_min == loss_max, and 0.0 for an obligor whose loss is constant over the scenarios. Each covariance uses centred rows, with one fixed summation order and no BLAS call, so the values do not depend on the BLAS or OpenMP thread count. Against 0.1.0, values change from wrong values to 0.0 on zero-variance books, and by rounding only on other books.
+* **D107.2 UL footing (C.34, Revision 10).** When loss_min != loss_max and loss_mean / loss_std_dev <= 1e10: |sum(ul_contribution) - loss_std_dev| <= 1e-9 x loss_std_dev + sd(delta), where delta is the rounding error of the summed portfolio loss vector. Above that domain, no footing claim is made. RiskSummary moments do not change.
+* **D107.3 n_scenarios = 1 (audit R-002).** It gives a result for every catalog key at both entry points. A scalar (N,) EAD with a dtype other than float64 raises in core; no silent cast occurs.
+* **D107.4 Strict float fields (audit R-003, C.18).** Float request fields admit float (including subclasses) and int (not bool) only. Decimal, Fraction, numpy scalars of other types, 0-d arrays and objects with __float__ now raise R. JSON payloads and the golden schemas do not change.
+* **D107.5 Canonical params order (audit R-008, C.37).** provenance.params holds the request params in ascending key order, so equal requests give byte-equal results. input_hash does not change.
+**Reason:** D106.3 counts a result value change or a newly rejected payload as breaking unless a D entry records it as a defect fix. No 0.2.x release exists; 0.1.0 users can trace the changes here.
+**Evidence:** S7.T1 to S7.T6 in `tests/solutions/credit_var/test_audit_fixes.py`. Owner gate at 6c792ce: full suite 7995 passed, 37 skipped; audit probe `_gates/audit_credit_var.py --skip G` with the Exit lines PASS. S7 re-review ACCEPT 2026-11-04.
+**Evidence limits:** C.34 holds only inside loss_mean / loss_std_dev <= 1e10. Admitted values outside the engine numeric domain can still give E (WS backlog R-004, R-005; api.py docstring "Numeric domain").
+
+---
+
 ## D-C01 — `obligor_uids_target` ordering (credit / exposure→JTD bridge)
 
 `obligor_uids_target` may be supplied in **any order**. Uids must be unique; duplicates raise. The output rows are emitted in exactly the caller's target order. Sorting is an internal implementation detail: `aggregate_ead_to_obligor` creates a sorted copy of the target, performs the `searchsorted` lookup against that sorted-unique array, and maps the returned ranks back through the sort permutation.

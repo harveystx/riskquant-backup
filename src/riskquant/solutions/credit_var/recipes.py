@@ -24,13 +24,17 @@ from __future__ import annotations
 from riskquant.basel.irb.correlation import basel_corporate_correlation
 
 __all__ = [
+    "CHI_FACTOR_NAME",
     "SUPPORTED_RECIPES",
     "AssembledInputs",
     "assemble_inputs",
+    "idiosyncratic_factor_name",
 ]
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Final
 
 import numpy as np
 import pandas as pd
@@ -61,6 +65,11 @@ _SYSTEMIC_GLOBAL = "SYSTEMIC_GLOBAL"
 _BETA_PD_GLOBAL = "BETA_PD_GLOBAL"
 _STRESS_GLOBAL = "STRESS_GLOBAL"
 _CHI_GLOBAL = "CHI_GLOBAL"
+#: Name of the shared chi-square factor that the Student-t recipes add to the
+#: factor universe. Public so that the request rule on reserved loadings factor
+#: names (WS_CREDIT_VAR_API C.17, A_CONTRACT section 2.5 rule 15) reads the
+#: recipe's own name, not a copy.
+CHI_FACTOR_NAME: Final[str] = _CHI_GLOBAL
 # forced-default reads no factor; the generator needs >=1
 _FORCED_DUMMY = "FORCED_DUMMY"
 _SYSTEMIC_SHOCK = "SYSTEMIC_SHOCK"  # Marshall-Olkin shared common-shock (UNIFORM)
@@ -99,6 +108,17 @@ class _FactorRow:
     nu: float | None = None
     alpha: float | None = None
     beta: float | None = None
+
+
+def idiosyncratic_factor_name(obligor_uid: int) -> str:
+    """Name of the idiosyncratic factor that the multi-factor recipes add for
+    one obligor.
+
+    The one owner of the format: `_mf_universe_and_bundle` builds its names
+    with it, and the request rule on reserved loadings factor names
+    (WS_CREDIT_VAR_API C.17) reads the same format, so the two cannot drift.
+    """
+    return f"IDIO_{int(obligor_uid):03d}"
 
 
 def _uids(obligor_table: pd.DataFrame) -> np.ndarray:
@@ -418,7 +438,7 @@ def _mf_universe_and_bundle(
             f"{instrument}: a multi-factor model requires a non-empty loadings table."
         )
     uids = _uids(obligor_table)
-    idio_names = [f"IDIO_{int(u):03d}" for u in uids]
+    idio_names = [idiosyncratic_factor_name(int(u)) for u in uids]
     # Distinct systemic factors, authoring order preserved.
     systemic_names = list(dict.fromkeys(loadings_table["factor"].astype(str)))
 
@@ -650,7 +670,10 @@ def _assemble_marshall_olkin(
     )
 
 
-SUPPORTED_RECIPES: dict[str, object] = {
+# Read-only view (WS_CREDIT_VAR_API C.22, F-16): the recipe table is process
+# state that every caller dispatches on, so no caller may add, replace or remove
+# an assembler. The literal is the only reference to the backing dict.
+SUPPORTED_RECIPES: Final[Mapping[str, object]] = MappingProxyType({
     "forced_default": _assemble_forced_default,
     "independent_bernoulli": _assemble_independent_bernoulli,
     "stress_regime_bernoulli": _assemble_stress_regime_bernoulli,
@@ -664,7 +687,7 @@ SUPPORTED_RECIPES: dict[str, object] = {
     "mf_gaussian": _assemble_mf_gaussian,
     "mf_students_t": _assemble_mf_students_t,
     "marshall_olkin": _assemble_marshall_olkin,
-}
+})
 
 
 def assemble_inputs(
@@ -687,6 +710,6 @@ def assemble_inputs(
             f"assemble_inputs: no recipe for model '{model_key}'. "
             f"Supported: {sorted(SUPPORTED_RECIPES)}."
         )
-    return assembler(  # type: ignore[operator]
+    return assembler(  # type: ignore[operator, no-any-return]
         obligor_table, params or {}, loadings_table, group_params
     )

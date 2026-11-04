@@ -3,7 +3,11 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 
-from riskquant.solutions.credit_var.api import CreditVarRequest, run_credit_var
+from riskquant.solutions.credit_var.api import (
+    CreditVarRequest,
+    CreditVarResult,
+    run_credit_var,
+)
 from riskquant.solutions.credit_var.run import simulate_portfolio_losses
 from riskquant.utils.printer import print_calling_file, print_success_message
 from riskquant_lab.fixtures.credit_var import (
@@ -63,7 +67,7 @@ def _calc_alpha_beta(mean_pd: float, precision: float) -> tuple[float, float]:
     return alpha, beta
 
 
-def main():
+def main() -> None:
 
     print_calling_file(add_space_after=False)
 
@@ -85,7 +89,7 @@ def main():
 
     for precision in PRECISION_STRESS_VALUES:
         # Preallocate to store results and losses for each stress scenario
-        results: list = []
+        results: list[CreditVarResult] = []
         losses_dict: dict[str, np.ndarray] = {}
         model_labels: list[str] = []
 
@@ -124,18 +128,22 @@ def main():
             current_losses = simulate_portfolio_losses(req)
 
             current_el = current_result.summary.loss_mean
-            current_var99 = current_result.summary.get_var(alpha=0.99)
-            current_es99 = current_result.summary.get_es(alpha=0.99)
-            current_es_to_var_ratio = (
-                current_es99 / current_var99 if current_var99 != 0 else float("nan")
-            )
+            current_at99 = current_result.summary.at(0.99)
+            current_var99 = current_at99.var
+            current_es99 = current_at99.es
+            # The result has no ES/VaR ratio (O-5). The ratio is undefined at
+            # VaR = 0; print "n/a" there, never a NaN.
+            if current_var99 == 0.0:
+                current_es_to_var_ratio = "n/a"
+            else:
+                current_es_to_var_ratio = f"{current_es99 / current_var99:3.2f}"
 
             current_model_label += (
                 f" | "
                 f"EL={current_el:12,.0f}, "
                 f"VaR 99%={current_var99:12,.0f}, "
                 f"ES 99%={current_es99:12,.0f}, "
-                f"ES/VaR Ratio={current_es_to_var_ratio:3.2f}"
+                f"ES/VaR Ratio={current_es_to_var_ratio}"
             )
 
             results.append(current_result)
@@ -145,7 +153,7 @@ def main():
 
             print(f"--> Running model: {current_model_label}")
 
-        fig, ax = plot_loss_distribution_comparison(
+        _fig, ax = plot_loss_distribution_comparison(
             losses_dict,
             title=f"Credit Loss KDE Distributions (Model: {clean_model_key_str}, Constant Precision (alpha + beta): {precision})",
             log_y=True,

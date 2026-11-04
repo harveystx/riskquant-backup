@@ -32,14 +32,20 @@ _LGD_HI = 1.0
 
 
 def _bad_uids(uid: npt.NDArray[np.int64], mask: npt.NDArray[np.bool_]) -> list[int]:
-    return uid[mask][:_PREVIEW].tolist()
+    return [int(u) for u in uid[mask][:_PREVIEW]]
 
 
 def validate_uid_sorted_unique(uid: npt.NDArray[np.int64]) -> None:
-    """`uid` must be strictly ascending — uniqueness + sorted in one check."""
+    """`uid` must be strictly ascending — uniqueness + sorted in one check.
+
+    Compares neighbours directly, not through ``np.diff``: the int64
+    difference of two valid uids can exceed the int64 range and wrap (for
+    example ``2**63 - 1 - (-1)``), which made an ascending pair look
+    descending.
+    """
     if uid.shape[0] == 0:
         raise ValueError("obligor master: empty uid array.")
-    if not (np.diff(uid) > 0).all():
+    if not (uid[1:] > uid[:-1]).all():
         # Surface duplicates first (the common bug); sortedness second.
         unique, counts = np.unique(uid, return_counts=True)
         dups = unique[counts > 1][:_PREVIEW].tolist()
