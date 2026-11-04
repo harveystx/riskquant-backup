@@ -3,8 +3,8 @@
 Path: docs/workstreams/WS_CREDIT_VAR_API.md
 Class: HEAVY
 Status: FROZEN
-Revision: 9
-Revision note: Owner decision of 2026-11-04 (S7 review R-001 listing): C.34 applies up to a dynamic range of 1e10; OD-S7R-1 (c) and OD-S7R-2 (a). No audit round.
+Revision: 10
+Revision note: Owner decision of 2026-11-04 (S7 re-review R-005, OD-S7R-3 (a)): the C.34 domain variable is loss_mean / loss_std_dev. No audit round.
 Date: 2026-10-29
 Branch: ws/credit-var-api
 Snapshot: SNAPSHOT commit=925533b dirty=false content_hash=046ed5dddb6305d3
@@ -90,8 +90,9 @@ Owner decisions in force:
 - 2026-11-03 (audit OD-3 (a)): the R-001 fix changes the attribution only. RiskSummary moments do not change. The footing clause C.34 holds for a dynamic range max|constant obligor loss| / loss_std_dev <= 1e10.
 - 2026-11-04 (OD-3 amended, Revision 8): the C.34 footing bound is 1e-9 x loss_std_dev + sd(delta), with delta the rounding error of the summed portfolio loss vector. Reason (S7 implementer, Observed): at max|constant| / loss_std_dev of 8.2e8 and 6.7e9 the footing error is 6.6e-9 and 5.1e-8 relative, because loss_std_dev contains the rounding of L = sum of the obligor rows and no centred obligor row contains it. By Cauchy-Schwarz that part of the error is at most sd(delta). The 1e10 range bound of Revision 7 is removed from C.34; the UL definition does not change.
 - 2026-11-04 (C.34 scope, Revision 9): C.34 applies only for max|constant obligor loss| / loss_std_dev <= 1e10. Reason (S7 review R-001 listing, Observed in the implementer sandbox): a marshall_olkin probe book at ratio 1.7e13 gives a footing error of 9.19e-6 against a Revision 8 bound of 8.81e-6. At that range the rounding of the centring of L inside loss_std_dev also exceeds the tolerance, and no footing statement is accurate. The UL definition does not change.
-- 2026-11-04 (OD-S7R-1 (c)): each RES-UL-FOOT failure of the audit probe is listed with two verdicts: ratio > 1e10 (S7 Exit) and the C.34 bound. A failure closes when its ratio is above 1e10, or when the C.34 bound holds.
+- 2026-11-04 (OD-S7R-1 (c)): each RES-UL-FOOT failure of the audit probe is listed with two verdicts: ratio > 1e10 (S7 Exit) and the C.34 bound. A failure closes when its ratio is above 1e10, or when the C.34 bound holds. From Revision 10 the ratio is loss_mean / loss_std_dev.
 - 2026-11-04 (OD-S7R-2 (a)): a test for lock release after an E inside _PARALLEL_KERNEL_LOCK goes to the backlog, outside S7.
+- 2026-11-04 (OD-S7R-3 (a), Revision 10): the C.34 domain is loss_mean / loss_std_dev <= 1e10, not max|constant obligor loss| / loss_std_dev. Reason (S7 re-review R-005, Observed in the reviewer sandbox): with 50 or more constant obligors, books inside the Revision 9 domain fail the bound (K 50 x 129431000.3, S 50, ratio 8.52e9: error 1.30956e-7 > bound 1.30932e-7). The rounding of mean(L) scales with eps x loss_mean. Reviewer sandbox: 0 failures in 1470 cases with loss_mean / loss_std_dev <= 1e11. Losses are >= 0, so loss_mean >= max|constant obligor loss|, and the 10 listed probe failures stay closed.
 - 2026-11-03 (audit R-002, OD-1 (a)): n_scenarios = 1 is fixed in credit/jtd/engine.py. Fix in S7. Revision 7 by explicit owner decision under the tripwire.
 - 2026-11-03 (audit R-003): float request fields admit float (including subclasses) and int (not bool) only. Golden schemas do not change. Fix in S7.
 - 2026-11-03 (audit R-008): provenance.params uses one canonical key order. Fix in S7.
@@ -195,7 +196,7 @@ Benchmark (S6):
 Audit fixes (S7):
 - C.18 is enforced for every float request field (ead, pd, lgd, rho, loading, GroupRow.params values, CreditVarRequest.params values, alphas elements). [Proposed] Test: S7.T5
 - C.33 When summary.loss_min == summary.loss_max, every ObligorContribution.ul_contribution and ul_pct is 0.0. An obligor whose loss is constant over the scenarios has ul_contribution 0.0. [Proposed] Test: S7.T1
-- C.34 When loss_min != loss_max and max|constant obligor loss| / loss_std_dev <= 1e10: |sum(ul_contribution) - loss_std_dev| <= 1e-9 x loss_std_dev + sd(delta), where delta_s = L_s - (exact sum over obligors of the obligor losses of scenario s) is the rounding error of the summed portfolio loss vector L, which loss_std_dev itself contains. sd uses ddof = 1, as loss_std_dev does. Above a dynamic range of 1e10, C.34 makes no claim: the summed loss vector and the computation of loss_std_dev itself are then quantized coarser than the footing tolerance (OD-3 (a), amended 2026-11-04, Revisions 8 and 9). [Proposed] Test: S7.T2
+- C.34 When loss_min != loss_max and loss_mean / loss_std_dev <= 1e10: |sum(ul_contribution) - loss_std_dev| <= 1e-9 x loss_std_dev + sd(delta), where delta_s = L_s - (exact sum over obligors of the obligor losses of scenario s) is the rounding error of the summed portfolio loss vector L, which loss_std_dev itself contains. sd uses ddof = 1, as loss_std_dev does. Above loss_mean / loss_std_dev = 1e10, C.34 makes no claim: the summed loss vector and the computation of loss_std_dev itself are then quantized coarser than the footing tolerance (OD-3 (a), amended 2026-11-04, Revisions 8, 9 and 10). Both quantities are RiskSummary fields, so a consumer can compute the domain from the result. [Proposed] Test: S7.T2
 - C.35 ul_contribution and ul_pct are bitwise invariant to the BLAS and OpenMP thread settings. obligor_ul_contribution makes no BLAS call and sums in one fixed order. [Proposed] Test: S7.T3
 - C.36 n_scenarios = 1 gives a result through run_credit_var and simulate_portfolio_losses for every MODEL_CATALOG key. [Proposed] Test: S7.T4
 - C.37 provenance.params holds the request params in ascending key order (Python str order, the order of the input_hash serialization). input_hash bytes do not change. [Proposed] Test: S7.T6
@@ -478,7 +479,7 @@ Files:
 Prohibited: every other src/ file; tests/solutions/credit_var/golden/*; the field set of every request and result model; provenance.py; catalog.py; recipes.py; scenario_metrics/**; src/riskquant/jit.py; any new Numba kernel; the C.25 lock sites; the computation of RiskSummary moments (OD-3 (a)); pyproject.toml; DECISIONS.md.
 Attach: docs/workstreams/WS_CREDIT_VAR_API.md ; docs/workstreams/WS_CREDIT_VAR_API/A_CONTRACT.md ; docs/CLAUDE.md ; docs/DECISIONS.md ; context_riskquant_index.txt ; context_riskquant_solutions_credit_var.txt ; context_riskquant_credit.txt ; context_riskquant_tests_solutions_credit_var.txt ; context_riskquant_tests_credit.txt ; _gates/audit_credit_var.py
 Gates: gate block with $f = the six S7 files and $t = "tests/solutions/credit_var", "tests/credit/jtd", "tests/credit/solutions"; then the demo import smoke; then python _gates/audit_credit_var.py --skip G (raw output saved). No full demo run (owner rule: demos only when imperative; no demo reads an S7 field).
-Exit: S7.T1 to S7.T6 pass; full suite passes; each S7 mutation is run once and fails its test (output reported); probe lines A2 (all float lines), B1 "n_scenarios = 1", RES-ZV-UL and the D2 BLAS line PASS; the D3 params-order line reads "byte-equal results True"; every remaining RES-UL-FOOT failure has max|constant obligor loss| / loss_std_dev > 1e10 (listed); golden files unchanged.
+Exit: S7.T1 to S7.T6 pass; full suite passes; each S7 mutation is run once and fails its test (output reported); probe lines A2 (all float lines), B1 "n_scenarios = 1", RES-ZV-UL and the D2 BLAS line PASS; the D3 params-order line reads "byte-equal results True"; every remaining RES-UL-FOOT failure has loss_mean / loss_std_dev > 1e10 or meets the C.34 bound (listed); golden files unchanged.
 Status: NOT_STARTED
 Evidence: none
 
