@@ -2,7 +2,7 @@
 
 Path: docs/workstreams/WS_CREDIT_VAR_API.md
 Class: HEAVY
-Status: FROZEN
+Status: CLOSED
 Revision: 10
 Revision note: Owner decision of 2026-11-04 (S7 re-review R-005, OD-S7R-3 (a)): the C.34 domain variable is loss_mean / loss_std_dev. No audit round.
 Date: 2026-10-29
@@ -11,7 +11,7 @@ Snapshot: SNAPSHOT commit=925533b dirty=false content_hash=046ed5dddb6305d3
 Drafted by: investigator
 Independent review: PASSED (SNAPSHOT commit=925533b dirty=false content_hash=046ed5dddb6305d3)
 Audit rounds used: 2 of 2
-Code merged: no
+Code merged: yes
 DECISIONS.md reconciled: YES (2026-10-29)
 Evidence limits: No repository gate, test or benchmark ran. Code facts were read at c060f06. snapshot_delta_c060f06_925533b.txt lists only _context_gen/ and docs/ paths, so each F-n holds at 925533b. F-12, F-30, F-34, F-35 and F-36 were read or run at 925533b. Test facts come from context_riskquant_tests_credit.txt, the 925533b tests bucket (PROFILE tests_credit, TEST DIRECTORY tests/credit/, 18 files), not from the filtered extract. Facts marked "sandbox" ran in an investigator sandbox (Python 3.12.3, pydantic 2.14.1, numpy 2.4.4, scipy 1.17.1, pandas 3.0.2, numba 0.68.1, threading layer omp), not on the owner machine. The A_ORACLES revision 2 check ran the engine from a scratch copy of the 925533b profile source in that sandbox; it is sandbox evidence only. The text of src/riskquant/credit/STABLE_API.md was not attached; F-28 and R1 A-06 are the evidence for its content. Not read: credit/jtd/evaluators/*, credit/jtd/bridge.py, scripts/tests/run_all_tests_solutions_credit_var.py, scripts/solutions/credit_var/demo_e2e_*.py, tests/e2e/test_demo_scripts_are_runnable.py, and the Emissary and riskquant-excel repositories.
 
@@ -95,6 +95,8 @@ Owner decisions in force:
 - 2026-11-04 (OD-S7R-3 (a), Revision 10): the C.34 domain is loss_mean / loss_std_dev <= 1e10, not max|constant obligor loss| / loss_std_dev. Reason (S7 re-review R-005, Observed in the reviewer sandbox): with 50 or more constant obligors, books inside the Revision 9 domain fail the bound (K 50 x 129431000.3, S 50, ratio 8.52e9: error 1.30956e-7 > bound 1.30932e-7). The rounding of mean(L) scales with eps x loss_mean. Reviewer sandbox: 0 failures in 1470 cases with loss_mean / loss_std_dev <= 1e11. Losses are >= 0, so loss_mean >= max|constant obligor loss|, and the 10 listed probe failures stay closed.
 - 2026-11-04 (OD-S7R-4 (b)): the reproducible evidence for Revision 10 is the test test_s7_t2_case_ii_c34_fails_outside_domain (1000 x 1e8 plus one Bernoulli row of loss 2**-5, pd 0.283, S 50, seed 0): sums are exact in any order (delta = 0), loss_mean / loss_std_dev = 7.65e12, and the bound fails (error 3.517e-9 > bound 1.308e-11; 40 of 40 seeds in the reviewer sandbox). The K 50 book above needs the modelled loss 0.03281946511141755, not 0.0328, to fail (S7 re-review).
 - 2026-11-04 (S7 closure): S7 VALIDATED; the S7 pre-release defect fixes are recorded as D107 (OD-4).
+- 2026-11-04 (R2 benchmark): R_BENCHMARK_R2.md committed at 08486fb (run at 184a9e8, free memory 17.7 GB, no second review). Against R1 (pre-S7, e8d5d8d), medians at S = 250000: run_credit_var N = 1000 sf_gaussian 8.37 s -> 9.40 s (+12 %), mf_students_t 9.45 s -> 10.72 s (+13 %), forced_default 4.69 s -> 4.26 s (-9 %); simulate_portfolio_losses, which has no UL attribution, moves by -4 % to +6 % (run-to-run noise); peak RSS, import (M1) and engine_version (M5) do not change. Inferred: the BLAS-free UL attribution of S7 (C.35) costs about 1 s at N = 1000, S = 250000; constant rows (forced_default) became cheaper.
+- 2026-11-04 (closure): all slices S1 to S7 VALIDATED; D106 and D107 LOCKED; Status CLOSED.
 - 2026-11-03 (audit R-002, OD-1 (a)): n_scenarios = 1 is fixed in credit/jtd/engine.py. Fix in S7. Revision 7 by explicit owner decision under the tripwire.
 - 2026-11-03 (audit R-003): float request fields admit float (including subclasses) and int (not bool) only. Golden schemas do not change. Fix in S7.
 - 2026-11-03 (audit R-008): provenance.params uses one canonical key order. Fix in S7.
@@ -554,6 +556,7 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - errors.py docstring: "E: the caller cannot fix it by a change of the request" is not true for R-004 and R-005 (audit).
 - credit/jtd/streaming.py:217 uses the same broadcast_to pattern as R-002; not on the api path (audit, adjacent).
 - Audit probe: PROBE-ERROR prints SKIP when zero probe exceptions occur; a reporting defect of _gates/audit_credit_var.py only (audit).
+- UL attribution speed: the BLAS-free centred covariance (C.35) adds about 1 s (+12 %) to run_credit_var at N = 1000, S = 250000 (R1 against R2). A deterministic Numba kernel with one fixed summation order per obligor row would keep C.35 and recover the time; it needs a new kernel, which S7 prohibited.
 - Test: an E raised inside _PARALLEL_KERNEL_LOCK, then a second call that finishes (OD-S7R-2 (a); S7 removed the only probe trigger, E2).
 - _attribution.py:obligor_tail_attribution comment "Distribution-wide UL ... foots to portfolio UL" states exact footing; state the C.34 bound (S7 review R-004, third comment).
 - credit/jtd/engine.py:run_jtd_for_obligor_ead: the (N, S) EAD branch passes a non-float64 array to run_jtd without a dtype check (S7 review round, adjacent).
@@ -562,19 +565,23 @@ Backlog (REFINEMENT findings and items that v1 omits):
 
 ## 8. Closure record
 
-Fill this section when the status becomes CLOSED. Leave no placeholder.
-
 | Item | Value |
 |---|---|
-| Final commit | <hash, dirty=false> |
-| Release tag | <tag> |
-| Decisions locked | <D-ids> |
-| Independent validation | <date and snapshot> |
+| Final commit | Branch head merged into prod: the commit that adds this record (its parent is 08486fb, the R2 commit), dirty=false. Last code commit: 6c792ce. |
+| Release tag | v0.2.0 on the prod merge commit; prod_20261104_1848 on prod before the merge (rollback point) |
+| Decisions locked | D106 (stable public surface, from P-CREDIT_VAR_API-001), D107 (S7 pre-release defect fixes) |
+| Independent validation | Slice reviews ACCEPT: S1 2026-11-02 (bf64906), S2 2026-11-03 (081bc45), S3 2026-11-03 (d150990), S4 2026-11-02 (6b98935), S5 2026-11-03 (64a531e), S6 2026-11-03 (e8d5d8d, QUICK), S7 2026-11-04 (6c792ce). Pre-release consumer audit 2026-11-03 (b179d88) and its probe rerun at 6c792ce. |
 
 Delivered:
-- <item>
+- riskquant.solutions.credit_var.api 0.2.0: a stable public surface of 22 names (D106.1), SemVer with result schema version 1.0, build identity `<V>+src.<H>` and the numerical environment in provenance (D106.2 to D106.6).
+- Result contract (S1): records instead of level-keyed dicts, finite-only frozen result models, provenance; request admission and error taxonomy R/E (S2); read-only catalog maps and a process lock for the parallel kernels (S3); independent oracles for all 13 catalog keys (S4); stable surface, golden JSON schemas, dependency pins and STABLE_API.md marked internal (S5); benchmark script and R1, R2 figures (S6); pre-release audit fixes (S7, D107).
+- Engine fixes found on the way: overflow-free uid ascending checks at 3 core sites (S2 R-001), NUL rule (S2 R-002), rule 14 equal to the engine sum (S2 R-003), n_scenarios = 1 and the scalar-EAD dtype check (S7), BLAS-free deterministic UL attribution (S7).
+- Evidence: owner full suite at 6c792ce 7995 passed, 37 skipped; audit probe `_gates/audit_credit_var.py`; R_BENCHMARK_R1.md and R_BENCHMARK_R2.md.
 
 Deferred:
-- <item>
+- Removal of pandas from riskquant, the pandas cap and from_dataframe on Polars: WS_CREDIT_POLARS (next workstream).
+- Section 7 backlog, as listed there: audit R-004 to R-007 (numeric domain, schema and lax result models), the lock-release test (OD-S7R-2), the (N, S) EAD dtype check, the third C.34 comment, from_dataframe input types, np.diff sites in credit_exposure, the ruff upgrade, the probe items, the M2 label of the benchmark, UL attribution speed.
+- O-3 triage items (C-04, C-07, RQ-AUD-009, P2-07) and the D-C18 entry (O-13).
+- riskquant-emissary: the consumer sets its own request size limit (about 32 B per obligor x scenario cell).
 
 Open work: none
