@@ -71,29 +71,68 @@ def obligor_ul_contribution(
     """Per-obligor contribution to portfolio Unexpected Loss (the std-dev / Euler
     risk-contribution decomposition).
 
-    RC_i = Cov(L_i, L) / sigma_L, which sums to sigma_L exactly (since
+    RC_i = Cov(L_i, L) / sigma_L, which sums to sigma_L (since
     Sum_i Cov(L_i, L) = Var(L)). Unlike the ES contribution this is a
     distribution-wide measure, not a tail one: it answers "how much of the
     portfolio's loss volatility does obligor i drive", net of diversification.
 
-    Uses the half-centred form ``L_i . (L - mean(L))`` — no (N, S) copy, and stable
-    (no large mean*mean cancellation). A certain (constant) loss — e.g. a
-    forced-default name — has zero covariance and so contributes 0, which is
-    correct: it adds to expected loss, not to unexpected loss. ``ddof = 1`` matches
-    the reported ``unexpected_loss`` so the column foots.
+    Rules (WS_CREDIT_VAR_API S7, C.33 to C.35)
+    ------------------------------------------
+    * Zero variance (C.33). When ``min(L) == max(L)``, the exact test of
+      `run._distribution_metrics`, every contribution is 0.0 and the total is
+      0.0. ``ddof = 1`` arithmetic on S equal values can give a nonzero std
+      from rounding only; the exact test removes that noise.
+    * Constant obligor (C.33). A row with ``min(L_i) == max(L_i)`` (for
+      example a forced default) has zero covariance with any series, so its
+      contribution is exactly 0.0: it adds to expected loss, not to
+      unexpected loss.
+    * Centred rows (C.34). Each covariance is
+      ``sum_s (L_i,s - mean(L_i)) (L_s - mean(L)) / (S - 1)``. The half-centred
+      form ``L_i . (L - mean(L))`` keeps the term ``mean(L_i) x sum_s(L_s -
+      mean(L))``. That sum is zero in exact arithmetic but not in floating
+      point, and a large constant mean(L_i) magnifies its rounding residue
+      until the column does not foot.
+    * Footing target (C.34, OD-3 (a) as amended in Revision 8). sigma_L is
+      ``L.std(ddof=1)``, the same call that gives ``RiskSummary.loss_std_dev``,
+      so the moment does not change. The contributions foot to it within
+      ``1e-9 x sigma_L + sd(delta)``, with ``delta_s`` the rounding error of
+      the summed loss ``L_s`` against the exact sum of the obligor losses of
+      scenario s (ddof = 1). sigma_L contains that rounding; no centred
+      obligor row contains it, so it is the part of sigma_L that no obligor
+      carries. By Cauchy-Schwarz its effect on the footing is at most
+      sd(delta). It grows with eps x |L| / sigma_L, for example with a large
+      constant obligor loss.
+    * No BLAS (C.35). Every reduction is a NumPy ufunc reduction (``sum``,
+      ``mean``, ``std``, ``min``, ``max``) along the contiguous scenario axis.
+      Such a reduction uses one fixed pairwise summation order and no thread
+      pool. A BLAS dot product (``@``, ``np.dot``) splits the sum by the
+      BLAS thread count, so its bits depend on OPENBLAS/MKL/OMP_NUM_THREADS.
+
+    Memory: the centred product is built per obligor chunk of
+    ``_LOO_CELL_BUDGET // S`` rows, so extra memory stays O(chunk x S).
 
     Returns ``(ul_contribution (N,), ul_total)``.
     """
     scenarios = int(portfolio_losses.shape[0])
     obligors = int(obligor_loss.shape[0])
-    if scenarios < 2:
-        return np.zeros(obligors, np.float64), 0.0
+    contribution = np.zeros(obligors, np.float64)
+    if scenarios < 2 or float(portfolio_losses.min()) == float(portfolio_losses.max()):
+        return contribution, 0.0
+    sigma = float(portfolio_losses.std(ddof=1))
+    if not sigma > 0.0:  # min < max with an underflowed std: no UL to split
+        return contribution, 0.0
     pf_centered = portfolio_losses - portfolio_losses.mean()
-    sigma = float(np.sqrt((pf_centered @ pf_centered) / (scenarios - 1)))
-    if sigma <= 0.0:  # deterministic portfolio (e.g. forced_default): no UL to split
-        return np.zeros(obligors, np.float64), 0.0
-    cov = (obligor_loss @ pf_centered) / (scenarios - 1)  # (N,)
-    return np.ascontiguousarray(cov / sigma), sigma
+    scale = float(scenarios - 1) * sigma
+    chunk = max(1, _LOO_CELL_BUDGET // scenarios)
+    for lo in range(0, obligors, chunk):
+        hi = min(obligors, lo + chunk)
+        rows = obligor_loss[lo:hi]
+        centred = rows - rows.mean(axis=1, keepdims=True)  # (chunk, S), C order
+        np.multiply(centred, pf_centered[None, :], out=centred)
+        covariance = centred.sum(axis=1)
+        constant = rows.min(axis=1) == rows.max(axis=1)
+        contribution[lo:hi] = np.where(constant, 0.0, covariance / scale)
+    return contribution, sigma
 
 
 def obligor_tail_attribution(

@@ -117,9 +117,16 @@ def run_jtd_for_obligor_ead(
 
     if aligned.ndim == 1:
         # Scalar per-obligor EAD -> materialise (N, S) for the bare-array core.
-        ead_by_obligor = np.ascontiguousarray(
-            np.broadcast_to(aligned[:, None], (aligned.shape[0], n_scenarios))
+        # Allocate and fill; do not wrap a broadcast view. For S = 1 the
+        # broadcast view of shape (N, 1) already counts as C-contiguous, so
+        # np.ascontiguousarray returns the read-only view itself, and the
+        # kernels have no signature for a read-only array (WS_CREDIT_VAR_API
+        # S7, R-002, C.36). The fill copies each EAD value unchanged, so the
+        # values for S >= 2 stay bitwise equal.
+        ead_by_obligor = np.empty(
+            (aligned.shape[0], n_scenarios), dtype=np.float64, order="C"
         )
+        ead_by_obligor[...] = aligned[:, None]
     else:
         if aligned.shape[1] != n_scenarios:
             raise ValueError(

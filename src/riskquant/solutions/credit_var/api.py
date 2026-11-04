@@ -32,6 +32,26 @@ The request error type is ``pydantic.ValidationError``. It comes from pydantic;
 this module does not re-export it. The engine error type is
 `CreditVarEngineError` (O-9).
 
+Numeric domain (WS_CREDIT_VAR_API S7, owner decision OD-2 (b))
+--------------------------------------------------------------
+Request admission checks the rules of the request contract only. It does not
+check the float64 and array limits of the engine. An admitted request can
+therefore still raise `CreditVarEngineError` (E) in these cases:
+
+* ``n_scenarios`` near or above 2**63: the scenario arrays exceed the maximum
+  array size or dimension of NumPy.
+* ``seed`` with more than 4300 decimal digits, on the dict path: the int to
+  str conversion limit of Python (``sys.get_int_max_str_digits``) stops the
+  run.
+* ``ead`` near 1e154 and above: the square of a loss overflows float64, so a
+  moment or a UL contribution is not finite and a result model rejects it.
+* ``(1 - alpha) x n_scenarios < 16 eps`` for an alpha in ``alphas``: the tail
+  holds no scenario mass, and the ES contribution is not finite.
+
+Backlog item R-004 covers the first three cases. Backlog item R-005 covers the
+last case. The request has no size limit (O-12). A consumer sets its own limit on ``n_obligors x n_scenarios``.
+One obligor x scenario cell costs about 32 B of memory (audit class G).
+
 Import as::
 
     from riskquant.solutions.credit_var.api import run_credit_var, CreditVarRequest

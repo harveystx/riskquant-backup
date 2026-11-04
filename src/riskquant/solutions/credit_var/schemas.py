@@ -18,6 +18,13 @@ Request contract (WS_CREDIT_VAR_API S2, A_CONTRACT sections 1 and 2)
   str only. The rules apply to dict keys, dict values and sequence elements.
   Silent coercion would let ``"100"`` or ``7.0`` reach the engine as a value
   that the author did not write.
+* Every float field (``ead``, ``pd``, ``lgd``, ``rho``, ``loading``, the
+  values of ``GroupRow.params`` and ``CreditVarRequest.params``, and each
+  ``alphas`` element) admits only a float (a subclass included, stored as
+  float) or an int (not a bool) (WS_CREDIT_VAR_API S7, R-003). Strict mode of
+  pydantic alone also admits every object with ``__float__``: Decimal,
+  Fraction, numpy.float32 and numpy integers. Those types round or change
+  type silently on the way in, so `_float_or_int` rejects them first.
 * A sequence field (``obligors``, ``loadings``, ``groups``, ``alphas``)
   accepts a list or a tuple and stores a tuple. A set, a generator or a str
   raises. ``frozen=True`` blocks assignment only, so the tuple is what stops
@@ -115,7 +122,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from pydantic_core import InitErrorDetails, PydanticCustomError
+from pydantic_core import InitErrorDetails, PydanticCustomError, PydanticKnownError
 
 from riskquant.credit.jtd.models import VALID_JTD_MODEL_NAMES
 from riskquant.solutions.credit_var.catalog import MODEL_CATALOG, model_entry
@@ -203,7 +210,36 @@ _NonEmpty = AfterValidator(_non_empty)
 #: JSON-schema statement of the non-empty rule that `_NonEmpty` enforces.
 _NON_EMPTY_SCHEMA: Final[dict[str, Any]] = {"minItems": 1}
 
-_Alpha = Annotated[float, Field(gt=0.0, lt=1.0)]
+
+def _float_or_int(value: object) -> object:
+    """Admit a float or an int (not a bool) for a float field (C.18, R-003).
+
+    A float subclass (for example numpy.float64) is stored as a plain float,
+    which keeps its value and the sign of zero. An int and ``None`` pass
+    through: the field type then stores the int as a float, and an optional
+    field accepts ``None``. Every other type raises one ``float_type`` entry
+    at the field path, the entry that strict mode gives for a bool. The check
+    is a before-validator, so ``model_json_schema()`` does not change.
+    """
+    if isinstance(value, float):
+        return value if type(value) is float else float(value)
+    if value is None or (isinstance(value, int) and not isinstance(value, bool)):
+        return value
+    raise PydanticKnownError("float_type")
+
+
+#: A float field of the request: `_float_or_int` runs before the strict float
+#: validator. An optional field puts the validator outside the union
+#: (``Annotated[float | None, _FloatOrInt]``), so a rejected input gives one
+#: entry and not one entry per union member.
+_FloatOrInt = BeforeValidator(_float_or_int)
+_Float = Annotated[float, _FloatOrInt]
+
+#: The validator comes after the Field: a BeforeValidator wraps the schema to its
+#: left, so it still runs first. In the other order the constraints leave the
+#: float schema and ``model_json_schema()`` writes "gt"/"lt" in place of
+#: "exclusiveMinimum"/"exclusiveMaximum" (C.29 golden file).
+_Alpha = Annotated[float, Field(gt=0.0, lt=1.0), _FloatOrInt]
 
 #: A str field that contains no NUL character (OD-S2-2 (a), A_CONTRACT sections
 #: 2.1 to 2.3). A NUL in a label is not data that an author writes; it reaches
@@ -268,9 +304,9 @@ class ObligorRow(BaseModel):
     model_config = _REQUEST
 
     obligor_uid: _ObligorUid
-    ead: float = Field(ge=0.0, description="Exposure at default (finite, >= 0).")
-    pd: float = Field(ge=0.0, le=1.0, description="Probability of default in [0, 1].")
-    lgd: float = Field(ge=0.0, le=1.0, description="Loss given default in [0, 1].")
+    ead: _Float = Field(ge=0.0, description="Exposure at default (finite, >= 0).")
+    pd: _Float = Field(ge=0.0, le=1.0, description="Probability of default in [0, 1].")
+    lgd: _Float = Field(ge=0.0, le=1.0, description="Loss given default in [0, 1].")
     in_stress_test: bool = Field(
         default=False,
         description="Include in the standalone hard-default stress test (does not "
@@ -289,7 +325,7 @@ class ObligorRow(BaseModel):
         "stress_regime_bernoulli_grouped): obligors sharing a group share that "
         "group's factor. Omit for non-grouped models.",
     )
-    rho: float | None = Field(
+    rho: Annotated[float | None, _FloatOrInt] = Field(
         default=None,
         ge=0.0,
         lt=1.0,
@@ -308,7 +344,7 @@ class LoadingRow(BaseModel):
 
     obligor_uid: _ObligorUid
     factor: str = Field(min_length=1, pattern=_NO_NUL_PATTERN)
-    loading: float = Field(ge=-1.0, le=1.0)
+    loading: _Float = Field(ge=-1.0, le=1.0)
 
 
 class GroupRow(BaseModel):
@@ -322,7 +358,7 @@ class GroupRow(BaseModel):
     model_config = _REQUEST
 
     name: str = Field(min_length=1, pattern=_NO_NUL_PATTERN)
-    params: dict[str, float] = Field(default_factory=dict)
+    params: dict[str, _Float] = Field(default_factory=dict)
 
 
 class CreditVarRequest(BaseModel):
@@ -339,7 +375,7 @@ class CreditVarRequest(BaseModel):
     obligors: Annotated[tuple[ObligorRow, ...], _AsTuple, _NonEmpty] = Field(
         json_schema_extra=_NON_EMPTY_SCHEMA
     )
-    params: dict[str, float] = Field(default_factory=dict)
+    params: dict[str, _Float] = Field(default_factory=dict)
     loadings: Annotated[tuple[LoadingRow, ...] | None, _AsTuple] = Field(
         default=None,
         description="Systemic loadings for multi-factor models; omit otherwise.",

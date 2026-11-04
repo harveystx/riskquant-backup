@@ -22,6 +22,10 @@ Result assembly (result schema version 1.0)
   records are reordered, so no number changes.
 * The forced-default overlay reports under the JtdModel name "FORCED_DEFAULT",
   the key the engine itself uses for the forced_default model.
+* ``provenance.params`` holds the request params in ascending key order
+  (Python str order), the key order of the `input_hash` serialization (C.37).
+  A dict keeps its insertion order into JSON, so two requests that differ only
+  in params key order would otherwise give one input_hash but different bytes.
 * The build identity and the input hash are computed BEFORE the simulation: an
   engine that cannot state its build fails before it spends the run time.
 
@@ -681,7 +685,10 @@ def _run(req: CreditVarRequest) -> CreditVarResult:
             scipy_version=SCIPY_VERSION,
             numba_version=NUMBA_VERSION,
             model=req.model,
-            params=dict(req.params),
+            # C.37 (R-008): ascending key order, the order of the input_hash
+            # serialization. Two requests that differ only in params key order
+            # have one input_hash and so give byte-equal results.
+            params=dict(sorted(req.params.items())),
             n_obligors=len(req.obligors),
             n_scenarios=req.n_scenarios,
             seed=req.seed,
