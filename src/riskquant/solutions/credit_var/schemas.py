@@ -1072,8 +1072,12 @@ class ObligorContribution(BaseModel):
     es_pct: float  # share of portfolio ES (the contributions sum to 1.0)
     incremental_var: float  # VaR(L) - VaR(L - L_i): VaR drop if obligor removed
     incremental_es: float  # ES(L) - ES(L - L_i): ES drop if obligor removed
-    ul_contribution: float  # Cov(L_i, L) / sigma_L; sums to portfolio UL
-    ul_pct: float  # share of portfolio UL (the contributions sum to 1.0)
+    # C.34 (Revision 10): when loss_min != loss_max and loss_mean / loss_std_dev
+    # <= 1e10, |sum(ul_contribution) - loss_std_dev| <= 1e-9 x loss_std_dev +
+    # sd(delta), with delta the rounding error of the summed loss vector. Above
+    # that ratio C.34 makes no claim. The sum is not exact.
+    ul_contribution: float  # Cov(L_i, L) / sigma_L, with sigma_L = loss_std_dev
+    ul_pct: float  # ul_contribution / loss_std_dev; 0.0 when loss_std_dev is 0.0
 
 
 class LossHistogram(BaseModel):

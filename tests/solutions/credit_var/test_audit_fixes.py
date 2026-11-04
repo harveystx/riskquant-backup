@@ -6,10 +6,11 @@ One test group per audit finding:
 
 * S7.T1 (R-001, C.33): UL attribution is 0.0 on a zero-variance book, and
   0.0 for a constant obligor in a varying book.
-* S7.T2 (R-001, C.34, Revision 8): UL attribution foots to ``loss_std_dev``
-  within ``1e-9 x loss_std_dev + sd(delta)``, with delta the rounding error of
-  the summed portfolio loss; the unit values equal a ``math.fsum`` oracle on
-  centred rows.
+* S7.T2 (R-001, C.34, Revision 10): for ``loss_mean / loss_std_dev <= 1e10``,
+  UL attribution foots to ``loss_std_dev`` within
+  ``1e-9 x loss_std_dev + sd(delta)``, with delta the rounding error of the
+  summed portfolio loss; above that ratio a book can fail the bound; the unit
+  values equal a ``math.fsum`` oracle on centred rows.
 * S7.T3 (R-009, C.35): `obligor_ul_contribution` makes no BLAS call, and the
   result bytes do not depend on the BLAS and OpenMP thread settings.
 * S7.T4 (R-002, C.36): ``n_scenarios = 1`` gives a result for every catalog
@@ -63,6 +64,8 @@ from riskquant.solutions.credit_var.api import (
 
 _EXCLUDE_GENERATED_AT: dict[str, Any] = {"provenance": {"generated_at"}}
 _FOOT_TOLERANCE = 1e-9  # C.34
+_C34_DOMAIN_LIMIT = 1e10  # C.34 (Revision 10): loss_mean / loss_std_dev
+_C34_OUTSIDE_RATIO = 1e11  # S7 review R-005: case (ii) loss_mean / loss_std_dev
 _ORACLE_TOLERANCE = 1e-12  # S7.T2 unit oracle
 
 
@@ -255,7 +258,9 @@ _FOOTING_BOOKS: dict[str, dict[str, Any]] = {
 def test_s7_t2_ul_contributions_foot_to_loss_std_dev(book: dict[str, Any]) -> None:
     """API books, bound 1e-9 x loss_std_dev alone.
 
-    C.34 (Revision 8) allows ``1e-9 x loss_std_dev + sd(delta)``. For these two
+    Both books are in the C.34 domain (Revision 10):
+    loss_mean / loss_std_dev <= 1e10. In the domain, C.34 allows
+    ``1e-9 x loss_std_dev + sd(delta)``. For these two
     books sd(delta) is negligible (0.0 in the S7 sandbox run): in the first,
     1e9 + 0.3 plus 0.0 or 1.0 rounds exactly; in the second, every obligor
     loss (2.25e8 and multiples of 450000.0) is an integer below 2**53, so
@@ -265,6 +270,7 @@ def test_s7_t2_ul_contributions_foot_to_loss_std_dev(book: dict[str, Any]) -> No
     result = run_credit_var(book)
     summary = result.summary
     assert summary.loss_min != summary.loss_max
+    assert summary.loss_mean / summary.loss_std_dev <= _C34_DOMAIN_LIMIT
     ul_sum = math.fsum(c.ul_contribution for c in result.obligor_contributions)
     assert abs(ul_sum - summary.loss_std_dev) <= _FOOT_TOLERANCE * summary.loss_std_dev
 
@@ -291,7 +297,9 @@ def _rounding_error_sd(obligor_loss: npt.NDArray[np.float64]) -> float:
 
 
 # (constant obligor loss, modelled lgd): the two books of the S7 report at
-# max|constant| / loss_std_dev of about 8.2e8 and 6.7e9.
+# max|constant| / loss_std_dev of about 8.2e8 and 6.7e9. With one constant row,
+# loss_mean / loss_std_dev has the same values, so both books are in the C.34
+# domain of Revision 10.
 _ROUNDING_BOOKS: dict[str, tuple[float, float]] = {
     "constant 1e8+0.3, lgd 0.9": (1e8 + 0.3, 0.9),
     "constant 3e8+0.1, lgd 0.33": (3e8 + 0.1, 0.33),
@@ -319,12 +327,117 @@ def test_s7_t2_footing_needs_the_rounding_term(constant: float, lgd: float) -> N
 
     contribution, loss_std_dev = obligor_ul_contribution(obligor_loss, portfolio)
     assert loss_std_dev == float(portfolio.std(ddof=1))  # the RiskSummary call
-    assert 1e8 < constant / loss_std_dev < 1e10  # the reported ratio range
+    assert 1e8 < float(portfolio.mean()) / loss_std_dev <= _C34_DOMAIN_LIMIT
     error = abs(math.fsum(contribution.tolist()) - loss_std_dev)
     delta_sd = _rounding_error_sd(obligor_loss)
 
     assert error > _FOOT_TOLERANCE * loss_std_dev  # the old bound fails
     assert error <= _FOOT_TOLERANCE * loss_std_dev + delta_sd  # C.34 holds
+
+
+def _c34_footing(
+    obligor_loss: npt.NDArray[np.float64],
+) -> tuple[float, float, float, float, float]:
+    """Footing quantities of C.34 for a synthetic (N, S) book.
+
+    Returns ``(error, bound, sd(delta), loss_mean, loss_std_dev)``.
+    ``loss_mean`` is ``L.mean()``, the `run._distribution_metrics` call, and
+    ``loss_std_dev`` is the total of `obligor_ul_contribution`.
+    """
+    portfolio = obligor_loss.sum(axis=0)
+    assert not bool(np.all(portfolio == portfolio[0]))  # loss_min != loss_max
+    contribution, loss_std_dev = obligor_ul_contribution(obligor_loss, portfolio)
+    assert loss_std_dev == float(portfolio.std(ddof=1))  # the RiskSummary call
+    error = abs(math.fsum(contribution.tolist()) - loss_std_dev)
+    delta_sd = _rounding_error_sd(obligor_loss)
+    bound = _FOOT_TOLERANCE * loss_std_dev + delta_sd
+    return error, bound, delta_sd, float(portfolio.mean()), loss_std_dev
+
+
+def _constant_rows_book(
+    *, rows: int, constant: float, loss: float, pd: float, scenarios: int, seed: int
+) -> npt.NDArray[np.float64]:
+    """``rows`` constant obligor rows, then one Bernoulli row (loss, pd).
+
+    The constant rows come first, so ``L = obligor_loss.sum(axis=0)`` adds the
+    constants in order and the Bernoulli loss last, as in the reviewer book.
+    """
+    rng = np.random.default_rng(seed)
+    modelled = loss * (rng.random(scenarios) < pd).astype(np.float64)
+    constants = np.full((rows, scenarios), constant, dtype=np.float64)
+    return np.ascontiguousarray(np.vstack([constants, modelled[None, :]]))
+
+
+# (constant obligor loss, modelled lgd): 50 constant rows, the per-row values
+# of _ROUNDING_BOOKS divided by 50. loss_mean / loss_std_dev is about 8.1e8 and
+# 6.7e9.
+_INSIDE_DOMAIN_BOOKS: dict[str, tuple[float, float]] = {
+    "50 x constant 2e6+0.3, lgd 0.9": (2e6 + 0.3, 0.9),
+    "50 x constant 6e6+0.1, lgd 0.33": (6e6 + 0.1, 0.33),
+}
+
+
+@pytest.mark.parametrize(
+    ("constant", "lgd"),
+    list(_INSIDE_DOMAIN_BOOKS.values()),
+    ids=list(_INSIDE_DOMAIN_BOOKS),
+)
+def test_s7_t2_case_i_c34_holds_inside_domain(constant: float, lgd: float) -> None:
+    """S7 review R-005 case (i): 50 constant rows, inside the C.34 domain.
+
+    loss_mean / loss_std_dev <= 1e10, so C.34 (Revision 10) applies. The
+    rounding of L_s correlates with L, so the footing fails
+    1e-9 x loss_std_dev alone; the sd(delta) term covers it. The rounding of
+    mean(L) is small against the 1e-9 x loss_std_dev part in this domain.
+    """
+    obligor_loss = _constant_rows_book(
+        rows=50, constant=constant, loss=lgd, pd=0.02, scenarios=20000, seed=1
+    )
+    error, bound, _delta_sd, loss_mean, loss_std_dev = _c34_footing(obligor_loss)
+
+    assert loss_mean / loss_std_dev <= _C34_DOMAIN_LIMIT  # C.34 domain
+    assert error > _FOOT_TOLERANCE * loss_std_dev  # the sd(delta) term is needed
+    assert error <= bound  # C.34 holds
+
+
+# Case (ii) book: 1000 constant rows of 1e8 and one Bernoulli row of loss 2**-5,
+# pd 0.283, S 50. Every value is a multiple of 2**-5 and every partial sum of L
+# and of sum(L) is below 2**48, so each of these sums is exact in every
+# summation order: delta is 0 and sum(L) is exact. mean(L) = sum(L) / S is one
+# IEEE division, so its rounding is the same on every platform.
+_CASE_II_SEED = 0
+
+
+def test_s7_t2_case_ii_c34_fails_outside_domain() -> None:
+    """S7 review R-005 case (ii): the reason for Revision 10.
+
+    max|constant| / loss_std_dev <= 1e10 (inside the Revision 9 domain) and
+    loss_mean / loss_std_dev > 1e11 (outside the Revision 10 domain). With
+    sd(delta) = 0 and m = mean(L) rounded by eps_m, loss_std_dev**2 is
+    var(L) + S / (S - 1) x eps_m**2, and the covariances do not contain
+    eps_m**2. The error is S / (S - 1) x eps_m**2 / loss_std_dev, and
+    eps_m scales with eps x loss_mean, so the bound 1e-9 x loss_std_dev fails.
+
+    The reviewer book (50 x 129431000.3, loss 0.0328, pd 0.283, S 50) fails
+    only by about 2e-4 relative, and its result depends on the rounding of
+    the pairwise sum in mean(L). This book has exact sums, so the result does
+    not depend on the platform. The test asserts the preconditions.
+    """
+    constant = 1e8
+    obligor_loss = _constant_rows_book(
+        rows=1000,
+        constant=constant,
+        loss=2.0**-5,
+        pd=0.283,
+        scenarios=50,
+        seed=_CASE_II_SEED,
+    )
+    error, bound, delta_sd, loss_mean, loss_std_dev = _c34_footing(obligor_loss)
+
+    assert delta_sd == 0.0  # exact sums: no rounding of L
+    assert constant / loss_std_dev <= _C34_DOMAIN_LIMIT  # Revision 9 domain
+    assert loss_mean / loss_std_dev > _C34_OUTSIDE_RATIO  # outside Revision 10
+    assert error > bound  # C.34 bound fails
 
 
 def _fsum_ul_oracle(

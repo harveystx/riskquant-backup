@@ -58,14 +58,16 @@ class ObligorAttribution:
     es_contribution: _F64  # (N,)  Euler ES contribution; sums to es_total
     incremental_var: _F64  # (N,)  VaR(L) - VaR(L - L_i), leave-one-out
     incremental_es: _F64  # (N,)  ES(L)  - ES(L - L_i),  leave-one-out
-    # (N,)  Cov(L_i, L) / sigma_L. The sum foots to ul_total within the C.34
-    # bound 1e-9 x loss_std_dev + sd(delta), not exactly.
+    # (N,)  Cov(L_i, L) / sigma_L. For loss_mean / loss_std_dev <= 1e10 the sum
+    # foots to ul_total within the C.34 bound 1e-9 x loss_std_dev + sd(delta),
+    # not exactly. Above that ratio C.34 makes no claim.
     ul_contribution: _F64
     es_total: float  # portfolio ES at the headline level (foots es_contribution)
     var_total: float  # portfolio VaR at the headline level
-    # Portfolio UL: L.std(ddof=1), the RiskSummary.loss_std_dev value. The
-    # ul_contribution sum foots to it within the C.34 bound
-    # 1e-9 x loss_std_dev + sd(delta); delta is the rounding error of L.
+    # Portfolio UL: L.std(ddof=1), the RiskSummary.loss_std_dev value. For
+    # loss_mean / loss_std_dev <= 1e10 the ul_contribution sum foots to it
+    # within the C.34 bound 1e-9 x loss_std_dev + sd(delta); delta is the
+    # rounding error of L. Above that ratio C.34 makes no claim.
     ul_total: float
 
 
@@ -97,16 +99,20 @@ def obligor_ul_contribution(
       mean(L))``. That sum is zero in exact arithmetic but not in floating
       point, and a large constant mean(L_i) magnifies its rounding residue
       until the column does not foot.
-    * Footing target (C.34, OD-3 (a) as amended in Revision 8). sigma_L is
-      ``L.std(ddof=1)``, the same call that gives ``RiskSummary.loss_std_dev``,
-      so the moment does not change. The contributions foot to it within
-      ``1e-9 x sigma_L + sd(delta)``, with ``delta_s`` the rounding error of
-      the summed loss ``L_s`` against the exact sum of the obligor losses of
-      scenario s (ddof = 1). sigma_L contains that rounding; no centred
-      obligor row contains it, so it is the part of sigma_L that no obligor
-      carries. By Cauchy-Schwarz its effect on the footing is at most
-      sd(delta). It grows with eps x |L| / sigma_L, for example with a large
-      constant obligor loss.
+    * Footing target (C.34, OD-3 (a) as amended in Revisions 8, 9 and 10).
+      sigma_L is ``L.std(ddof=1)``, the same call that gives
+      ``RiskSummary.loss_std_dev``, so the moment does not change. Domain:
+      ``mean(L) / sigma_L <= 1e10``, with ``mean(L)`` the
+      ``RiskSummary.loss_mean`` value. In the domain, the contributions foot
+      to sigma_L within ``1e-9 x sigma_L + sd(delta)``, with ``delta_s`` the
+      rounding error of the summed loss ``L_s`` against the exact sum of the
+      obligor losses of scenario s (ddof = 1). sigma_L contains that
+      rounding; no centred obligor row contains it, so it is the part of
+      sigma_L that no obligor carries. By Cauchy-Schwarz its effect on the
+      footing is at most sd(delta). Outside the domain, C.34 makes no claim.
+      The rounding error of ``mean(L)`` scales with eps x mean(L). The
+      centring puts its square into sigma_L and into no obligor row, and
+      above the domain limit that part can exceed ``1e-9 x sigma_L``.
     * No BLAS (C.35). Every reduction is a NumPy ufunc reduction (``sum``,
       ``mean``, ``std``, ``min``, ``max``) along the contiguous scenario axis.
       Such a reduction uses one fixed pairwise summation order and no thread
