@@ -5121,6 +5121,22 @@ Historical snapshot references are retained for evidence lineage. The final cert
 
 ---
 
+## D107 - S7 pre-release defect fixes of riskquant.solutions.credit_var.api
+**Status:** LOCKED (2026-11-04, owner approval). Implemented in `docs/workstreams/WS_CREDIT_VAR_API.md`, slice S7 (Revisions 7 to 10). Owner decision OD-4.
+**Related:** D106 (clause 3), D-C15, D040, D041.
+**Scope:** defect fixes found by the pre-release consumer audit of the credit_var api, made before release 0.2.0.
+**Decision:** these changes are defect fixes under D106.3, not breaking changes:
+* **D107.1 UL attribution (audit R-001, R-009).** `ul_contribution` and `ul_pct` are 0.0 when loss_min == loss_max, and 0.0 for an obligor whose loss is constant over the scenarios. Each covariance uses centred rows, with one fixed summation order and no BLAS call, so the values do not depend on the BLAS or OpenMP thread count. Against 0.1.0, values change from wrong values to 0.0 on zero-variance books, and by rounding only on other books.
+* **D107.2 UL footing (C.34, Revision 10).** When loss_min != loss_max and loss_mean / loss_std_dev <= 1e10: |sum(ul_contribution) - loss_std_dev| <= 1e-9 x loss_std_dev + sd(delta), where delta is the rounding error of the summed portfolio loss vector. Above that domain, no footing claim is made. RiskSummary moments do not change.
+* **D107.3 n_scenarios = 1 (audit R-002).** It gives a result for every catalog key at both entry points. A scalar (N,) EAD with a dtype other than float64 raises in core; no silent cast occurs.
+* **D107.4 Strict float fields (audit R-003, C.18).** Float request fields admit float (including subclasses) and int (not bool) only. Decimal, Fraction, numpy scalars of other types, 0-d arrays and objects with __float__ now raise R. JSON payloads and the golden schemas do not change.
+* **D107.5 Canonical params order (audit R-008, C.37).** provenance.params holds the request params in ascending key order, so equal requests give byte-equal results. input_hash does not change.
+**Reason:** D106.3 counts a result value change or a newly rejected payload as breaking unless a D entry records it as a defect fix. No 0.2.x release exists; 0.1.0 users can trace the changes here.
+**Evidence:** S7.T1 to S7.T6 in `tests/solutions/credit_var/test_audit_fixes.py`. Owner gate at 6c792ce: full suite 7995 passed, 37 skipped; audit probe `_gates/audit_credit_var.py --skip G` with the Exit lines PASS. S7 re-review ACCEPT 2026-11-04.
+**Evidence limits:** C.34 holds only inside loss_mean / loss_std_dev <= 1e10. Admitted values outside the engine numeric domain can still give E (WS backlog R-004, R-005; api.py docstring "Numeric domain").
+
+---
+
 ## D-C01 — `obligor_uids_target` ordering (credit / exposure→JTD bridge)
 
 `obligor_uids_target` may be supplied in **any order**. Uids must be unique; duplicates raise. The output rows are emitted in exactly the caller's target order. Sorting is an internal implementation detail: `aggregate_ead_to_obligor` creates a sorted copy of the target, performs the `searchsorted` lookup against that sorted-unique array, and maps the returned ranks back through the sort permutation.
