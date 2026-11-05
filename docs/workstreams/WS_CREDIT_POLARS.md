@@ -2,7 +2,7 @@
 
 Path: docs/workstreams/WS_CREDIT_POLARS.md
 Class: HEAVY
-Status: DRAFT
+Status: FROZEN
 Revision: 3
 Revision note: Owner decision of 2026-11-05 on R_FREEZE_RECONCILIATION_R1.md under the tripwire (option: descope): v1 keeps S1 to S6; the market-risk edge, the test-tree sweep and the dependency removal move to WS_PANDAS_REMOVAL; B-1 to B-8 and R-1 to R-17 applied as decided; no audit round 2; the owner freezes this revision by explicit decision.
 Date: 2026-11-05
@@ -55,6 +55,7 @@ Owner decisions in force:
 - 2026-11-05 (R-10, R-17): every `to_numpy` site that feeds an engine array gives a writeable, C-contiguous array.
 - 2026-11-05 (B-2, B-3, B-7, R-1 to R-8, R-11 to R-16): applied as the report states, where they concern S1 to S6.
 - 2026-11-05 (P-CREDIT_POLARS-001): keeps only the clauses that v1 delivers.
+- 2026-11-05 (freeze): the owner freezes Revision 3 by explicit decision under the tripwire, with no audit round 2; round 1 covered every clause that v1 keeps. Accepted deviations of the Revision 3 author: the change list stays outside the file (WS_TEMPLATE 1.3); C.12 admits CreditExposureRequest.from_dataframe cells by dtype, as C.11 does; the S1 gate also runs under pandas 3.1.x; the C.4 request set is named Q; A_INVENTORY.md stays at Revision 1. The S1 golden records are made on the owner machine with a recorder tool outside the repository (_gates), on a v0.2.0 worktree.
 
 Depends on: WS_CREDIT_VAR_API (CLOSED; D106, D107).
 Blocks: WS_PANDAS_REMOVAL.
