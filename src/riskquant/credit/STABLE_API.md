@@ -78,6 +78,8 @@ Status: internal contract of `riskquant.credit`. It binds riskquant code only.
 - `riskquant.credit.jtd.engine.run_jtd_for_obligor_ead`
 - `riskquant.credit.jtd.ingest.bundle.JtdIngestBundle`
 - `riskquant.credit.jtd.ingest.compile.compile_jtd_portfolio`
+- `riskquant.credit.jtd.ingest.loading_sum.LoadingSumSq`
+- `riskquant.credit.jtd.ingest.loading_sum.loading_sum_sq`
 - `riskquant.credit.jtd.models.JtdModel`
 - `riskquant.credit.jtd.results.JtdLossResult`
 - `riskquant.credit.jtd.results.StreamingJtdResult`
