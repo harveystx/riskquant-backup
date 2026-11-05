@@ -17,7 +17,7 @@ compile_exposure_saccr; all supervisory parameters are ours, not SA-CCR's.
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.credit.exposure.add_on.ingest import compile_add_on_factors
 from riskquant.credit.exposure.add_on.resolve import (
@@ -28,7 +28,11 @@ from riskquant.credit.exposure.engine import run_exposure
 from riskquant.credit.exposure.saccr.ingest import compile_saccr_config
 from riskquant.credit.jtd.bridge import aggregate_ead_to_obligor
 from riskquant.credit.masters.netting_set.compiled import CompiledNettingSetMaster
-from riskquant.utils.printer import print_calling_file, print_success_message
+from riskquant.utils.printer import (
+    print_calling_file,
+    print_df,
+    print_success_message,
+)
 from riskquant_lab.fixtures.credit_exposure import generate_canonical_exposure_book
 
 # House-defined hedging sets over the environmental subclasses (NOT SA-CCR's
@@ -59,9 +63,7 @@ def _contract(name: str, **arrays: np.ndarray) -> None:
     print(f"\n  [{name}]")
     for label, arr in arrays.items():
         head = np.array2string(arr.ravel()[:6], precision=2, separator=", ")
-        print(
-            f"    {label:<26} shape={str(arr.shape):<10} dtype={str(arr.dtype):<8} {head}"
-        )
+        print(f"    {label:<26} shape={arr.shape!s:<10} dtype={arr.dtype!s:<8} {head}")
 
 
 def main() -> None:
@@ -78,7 +80,7 @@ def main() -> None:
     # ------------------------------------------------------------------ CONTRACT A
     _rule("CONTRACT A:  SA-CCR INPUT  (trade level)")
     print("\n  Human edge (authored trade table):\n")
-    print(book.trades_frame().to_string(index=False))
+    print_df(book.trades_frame(), add_space_before=False, add_space_after=False)
     print("\n  Supervisory add-on table (HOUSE-DEFINED):")
     for name, uix, f in zip(
         book.subclass_name, book.subclass_uix, book.subclass_factor, strict=True
@@ -111,23 +113,20 @@ def main() -> None:
     # ------------------------------------------------------------------ CONFIG / RESOLVE
     _rule("RESOLVE  (edge):  effective_notional  +  SA-CCR config")
     add_on = compile_add_on_factors(
-        pd.DataFrame(
-            {"subclass_uix": book.subclass_uix, "factor": book.subclass_factor}
-        )
+        pl.DataFrame({
+            "subclass_uix": book.subclass_uix,
+            "factor": book.subclass_factor,
+        })
     )
     saccr_config = compile_saccr_config(
-        pd.DataFrame(
-            {
-                "subclass_uix": book.subclass_uix,
-                "hedging_set_uix": [hedging_set_of[int(u)] for u in book.subclass_uix],
-            }
-        ),
-        pd.DataFrame(
-            {
-                "hedging_set_uix": hedging_sets,
-                "rho": [_HEDGING_SET_RHO.get(hs, _DEFAULT_RHO) for hs in hedging_sets],
-            }
-        ),
+        pl.DataFrame({
+            "subclass_uix": book.subclass_uix,
+            "hedging_set_uix": [hedging_set_of[int(u)] for u in book.subclass_uix],
+        }),
+        pl.DataFrame({
+            "hedging_set_uix": hedging_sets,
+            "rho": [_HEDGING_SET_RHO.get(hs, _DEFAULT_RHO) for hs in hedging_sets],
+        }),
         alpha=_ALPHA,
         multiplier_floor=_MULTIPLIER_FLOOR,
     )

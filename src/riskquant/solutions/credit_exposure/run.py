@@ -16,8 +16,12 @@ __all__ = [
     "run_credit_exposure",
 ]
 
+from collections.abc import Mapping, Sequence
+from typing import Any, Final
+
 import numpy as np
-import pandas as pd
+import polars as pl
+from pydantic import BaseModel
 
 from riskquant.credit.exposure.engine import run_exposure
 from riskquant.credit.jtd.bridge import aggregate_ead_to_obligor
@@ -33,7 +37,7 @@ from riskquant.solutions.credit_exposure.schemas import (
 _ENGINE_VERSION = "riskquant-credit-exposure/0.1.0"
 
 
-def _coerce(request: CreditExposureRequest | dict) -> CreditExposureRequest:
+def _coerce(request: CreditExposureRequest | dict[str, Any]) -> CreditExposureRequest:
     if isinstance(request, CreditExposureRequest):
         return request
     return CreditExposureRequest.model_validate(request)
@@ -44,30 +48,73 @@ def _coerce(request: CreditExposureRequest | dict) -> CreditExposureRequest:
 # --------------------------------------------------------------------------
 
 
-def _trades_frame(req: CreditExposureRequest) -> pd.DataFrame:
-    return pd.DataFrame([t.model_dump() for t in req.trades])
+# Explicit schemas (F-23): a frame built from row dicts infers its dtypes from
+# the first 100 rows, so 100 trades with ``volume=None`` then a float raise
+# ComputeError, and 100 int marks then 1.5 truncate to 1. Each frame is built
+# column by column with the dtype of its row-model field.
+_TRADES_SCHEMA: Final[dict[str, pl.DataType]] = {
+    "trade_uid": pl.Int64(),
+    "netting_set_uid": pl.Int64(),
+    "mtm": pl.Float64(),
+    "volume": pl.Float64(),
+    "current_price": pl.Float64(),
+    "asset_subclass_uix": pl.Int64(),
+    "direction": pl.Utf8(),
+    "remaining_maturity_years": pl.Float64(),
+}
+_NETTING_SETS_SCHEMA: Final[dict[str, pl.DataType]] = {
+    "netting_set_uid": pl.Int64(),
+    "obligor_uid": pl.Int64(),
+    "net_collateral": pl.Float64(),
+}
+_ADD_ON_SCHEMA: Final[dict[str, pl.DataType]] = {
+    "subclass_uix": pl.Int64(),
+    "factor": pl.Float64(),
+}
+_HEDGING_SETS_SCHEMA: Final[dict[str, pl.DataType]] = {
+    "subclass_uix": pl.Int64(),
+    "hedging_set_uix": pl.Int64(),
+}
+_CORRELATIONS_SCHEMA: Final[dict[str, pl.DataType]] = {
+    "hedging_set_uix": pl.Int64(),
+    "rho": pl.Float64(),
+}
 
 
-def _netting_sets_frame(req: CreditExposureRequest) -> pd.DataFrame:
-    return pd.DataFrame([n.model_dump() for n in req.netting_sets])
+def _frame(
+    rows: Sequence[BaseModel], schema: Mapping[str, pl.DataType]
+) -> pl.DataFrame:
+    """Rows of one request table as a frame with the stated ``schema``."""
+    return pl.DataFrame(
+        {name: [getattr(row, name) for row in rows] for name in schema},
+        schema=dict(schema),
+    )
 
 
-def _add_on_frame(req: CreditExposureRequest) -> pd.DataFrame | None:
+def _trades_frame(req: CreditExposureRequest) -> pl.DataFrame:
+    return _frame(req.trades, _TRADES_SCHEMA)
+
+
+def _netting_sets_frame(req: CreditExposureRequest) -> pl.DataFrame:
+    return _frame(req.netting_sets, _NETTING_SETS_SCHEMA)
+
+
+def _add_on_frame(req: CreditExposureRequest) -> pl.DataFrame | None:
     if not req.add_on_factors:
         return None
-    return pd.DataFrame([a.model_dump() for a in req.add_on_factors])
+    return _frame(req.add_on_factors, _ADD_ON_SCHEMA)
 
 
-def _hedging_sets_frame(req: CreditExposureRequest) -> pd.DataFrame | None:
+def _hedging_sets_frame(req: CreditExposureRequest) -> pl.DataFrame | None:
     if not req.subclass_hedging_sets:
         return None
-    return pd.DataFrame([h.model_dump() for h in req.subclass_hedging_sets])
+    return _frame(req.subclass_hedging_sets, _HEDGING_SETS_SCHEMA)
 
 
-def _correlations_frame(req: CreditExposureRequest) -> pd.DataFrame | None:
+def _correlations_frame(req: CreditExposureRequest) -> pl.DataFrame | None:
     if not req.hedging_set_correlations:
         return None
-    return pd.DataFrame([c.model_dump() for c in req.hedging_set_correlations])
+    return _frame(req.hedging_set_correlations, _CORRELATIONS_SCHEMA)
 
 
 def _params(req: CreditExposureRequest) -> dict[str, float]:
@@ -92,7 +139,7 @@ def _params(req: CreditExposureRequest) -> dict[str, float]:
 
 
 def run_credit_exposure(
-    request: CreditExposureRequest | dict,
+    request: CreditExposureRequest | dict[str, Any],
     *,
     obligor_uids_target: np.ndarray | None = None,
 ) -> CreditExposureResult:

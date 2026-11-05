@@ -14,7 +14,7 @@ The middle is pure engine: resolve -> compile -> run_exposure -> aggregate.
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.credit.exposure.add_on.ingest import compile_add_on_factors
 from riskquant.credit.exposure.add_on.resolve import (
@@ -25,7 +25,11 @@ from riskquant.credit.exposure.compile import compile_exposure_cem
 from riskquant.credit.exposure.engine import run_exposure
 from riskquant.credit.jtd.bridge import aggregate_ead_to_obligor
 from riskquant.credit.masters.netting_set.compiled import CompiledNettingSetMaster
-from riskquant.utils.printer import print_calling_file, print_success_message
+from riskquant.utils.printer import (
+    print_calling_file,
+    print_df,
+    print_success_message,
+)
 from riskquant_lab.fixtures.credit_exposure import (
     generate_canonical_exposure_book,
 )
@@ -41,9 +45,7 @@ def _contract(name: str, **arrays: np.ndarray) -> None:
     print(f"\n  [{name}]")
     for label, arr in arrays.items():
         head = np.array2string(arr.ravel()[:6], precision=2, separator=", ")
-        print(
-            f"    {label:<26} shape={str(arr.shape):<10} dtype={str(arr.dtype):<8} {head}"
-        )
+        print(f"    {label:<26} shape={arr.shape!s:<10} dtype={arr.dtype!s:<8} {head}")
 
 
 def main() -> None:
@@ -54,7 +56,7 @@ def main() -> None:
     # ------------------------------------------------------------------ CONTRACT A
     _rule("CONTRACT A:  CEM INPUT  (trade level)")
     print("\n  Human edge (authored trade table):\n")
-    print(book.trades_frame().to_string(index=False))
+    print_df(book.trades_frame(), add_space_before=False, add_space_after=False)
     print("\n  Supervisory add-on table (HOUSE-DEFINED, not SA-CCR):")
     for name, uix, f in zip(
         book.subclass_name,
@@ -76,9 +78,10 @@ def main() -> None:
     # ------------------------------------------------------------------ INGEST/RESOLVE
     _rule("RESOLVE  (edge):  effective_notional  &  supervisory_factor")
     add_on = compile_add_on_factors(
-        pd.DataFrame(
-            {"subclass_uix": book.subclass_uix, "factor": book.subclass_factor}
-        )
+        pl.DataFrame({
+            "subclass_uix": book.subclass_uix,
+            "factor": book.subclass_factor,
+        })
     )
     netting_master = CompiledNettingSetMaster(
         uid=book.netting_set_uid,

@@ -18,12 +18,15 @@ pytest.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.constants import CEM_PFE_COEFFICIENT_DEFAULT, CEM_PFE_FLOOR_DEFAULT
 from riskquant.solutions.credit_exposure.api import (
     CreditExposureRequest,
+    CreditExposureResult,
     run_credit_exposure,
 )
 
@@ -31,47 +34,73 @@ _TOL = 1e-6
 
 
 # ============================================================ LAYER 1: invariants
-def _run(model, trades, netting_sets, add_on=None, **extra):
+def _run(
+    model: str,
+    trades: pl.DataFrame,
+    netting_sets: pl.DataFrame,
+    add_on: pl.DataFrame | None = None,
+    *,
+    subclass_hedging_sets: pl.DataFrame | None = None,
+    hedging_set_correlations: pl.DataFrame | None = None,
+    saccr_alpha: float | None = None,
+) -> CreditExposureResult:
     return run_credit_exposure(
         CreditExposureRequest.from_dataframe(
-            trades, netting_sets, model=model, add_on_factors=add_on, **extra
+            trades,
+            netting_sets,
+            model=model,
+            add_on_factors=add_on,
+            subclass_hedging_sets=subclass_hedging_sets,
+            hedging_set_correlations=hedging_set_correlations,
+            saccr_alpha=saccr_alpha,
         )
     )
 
 
-def _saccr_config_for(add_on):
+def _saccr_config_for(add_on: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     """A house hedging-set config covering every subclass in the add-on table,
     derived from it so the invariant rides whatever subclasses the fixture has:
     subclasses split across two hedging sets with distinct correlations."""
-    subs = sorted(int(x) for x in add_on["subclass_uix"])
-    hedging_sets = pd.DataFrame({
+    subs = sorted(int(x) for x in add_on.get_column("subclass_uix").to_list())
+    hedging_sets = pl.DataFrame({
         "subclass_uix": subs,
         "hedging_set_uix": [10 if i % 2 == 0 else 20 for i in range(len(subs))],
     })
-    correlations = pd.DataFrame({"hedging_set_uix": [10, 20], "rho": [0.40, 0.30]})
+    correlations = pl.DataFrame({"hedging_set_uix": [10, 20], "rho": [0.40, 0.30]})
     return hedging_sets, correlations
 
 
-def _gross_add_on_by_netting_set(trades, add_on):
+def _gross_add_on_by_netting_set(
+    trades: pl.DataFrame, add_on: pl.DataFrame
+) -> dict[int, float]:
     """Per-netting-set gross add-on: sum of ``volume * price * factor`` — the
     quantity the NGR multiplier compresses. Recomputed independently of the engine
-    so the invariant can bound the engine's output."""
+    so the invariant can bound the engine's output: per-row products in Python
+    floats, one ``math.fsum`` per netting set (a test oracle with a tolerance)."""
     factor = dict(
         zip(
-            add_on["subclass_uix"].astype(int),
-            add_on["factor"].astype(float),
+            (int(u) for u in add_on.get_column("subclass_uix").to_list()),
+            (float(f) for f in add_on.get_column("factor").to_list()),
             strict=True,
         )
     )
-    gross = (
-        trades["volume"]
-        * trades["current_price"]
-        * trades["asset_subclass_uix"].map(factor)
-    )
-    return trades.assign(_g=gross).groupby("netting_set_uid")["_g"].sum().to_dict()
+    terms: dict[int, list[float]] = {}
+    for ns, volume, price, subclass in zip(
+        trades.get_column("netting_set_uid").to_list(),
+        trades.get_column("volume").to_list(),
+        trades.get_column("current_price").to_list(),
+        trades.get_column("asset_subclass_uix").to_list(),
+        strict=True,
+    ):
+        terms.setdefault(int(ns), []).append(
+            float(volume) * float(price) * factor[int(subclass)]
+        )
+    return {ns: math.fsum(values) for ns, values in terms.items()}
 
 
-def assert_contract_invariants(trades, netting_sets, add_on):
+def assert_contract_invariants(
+    trades: pl.DataFrame, netting_sets: pl.DataFrame, add_on: pl.DataFrame
+) -> None:
     """Every property that must hold for *any* book. Anti-fragile: fixture-agnostic."""
     cem = _run("current_exposure_method", trades, netting_sets, add_on)
     rc = _run("replacement_cost", trades, netting_sets)
@@ -92,7 +121,7 @@ def assert_contract_invariants(trades, netting_sets, add_on):
     )
 
     # (3) Many-to-one is a pure sum: each obligor == sum of its netting sets.
-    per_obligor = {}
+    per_obligor: dict[int, float] = {}
     for n in cem.netting_set_ead:
         per_obligor[n.obligor_uid] = per_obligor.get(n.obligor_uid, 0.0) + n.ead
     for uid, total in per_obligor.items():
@@ -108,7 +137,10 @@ def assert_contract_invariants(trades, netting_sets, add_on):
 
     # (5) Zero add-on collapses CEM onto RC exactly (isolates the NRC path).
     cem_zero = _run(
-        "current_exposure_method", trades, netting_sets, add_on.assign(factor=0.0)
+        "current_exposure_method",
+        trades,
+        netting_sets,
+        add_on.with_columns(pl.lit(0.0).alias("factor")),
     )
     cem_zero_obl = {o.obligor_uid: o.ead for o in cem_zero.obligor_ead}
     for uid in cem_zero_obl:
@@ -133,7 +165,7 @@ def assert_contract_invariants(trades, netting_sets, add_on):
     #     alpha wiring — all input-agnostic, so they ride the evolving fixture.
     hedging_sets, correlations = _saccr_config_for(add_on)
 
-    def _run_saccr(alpha):
+    def _run_saccr(alpha: float) -> CreditExposureResult:
         return _run(
             "saccr",
             trades,
@@ -181,7 +213,7 @@ def assert_contract_invariants(trades, netting_sets, add_on):
 
 
 # ============================================================= LAYER 2: frozen case
-def _frozen_book():
+def _frozen_book() -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """Tiny hand-computed book (subclass factor 0.10, unit price so notional=volume).
 
     Covers every CEM branch by construction:
@@ -190,7 +222,7 @@ def _frozen_book():
       ns3 (obligor 3)  -40                 fully OTM, GRC=0 -> PFE floor
       ns4 (obligor 3)  +20                 NGR=1 (no compression) + aggregation
     """
-    trades = pd.DataFrame({
+    trades = pl.DataFrame({
         "trade_uid": [1, 2, 3, 4, 5],
         "netting_set_uid": [1, 1, 2, 3, 4],
         "mtm": [100.0, -60.0, 80.0, -40.0, 20.0],
@@ -205,12 +237,12 @@ def _frozen_book():
         "direction": ["long", "long", "long", "long", "long"],
         "remaining_maturity_years": [1.0, 1.0, 1.0, 1.0, 1.0],
     })
-    netting_sets = pd.DataFrame({
+    netting_sets = pl.DataFrame({
         "netting_set_uid": [1, 2, 3, 4],
         "obligor_uid": [1, 2, 3, 3],
         "net_collateral": [0.0, 30.0, 0.0, 0.0],
     })
-    add_on = pd.DataFrame({"subclass_uix": [1], "factor": [0.10]})
+    add_on = pl.DataFrame({"subclass_uix": [1], "factor": [0.10]})
     return trades, netting_sets, add_on
 
 
@@ -223,7 +255,7 @@ _FROZEN_NETTING_SET_EAD = {1: 136.0, 2: 65.5, 3: 12.0, 4: 30.0}
 _FROZEN_OBLIGOR_EAD = {1: 136.0, 2: 65.5, 3: 42.0}  # obligor 3 = ns3 + ns4
 
 
-def test_frozen_case():
+def test_frozen_case() -> None:
     trades, netting_sets, add_on = _frozen_book()
     result = _run("current_exposure_method", trades, netting_sets, add_on)
 
@@ -242,7 +274,7 @@ def test_frozen_case():
     assert_contract_invariants(trades, netting_sets, add_on)
 
 
-def test_invariants_on_canonical_book():
+def test_invariants_on_canonical_book() -> None:
     """Invariants ride the evolving fixture — properties, not pinned numbers."""
     from riskquant_lab.fixtures.credit_exposure import (
         generate_canonical_exposure_book,
@@ -250,7 +282,7 @@ def test_invariants_on_canonical_book():
 
     book = generate_canonical_exposure_book()
     n_trades = len(book.trade_uid)
-    trades = pd.DataFrame({
+    trades = pl.DataFrame({
         "trade_uid": book.trade_uid,
         "netting_set_uid": book.trade_netting_set_id,
         "mtm": book.mtm,
@@ -265,19 +297,19 @@ def test_invariants_on_canonical_book():
         "direction": ["long"] * n_trades,
         "remaining_maturity_years": [1.0] * n_trades,
     })
-    netting_sets = pd.DataFrame({
+    netting_sets = pl.DataFrame({
         "netting_set_uid": book.netting_set_uid,
         "obligor_uid": book.netting_set_obligor_uid,
         "net_collateral": book.netting_set_collateral,
     })
-    add_on = pd.DataFrame({
+    add_on = pl.DataFrame({
         "subclass_uix": book.subclass_uix,
         "factor": book.subclass_factor,
     })
     assert_contract_invariants(trades, netting_sets, add_on)
 
 
-def main():
+def main() -> None:
     test_frozen_case()
     test_invariants_on_canonical_book()
     print("CONTRACT LOCK PASSED")
