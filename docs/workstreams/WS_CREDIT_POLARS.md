@@ -69,6 +69,13 @@ Owner decisions in force:
 - 2026-11-05 (S2 review Q2 (a)): O-2 (b) and the FROZEN P-CREDIT_POLARS-001 clause 4 are the authority for the D096 supersession until closure, where the owner promotes P-CREDIT_POLARS-001 and records the supersession in DECISIONS.md (same rule as OD-2 (a); WS_CREDIT_VAR_API precedent, D106). A divergence from D096 before closure is not a finding.
 - 2026-11-05 (S2 review OD-1 (a)): the rc demo gate of S2 is met by the owner NOTE of gate_output_CP_S2.txt: the demo stops at line 204 in files that S2 does not change; S2.T2 and the reviewer probe cover the line 212 .df print. The line 204 defect goes to WS_PANDAS_REMOVAL (backlog).
 - 2026-11-05 (S3 demo scope): the S3 full demo run covers the 2 demo files that S3 changes (demo_e2e_cem_trade_to_exposure.py, demo_e2e_saccr_trade_to_exposure.py); the 15 credit_var demos, which S3 does not change, get the demo import smoke (scripts/tools/demo_import_smoke.py).
+- 2026-11-05 (S3 owner answers): Q2: CanonicalExposureBook.trades_frame returns pl.DataFrame; scripts/demos/credit/exposure/demo_e2e_rc_trade_to_exposure.py joins the S3 Files list for its trades_frame print only (owner caller search). Q3 (a): the C.8 column helpers are private functions in add_on/ingest.py, imported by saccr/ingest.py. Q4: rho is a required float column; null or NaN raises ValueError (C.8).
+- 2026-11-05 (S3 OD-1, extended by S3 review OD-C (a)): a column with no value dtype (pl.Null) in a required field raises TypeError, at the request edge (from_dataframe) and in the C.8 ingest readers (_int_column, _float_column); a null cell in a typed required column raises R at the field (request edge) or ValueError (ingest). S6 applies the same rule to CreditVarRequest.from_dataframe.
+- 2026-11-05 (S3 OD-2): attach_exposure_ead returns pl.DataFrame from S3; the handoff example into CreditVarRequest.from_dataframe is invalid until S6 closes it.
+- 2026-11-05 (S3 review OD-A (b)): a NaN cell in a required float field of CreditExposureRequest.from_dataframe raises R at the field path, as a null cell does (B-8: in a float column null means null or NaN). Fix round of S3 (R-001). S6 applies the same rule to CreditVarRequest.from_dataframe.
+- 2026-11-05 (S3 review OD-B (b1)): a trade asset_subclass_uix outside int32 raises TypeError at the recipe read (R-9 form), before any engine call, on the dict path and the from_dataframe path. Fix round of S3 (R-002). TradeRow gets no field bound, so the request JSON schema does not change.
+- 2026-11-05 (gate rule): an iteration gate runs ruff, format, mypy, the slice tests, the new test files, the import smoke and the slice checks; the review gate adds the full suite and the required demo runs, once per slice, on the commit that goes to review; a fix round that changes a src/ .py file runs the review gate again, any other fix runs the iteration gate. Gate logs print the raw mypy error lines and the real exit code (S3 review R-004).
+- 2026-11-05 (S4 and S5 delivery): S4 and S5 are delivered in one implementer round with one recorder (_gates/record_s45_goldens.py), one review gate and one FULL review; files that both slices change get their final state only. The 12 JTD demos of F-16 run in full once, on the final state; the 15 credit_var demos get the import smoke. S6 stays a separate round.
 
 Depends on: WS_CREDIT_VAR_API (CLOSED; D106, D107).
 Blocks: WS_PANDAS_REMOVAL.
@@ -269,8 +276,8 @@ Prohibited: `credit/exposure/obligor_ead/ingest.py` (S4); every kernel and evalu
 Attach: docs/workstreams/WS_CREDIT_POLARS.md ; docs/workstreams/WS_CREDIT_POLARS/A_INVENTORY.md ; docs/CLAUDE.md ; docs/DECISIONS.md ; context_riskquant_index.txt ; context_riskquant_credit.txt ; context_riskquant_solutions_credit_exposure.txt ; context_riskquant_lab.txt ; context_riskquant_tests_credit.txt
 Gates: gate block; `$t = "tests/credit/exposure", "tests/solutions/credit_exposure", "tests/solutions/credit_var/test_pandas_free_results.py"`; `python src/riskquant/solutions/credit_exposure/golden_master_credit_exposure.py`; demo full over the 2 changed demos and the 15 credit_var demos.
 Exit: every S3 test passes; full suite passes; the golden master exits 0.
-Status: NOT_STARTED
-Evidence: none
+Status: DONE
+Evidence: commit c572282 (base cd3a312); review gate gate_output_CP_S3.txt: ruff and format exit 0 (14 files); mypy 29 errors against 56 at cd3a312, no new message; S3 file 62 passed; slice 182 passed; full 8114 passed, 37 skipped; golden master CONTRACT LOCK PASSED; demo full cem, rc, saccr exit 0; demo import smoke 15 of 15. Review FULL: ACCEPT WITH FIXES; fix round open for R-001 (OD-A (b)) and R-002 (OD-B (b1)).
 
 | Id | Case | Expected | Defect caught |
 |---|---|---|---|
@@ -382,6 +389,9 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - config/static_config/audit.py: the holiday calendar row order depends on the hash seed (S2 review A-3, Observed in the gate log).
 - WS_PANDAS_REMOVAL: scripts/demos/credit/rc/demo_spot_rc_end_to_end.py stops at line 204 in canonicalize (unknown VANILLA_IRS columns of the exhaustive fixture) (S2 review A-4).
 - utils/printer.py:print_df does not pin tbl_formatting; configure_polars_display sets ASCII, and the S2.T1 and S2.T3 parsers need the default UTF8 table (S2 review A-5).
+- solutions/credit_exposure/handoff.py:attach_exposure_ead truncates a fractional float uid with int() (v0.2.0 behavior, S3 report).
+- credit/exposure/saccr/aggregate.py:40: ruff F841 on the unused local sf; its searchsorted_or_raise call may serve as a validation (S3 report; not investigated).
+- WS_PANDAS_REMOVAL: tests/solutions/credit_exposure/test_polars_edge_contract.py imports pandas at module level for its negative cases; without pandas the file does not collect (S3 review adjacent).
 
 ## 8. Closure record
 
