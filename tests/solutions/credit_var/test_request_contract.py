@@ -22,6 +22,7 @@ import math
 import re
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -478,11 +479,23 @@ def _book_with_obligor_20_vector(hex_loadings: tuple[str, ...]) -> dict[str, Any
 
 
 def _engine_grouped_sum(loadings: list[float]) -> float:
-    """The engine expression of `_semantic_mf_gaussian` on one obligor:
-    float64 squares, then a pandas group sum."""
-    squares = np.asarray(loadings, dtype=np.float64) ** 2
-    uids = np.full(len(loadings), 20, dtype=np.int64)
-    return float(pd.Series(squares).groupby(uids).sum().iloc[0])
+    """The v0.2.0 engine sum of `loadings` on one obligor: the pandas 3.0.x
+    group sum of the float64 squares, as recorded at tag v0.2.0 in the
+    WS_CREDIT_POLARS C.6 record (``named`` entries). The oracle reads the
+    record; it does not depend on pandas or on the code under test (S1.T6)."""
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "credit"
+        / "jtd"
+        / "golden"
+        / "loading_sum_kahan.json"
+    )
+    named = json.loads(path.read_text(encoding="utf-8"))["named"]
+    wanted = [x.hex() for x in loadings]
+    for entry in named.values():
+        if entry["loading"] == wanted:
+            return float.fromhex(entry["total"])
+    pytest.fail(f"no recorded engine sum for loadings {wanted}")
 
 
 def test_s2_t6_fsum_over_engine_within_is_accepted_as_in_the_engine() -> None:

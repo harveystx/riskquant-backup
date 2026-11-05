@@ -32,6 +32,7 @@ from riskquant.credit.jtd.ingest.contracts import (
     JtdModelContract,
     MfLoadingsContract,
 )
+from riskquant.credit.jtd.ingest.loading_sum import loading_sum_sq
 from riskquant.credit.masters.enums.credit_factor_kind import CreditFactorKind
 
 if TYPE_CHECKING:
@@ -608,10 +609,13 @@ def _semantic_mf_gaussian(
             f"{ctx}: obligor(s) {dups} load on the same systemic factor twice."
         )
 
-    # sum beta^2 <= 1 (room for a real idiosyncratic component).
-    sum_sq = sub["factor_loading"].to_numpy(dtype=np.float64) ** 2
-    by = pd.Series(sum_sq).groupby(sub["obligor_uid"].to_numpy()).sum()
-    over = by[by > 1.0 + 1e-9].index.tolist()[:_PREVIEW]
+    # sum beta^2 <= 1 (room for a real idiosyncratic component). One shared
+    # arithmetic with request rule 14 (C.5); uids reported in ascending order.
+    sums = loading_sum_sq(
+        obligor_uid=sub["obligor_uid"].to_numpy(dtype=np.int64),
+        loading=sub["factor_loading"].to_numpy(dtype=np.float64),
+    )
+    over = sorted(sums.uids[sums.totals > 1.0 + 1e-9].tolist())[:_PREVIEW]
     if over:
         raise ValueError(
             f"{ctx}: sum of squared loadings exceeds 1 for obligor(s) {over}."

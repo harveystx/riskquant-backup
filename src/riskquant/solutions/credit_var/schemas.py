@@ -89,6 +89,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Annotated, Any, Final, Literal
 
+import numpy as np
 import pandas as pd
 
 __all__ = [
@@ -124,6 +125,7 @@ from pydantic import (
 )
 from pydantic_core import InitErrorDetails, PydanticCustomError, PydanticKnownError
 
+from riskquant.credit.jtd.ingest.loading_sum import loading_sum_sq
 from riskquant.credit.jtd.models import VALID_JTD_MODEL_NAMES
 from riskquant.solutions.credit_var.catalog import MODEL_CATALOG, model_entry
 from riskquant.solutions.credit_var.provenance import ScenarioConstructionId
@@ -153,8 +155,9 @@ _INT64_MAX: Final[int] = 2**63 - 1
 
 #: Tolerance of the per-obligor rule sum(loading^2) <= 1 + tolerance. It is the
 #: tolerance of the engine check `credit.jtd.ingest.validate._semantic_mf_gaussian`.
-#: `CreditVarRequest._check_loading_sum_sq` also uses the arithmetic of that check,
-#: so the request rule and the engine rule accept the same loadings.
+#: `CreditVarRequest._check_loading_sum_sq` and that check call the same sum,
+#: `credit.jtd.ingest.loading_sum.loading_sum_sq` (WS_CREDIT_POLARS C.5), so the
+#: request rule and the engine rule accept the same loadings.
 LOADING_SUM_SQ_TOLERANCE: Final[float] = 1e-9
 
 #: Default scenario count of a request. `CreditVarRequest.from_dataframe` uses
@@ -519,56 +522,53 @@ class CreditVarRequest(BaseModel):
         The idiosyncratic weight is sqrt(1 - sum loading^2); above 1 there is
         no real residual.
 
-        The decision uses the arithmetic of the engine check
-        `credit.jtd.ingest.validate._semantic_mf_gaussian`, not a more accurate
-        sum. Near the bound, two summations of the same squares can round to
-        adjacent floats on the two sides of 1 + 1e-9 (``math.fsum`` and the
-        engine sum differ in both directions), so only the same arithmetic
-        gives the same decision. The engine arithmetic is:
+        The sum is `riskquant.credit.jtd.ingest.loading_sum.loading_sum_sq`,
+        the function that the engine check
+        `credit.jtd.ingest.validate._semantic_mf_gaussian` also calls
+        (WS_CREDIT_POLARS C.5). Near the bound, two summations of the same
+        squares can round to adjacent floats on the two sides of 1 + 1e-9
+        (``math.fsum`` and the Kahan sum differ in both directions), so only
+        one arithmetic gives one decision. The rows go in request order: the
+        engine rows also arrive in request order, because
+        `run._loadings_frame` and `recipes._mf_universe_and_bundle` keep the
+        order and only drop the rows of other obligors, which does not change
+        the sum of an obligor.
 
-        * each square is the float64 ``x ** 2``, equal to ``x * x``;
-        * the sum is ``pandas.Series.groupby(uid).sum()``, which pandas
-          evaluates as a Kahan compensated sum over the rows of each group,
-          in row order, from ``sum = compensation = 0.0``;
-        * the rows arrive in request order: `run._loadings_frame` and
-          `recipes._mf_universe_and_bundle` keep the order and only drop the
-          rows of other obligors, which does not change a group's sum.
-
-        One pass over the rows, linear in the row count: per obligor, the
-        Kahan state and the first row at which the running sum exceeds the
-        bound. The decision uses the final sum of each obligor. The loc is,
-        over the rejected obligors, the lowest such row. A rejected obligor
-        always has such a row, because its last row holds the final sum.
+        One pass over the rows, linear in the row count. The decision uses the
+        final sum of each obligor. The loc is, over the rejected obligors, the
+        lowest row at which the running sum of the row's obligor exceeds the
+        bound. A rejected obligor always has such a row, because its last row
+        holds the final sum.
         """
         bound = 1.0 + LOADING_SUM_SQ_TOLERANCE
-        # uid -> [running sum, compensation]: the state of pandas group_sum.
-        state: dict[int, list[float]] = {}
-        first_over: dict[int, int] = {}
-        for j, row in enumerate(loadings):
-            uid = row.obligor_uid
-            kahan = state.get(uid)
-            if kahan is None:
-                kahan = state[uid] = [0.0, 0.0]
-            total, compensation = kahan
-            y = row.loading * row.loading - compensation
-            t = total + y
-            kahan[1] = (t - total) - y
-            kahan[0] = t
-            if t > bound and uid not in first_over:
-                first_over[uid] = j
-        rejected = [j for uid, j in first_over.items() if state[uid][0] > bound]
-        if rejected:
-            j = min(rejected)
-            row = loadings[j]
-            raise _request_fault(
-                ("loadings", j, "loading"),
-                f"obligor {row.obligor_uid}: sum of squared loadings "
-                f"{state[row.obligor_uid][0]!r} exceeds 1 + "
-                f"{LOADING_SUM_SQ_TOLERANCE!r}; the running sum first exceeds "
-                "the bound at this row. The idiosyncratic weight sqrt(1 - sum) "
-                "is undefined.",
-                row.loading,
-            )
+        n = len(loadings)
+        uids = np.fromiter(
+            (row.obligor_uid for row in loadings), dtype=np.int64, count=n
+        )
+        sums = loading_sum_sq(
+            obligor_uid=uids,
+            loading=np.fromiter(
+                (row.loading for row in loadings), dtype=np.float64, count=n
+            ),
+        )
+        rejected = sums.uids[sums.totals > bound]
+        if rejected.size == 0:
+            return
+        over = (sums.running > bound) & np.isin(uids, rejected)
+        j = int(np.flatnonzero(over)[0])
+        row = loadings[j]
+        total = dict(zip(sums.uids.tolist(), sums.totals.tolist(), strict=True))[
+            row.obligor_uid
+        ]
+        raise _request_fault(
+            ("loadings", j, "loading"),
+            f"obligor {row.obligor_uid}: sum of squared loadings "
+            f"{total!r} exceeds 1 + "
+            f"{LOADING_SUM_SQ_TOLERANCE!r}; the running sum first exceeds "
+            "the bound at this row. The idiosyncratic weight sqrt(1 - sum) "
+            "is undefined.",
+            row.loading,
+        )
 
     def _check_reserved_factor_names(self, loadings: tuple[LoadingRow, ...]) -> None:
         """Rule 15: no loadings factor takes a name that the recipe adds.
