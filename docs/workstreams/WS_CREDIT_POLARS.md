@@ -276,8 +276,8 @@ Prohibited: `credit/exposure/obligor_ead/ingest.py` (S4); every kernel and evalu
 Attach: docs/workstreams/WS_CREDIT_POLARS.md ; docs/workstreams/WS_CREDIT_POLARS/A_INVENTORY.md ; docs/CLAUDE.md ; docs/DECISIONS.md ; context_riskquant_index.txt ; context_riskquant_credit.txt ; context_riskquant_solutions_credit_exposure.txt ; context_riskquant_lab.txt ; context_riskquant_tests_credit.txt
 Gates: gate block; `$t = "tests/credit/exposure", "tests/solutions/credit_exposure", "tests/solutions/credit_var/test_pandas_free_results.py"`; `python src/riskquant/solutions/credit_exposure/golden_master_credit_exposure.py`; demo full over the 2 changed demos and the 15 credit_var demos.
 Exit: every S3 test passes; full suite passes; the golden master exits 0.
-Status: DONE
-Evidence: commit c572282 (base cd3a312); review gate gate_output_CP_S3.txt: ruff and format exit 0 (14 files); mypy 29 errors against 56 at cd3a312, no new message; S3 file 62 passed; slice 182 passed; full 8114 passed, 37 skipped; golden master CONTRACT LOCK PASSED; demo full cem, rc, saccr exit 0; demo import smoke 15 of 15. Review FULL: ACCEPT WITH FIXES; fix round open for R-001 (OD-A (b)) and R-002 (OD-B (b1)).
+Status: VALIDATED
+Evidence: S3 review ACCEPT 2026-11-05 at 97cadac (fix round, base c572282; S3 delivery c572282, base cd3a312). gate_output_CP_S3.txt at c572282 (.venv: polars 1.42.1, pandas 3.0.3, numpy 2.4.6, scipy 1.17.1, numba 0.66.0, ruff 0.15.21): ruff and format exit 0 (14 files); mypy 29 errors against 56 at cd3a312, no new message; S3 file 62 passed; slice 182 passed; full 8114 passed, 37 skipped; golden master CONTRACT LOCK PASSED; demo full cem, rc, saccr exit 0; demo import smoke 15 of 15. gate_output_CP_S3_fix.txt at 97cadac: ruff and format exit 0 (3 files); raw mypy 1 error (recipes.py:287, baseline), exit 1, no new message; S3 file 70 passed; slice 190 passed; full 8122 passed, 37 skipped; golden master CONTRACT LOCK PASSED; demo full cem, saccr exit 0; demo import smoke 15 of 15. r003_fixture_import.txt: fixture import pl.DataFrame (8, 15). Goldens recorded at v0.2.0 by the owner recorder (numpy 2.4.6, scipy 1.17.1, numba 0.66.0). Review: FULL; R-001 (OD-A (b)) and R-002 (OD-B (b1)) closed by the fix round; R-003 and R-004 closed; backlog BL-1, BL-2, A-1.
 
 | Id | Case | Expected | Defect caught |
 |---|---|---|---|
@@ -392,6 +392,9 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - solutions/credit_exposure/handoff.py:attach_exposure_ead truncates a fractional float uid with int() (v0.2.0 behavior, S3 report).
 - credit/exposure/saccr/aggregate.py:40: ruff F841 on the unused local sf; its searchsorted_or_raise call may serve as a validation (S3 report; not investigated).
 - WS_PANDAS_REMOVAL: tests/solutions/credit_exposure/test_polars_edge_contract.py imports pandas at module level for its negative cases; without pandas the file does not collect (S3 review adjacent).
+- PRIORITY before an external client (riskquant-emissary) uses credit_exposure: solutions/credit_exposure/schemas.py: TradeRow.mtm (and the other request floats) admit NaN and inf on the dict and JSON paths; the credit_var models use allow_inf_nan=False; a NaN mtm gives a NaN EAD with no error (S3 fix report; S3 re-review BL-1). The fix changes the validation contract of the credit_exposure request models and needs its own owner decision and a JSON schema check.
+- solutions/credit_exposure/run.py: a uid at or above 2**63 raises a polars-internal TypeError in the frame build that does not name the field (S3 fix report; S3 re-review BL-2; low priority, loud).
+- credit/exposure/add_on/compiled.py:46-47: np.diff(self.subclass_uix) on int32 overflows when the span of the subclass uix exceeds 2**31-1, so {-2**31, 2**31-1} raises "must be ascending-sorted and unique" with the wrong cause (S3 re-review A-1; loud).
 
 ## 8. Closure record
 
