@@ -142,7 +142,24 @@ def _saccr_effective_notional(trades: pl.DataFrame) -> np.ndarray:
 
 
 def _subclass_uix(trades: pl.DataFrame) -> np.ndarray:
-    return _array(trades, "asset_subclass_uix", np.int32)
+    """Trade ``asset_subclass_uix`` as a new int32 array; outside int32 raises.
+
+    The request field is a Python int and the request frame column is Int64. A
+    direct int64 -> int32 cast wraps without an error (2**32 + 2 becomes 2, a
+    subclass the author did not write), so the range is checked first and an
+    overflow raises TypeError (R-9 form, S3 review OD-B (b1)). This runs before
+    any engine call on the dict path and on the from_dataframe path.
+    """
+    uix = _array(trades, "asset_subclass_uix", np.int64)
+    info = np.iinfo(np.int32)
+    outside = (uix < info.min) | (uix > info.max)
+    if outside.any():
+        raise TypeError(
+            "assemble_exposure_inputs: trade asset_subclass_uix "
+            f"{int(uix[outside][0])} is outside the int32 range "
+            f"[{info.min}, {info.max}]."
+        )
+    return np.ascontiguousarray(uix.astype(np.int32))
 
 
 def _overrides(params: Mapping[str, float], keys: tuple[str, ...]) -> dict[str, float]:

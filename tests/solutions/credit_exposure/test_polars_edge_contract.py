@@ -553,3 +553,111 @@ def test_s3_t4_from_dataframe_refuses_a_table_that_is_not_a_polars_frame(
             model="current_exposure_method",
             add_on_factors=tables["add_on_factors"],
         )
+
+
+@pytest.mark.parametrize(
+    ("table", "column"),
+    [("trades", "mtm"), ("netting_sets", "net_collateral")],
+)
+def test_s3_t4_nan_in_a_required_float_field_raises_r_at_the_field(
+    table: str, column: str
+) -> None:
+    # S3 review R-001, OD-A (b): in a float column null means null or NaN, so a
+    # NaN in a required float field raises R at the field path, as a null does.
+    trades = _small_trades()
+    netting_sets = _NETTING_SETS
+    if table == "trades":
+        trades = trades.with_columns(pl.Series(column, [10.0, math.nan]))
+    else:
+        netting_sets = netting_sets.with_columns(pl.Series(column, [math.nan]))
+    with pytest.raises(ValidationError) as excinfo:
+        CreditExposureRequest.from_dataframe(
+            trades, netting_sets, model="replacement_cost"
+        )
+    assert excinfo.value.errors()[0]["loc"] == (column,)
+
+
+_SUBCLASS_OUTSIDE_INT32 = 2**32 + 2  # an int32 wrap gives 2, a valid subclass
+
+
+def _subclass_book(method: str, subclass_uix: int) -> dict[str, Any]:
+    trades = [
+        {
+            "trade_uid": 1,
+            "netting_set_uid": 1,
+            "mtm": 10.0,
+            "volume": 100.0,
+            "current_price": 1.0,
+            "asset_subclass_uix": subclass_uix,
+            "direction": "long",
+            "remaining_maturity_years": 1.0,
+        }
+    ]
+    tables: dict[str, list[dict[str, Any]]] = {
+        "trades": trades,
+        "netting_sets": [
+            {"netting_set_uid": 1, "obligor_uid": 9, "net_collateral": 0.0}
+        ],
+        "add_on_factors": [
+            {"subclass_uix": 1, "factor": 0.1},
+            {"subclass_uix": 2, "factor": 0.2},
+        ],
+        "subclass_hedging_sets": [
+            {"subclass_uix": 1, "hedging_set_uix": 10},
+            {"subclass_uix": 2, "hedging_set_uix": 10},
+        ],
+        "hedging_set_correlations": [{"hedging_set_uix": 10, "rho": 0.4}],
+    }
+    return _request_dict(tables, method)
+
+
+def _request_from_frames(payload: dict[str, Any]) -> CreditExposureRequest:
+    def frame(name: str) -> pl.DataFrame | None:
+        rows = payload.get(name)
+        if rows is None:
+            return None
+        return pl.DataFrame({c: [r[c] for r in rows] for c in rows[0]})
+
+    trades, netting_sets = frame("trades"), frame("netting_sets")
+    assert trades is not None
+    assert netting_sets is not None
+    return CreditExposureRequest.from_dataframe(
+        trades,
+        netting_sets,
+        model=payload["model"],
+        add_on_factors=frame("add_on_factors"),
+        subclass_hedging_sets=frame("subclass_hedging_sets"),
+        hedging_set_correlations=frame("hedging_set_correlations"),
+    )
+
+
+@pytest.mark.parametrize("path", ["model_validate", "from_dataframe"])
+@pytest.mark.parametrize("method", ["current_exposure_method", "saccr"])
+def test_s3_t4_subclass_uix_outside_int32_raises_type_error_before_the_engine(
+    method: str, path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # S3 review R-002, OD-B (b1), R-9 form: no silent int32 wrap of the uix.
+    payload = _subclass_book(method, _SUBCLASS_OUTSIDE_INT32)
+    request = (
+        CreditExposureRequest.model_validate(payload)
+        if path == "model_validate"
+        else _request_from_frames(payload)
+    )
+    assert request.trades[0].asset_subclass_uix == _SUBCLASS_OUTSIDE_INT32
+
+    def _engine_must_not_run(**_: object) -> None:
+        raise AssertionError("run_exposure was called")
+
+    monkeypatch.setattr(
+        "riskquant.solutions.credit_exposure.run.run_exposure", _engine_must_not_run
+    )
+    with pytest.raises(TypeError, match=r"asset_subclass_uix 4294967298"):
+        run_credit_exposure(request)
+
+
+@pytest.mark.parametrize("method", ["current_exposure_method", "saccr"])
+def test_s3_t4_subclass_uix_inside_int32_runs(method: str) -> None:
+    result = run_credit_exposure(
+        CreditExposureRequest.model_validate(_subclass_book(method, 2))
+    )
+    assert len(result.obligor_ead) == 1

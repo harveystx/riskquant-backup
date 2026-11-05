@@ -231,10 +231,10 @@ class CreditExposureRequest(BaseModel):
         infinite cell reaches the int field unchanged and raises
         ``pydantic.ValidationError`` (``int(7.9)`` would give a uid that the
         author did not write). A float field admits an integer or a float
-        dtype. ``direction`` admits ``pl.Utf8``. An optional field also admits
-        ``pl.Null``, and its null cell (in a float column: null or NaN) means
-        absent. A null cell in a required field reaches the row model as
-        ``None`` and raises ``pydantic.ValidationError`` at that field. Any
+        dtype. ``direction`` admits ``pl.Utf8``. In a float column, null means
+        null or NaN. An optional field also admits ``pl.Null``, and its null
+        cell means absent. A null cell in a required field reaches the row model
+        as ``None`` and raises ``pydantic.ValidationError`` at that field. Any
         other dtype (``pl.Boolean``, ``pl.Decimal`` included) raises TypeError
         that names the column.
 
@@ -464,10 +464,14 @@ def _cells(
     values: list[object] = series.to_list()
     if kind is str:
         return values
-    is_float_col = dtype.is_float()
+    # A NaN cell in a float column is a null (B-8): absent for an optional
+    # field; for a required float field it reaches the row model as None and
+    # raises R at the field path, as a null cell does (S3 review OD-A (b)).
+    # A NaN in a required int field reaches the int field unchanged (R).
+    nan_is_null = dtype.is_float() and (optional or kind is float)
     out: list[object] = []
     for v in values:
-        if v is None or (optional and is_float_col and math.isnan(cast("float", v))):
+        if v is None or (nan_is_null and math.isnan(cast("float", v))):
             out.append(None)  # absent (optional) or None -> R (required)
         elif kind is int:
             out.append(_int_cell(v))
