@@ -3,8 +3,8 @@
 Path: docs/workstreams/WS_CREDIT_POLARS.md
 Class: HEAVY
 Status: DRAFT
-Revision: 1
-Revision note: First draft from the investigator chat of 2026-11-04/05.
+Revision: 2
+Revision note: Owner decisions of 2026-11-05: O-1 to O-6 and O-8 closed; O-7 open until the freeze audit gives the blast radius of the RiskFactorMatrix views.
 Date: 2026-11-05
 Branch: ws/credit-polars
 Snapshot: SNAPSHOT commit=19d097a dirty=false content_hash=c00f240898f32d74
@@ -127,14 +127,14 @@ Evidence: S1.T1 to S1.T4, S4.T2, S4.T3, S8.T1 to S8.T5; C.4 golden in every slic
 
 | Id | Question | Status | Closed on | Evidence |
 |---|---|---|---|---|
-| O-1 | Scope of the market-risk edge (F-9): (a) keep S7 in this workstream; (b) move S7 to a separate workstream and keep pyproject.toml with pandas until it closes. Investigator view: (a), because the goal items on pyproject.toml and C.1 need it. | OPEN | | |
-| O-2 | `IngestBatch.to_df` and `.df` (F-10, D096): (a) delete both and the demo print; (b) `to_df() -> pl.DataFrame`, `.df` the same. Investigator view: (b). | OPEN | | |
-| O-3 | C.8 null rules: confirm the TypeError on a fractional float (F-11) and the all-null column rule. | OPEN | | |
-| O-4 | Placement of the C.5 function: (a) `src/riskquant/credit/jtd/ingest/loading_sum.py`, imported by `validate.py` and `schemas.py`; (b) `src/riskquant/_arrays.py`. Investigator view: (a); the function carries credit semantics and `_arrays.py` holds domain-free joins. | OPEN | | |
-| O-5 | `from_dataframe` cell admission: (a) keep the per-cell `int`, `float`, `str` casts; a bool cell becomes 1, a Decimal cell is truncated, a str cell "7.9" raises ValueError (WS_CREDIT_VAR_API backlog); (b) admit by column dtype: `obligor_uid` integer dtypes; `ead`, `pd`, `lgd`, `rho`, `loading` integer or float dtypes; `group`, `factor` `pl.Utf8`; any other dtype raises TypeError that names the column. Investigator view: (b); one check per column closes the backlog item. | OPEN | | |
-| O-6 | Release version: (a) 0.2.1, no D106.3 item is met; (b) 0.3.0 because the installed environment loses pandas. Investigator view: (a). | OPEN | | |
+| O-1 | Scope of the market-risk edge (F-9): (a) keep S7 in this workstream; (b) move S7 to a separate workstream and keep pyproject.toml with pandas until it closes. Investigator view: (a), because the goal items on pyproject.toml and C.1 need it. | CLOSED | 2026-11-05 | Owner: (a). S7 stays in this workstream. Owner goal: no pandas anywhere in riskquant, Polars only. S7 keeps its own golden (C.15) and FULL review. |
+| O-2 | `IngestBatch.to_df` and `.df` (F-10, D096): (a) delete both and the demo print; (b) `to_df() -> pl.DataFrame`, `.df` the same. Investigator view: (b). | CLOSED | 2026-11-05 | Owner: (b). `to_df()` and `.df` return `pl.DataFrame`; D096 is superseded by P-CREDIT_POLARS-001 clause 5. |
+| O-3 | C.8 null rules: confirm the TypeError on a fractional float (F-11) and the all-null column rule. | CLOSED | 2026-11-05 | Owner: confirmed. A float with a fractional part raises TypeError (fail loud, D098 precedent); an all-null column is all missing; a null in a required column raises ValueError. |
+| O-4 | Placement of the C.5 function: (a) `src/riskquant/credit/jtd/ingest/loading_sum.py`, imported by `validate.py` and `schemas.py`; (b) `src/riskquant/_arrays.py`. Investigator view: (a); the function carries credit semantics and `_arrays.py` holds domain-free joins. | CLOSED | 2026-11-05 | Owner: (a) `src/riskquant/credit/jtd/ingest/loading_sum.py`. The solution tier (schemas.py) may import core; core does not import the solution tier. |
+| O-5 | `from_dataframe` cell admission: (a) keep the per-cell `int`, `float`, `str` casts; a bool cell becomes 1, a Decimal cell is truncated, a str cell "7.9" raises ValueError (WS_CREDIT_VAR_API backlog); (b) admit by column dtype: `obligor_uid` integer dtypes; `ead`, `pd`, `lgd`, `rho`, `loading` integer or float dtypes; `group`, `factor` `pl.Utf8`; any other dtype raises TypeError that names the column. Investigator view: (b); one check per column closes the backlog item. | CLOSED | 2026-11-05 | Owner: (b). Admission by column dtype; any other dtype raises TypeError that names the column. Closes the WS_CREDIT_VAR_API backlog item on bool, Decimal and str cells. |
+| O-6 | Release version: (a) 0.2.1, no D106.3 item is met; (b) 0.3.0 because the installed environment loses pandas. Investigator view: (a). | CLOSED | 2026-11-05 | Owner: (a) 0.2.1. D106.2 applies SemVer over the D106.1 surface, which does not change; from_dataframe is outside it (D106.1). Owner action before S6: check riskquant-excel and riskquant-emissary for from_dataframe callers that pass pandas frames. |
 | O-7 | `RiskFactorMatrix` and `RiskFactorLevelSnapshot` pandas views (F-9): (a) Polars members with the same names; (b) remove the views and keep the arrays. | OPEN | | |
-| O-8 | "Full demo set" for the owner rule: the 15 `scripts/solutions/credit_var/demo_e2e_*.py` plus every demo file the slice changes. Demo import smoke: `runpy.run_path(path, run_name="demo_import_smoke")` for each of the 15, which runs module-level code and not `main()`. Confirm or name the repository command. | OPEN | | |
+| O-8 | "Full demo set" for the owner rule: the 15 `scripts/solutions/credit_var/demo_e2e_*.py` plus every demo file the slice changes. Demo import smoke: `runpy.run_path(path, run_name="demo_import_smoke")` for each of the 15, which runs module-level code and not `main()`. Confirm or name the repository command. | CLOSED | 2026-11-05 | Owner: the demo import smoke is `python scripts/tools/demo_import_smoke.py [paths]`: it executes only the top-level import statements of each demo (AST), so no demo body runs. Default paths: the 15 `scripts/solutions/credit_var/demo_e2e_*.py`; a slice adds the demo files it changes. S2 creates the script from the owner gate tool `_gates/demo_import_smoke.py`. The full demo set is as the question states. |
 
 Status values: OPEN, CLOSED.
 
@@ -157,7 +157,7 @@ Gate block (PowerShell, repository root, `WORKFLOW.md` section 6, ruff 0.15.21).
 } *>&1 | Tee-Object -FilePath gate_output.txt
 ```
 
-Demo gate (O-8): `smoke` = `Get-ChildItem scripts/solutions/credit_var/demo_e2e_*.py | ForEach-Object { python -c "import runpy; runpy.run_path(r'$($_.FullName)', run_name='demo_import_smoke')"; "$($_.Name) exit=$LASTEXITCODE" }`. `full` = `Get-ChildItem <paths> | ForEach-Object { python $_.FullName; "$($_.Name) exit=$LASTEXITCODE" }` over the 15 credit_var demos and every demo file the slice changes, each with exit=0.
+Demo gate (O-8): `smoke` = `python scripts/tools/demo_import_smoke.py [demo files the slice changes]` (default: the 15 credit_var demos; top-level imports only). `full` = `Get-ChildItem <paths> | ForEach-Object { python $_.FullName; "$($_.Name) exit=$LASTEXITCODE" }` over the 15 credit_var demos and every demo file the slice changes, each with exit=0.
 
 ### S1: Frame-free loading sum
 
@@ -188,7 +188,7 @@ Objective: Make the printer, the config audit and the ingest batch adapter panda
 Contract: C.13, C.14
 Depends on: O-2
 Files:
-- create: tests/utils/test_printer_polars.py
+- create: tests/utils/test_printer_polars.py; scripts/tools/demo_import_smoke.py (O-8, from the owner gate tool _gates/demo_import_smoke.py, with optional path arguments)
 - modify: src/riskquant/utils/printer.py; src/riskquant/config/static_config/audit.py; src/riskquant/portfolio/ingest/batch.py; scripts/demos/config/static_config/demo_full.py; scripts/demos/credit/rc/demo_spot_rc_end_to_end.py (the `.df` print only); tests/portfolio/test_pandas_free_boundary.py (the `to_df` case)
 - delete: src/riskquant/utils/dataframes.py (no caller, F-17)
 Prohibited: `src/riskquant/credit/**`; `src/riskquant/market_data/**`; pyproject.toml; DECISIONS.md.
