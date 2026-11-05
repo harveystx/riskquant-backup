@@ -10,7 +10,7 @@ master at compile time.
 
 from __future__ import annotations
 
-import pandas as pd
+import polars as pl
 
 from riskquant.credit.jtd.models import JtdModel
 from riskquant.ingest_fixtures.credit.credit_factors.minimal_factor_universe import (
@@ -45,7 +45,7 @@ CANONICAL_GAUSSIAN_COPULA_JTD_INGEST_DATA: GaussianCopulaJTDIngestData = _get_da
 
 validate_column_lengths(CANONICAL_GAUSSIAN_COPULA_JTD_INGEST_DATA)
 
-CANONICAL_GAUSSIAN_COPULA_JTD_INGEST_DF = pd.DataFrame(
+CANONICAL_GAUSSIAN_COPULA_JTD_INGEST_DF = pl.DataFrame(
     CANONICAL_GAUSSIAN_COPULA_JTD_INGEST_DATA
 )
 

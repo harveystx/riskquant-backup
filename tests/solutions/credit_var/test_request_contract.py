@@ -27,6 +27,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import polars as pl
 import pytest
 from pydantic import BaseModel, ValidationError
 
@@ -367,13 +368,13 @@ def _engine_accepts(book: dict[str, Any], *, target: str) -> bool:
     test: an engine rejection for a different reason is not evidence that the
     engine applies the rule (S2 review R-005).
     """
-    obligor_table = pd.DataFrame({
+    obligor_table = pl.DataFrame({
         "uid": [row["obligor_uid"] for row in book["obligors"]],
         "ead": [row["ead"] for row in book["obligors"]],
         "pd": [row["pd"] for row in book["obligors"]],
         "lgd": [row["lgd"] for row in book["obligors"]],
     })
-    loadings_table = pd.DataFrame({
+    loadings_table = pl.DataFrame({
         "uid": [row["obligor_uid"] for row in book["loadings"]],
         "factor": [row["factor"] for row in book["loadings"]],
         "loading": [row["loading"] for row in book["loadings"]],

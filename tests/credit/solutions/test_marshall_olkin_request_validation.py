@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import polars as pl
 import pytest
 from pydantic import ValidationError
 
@@ -153,7 +154,7 @@ def test_low_pd_does_not_break_unrelated_models(model, kwargs) -> None:
 def test_builder_guard_still_rejects_when_called_directly() -> None:
     """The request validator is an earlier gate, not a replacement. Calling the
     builder with the same violation must still fail."""
-    frame = pd.DataFrame({
+    frame = pl.DataFrame({
         "uid": [1, 2],
         "uniform_factor": ["U_001", "U_002"],
         "systemic_uniform_factor": ["SYSTEMIC_SHOCK", "SYSTEMIC_SHOCK"],

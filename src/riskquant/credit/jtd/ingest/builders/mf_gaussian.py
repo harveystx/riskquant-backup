@@ -7,7 +7,7 @@ This builder only packs CSR (in band order) and precomputes the idio weight."""
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.credit.jtd.blocks.mf_copula_gaussian import MfGaussianCopulaJtdBlock
 from riskquant.credit.jtd.ingest._shared import (
@@ -15,23 +15,24 @@ from riskquant.credit.jtd.ingest._shared import (
     _gaussian_thresholds,
     _i64,
     _join_pd_lgd_from_master,
+    _names,
     _resolve_factor_uix,
 )
 from riskquant.credit.masters.obligors.compiled import CompiledObligorCredit
 
 
 def build_mf_gaussian_block(
-    df: pd.DataFrame,
+    df: pl.DataFrame,
     obligor_master: CompiledObligorCredit,
     factor_name_to_uix: dict[str, int],
-    mf_loadings_df: pd.DataFrame,
+    mf_loadings_df: pl.DataFrame,
 ) -> MfGaussianCopulaJtdBlock:
     obligor_uids = _i64(df, "uid")
     n = obligor_uids.shape[0]
     pd_arr, lgd_arr = _join_pd_lgd_from_master(obligor_uids, obligor_master)
 
     idiosyncratic_uix = _resolve_factor_uix(
-        df["idiosyncratic_factor"].to_numpy(copy=False),
+        _names(df, "idiosyncratic_factor"),
         factor_name_to_uix,
         ctx="idiosyncratic_factor",
     )
@@ -39,12 +40,12 @@ def build_mf_gaussian_block(
     # Band-order position of each obligor; filter the shared loadings frame to
     # this block's obligors (other obligors belong to other MF blocks).
     uid_to_pos = {int(uid): pos for pos, uid in enumerate(obligor_uids)}
-    load_uids = mf_loadings_df["obligor_uid"].to_numpy()
+    load_uids = _i64(mf_loadings_df, "obligor_uid")
     keep = np.array([int(u) in uid_to_pos for u in load_uids], dtype=bool)
 
     pos = np.array([uid_to_pos[int(u)] for u in load_uids[keep]], dtype=np.int64)
-    loadings = _f64(mf_loadings_df.loc[keep], "factor_loading")
-    sys_names = mf_loadings_df.loc[keep, "factor_name"].to_numpy(copy=False)
+    loadings = _f64(mf_loadings_df, "factor_loading")[keep]
+    sys_names = _names(mf_loadings_df, "factor_name")[keep]
 
     # Stable sort by obligor position -> CSR-contiguous per obligor, band order.
     order = np.argsort(pos, kind="stable")

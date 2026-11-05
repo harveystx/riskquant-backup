@@ -28,6 +28,7 @@ import pathlib
 
 import numpy as np
 import pandas as pd
+import polars as pl
 import pytest
 from pydantic import ValidationError
 
@@ -45,9 +46,9 @@ def _spec():
     return next(p for p in model_entry(MODEL).params if p.key == "systemic_pd")
 
 
-def _recipe_table(pds: list[float]) -> pd.DataFrame:
+def _recipe_table(pds: list[float]) -> pl.DataFrame:
     """The recipe's own column contract (`uid`), not the request's."""
-    return pd.DataFrame({
+    return pl.DataFrame({
         "uid": list(range(1, len(pds) + 1)),
         "ead": [1_000_000.0] * len(pds),
         "pd": pds,
@@ -62,7 +63,7 @@ def _effective_systemic_pd_at_construction(params: dict[str, float]) -> float:
     )
     frame = assembled.bundle.marshall_olkin_df
     assert frame is not None
-    column = frame["systemic_pd"].to_numpy(dtype=np.float64)
+    column = np.asarray(frame["systemic_pd"].to_numpy(), dtype=np.float64)
     assert np.all(column == column[0])  # one shock, one probability
     return float(column[0])
 

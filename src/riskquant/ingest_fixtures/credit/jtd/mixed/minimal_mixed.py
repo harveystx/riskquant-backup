@@ -21,8 +21,7 @@ distinct); it is a minimal compile-path fixture, not a statistical sample.
 
 from __future__ import annotations
 
-import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.credit.jtd.ingest.bundle import JtdIngestBundle
 from riskquant.ingest_fixtures.credit.jtd.beta_binomial.minimal_beta_binomial_jtd import (
@@ -50,7 +49,7 @@ from riskquant.ingest_fixtures.credit.jtd.stress_regime_bernoulli.minimal_stress
 
 # Per-model sources, in CompiledJtdPortfolio band order. The multi-factor frame
 # is last; its loadings relation is re-based with the same offset.
-_SOURCES: tuple[pd.DataFrame, ...] = (
+_SOURCES: tuple[pl.DataFrame, ...] = (
     CANONICAL_FORCED_DEFAULT_JTD_INGEST_DF,
     CANONICAL_INDEPENDENT_BERNOULLI_JTD_INGEST_DF,
     CANONICAL_BETA_BINOMIAL_JTD_INGEST_DF,
@@ -61,29 +60,29 @@ _SOURCES: tuple[pd.DataFrame, ...] = (
 )
 
 
-def _combine() -> tuple[pd.DataFrame, pd.DataFrame, int]:
+def _combine() -> tuple[pl.DataFrame, pl.DataFrame, int]:
     """Re-base each fixture's uids onto a disjoint range and concatenate.
 
     Each fixture numbers its obligors 1..n, so adding the running offset (the
     count of all obligors placed so far) shifts it into a fresh, collision-free
-    band while preserving the uid values the loadings relation references.
+    band while preserving the uid values the loadings relation references. The
+    union of columns is a diagonal concat: a column that a fixture lacks is
+    null on its rows (the pandas concat gave NaN).
     """
-    rebased: list[pd.DataFrame] = []
+    rebased: list[pl.DataFrame] = []
     offset = 0
     mf_offset = 0
     for df in _SOURCES:
-        frame = df.copy()
-        frame["uid"] = frame["uid"].to_numpy(dtype=np.int64) + offset
+        frame = df.with_columns(pl.col("uid").cast(pl.Int64) + offset)
         if df is CANONICAL_MF_GAUSSIAN_COPULA_JTD_INGEST_DF:
             mf_offset = offset
         rebased.append(frame)
-        offset += len(df)
+        offset += df.height
 
-    mixed = pd.concat(rebased, ignore_index=True)
+    mixed = pl.concat(rebased, how="diagonal_relaxed")
 
-    loadings = CANONICAL_MF_GAUSSIAN_COPULA_LOADINGS_DF.copy()
-    loadings["obligor_uid"] = (
-        loadings["obligor_uid"].to_numpy(dtype=np.int64) + mf_offset
+    loadings = CANONICAL_MF_GAUSSIAN_COPULA_LOADINGS_DF.with_columns(
+        pl.col("obligor_uid").cast(pl.Int64) + mf_offset
     )
     return mixed, loadings, offset
 

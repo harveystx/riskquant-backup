@@ -37,7 +37,7 @@ import ast
 import pathlib
 
 import numpy as np
-import pandas as pd
+import polars as pl
 import pytest
 
 from riskquant.credit.aggregate.loss_metrics import PortfolioLossDistribution
@@ -58,7 +58,7 @@ SRC = pathlib.Path(__file__).resolve().parents[2] / "src" / "riskquant"
 _ARRAY_HINTS = ("ndarray", "NDArray")
 _ARRAY_ALIASES = {"_F64_1D", "_F64"}  # module-local NDArray aliases
 _INDIRECT = {  # hold array-bearing payloads
-    "JtdIngestBundle",  # pandas DataFrames: `==` is elementwise too
+    "JtdIngestBundle",  # polars DataFrames: `==` is elementwise too
     "CompiledCreditMasters",
     "AssembledInputs",
     "AssembledExposureInputs",
@@ -212,7 +212,7 @@ def _loss(values):
         ),
         pytest.param(
             lambda: JtdIngestBundle(
-                independent_bernoulli_df=pd.DataFrame({"uid": [1, 2]})
+                independent_bernoulli_df=pl.DataFrame({"uid": [1, 2]})
             ),
             id="bundle_of_dataframes",
         ),

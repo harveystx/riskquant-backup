@@ -11,17 +11,17 @@ CreditFactorMatrix structures correctly recover the theoretical correlations.
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.constants import RNG_SEED
 from riskquant.credit.factors.simulate.base import build_credit_factor_matrix
 from riskquant.credit.factors.simulate.mixed import MixedCreditFactorGenerator
 from riskquant.credit.jtd.ingest.bundle import JtdIngestBundle
 from riskquant.credit.jtd.ingest.compile import compile_jtd_portfolio
+from riskquant.credit.jtd.models import JtdModel
 from riskquant.credit.masters.cross_master.compiled import (
     CompiledCreditMasters,
 )
-from riskquant.credit.jtd.models import JtdModel
 from riskquant.credit.masters.factor_universe.ingest import (
     compile_credit_factor_universe,
 )
@@ -48,17 +48,15 @@ def run_demo() -> None:
 
     # 1A. Obligor Master
     obligor_uids = np.arange(1, NUM_OBLIGORS + 1, dtype=np.int64)
-    obligor_df = pd.DataFrame(
-        {
-            "uid": obligor_uids,
-            "pd": 0.10,
-            "lgd": 0.60,
-            "rating_id": 0,
-            "sector_id": 0,
-            "country_id": 0,
-            "parent_uid": None,
-        }
-    )
+    obligor_df = pl.DataFrame({
+        "uid": obligor_uids,
+        "pd": 0.10,
+        "lgd": 0.60,
+        "rating_id": 0,
+        "sector_id": 0,
+        "country_id": 0,
+        "parent_uid": None,
+    })
     obligor_master = compile_obligor_master(obligor_df)
 
     # 1B. JTD Portfolio
@@ -69,39 +67,35 @@ def run_demo() -> None:
     # factor per obligor) rather than the minimal canonical fixture, but it
     # flows through the SAME master contract: name -> UIX resolution and chi-dof
     # reconciliation now read from `universe`, never an ad-hoc {name: i} dict.
-    factor_universe_df = pd.DataFrame(
-        {
-            "factor_id": range(len(factor_names)),
-            "factor_name": factor_names,
-            "factor_kind": [
-                "SYSTEMIC"
-                if n == "GLOBAL_CREDIT"
-                else "CHI"
-                if (n == "GLOBAL_CHI" or n.startswith("CHI_"))
-                else "UNIFORM"
-                if n.startswith("U_")
-                else "STRESS_INDICATOR"
-                if n == "GLOBAL_STRESS_REGIME"
-                else "IDIOSYNCRATIC"
-                for n in factor_names
-            ],
-            "nu": [
-                GLOBAL_T_COP_NU if (n == "GLOBAL_CHI" or n.startswith("CHI_")) else None
-                for n in factor_names
-            ],
-        }
-    )
+    factor_universe_df = pl.DataFrame({
+        "factor_id": range(len(factor_names)),
+        "factor_name": factor_names,
+        "factor_kind": [
+            "SYSTEMIC"
+            if n == "GLOBAL_CREDIT"
+            else "CHI"
+            if (n == "GLOBAL_CHI" or n.startswith("CHI_"))
+            else "UNIFORM"
+            if n.startswith("U_")
+            else "STRESS_INDICATOR"
+            if n == "GLOBAL_STRESS_REGIME"
+            else "IDIOSYNCRATIC"
+            for n in factor_names
+        ],
+        "nu": [
+            GLOBAL_T_COP_NU if (n == "GLOBAL_CHI" or n.startswith("CHI_")) else None
+            for n in factor_names
+        ],
+    })
     universe = compile_credit_factor_universe(factor_universe_df)
 
-    jtd_df = pd.DataFrame(
-        {
-            "uid": obligor_uids,
-            "instrument": JtdModel.COPULA_SF_GAUSSIAN.name,
-            "factor_loading": input_betas,
-            "systemic_factor": "GLOBAL_CREDIT",
-            "idiosyncratic_factor": [f"IDIO_{i}" for i in range(1, NUM_OBLIGORS + 1)],
-        }
-    )
+    jtd_df = pl.DataFrame({
+        "uid": obligor_uids,
+        "instrument": JtdModel.COPULA_SF_GAUSSIAN.name,
+        "factor_loading": input_betas,
+        "systemic_factor": "GLOBAL_CREDIT",
+        "idiosyncratic_factor": [f"IDIO_{i}" for i in range(1, NUM_OBLIGORS + 1)],
+    })
 
     # THIS IS THE CRITICAL TEST: Does the compiler correctly map the strings
     # to UIX integers and align the betas?

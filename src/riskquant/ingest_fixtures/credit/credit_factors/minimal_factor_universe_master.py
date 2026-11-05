@@ -42,7 +42,7 @@ unchanged.
 
 from __future__ import annotations
 
-import pandas as pd
+import polars as pl
 
 from riskquant.credit.masters.factor_universe.compiled import (
     CompiledCreditFactorUniverse,
@@ -176,7 +176,7 @@ CANONICAL_CREDIT_FACTOR_UNIVERSE_INGEST_DATA: CreditFactorUniverseIngestData = (
 
 validate_column_lengths(CANONICAL_CREDIT_FACTOR_UNIVERSE_INGEST_DATA)
 
-CANONICAL_CREDIT_FACTOR_UNIVERSE_INGEST_DF = pd.DataFrame(
+CANONICAL_CREDIT_FACTOR_UNIVERSE_INGEST_DF = pl.DataFrame(
     CANONICAL_CREDIT_FACTOR_UNIVERSE_INGEST_DATA
 )
 

@@ -4,7 +4,7 @@ valid (validated upstream in `validate.py`); builders only resolve and construct
 
 from __future__ import annotations
 
-import pandas as pd
+import polars as pl
 
 from riskquant.credit.jtd.blocks.forced_default import ForcedDefaultJtdBlock
 from riskquant.credit.jtd.ingest._shared import _i64, _join_pd_lgd_from_master
@@ -12,7 +12,7 @@ from riskquant.credit.masters.obligors.compiled import CompiledObligorCredit
 
 
 def build_forced_default_block(
-    df: pd.DataFrame,
+    df: pl.DataFrame,
     obligor_master: CompiledObligorCredit,
 ) -> ForcedDefaultJtdBlock:
     """Forced-default JTD: loss = ead * lgd, default forced to 1. The kernel

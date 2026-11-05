@@ -11,8 +11,14 @@ at nu. Stress-regime: a shared STRESS_INDICATOR plus a per-run stress probabilit
 
 This is solution-tier, not core: the core engine takes a fully-authored universe +
 bundle; "construct them from a flat table" is presentation/authoring sugar that
-belongs with the solution. Plain DataFrame + params in, engine objects out,
+belongs with the solution. ``pl.DataFrame`` + params in, engine objects out,
 fail-fast. Adding a flat-sheet model is one assembler here plus a catalog entry.
+
+Frames (WS_CREDIT_POLARS C.10): ``obligor_table`` and ``loadings_table`` are
+``pl.DataFrame``; any other type raises TypeError before a column is read. Every
+frame built here (the factor universe, the per-model dispatch frame, the engine
+loadings relation) is built column by column with a stated dtype, never by
+schema inference from the first rows (F-23).
 
 Multi-factor copulas are deliberately absent: their systemic loadings are a
 relational input (a loadings sheet), not a scalar, and are handled by a separate
@@ -37,8 +43,14 @@ from types import MappingProxyType
 from typing import Final
 
 import numpy as np
-import pandas as pd
+import numpy.typing as npt
+import polars as pl
 
+from riskquant.credit.exposure.add_on.ingest import (
+    _float_column,
+    _int_column,
+    _require_polars_frame,
+)
 from riskquant.credit.exposure.obligor_ead.compiled import CompiledObligorEad
 from riskquant.credit.exposure.obligor_ead.ingest import compile_obligor_ead
 from riskquant.credit.jtd.ingest.bundle import JtdIngestBundle
@@ -83,6 +95,8 @@ _DEFAULT_BETA_BETA = SF_BETA_BINOMIAL_BETA
 _DEFAULT_STRESS_PROB = SF_STRESS_REGIME_PROB
 _DEFAULT_STRESS_MULT = SF_STRESS_REGIME_MULT
 
+_ENTRY = "assemble_inputs"
+
 
 @dataclass(frozen=True, slots=True, kw_only=True, eq=False)
 class AssembledInputs:
@@ -121,30 +135,58 @@ def idiosyncratic_factor_name(obligor_uid: int) -> str:
     return f"IDIO_{int(obligor_uid):03d}"
 
 
-def _uids(obligor_table: pd.DataFrame) -> np.ndarray:
-    return np.ascontiguousarray(obligor_table["uid"].to_numpy(dtype=np.int64))
+def _uids(obligor_table: pl.DataFrame) -> npt.NDArray[np.int64]:
+    return _int_column(obligor_table, "uid", np.int64, entry=_ENTRY)
+
+
+def _str_col(values: list[str]) -> pl.Series:
+    return pl.Series(values=values, dtype=pl.String)
+
+
+def _dispatch_frame(
+    uids: npt.NDArray[np.int64],
+    instrument: str,
+    *,
+    strings: Mapping[str, str | list[str]] | None = None,
+    floats: Mapping[str, npt.NDArray[np.float64]] | None = None,
+) -> pl.DataFrame:
+    """The per-model dispatch frame, column by column with stated dtypes.
+
+    ``uid`` is Int64; ``instrument`` and every factor-name column are String (a
+    str value is repeated for every row); every value column is Float64.
+    """
+    n = uids.shape[0]
+    columns: dict[str, pl.Series] = {
+        "uid": pl.Series(values=uids, dtype=pl.Int64),
+        "instrument": _str_col([instrument] * n),
+    }
+    for name, value in (strings or {}).items():
+        columns[name] = _str_col([value] * n if isinstance(value, str) else value)
+    for name, arr in (floats or {}).items():
+        columns[name] = pl.Series(values=arr, dtype=pl.Float64)
+    return pl.DataFrame(columns)
 
 
 def _universe(rows: list[_FactorRow]) -> CompiledCreditFactorUniverse:
     """Compile factor rows into a universe, emitting the nu / alpha / beta columns
-    only when a kind that needs them is present (the ingest maps NaN elsewhere to
+    only when a kind that needs them is present (the ingest maps null elsewhere to
     its sentinels)."""
-    data: dict[str, object] = {
-        "factor_id": np.arange(len(rows), dtype=np.int64),
-        "factor_name": [r.name for r in rows],
-        "factor_kind": [r.kind for r in rows],
+    columns: dict[str, pl.Series] = {
+        "factor_id": pl.Series(values=np.arange(len(rows), dtype=np.int64)),
+        "factor_name": _str_col([r.name for r in rows]),
+        "factor_kind": _str_col([r.kind for r in rows]),
     }
     if any(r.nu is not None for r in rows):
-        data["nu"] = [r.nu if r.nu is not None else np.nan for r in rows]
+        columns["nu"] = pl.Series(values=[r.nu for r in rows], dtype=pl.Float64)
     if any(r.alpha is not None for r in rows):
-        data["alpha"] = [r.alpha if r.alpha is not None else np.nan for r in rows]
+        columns["alpha"] = pl.Series(values=[r.alpha for r in rows], dtype=pl.Float64)
     if any(r.beta is not None for r in rows):
-        data["beta"] = [r.beta if r.beta is not None else np.nan for r in rows]
-    return compile_credit_factor_universe(pd.DataFrame(data))
+        columns["beta"] = pl.Series(values=[r.beta for r in rows], dtype=pl.Float64)
+    return compile_credit_factor_universe(pl.DataFrame(columns))
 
 
 def _masters(
-    obligor_table: pd.DataFrame, universe: CompiledCreditFactorUniverse
+    obligor_table: pl.DataFrame, universe: CompiledCreditFactorUniverse
 ) -> CompiledCreditMasters:
     # compile_obligor_master reads uid/pd/lgd and ignores the rest (e.g. ead).
     return CompiledCreditMasters(
@@ -153,7 +195,7 @@ def _masters(
     )
 
 
-def _ead(obligor_table: pd.DataFrame) -> CompiledObligorEad:
+def _ead(obligor_table: pl.DataFrame) -> CompiledObligorEad:
     return compile_obligor_ead(obligor_table)
 
 
@@ -167,15 +209,15 @@ def _require(params: Mapping[str, float], key: str, default: float) -> float:
 
 
 def _assemble_forced_default(
-    obligor_table: pd.DataFrame,
+    obligor_table: pl.DataFrame,
     params: Mapping[str, float],
-    loadings_table: pd.DataFrame | None = None,
+    loadings_table: pl.DataFrame | None = None,
     group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     uids = _uids(obligor_table)
     # Forced default reads no factor, but the generator needs a non-empty universe.
     universe = _universe([_FactorRow(name=_FORCED_DUMMY, kind="UNIFORM")])
-    frame = pd.DataFrame({"uid": uids, "instrument": JtdModel.FORCED_DEFAULT.name})
+    frame = _dispatch_frame(uids, JtdModel.FORCED_DEFAULT.name)
     return AssembledInputs(
         masters=_masters(obligor_table, universe),
         bundle=JtdIngestBundle.from_instrument_frame(frame),
@@ -184,19 +226,19 @@ def _assemble_forced_default(
 
 
 def _assemble_independent_bernoulli(
-    obligor_table: pd.DataFrame,
+    obligor_table: pl.DataFrame,
     params: Mapping[str, float],
-    loadings_table: pd.DataFrame | None = None,
+    loadings_table: pl.DataFrame | None = None,
     group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     uids = _uids(obligor_table)
     uniform_names = [f"U_{int(u):03d}" for u in uids]
     universe = _universe([_FactorRow(name=n, kind="UNIFORM") for n in uniform_names])
-    frame = pd.DataFrame({
-        "uid": uids,
-        "instrument": JtdModel.INDEPENDENT_BERNOULLI.name,
-        "uniform_factor": uniform_names,
-    })
+    frame = _dispatch_frame(
+        uids,
+        JtdModel.INDEPENDENT_BERNOULLI.name,
+        strings={"uniform_factor": uniform_names},
+    )
     return AssembledInputs(
         masters=_masters(obligor_table, universe),
         bundle=JtdIngestBundle.from_instrument_frame(frame),
@@ -205,9 +247,9 @@ def _assemble_independent_bernoulli(
 
 
 def _assemble_beta_binomial(
-    obligor_table: pd.DataFrame,
+    obligor_table: pl.DataFrame,
     params: Mapping[str, float],
-    loadings_table: pd.DataFrame | None = None,
+    loadings_table: pl.DataFrame | None = None,
     group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     uids = _uids(obligor_table)
@@ -221,12 +263,11 @@ def _assemble_beta_binomial(
         [_FactorRow(name=n, kind="UNIFORM") for n in uniform_names]
         + [_FactorRow(name=_BETA_PD_GLOBAL, kind="BETA_PD", alpha=alpha, beta=beta)]
     )
-    frame = pd.DataFrame({
-        "uid": uids,
-        "instrument": JtdModel.BETA_BINOMIAL.name,
-        "uniform_factor": uniform_names,
-        "beta_factor": _BETA_PD_GLOBAL,
-    })
+    frame = _dispatch_frame(
+        uids,
+        JtdModel.BETA_BINOMIAL.name,
+        strings={"uniform_factor": uniform_names, "beta_factor": _BETA_PD_GLOBAL},
+    )
     return AssembledInputs(
         masters=_masters(obligor_table, universe),
         bundle=JtdIngestBundle.from_instrument_frame(frame),
@@ -235,9 +276,9 @@ def _assemble_beta_binomial(
 
 
 def _assemble_stress_regime_bernoulli(
-    obligor_table: pd.DataFrame,
+    obligor_table: pl.DataFrame,
     params: Mapping[str, float],
-    loadings_table: pd.DataFrame | None = None,
+    loadings_table: pl.DataFrame | None = None,
     group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     uids = _uids(obligor_table)
@@ -255,13 +296,17 @@ def _assemble_stress_regime_bernoulli(
         [_FactorRow(name=n, kind="UNIFORM") for n in uniform_names]
         + [_FactorRow(name=_STRESS_GLOBAL, kind="STRESS_INDICATOR")]
     )
-    frame = pd.DataFrame({
-        "uid": uids,
-        "instrument": JtdModel.STRESS_REGIME_BERNOULLI.name,
-        "uniform_factor": uniform_names,
-        "stress_regime_factor": _STRESS_GLOBAL,
-        "stress_pd_multiplier": np.full(uids.shape[0], stress_mult, np.float64),
-    })
+    frame = _dispatch_frame(
+        uids,
+        JtdModel.STRESS_REGIME_BERNOULLI.name,
+        strings={
+            "uniform_factor": uniform_names,
+            "stress_regime_factor": _STRESS_GLOBAL,
+        },
+        floats={
+            "stress_pd_multiplier": np.full(uids.shape[0], stress_mult, np.float64)
+        },
+    )
     stress_p_by_uix = {int(u): stress_prob for u in universe.stress_indicator_uix}
     return AssembledInputs(
         masters=_masters(obligor_table, universe),
@@ -272,7 +317,7 @@ def _assemble_stress_regime_bernoulli(
 
 
 def _per_obligor_rho(
-    obligor_table: pd.DataFrame,
+    obligor_table: pl.DataFrame,
     params: Mapping[str, float],
     *,
     regulatory: bool,
@@ -286,7 +331,10 @@ def _per_obligor_rho(
     """
     n = len(obligor_table)
     if regulatory:
-        pd_vals = obligor_table["pd"].to_numpy(dtype=np.float64)
+        pd_vals = np.asarray(
+            obligor_table.get_column("pd").cast(pl.Float64).to_numpy(),
+            dtype=np.float64,
+        )
         rho = basel_corporate_correlation(pd_vals)
     else:
         g = _require(params, "rho", _DEFAULT_RHO)
@@ -295,11 +343,19 @@ def _per_obligor_rho(
         rho = np.full(n, g, dtype=np.float64)
 
     if "rho" in obligor_table.columns:
-        col = obligor_table["rho"]
-        notna = col.notna().to_numpy()
-        if notna.any():
-            explicit = pd.to_numeric(col, errors="coerce").to_numpy(dtype=np.float64)
-            rho = np.where(notna, explicit, rho)
+        col = obligor_table.get_column("rho")
+        # A pl.Null column means no explicit rho for any row; a null cell means
+        # no explicit rho for that obligor (B-5, C.10).
+        if col.dtype != pl.Null:
+            if not (col.dtype.is_integer() or col.dtype.is_float()):
+                raise TypeError(
+                    f"{ctx}: column 'rho' has dtype {col.dtype!s}; it admits an "
+                    "integer or a float dtype, or pl.Null."
+                )
+            explicit_mask = ~col.is_null().to_numpy()
+            if explicit_mask.any():
+                explicit = np.asarray(col.cast(pl.Float64).to_numpy(), dtype=np.float64)
+                rho = np.where(explicit_mask, explicit, rho)
 
     if not np.all((rho >= 0.0) & (rho < 1.0)):
         bad = sorted({float(x) for x in rho if not (0.0 <= x < 1.0)})
@@ -308,7 +364,7 @@ def _per_obligor_rho(
 
 
 def _assemble_sf(
-    obligor_table: pd.DataFrame,
+    obligor_table: pl.DataFrame,
     params: Mapping[str, float],
     *,
     instrument: str,
@@ -336,28 +392,27 @@ def _assemble_sf(
         rows.append(_FactorRow(name=_CHI_GLOBAL, kind="CHI", nu=nu))
     universe = _universe(rows)
 
-    frame_data: dict[str, object] = {
-        "uid": uids,
-        "instrument": instrument,
-        "factor_loading": loading,
+    strings: dict[str, str | list[str]] = {
         "systemic_factor": _SYSTEMIC_GLOBAL,
         "idiosyncratic_factor": idio_names,
     }
+    floats: dict[str, npt.NDArray[np.float64]] = {"factor_loading": loading}
     if with_chi:
-        frame_data["chi_squared_factor"] = _CHI_GLOBAL
+        strings["chi_squared_factor"] = _CHI_GLOBAL
         # nu on the frame must match the chi factor's nu (engine invariant).
-        frame_data["nu"] = np.full(uids.shape[0], nu, dtype=np.float64)
+        floats["nu"] = np.full(uids.shape[0], nu, dtype=np.float64)
+    frame = _dispatch_frame(uids, instrument, strings=strings, floats=floats)
     return AssembledInputs(
         masters=_masters(obligor_table, universe),
-        bundle=JtdIngestBundle.from_instrument_frame(pd.DataFrame(frame_data)),
+        bundle=JtdIngestBundle.from_instrument_frame(frame),
         obligor_ead=_ead(obligor_table),
     )
 
 
 def _assemble_sf_gaussian(
-    obligor_table: pd.DataFrame,
+    obligor_table: pl.DataFrame,
     params: Mapping[str, float],
-    loadings_table: pd.DataFrame | None = None,
+    loadings_table: pl.DataFrame | None = None,
     group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     return _assemble_sf(
@@ -371,9 +426,9 @@ def _assemble_sf_gaussian(
 
 
 def _assemble_sf_gaussian_basel(
-    obligor_table: pd.DataFrame,
+    obligor_table: pl.DataFrame,
     params: Mapping[str, float],
-    loadings_table: pd.DataFrame | None = None,
+    loadings_table: pl.DataFrame | None = None,
     group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     return _assemble_sf(
@@ -387,9 +442,9 @@ def _assemble_sf_gaussian_basel(
 
 
 def _assemble_sf_students_t(
-    obligor_table: pd.DataFrame,
+    obligor_table: pl.DataFrame,
     params: Mapping[str, float],
-    loadings_table: pd.DataFrame | None = None,
+    loadings_table: pl.DataFrame | None = None,
     group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     return _assemble_sf(
@@ -403,9 +458,9 @@ def _assemble_sf_students_t(
 
 
 def _assemble_sf_students_t_basel(
-    obligor_table: pd.DataFrame,
+    obligor_table: pl.DataFrame,
     params: Mapping[str, float],
-    loadings_table: pd.DataFrame | None = None,
+    loadings_table: pl.DataFrame | None = None,
     group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     return _assemble_sf(
@@ -419,8 +474,8 @@ def _assemble_sf_students_t_basel(
 
 
 def _mf_universe_and_bundle(
-    obligor_table: pd.DataFrame,
-    loadings_table: pd.DataFrame | None,
+    obligor_table: pl.DataFrame,
+    loadings_table: pl.DataFrame | None,
     *,
     instrument: str,
     with_chi: bool,
@@ -433,14 +488,23 @@ def _mf_universe_and_bundle(
     Numeric validation (coverage, no-duplicate, sum-beta^2 <= 1, loading range,
     chi/nu reconciliation) is the engine's at compile; this only shapes inputs.
     """
-    if loadings_table is None or len(loadings_table) == 0:
+    if loadings_table is None or loadings_table.height == 0:
         raise ValueError(
             f"{instrument}: a multi-factor model requires a non-empty loadings table."
         )
     uids = _uids(obligor_table)
     idio_names = [idiosyncratic_factor_name(int(u)) for u in uids]
-    # Distinct systemic factors, authoring order preserved.
-    systemic_names = list(dict.fromkeys(loadings_table["factor"].astype(str)))
+    factor_col = loadings_table.get_column("factor")
+    if factor_col.dtype != pl.String:
+        raise TypeError(
+            f"{instrument}: loadings column 'factor' has dtype {factor_col.dtype!s}; "
+            "it admits pl.Utf8."
+        )
+    if factor_col.null_count():
+        raise ValueError(f"{instrument}: null in loadings column 'factor'.")
+    factor_names = factor_col.to_list()
+    # Distinct systemic factors, authoring order preserved (first seen).
+    systemic_names = list(dict.fromkeys(factor_names))
 
     rows = [_FactorRow(name=s, kind="SYSTEMIC") for s in systemic_names]
     rows += [_FactorRow(name=n, kind="IDIOSYNCRATIC") for n in idio_names]
@@ -448,31 +512,36 @@ def _mf_universe_and_bundle(
         rows.append(_FactorRow(name=_CHI_GLOBAL, kind="CHI", nu=nu))
     universe = _universe(rows)
 
-    mf_loadings_df = pd.DataFrame({
-        "obligor_uid": loadings_table["uid"].to_numpy(dtype=np.int64),
-        "factor_name": loadings_table["factor"].astype(str).to_numpy(),
-        "factor_loading": loadings_table["loading"].to_numpy(dtype=np.float64),
+    # The engine loadings relation keeps the row order of the table (F-6).
+    mf_loadings_df = pl.DataFrame({
+        "obligor_uid": pl.Series(
+            values=_int_column(loadings_table, "uid", np.int64, entry=_ENTRY),
+            dtype=pl.Int64,
+        ),
+        "factor_name": _str_col(factor_names),
+        "factor_loading": pl.Series(
+            values=_float_column(loadings_table, "loading", entry=_ENTRY),
+            dtype=pl.Float64,
+        ),
     })
 
-    frame_data: dict[str, object] = {
-        "uid": uids,
-        "instrument": instrument,
-        "idiosyncratic_factor": idio_names,
-    }
+    strings: dict[str, str | list[str]] = {"idiosyncratic_factor": idio_names}
+    floats: dict[str, npt.NDArray[np.float64]] = {}
     if with_chi:
-        frame_data["chi_squared_factor"] = _CHI_GLOBAL
+        strings["chi_squared_factor"] = _CHI_GLOBAL
         # frame nu must match the chi factor's nu (engine reconciliation).
-        frame_data["nu"] = np.full(uids.shape[0], nu, dtype=np.float64)
+        floats["nu"] = np.full(uids.shape[0], nu, dtype=np.float64)
     bundle = JtdIngestBundle.from_instrument_frame(
-        pd.DataFrame(frame_data), mf_loadings_df=mf_loadings_df
+        _dispatch_frame(uids, instrument, strings=strings, floats=floats),
+        mf_loadings_df=mf_loadings_df,
     )
     return universe, bundle
 
 
 def _assemble_mf_gaussian(
-    obligor_table: pd.DataFrame,
+    obligor_table: pl.DataFrame,
     params: Mapping[str, float],
-    loadings_table: pd.DataFrame | None = None,
+    loadings_table: pl.DataFrame | None = None,
     group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     universe, bundle = _mf_universe_and_bundle(
@@ -489,9 +558,9 @@ def _assemble_mf_gaussian(
 
 
 def _assemble_mf_students_t(
-    obligor_table: pd.DataFrame,
+    obligor_table: pl.DataFrame,
     params: Mapping[str, float],
-    loadings_table: pd.DataFrame | None = None,
+    loadings_table: pl.DataFrame | None = None,
     group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     nu = _require(params, "nu", _DEFAULT_NU)
@@ -511,10 +580,34 @@ def _assemble_mf_students_t(
     )
 
 
+def _groups(obligor_table: pl.DataFrame, *, ctx: str) -> list[str]:
+    """The ``group`` column of a grouped model as a list of str (C.10).
+
+    Admits ``pl.Utf8`` or ``pl.Null``. A null (or a ``pl.Null`` column) means
+    no group; a grouped model needs a group for every obligor, so it raises
+    ValueError (the request rules reject it earlier, at
+    ``("obligors", i, "group")``). The pandas ``astype(str)`` path read a
+    missing group as the text "None".
+    """
+    col = obligor_table.get_column("group")
+    if col.dtype not in (pl.String, pl.Null):
+        raise TypeError(
+            f"{ctx}: column 'group' has dtype {col.dtype!s}; it admits pl.Utf8 "
+            "or pl.Null."
+        )
+    if col.null_count():
+        uids = _uids(obligor_table)[col.is_null().to_numpy()]
+        raise ValueError(
+            f"{ctx}: obligor(s) {uids[:5].tolist()} have no group; a grouped "
+            "model needs a group for every obligor."
+        )
+    return [str(g) for g in col.to_list()]
+
+
 def _assemble_beta_binomial_grouped(
-    obligor_table: pd.DataFrame,
+    obligor_table: pl.DataFrame,
     params: Mapping[str, float],
-    loadings_table: pd.DataFrame | None = None,
+    loadings_table: pl.DataFrame | None = None,
     group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     """Segmented beta-binomial: one BETA_PD factor per obligor group, each with its
@@ -525,8 +618,8 @@ def _assemble_beta_binomial_grouped(
     if not group_params:
         raise ValueError("beta_binomial_grouped: per-group params are required.")
     uids = _uids(obligor_table)
-    groups = obligor_table["group"].astype(str).to_numpy()
-    distinct = list(dict.fromkeys(groups.tolist()))  # authoring order
+    groups = _groups(obligor_table, ctx="beta_binomial_grouped")
+    distinct = list(dict.fromkeys(groups))  # authoring order
 
     uniform_names = [f"U_{int(u):03d}" for u in uids]
     beta_factor = {g: f"BETA_PD::{g}" for g in distinct}
@@ -546,12 +639,14 @@ def _assemble_beta_binomial_grouped(
             _FactorRow(name=beta_factor[g], kind="BETA_PD", alpha=alpha, beta=beta)
         )
     universe = _universe(rows)
-    frame = pd.DataFrame({
-        "uid": uids,
-        "instrument": JtdModel.BETA_BINOMIAL.name,
-        "uniform_factor": uniform_names,
-        "beta_factor": [beta_factor[g] for g in groups],
-    })
+    frame = _dispatch_frame(
+        uids,
+        JtdModel.BETA_BINOMIAL.name,
+        strings={
+            "uniform_factor": uniform_names,
+            "beta_factor": [beta_factor[g] for g in groups],
+        },
+    )
     return AssembledInputs(
         masters=_masters(obligor_table, universe),
         bundle=JtdIngestBundle.from_instrument_frame(frame),
@@ -560,9 +655,9 @@ def _assemble_beta_binomial_grouped(
 
 
 def _assemble_stress_regime_bernoulli_grouped(
-    obligor_table: pd.DataFrame,
+    obligor_table: pl.DataFrame,
     params: Mapping[str, float],
-    loadings_table: pd.DataFrame | None = None,
+    loadings_table: pl.DataFrame | None = None,
     group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     """Segmented stress regime: one STRESS_INDICATOR factor per obligor group, each
@@ -578,8 +673,8 @@ def _assemble_stress_regime_bernoulli_grouped(
             "stress_regime_bernoulli_grouped: per-group params are required."
         )
     uids = _uids(obligor_table)
-    groups = obligor_table["group"].astype(str).to_numpy()
-    distinct = list(dict.fromkeys(groups.tolist()))
+    groups = _groups(obligor_table, ctx="stress_regime_bernoulli_grouped")
+    distinct = list(dict.fromkeys(groups))
 
     uniform_names = [f"U_{int(u):03d}" for u in uids]
     stress_factor = {g: f"STRESS::{g}" for g in distinct}
@@ -608,15 +703,19 @@ def _assemble_stress_regime_bernoulli_grouped(
         mult_by_group[g] = mult
         rows.append(_FactorRow(name=stress_factor[g], kind="STRESS_INDICATOR"))
     universe = _universe(rows)
-    frame = pd.DataFrame({
-        "uid": uids,
-        "instrument": JtdModel.STRESS_REGIME_BERNOULLI.name,
-        "uniform_factor": uniform_names,
-        "stress_regime_factor": [stress_factor[g] for g in groups],
-        "stress_pd_multiplier": np.array(
-            [mult_by_group[g] for g in groups], dtype=np.float64
-        ),
-    })
+    frame = _dispatch_frame(
+        uids,
+        JtdModel.STRESS_REGIME_BERNOULLI.name,
+        strings={
+            "uniform_factor": uniform_names,
+            "stress_regime_factor": [stress_factor[g] for g in groups],
+        },
+        floats={
+            "stress_pd_multiplier": np.array(
+                [mult_by_group[g] for g in groups], dtype=np.float64
+            )
+        },
+    )
     name_to_uix = universe.factor_name_to_uix
     stress_p_by_uix = {
         int(name_to_uix[stress_factor[g]]): prob_by_group[g] for g in distinct
@@ -632,9 +731,9 @@ def _assemble_stress_regime_bernoulli_grouped(
 # Recipe key -> assembler. The key is the stable model identifier the solution
 # dispatches on; the catalog mirrors it (no-drift guard).
 def _assemble_marshall_olkin(
-    obligor_table: pd.DataFrame,
+    obligor_table: pl.DataFrame,
     params: Mapping[str, float],
-    loadings_table: pd.DataFrame | None = None,
+    loadings_table: pl.DataFrame | None = None,
     group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     """Marshall-Olkin common-shock model.
@@ -656,13 +755,15 @@ def _assemble_marshall_olkin(
         [_FactorRow(name=n, kind="UNIFORM") for n in uniform_names]
         + [_FactorRow(name=_SYSTEMIC_SHOCK, kind="UNIFORM")]
     )
-    frame = pd.DataFrame({
-        "uid": uids,
-        "instrument": JtdModel.MARSHALL_OLKIN.name,
-        "uniform_factor": uniform_names,
-        "systemic_uniform_factor": _SYSTEMIC_SHOCK,
-        "systemic_pd": np.full(uids.shape[0], systemic_pd, np.float64),
-    })
+    frame = _dispatch_frame(
+        uids,
+        JtdModel.MARSHALL_OLKIN.name,
+        strings={
+            "uniform_factor": uniform_names,
+            "systemic_uniform_factor": _SYSTEMIC_SHOCK,
+        },
+        floats={"systemic_pd": np.full(uids.shape[0], systemic_pd, np.float64)},
+    )
     return AssembledInputs(
         masters=_masters(obligor_table, universe),
         bundle=JtdIngestBundle.from_instrument_frame(frame),
@@ -693,17 +794,26 @@ SUPPORTED_RECIPES: Final[Mapping[str, object]] = MappingProxyType({
 def assemble_inputs(
     *,
     model_key: str,
-    obligor_table: pd.DataFrame,
+    obligor_table: pl.DataFrame,
     params: Mapping[str, float] | None = None,
-    loadings_table: pd.DataFrame | None = None,
+    loadings_table: pl.DataFrame | None = None,
     group_params: Mapping[str, Mapping[str, float]] | None = None,
 ) -> AssembledInputs:
     """Build compiled engine inputs for `model_key` from the obligor table + params.
 
-    Raises ValueError on an unknown/unsupported recipe; each assembler fail-fast
+    ``obligor_table`` is a ``pl.DataFrame`` (columns ``uid``, ``ead``, ``pd``,
+    ``lgd``, and ``group`` / ``rho`` where the model reads them);
+    ``loadings_table`` is None or a ``pl.DataFrame`` (columns ``uid``,
+    ``factor``, ``loading``) for the multi-factor models.
+
+    Raises TypeError for a table of another type, before any column is read;
+    ValueError on an unknown/unsupported recipe; each assembler fail-fast
     validates its own params, and the obligor columns flow through the master / EAD
     compilers' validation.
     """
+    _require_polars_frame(obligor_table, entry=_ENTRY, arg="obligor_table")
+    if loadings_table is not None:
+        _require_polars_frame(loadings_table, entry=_ENTRY, arg="loadings_table")
     assembler = SUPPORTED_RECIPES.get(model_key)
     if assembler is None:
         raise ValueError(

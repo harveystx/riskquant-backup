@@ -116,6 +116,7 @@ import time
 
 import numpy as np
 import pandas as pd
+import polars as pl
 
 from riskquant.constants import RNG_SEED
 from riskquant.credit.factors.simulate.base import build_credit_factor_matrix
@@ -229,17 +230,15 @@ def run_demo() -> None:
     # CRITICAL: For Marshall-Olkin, the Master PD (Total PD) must be mathematically
     # greater than or equal to the Systemic PD to allow survival decoupling.
     # We generate total PDs smoothly between 2.5% and 8.0%.
-    obligor_df = pd.DataFrame(
-        {
-            "uid": obligor_uids,
-            "pd": rng.uniform(MO_SYSTEMIC_PD + 0.005, 0.08, NUM_OBLIGORS),
-            "lgd": rng.uniform(0.4, 0.8, NUM_OBLIGORS),
-            "rating_id": 0,
-            "sector_id": 0,
-            "country_id": 0,
-            "parent_uid": None,
-        }
-    )
+    obligor_df = pl.DataFrame({
+        "uid": obligor_uids,
+        "pd": rng.uniform(MO_SYSTEMIC_PD + 0.005, 0.08, NUM_OBLIGORS),
+        "lgd": rng.uniform(0.4, 0.8, NUM_OBLIGORS),
+        "rating_id": 0,
+        "sector_id": 0,
+        "country_id": 0,
+        "parent_uid": None,
+    })
 
     obligor_master = compile_obligor_master(obligor_df)
 
@@ -267,28 +266,26 @@ def run_demo() -> None:
         + ["U_SYSTEMIC_SHOCK"]
     )
 
-    factor_universe_df = pd.DataFrame(
-        {
-            "factor_id": range(len(factor_names)),
-            "factor_name": factor_names,
-            "factor_kind": [
-                "SYSTEMIC"
-                if n == "GLOBAL_CREDIT"
-                else "CHI"
-                if (n == "GLOBAL_CHI" or n.startswith("CHI_"))
-                else "UNIFORM"
-                if n.startswith("U_")
-                else "STRESS_INDICATOR"
-                if n == "GLOBAL_STRESS_REGIME"
-                else "IDIOSYNCRATIC"
-                for n in factor_names
-            ],
-            "nu": [
-                GLOBAL_T_COP_NU if (n == "GLOBAL_CHI" or n.startswith("CHI_")) else None
-                for n in factor_names
-            ],
-        }
-    )
+    factor_universe_df = pl.DataFrame({
+        "factor_id": range(len(factor_names)),
+        "factor_name": factor_names,
+        "factor_kind": [
+            "SYSTEMIC"
+            if n == "GLOBAL_CREDIT"
+            else "CHI"
+            if (n == "GLOBAL_CHI" or n.startswith("CHI_"))
+            else "UNIFORM"
+            if n.startswith("U_")
+            else "STRESS_INDICATOR"
+            if n == "GLOBAL_STRESS_REGIME"
+            else "IDIOSYNCRATIC"
+            for n in factor_names
+        ],
+        "nu": [
+            GLOBAL_T_COP_NU if (n == "GLOBAL_CHI" or n.startswith("CHI_")) else None
+            for n in factor_names
+        ],
+    })
     universe = compile_credit_factor_universe(factor_universe_df)
 
     # Marshall-Olkin's common shock is a UNIFORM draw, so it uses the dedicated
@@ -299,22 +296,18 @@ def run_demo() -> None:
         for m in models
     ]
 
-    jtd_df = pd.DataFrame(
-        {
-            "uid": obligor_uids,
-            "instrument": models,
-            "beta": rng.uniform(0.1, 0.5, NUM_OBLIGORS),
-            "systemic_factor": "GLOBAL_CREDIT",
-            "systemic_uniform_factor": systemic_uniform_factors,
-            "systemic_pd": MO_SYSTEMIC_PD,
-            "idiosyncratic_factor": [
-                f"IDIO_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)
-            ],
-            "uniform_factor": [f"U_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)],
-            "stress_regime_factor": "GLOBAL_STRESS_REGIME",
-            "stress_pd_multiplier": rng.uniform(1.25, 3.0, NUM_OBLIGORS),
-        }
-    )
+    jtd_df = pl.DataFrame({
+        "uid": obligor_uids,
+        "instrument": models,
+        "beta": rng.uniform(0.1, 0.5, NUM_OBLIGORS),
+        "systemic_factor": "GLOBAL_CREDIT",
+        "systemic_uniform_factor": systemic_uniform_factors,
+        "systemic_pd": MO_SYSTEMIC_PD,
+        "idiosyncratic_factor": [f"IDIO_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)],
+        "uniform_factor": [f"U_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)],
+        "stress_regime_factor": "GLOBAL_STRESS_REGIME",
+        "stress_pd_multiplier": rng.uniform(1.25, 3.0, NUM_OBLIGORS),
+    })
 
     chi_factors = (
         [None] * N_GAUSS
@@ -333,11 +326,13 @@ def run_demo() -> None:
         + [None] * N_MARSHALL_OLKIN
     )
 
-    jtd_df["chi_squared_factor"] = chi_factors
-    jtd_df["nu"] = nus
+    jtd_df = jtd_df.with_columns(
+        pl.Series("chi_squared_factor", chi_factors, dtype=pl.String),
+        pl.Series("nu", nus, dtype=pl.Float64),
+    )
 
     print_df(
-        jtd_df.sample(n=25, random_state=RNG_SEED),
+        jtd_df.sample(n=25, seed=RNG_SEED),
         title="Sample JTD Portfolio DataFrame (Unsorted)",
     )
 
@@ -437,20 +432,16 @@ def run_demo() -> None:
     default_indicators = jtd_result.loss > 0.0
     empirical_pd = default_indicators.mean(axis=1)
 
-    validation_df = pd.DataFrame(
-        {
-            "uid": compiled_portfolio.obligor_uids,
-            "empirical_pd": empirical_pd,
-        }
-    )
+    validation_df = pd.DataFrame({
+        "uid": compiled_portfolio.obligor_uids,
+        "empirical_pd": empirical_pd,
+    })
 
     validation_df = validation_df.merge(
-        pd.DataFrame(
-            {
-                "uid": obligor_master.uid,
-                "target_pd": obligor_master.pd,
-            }
-        ),
+        pd.DataFrame({
+            "uid": obligor_master.uid,
+            "target_pd": obligor_master.pd,
+        }),
         on="uid",
         how="inner",
     )
@@ -489,10 +480,12 @@ def run_demo() -> None:
     # MODEL COMPARISON
     # ============================================================
 
-    model_series = jtd_df.set_index("uid")["instrument"]
-    aligned_models = model_series.loc[
-        compiled_portfolio.obligor_uids.tolist()
-    ].to_numpy()
+    model_by_uid = dict(
+        zip(jtd_df["uid"].to_list(), jtd_df["instrument"].to_list(), strict=True)
+    )
+    aligned_models = np.array([
+        model_by_uid[int(u)] for u in compiled_portfolio.obligor_uids
+    ])
 
     mo_mask = aligned_models == JtdModel.MARSHALL_OLKIN.name
     mo_losses = jtd_result.loss[mo_mask].sum(axis=0)
