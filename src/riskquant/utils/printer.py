@@ -1,12 +1,21 @@
 # src/riskquant/utils/printer.py
+"""
+Console printers for debug and demo output.
+
+``print_df`` and ``print_dict_of_dfs`` take Polars frames. The module imports
+no pandas. A table that is not a Polars object and has a ``to_string`` method
+(in practice a pandas object from a module that is not migrated yet) prints
+through its own ``to_string``; WS_PANDAS_REMOVAL removes that legacy branch.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from datetime import datetime
-from typing import Any
+from typing import Any, Final, Protocol
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 # ==========================================
 # DEFAULT STYLING & ANSI COLORS
@@ -440,8 +449,128 @@ class _FloatFormatter:
         return format(x, self._spec)
 
 
+class _LegacyFrame(Protocol):
+    """
+    A table that is not a Polars object and prints through ``to_string``.
+
+    The v0.2.0 keyword set (``index``, ``max_rows``, ``max_cols`` and
+    ``float_format``) goes to ``to_string`` unchanged, so a pandas object
+    prints the same text as at v0.2.0 without a pandas import here.
+    """
+
+    def to_string(self, *args: Any, **kwargs: Any) -> Any: ...
+
+
+# The v0.2.0 printer cast these dtypes to float before ``float_format`` applied.
+# The same dtype set keeps the same formatted columns for Polars frames.
+_FORMATTED_DTYPES: Final = (pl.Int32, pl.Int64, pl.Float32, pl.Float64)
+_LEGACY_FORMATTED_DTYPES: Final = ("int64", "int32", "float64", "float32")
+
+# Caps for Polars table text. The printer shows full cell text and full table
+# width, as the v0.2.0 printer did; the Polars defaults truncate both. Polars
+# stores the table width as u16, so 65_535 is the largest accepted width.
+_TABLE_WIDTH_CAP: Final = 65_535
+_CELL_TEXT_CAP: Final = 100_000
+
+
+def _format_numeric_columns(
+    df: pl.DataFrame, formatter: _FloatFormatter
+) -> pl.DataFrame:
+    """
+    Replace each numeric column of ``_FORMATTED_DTYPES`` with its text.
+
+    Each value goes through ``float`` and then ``formatter``, as the v0.2.0
+    pandas cast did. A null cell stays null.
+    """
+    columns: list[pl.Series] = []
+    for name, dtype in df.schema.items():
+        column = df.get_column(name)
+        if dtype in _FORMATTED_DTYPES:
+            text = [None if v is None else formatter(float(v)) for v in column]
+            columns.append(pl.Series(name, text, dtype=pl.Utf8))
+        else:
+            columns.append(column)
+    return pl.DataFrame(columns)
+
+
+def _polars_table_text(
+    obj: pl.DataFrame | pl.Series,
+    *,
+    index: bool,
+    max_rows: int | None,
+    max_cols: int | None,
+    float_format: str | None,
+    zero_tol: float,
+) -> tuple[tuple[int, int], str]:
+    """Return the shape and the table text of a Polars frame or series."""
+    if isinstance(obj, pl.Series):
+        df = obj.to_frame(obj.name if obj.name else "value")
+    else:
+        df = obj
+
+    if float_format is not None:
+        df = _format_numeric_columns(
+            df, _FloatFormatter(float_format, zero_tol=zero_tol)
+        )
+    if index:
+        # Polars has no index. The row position is the default index that the
+        # v0.2.0 printer showed.
+        df = df.with_row_index("index")
+
+    with pl.Config(
+        tbl_rows=-1 if max_rows is None else max_rows,
+        tbl_cols=-1 if max_cols is None else max_cols,
+        tbl_hide_dataframe_shape=True,
+        tbl_hide_column_data_types=True,
+        tbl_cell_alignment="RIGHT",
+        tbl_width_chars=_TABLE_WIDTH_CAP,
+        fmt_str_lengths=_CELL_TEXT_CAP,
+    ):
+        text = str(df)
+    return df.shape, text
+
+
+def _legacy_table_text(
+    obj: _LegacyFrame,
+    *,
+    index: bool,
+    max_rows: int | None,
+    max_cols: int | None,
+    float_format: str | None,
+    zero_tol: float,
+) -> tuple[object, str]:
+    """
+    Return the shape and the ``to_string`` text of a table that is not Polars.
+
+    The steps are the v0.2.0 pandas steps, called through the object's own
+    methods: a series becomes a one-column frame (``to_frame``), the
+    ``_LEGACY_FORMATTED_DTYPES`` columns become float (``select_dtypes``), and
+    ``to_string`` renders the table.
+    """
+    frame: Any = obj
+    to_frame = getattr(frame, "to_frame", None)
+    if callable(to_frame):
+        name = getattr(frame, "name", None)
+        frame = to_frame(name=name if name is not None else "value")
+
+    kwargs: dict[str, Any] = {
+        "index": index,
+        "max_rows": max_rows,
+        "max_cols": max_cols,
+    }
+    if float_format is not None:
+        select_dtypes = getattr(frame, "select_dtypes", None)
+        if callable(select_dtypes):
+            numeric_cols = select_dtypes(include=list(_LEGACY_FORMATTED_DTYPES)).columns
+            frame = frame.copy()
+            frame[numeric_cols] = frame[numeric_cols].astype(float)
+        kwargs["float_format"] = _FloatFormatter(float_format, zero_tol=zero_tol)
+
+    return getattr(frame, "shape", None), str(frame.to_string(**kwargs))
+
+
 def print_df(
-    obj: pd.Series | pd.DataFrame,
+    obj: pl.DataFrame | pl.Series | _LegacyFrame,
     *,
     title: str | None = None,
     index: bool = False,
@@ -453,25 +582,61 @@ def print_df(
     zero_tol: float = 0.0,
     title_color: str | None = None,
 ) -> None:
-    """Print a Series/DataFrame with optional display controls."""
-    if isinstance(obj, pd.Series):
-        name = obj.name if obj.name is not None else "value"
-        df = obj.to_frame(name=name)
-    else:
-        df = obj
+    """
+    Print a Polars frame or series with optional display controls.
 
-    if float_format is not None:
-        numeric_cols = df.select_dtypes(
-            include=["int64", "int32", "float64", "float32"]
-        ).columns
-        df = df.copy()
-        df[numeric_cols] = df[numeric_cols].astype(float)
+    Parameters
+    ----------
+    obj
+        ``pl.DataFrame`` or ``pl.Series``. A series prints as one column. An
+        object that is not Polars and has ``to_string`` prints through its
+        own ``to_string`` (legacy branch, removed by WS_PANDAS_REMOVAL).
+    index
+        Polars has no index: ``True`` prints the row position as a first
+        column named ``index``.
+    max_rows, max_cols
+        Display caps; ``None`` prints every row and every column.
+    float_format
+        Format spec for the Int32, Int64, Float32 and Float64 columns.
+        ``None`` keeps the native text of each column.
+    zero_tol
+        Absolute values below this tolerance print as zero.
+
+    Raises
+    ------
+    TypeError
+        ``obj`` is not Polars and has no ``to_string`` method.
+    """
+    shape: object
+    if isinstance(obj, pl.DataFrame | pl.Series):
+        shape, text = _polars_table_text(
+            obj,
+            index=index,
+            max_rows=max_rows,
+            max_cols=max_cols,
+            float_format=float_format,
+            zero_tol=zero_tol,
+        )
+    elif callable(getattr(obj, "to_string", None)):
+        shape, text = _legacy_table_text(
+            obj,
+            index=index,
+            max_rows=max_rows,
+            max_cols=max_cols,
+            float_format=float_format,
+            zero_tol=zero_tol,
+        )
+    else:
+        raise TypeError(
+            "print_df expects a polars.DataFrame or polars.Series; "
+            f"got {type(obj).__module__}.{type(obj).__qualname__}."
+        )
 
     if add_space_before:
         print()
 
     if title:
-        df_attrs = f"(shape={df.shape})"
+        df_attrs = f"(shape={shape})"
         print_header(
             title=f"DataFrame: {title} {df_attrs}",
             color=title_color,
@@ -479,31 +644,14 @@ def print_df(
             add_space_after=False,
         )
 
-    if float_format is None:
-        print(
-            df.to_string(
-                index=index,
-                max_rows=max_rows,
-                max_cols=max_cols,
-            )
-        )
-    else:
-        formatter = _FloatFormatter(float_format, zero_tol=zero_tol)
-        print(
-            df.to_string(
-                index=index,
-                max_rows=max_rows,
-                max_cols=max_cols,
-                float_format=formatter,
-            )
-        )
+    print(text)
 
     if add_space_after:
         print()
 
 
 def print_dict_of_dfs(
-    d: dict[str, pd.DataFrame],
+    d: Mapping[str, pl.DataFrame | _LegacyFrame],
     *,
     title: str | None = None,
     index: bool = False,
@@ -517,7 +665,14 @@ def print_dict_of_dfs(
     title_color: str | None = ANSI_MIDNIGHT_BLUE,
     subtitle_color: str | None = ANSI_BLUE,
 ) -> None:
-    """Print a dictionary of DataFrames with optional display controls."""
+    """
+    Print a dictionary of frames with optional display controls.
+
+    A Polars frame with more than ``cols_before_transpose`` columns prints as
+    ``transpose(include_header=True)``: the column names become the first
+    column, named ``column``. A legacy table prints through ``print_df``, and
+    a wide legacy table is transposed with its own ``T``.
+    """
     if add_space_before:
         print()
 
@@ -532,12 +687,20 @@ def print_dict_of_dfs(
         )
 
     for key, df in d.items():
-        if df.shape[1] > cols_before_transpose:
-            df = df.T
-            key += " (transposed)"
+        label = key
+        table: pl.DataFrame | _LegacyFrame = df
+        if isinstance(df, pl.DataFrame):
+            if df.width > cols_before_transpose:
+                table = df.transpose(include_header=True)
+                label = f"{key} (transposed)"
+        else:
+            legacy: Any = df
+            if legacy.shape[1] > cols_before_transpose:
+                table = legacy.T
+                label = f"{key} (transposed)"
         print_df(
-            df,
-            title=key,
+            table,
+            title=label,
             index=index,
             max_rows=max_rows,
             max_cols=max_cols,

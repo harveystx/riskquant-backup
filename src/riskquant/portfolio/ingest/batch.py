@@ -30,10 +30,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final
+from typing import Final
 
 import numpy as np
 import numpy.typing as npt
+import polars as pl
 
 from riskquant.constants import (
     NO_DATE_ORD32,
@@ -43,9 +44,6 @@ from riskquant.constants import (
 )
 from riskquant.portfolio.ingest.compile import CompiledIngestSoA
 from riskquant.utils.dates import ordinal32_to_datetime64D
-
-if TYPE_CHECKING:
-    from pandas import DataFrame
 
 # ==============================================================================
 # MODULE-LEVEL DTYPE / LENGTH CONTRACT
@@ -107,60 +105,45 @@ def _assert_dtype(
         )
 
 
-def _masked_float_copy(
-    arr: npt.NDArray,
+def _debug_column(
+    name: str,
+    arr: npt.NDArray[np.generic],
     *,
-    mask_value: float | int,
-    replace_with: float = np.nan,
+    dtype: pl.DataType,
+    sentinel: float | None,
     copy: bool,
-) -> npt.NDArray[np.float64]:
-    """Create float view/copy and replace sentinel-like values with NaN."""
-    out = arr.copy() if copy else arr.astype(arr.dtype, copy=False)
+) -> pl.Series:
+    """
+    Debug-only helper: one typed Polars column of the debug frame.
 
-    mask = out == mask_value
+    The SoA sentinel becomes null, so the column keeps one dtype. The v0.2.0
+    pandas adapter mixed int values with the text "NONE" (object dtype) or
+    put NaN in float columns. ``copy=False`` lets Polars share the SoA buffer
+    where the dtype allows it; ``copy=True`` gives an independent buffer.
+    NEVER use in pricing/risk kernels.
+    """
+    values = np.array(arr, copy=True) if copy else arr
+    column = pl.Series(name, values, dtype=dtype)
+    if sentinel is None:
+        return column
+    is_sentinel = pl.Series(arr == sentinel)
+    return pl.select(
+        pl.when(is_sentinel).then(None).otherwise(column).alias(name)
+    ).to_series()
 
-    if np.any(mask):
-        out = out.copy()
-        out[mask] = replace_with
 
-    return out
-
-
-def _decode_dates(
+def _debug_date_column(
+    name: str,
     ord_array: npt.NDArray[np.int32],
     *,
     sentinel: int,
-    copy: bool,
-) -> npt.NDArray[np.datetime64]:
-    """Decode ordinal32 dates to datetime64[D] with NaT masking."""
-    dts = ordinal32_to_datetime64D(ord_array)
-
-    mask = ord_array == sentinel
-    if copy or np.any(mask):
-        dts = dts.copy()
-    if np.any(mask):
-        dts[mask] = np.datetime64("NaT")
-
-    return dts
-
-
-def _debug_mask_int_sentinel(
-    arr: npt.NDArray,
-    *,
-    sentinel: int,
-    replacement: str,
-) -> npt.NDArray[np.object_]:
-    """
-    Debug-only helper.
-
-    Converts integer arrays into object arrays for human-readable auditing.
-    NEVER use in pricing/risk kernels.
-    """
-    out = arr.astype(object, copy=True)
-    mask = arr == sentinel
-    if np.any(mask):
-        out[mask] = replacement
-    return out
+) -> pl.Series:
+    """Debug-only helper: ordinal32 dates as ``pl.Date`` with null at the sentinel."""
+    dates = pl.Series(name, ordinal32_to_datetime64D(ord_array), dtype=pl.Date)
+    is_sentinel = pl.Series(ord_array == sentinel)
+    return pl.select(
+        pl.when(is_sentinel).then(None).otherwise(dates).alias(name)
+    ).to_series()
 
 
 # ==============================================================================
@@ -245,100 +228,148 @@ class IngestBatch:
     # DEBUG RECONSTRUCTION
     # ==========================================================================
 
-    def to_df(self, *, copy: bool = True) -> DataFrame:
+    def to_df(self, *, copy: bool = True) -> pl.DataFrame:
         """
         DEBUG / AUDIT ONLY.
 
-        Reconstruct a DataFrame from the SoA container. Alloc-heavy,
-        produces object arrays. Not engine-safe.
+        Reconstruct a ``pl.DataFrame`` from the SoA container. Alloc-heavy.
+        Not engine-safe. The columns and their order are the v0.2.0 columns.
+
+        Each column has one dtype. A SoA sentinel is null: ``NO_ID`` in the
+        id columns, ``NO_FX_RF_REQUIRED`` in the FX id columns, strike ``0.0``
+        in ``k``, ``NOT_OPTION_MULT`` in ``cp_mult`` and ``NO_DATE_ORD32`` in
+        the date columns.
+
+        Parameters
+        ----------
+        copy
+            ``True`` gives columns with independent buffers. ``False`` lets
+            Polars share the SoA buffers (``.df``); the batch arrays must not
+            change while the frame is in use.
+
+        Returns
+        -------
+        pl.DataFrame
+            ``uid`` Int64, ``inst_id`` Int32, ``qty`` Float64, ``k`` and
+            ``cp_mult`` Float64, the id columns Int64, ``fx_*_inv`` and
+            ``vol_surface_y_axis_type_id`` Int8, the date columns Date.
         """
-        from pandas import DataFrame
-
-        strike_price = _masked_float_copy(
-            self.strike_price,
-            mask_value=0.0,
-            copy=copy,
-        )
-        cp_mult = _masked_float_copy(
-            self.cp_mult.astype(np.float64, copy=False),
-            mask_value=int(NOT_OPTION_MULT),
-            copy=copy,
-        )
-
-        return DataFrame(
-            {
-                # CORE
-                "uid": self.uids,
-                "inst_id": self.instrument_ids,
-                # ECONOMICS
-                "qty": self.qty,
-                "k": strike_price,
-                "cp_mult": cp_mult,
-                # MARKET LINKAGES
-                "und_ids": _debug_mask_int_sentinel(
-                    self.underlying_ids,
-                    sentinel=int(NO_ID),
-                    replacement="NONE",
-                ),
-                "vol_ids": _debug_mask_int_sentinel(
-                    self.volatility_ids,
-                    sentinel=int(NO_ID),
-                    replacement="NONE",
-                ),
-                # FX IDs
-                "fx_u2s_ids": _debug_mask_int_sentinel(
-                    self.fx_u2s_ids,
-                    sentinel=int(NO_FX_RF_REQUIRED),
-                    replacement="NONE",
-                ),
-                "fx_u2s_inv": self.fx_u2s_inv,
-                "fx_k2s_ids": _debug_mask_int_sentinel(
-                    self.fx_k2s_ids,
-                    sentinel=int(NO_FX_RF_REQUIRED),
-                    replacement="NONE",
-                ),
-                "fx_k2s_inv": self.fx_k2s_inv,
-                # CURVES
-                "disc_und_id": _debug_mask_int_sentinel(
-                    self.under_discount_curve_ids,
-                    sentinel=int(NO_ID),
-                    replacement="NONE",
-                ),
-                "disc_k_id": _debug_mask_int_sentinel(
-                    self.strike_discount_curve_ids,
-                    sentinel=int(NO_ID),
-                    replacement="NONE",
-                ),
-                # DATES
-                "settle_date": _decode_dates(
-                    self.settle_ord,
-                    sentinel=int(NO_DATE_ORD32),
-                    copy=copy,
-                ),
-                "delivery_date": _decode_dates(
-                    self.delivery_ord,
-                    sentinel=int(NO_DATE_ORD32),
-                    copy=copy,
-                ),
-                "expiry_date": _decode_dates(
-                    self.expiry_ord,
-                    sentinel=int(NO_DATE_ORD32),
-                    copy=copy,
-                ),
-                # VOL
-                "vol_surface_y_axis_type_id": self.vol_surface_y_axis_type_ids,
-                # NETTING
-                "netting_set_id": _debug_mask_int_sentinel(
-                    self.netting_set_id,
-                    sentinel=int(NO_ID),
-                    replacement="NONE",
-                ),
-            },
-            copy=copy,
-        )
+        no_id = float(NO_ID)
+        no_fx = float(NO_FX_RF_REQUIRED)
+        columns = [
+            # CORE
+            _debug_column("uid", self.uids, dtype=pl.Int64(), sentinel=None, copy=copy),
+            _debug_column(
+                "inst_id",
+                self.instrument_ids,
+                dtype=pl.Int32(),
+                sentinel=None,
+                copy=copy,
+            ),
+            # ECONOMICS
+            _debug_column(
+                "qty", self.qty, dtype=pl.Float64(), sentinel=None, copy=copy
+            ),
+            _debug_column(
+                "k", self.strike_price, dtype=pl.Float64(), sentinel=0.0, copy=copy
+            ),
+            _debug_column(
+                "cp_mult",
+                self.cp_mult,
+                dtype=pl.Float64(),
+                sentinel=float(NOT_OPTION_MULT),
+                copy=copy,
+            ),
+            # MARKET LINKAGES
+            _debug_column(
+                "und_ids",
+                self.underlying_ids,
+                dtype=pl.Int64(),
+                sentinel=no_id,
+                copy=copy,
+            ),
+            _debug_column(
+                "vol_ids",
+                self.volatility_ids,
+                dtype=pl.Int64(),
+                sentinel=no_id,
+                copy=copy,
+            ),
+            # FX IDs
+            _debug_column(
+                "fx_u2s_ids",
+                self.fx_u2s_ids,
+                dtype=pl.Int64(),
+                sentinel=no_fx,
+                copy=copy,
+            ),
+            _debug_column(
+                "fx_u2s_inv",
+                self.fx_u2s_inv,
+                dtype=pl.Int8(),
+                sentinel=None,
+                copy=copy,
+            ),
+            _debug_column(
+                "fx_k2s_ids",
+                self.fx_k2s_ids,
+                dtype=pl.Int64(),
+                sentinel=no_fx,
+                copy=copy,
+            ),
+            _debug_column(
+                "fx_k2s_inv",
+                self.fx_k2s_inv,
+                dtype=pl.Int8(),
+                sentinel=None,
+                copy=copy,
+            ),
+            # CURVES
+            _debug_column(
+                "disc_und_id",
+                self.under_discount_curve_ids,
+                dtype=pl.Int64(),
+                sentinel=no_id,
+                copy=copy,
+            ),
+            _debug_column(
+                "disc_k_id",
+                self.strike_discount_curve_ids,
+                dtype=pl.Int64(),
+                sentinel=no_id,
+                copy=copy,
+            ),
+            # DATES
+            _debug_date_column(
+                "settle_date", self.settle_ord, sentinel=int(NO_DATE_ORD32)
+            ),
+            _debug_date_column(
+                "delivery_date", self.delivery_ord, sentinel=int(NO_DATE_ORD32)
+            ),
+            _debug_date_column(
+                "expiry_date", self.expiry_ord, sentinel=int(NO_DATE_ORD32)
+            ),
+            # VOL
+            _debug_column(
+                "vol_surface_y_axis_type_id",
+                self.vol_surface_y_axis_type_ids,
+                dtype=pl.Int8(),
+                sentinel=None,
+                copy=copy,
+            ),
+            # NETTING
+            _debug_column(
+                "netting_set_id",
+                self.netting_set_id,
+                dtype=pl.Int64(),
+                sentinel=no_id,
+                copy=copy,
+            ),
+        ]
+        return pl.DataFrame(columns)
 
     @property
-    def df(self) -> DataFrame:
+    def df(self) -> pl.DataFrame:
         """Convenience debug alias for to_df(copy=False)."""
         return self.to_df(copy=False)
 
