@@ -65,6 +65,10 @@ Owner decisions in force:
 - 2026-11-05 (S1 review R-002): the S1 mypy baseline reference v0.2.0 is commit 19d097a (the tag is on that commit), so the S1 mypy baseline decision is met as written.
 - 2026-11-05 (S1 review R-003): S1 also adds the two loading_sum names to src/riskquant/credit/STABLE_API.md (c004f1f), outside the S1 Files list, because S5.T4 of WS_CREDIT_VAR_API requires every __all__ name under riskquant.credit to be listed. A later slice that adds an __all__ name under riskquant.credit lists it there.
 - 2026-11-05 (S2 demo scope): the S2 full demo run covers the demo files that S2 changes (demo_full.py, demo_spot_rc_end_to_end.py); the 15 credit_var demos, which S2 does not change, get the demo import smoke, and the print_df branch for non-Polars objects is covered by a unit test.
+- 2026-11-05 (S2 review Q1 (b)): the S2 review depth is FULL, not QUICK. S2 changes the return type of IngestBatch.to_df and .df and the accepted types of print_df and print_dict_of_dfs, and supersedes D096; REVIEWER.md section 12 refuses QUICK for these. The QUICK line of section 6 was an owner planning error.
+- 2026-11-05 (S2 review Q2 (a)): O-2 (b) and the FROZEN P-CREDIT_POLARS-001 clause 4 are the authority for the D096 supersession until closure, where the owner promotes P-CREDIT_POLARS-001 and records the supersession in DECISIONS.md (same rule as OD-2 (a); WS_CREDIT_VAR_API precedent, D106). A divergence from D096 before closure is not a finding.
+- 2026-11-05 (S2 review OD-1 (a)): the rc demo gate of S2 is met by the owner NOTE of gate_output_CP_S2.txt: the demo stops at line 204 in files that S2 does not change; S2.T2 and the reviewer probe cover the line 212 .df print. The line 204 defect goes to WS_PANDAS_REMOVAL (backlog).
+- 2026-11-05 (S3 demo scope): the S3 full demo run covers the 2 demo files that S3 changes (demo_e2e_cem_trade_to_exposure.py, demo_e2e_saccr_trade_to_exposure.py); the 15 credit_var demos, which S3 does not change, get the demo import smoke (scripts/tools/demo_import_smoke.py).
 
 Depends on: WS_CREDIT_VAR_API (CLOSED; D106, D107).
 Blocks: WS_PANDAS_REMOVAL.
@@ -242,8 +246,8 @@ Prohibited: `src/riskquant/credit/**`; `src/riskquant/market_data/**`; `src/risk
 Attach: docs/workstreams/WS_CREDIT_POLARS.md ; docs/CLAUDE.md ; docs/DECISIONS.md ; context_riskquant_index.txt ; context_riskquant_utils.txt ; context_riskquant_config.txt ; context_riskquant_portfolio.txt ; context_riskquant_tests_portfolio.txt ; context_riskquant_tests_utils.txt ; _gates/demo_import_smoke.py
 Gates: gate block; `$t = "tests/utils", "tests/portfolio", "tests/config"`; demo full over `scripts/demos/config/static_config/demo_full.py`, `scripts/demos/credit/rc/demo_spot_rc_end_to_end.py` and the 15 credit_var demos; `python scripts/tools/demo_import_smoke.py`.
 Exit: every S2 test passes; full suite passes; `utils/dataframes.py` is absent; `grep -n "pandas" src/riskquant/portfolio/ingest/batch.py src/riskquant/utils/printer.py src/riskquant/config/static_config/audit.py` returns docstring hits only.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: commit 3a6e5d6 (base e385a57); gate_output_CP_S2.txt: ruff check and format --check exit 0; mypy new files and audit.py Success; mypy baseline printer.py, batch.py 13 errors against 15 at e385a57, no new message; S2 files 21 passed; slice 329 passed; full 8052 passed, 37 skipped; demo_full.py exit 0; demo_import_smoke.py (15 credit_var demos) exit 0; exit grep docstring hits only; utils/dataframes.py absent. rc demo: stops at line 204 outside the S2 files (owner NOTE); the line 212 .df print is covered by S2.T2. Review: FULL (owner Q1 (b) replaces the QUICK line of section 6), ACCEPT; R-001 to R-003 P2 backlog.
 
 | Id | Case | Expected | Defect caught |
 |---|---|---|---|
@@ -370,6 +374,14 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - Gate output records `ruff --version` from .venv in every slice (S1 review R-001).
 - loading_sum_sq is a Python loop: about 0.84 s per 1e6 loading rows against 0.08 s for pandas (S1 review A-2, reviewer sandbox); cost per run, not per scenario. The Numba backlog item above covers it.
 - validate.py casts uids with to_numpy(dtype=np.int64); a uint64 uid >= 2**63 wraps without an error in the message uid list (S1 review A-3). S5 rewrites validate.py and states the uid dtype rule.
+- tests/portfolio/test_pandas_free_boundary.py:_BLOCKED_PANDAS_CHILD copies the module import block into the child code string (duplicate and unused imports); keep only the imports that the child uses (S2 review R-001).
+- utils/printer.py:_format_numeric_columns formats every row before the max_rows cap (3.16 s for 200,000 x 10, reviewer sandbox); format only the displayed rows (S2 review R-002).
+- scripts/demos/config/static_config/demo_full.py lines 38-39: the comment says print_dict_of_dfs is pandas-typed; C.13 makes it false (S2 review R-003).
+- WS_PANDAS_REMOVAL: portfolio/ingest/compile.py lines 643-645 truncate the fallback currency of an all-null strike_ccy to 1 character (<U1) (S2 review A-1, reported in the S2 implementer sandbox).
+- WS_PANDAS_REMOVAL: D063 refuses SPOT fixture uid 11 (USD_LIBOR_3M[10Y]) (S2 review A-2).
+- config/static_config/audit.py: the holiday calendar row order depends on the hash seed (S2 review A-3, Observed in the gate log).
+- WS_PANDAS_REMOVAL: scripts/demos/credit/rc/demo_spot_rc_end_to_end.py stops at line 204 in canonicalize (unknown VANILLA_IRS columns of the exhaustive fixture) (S2 review A-4).
+- utils/printer.py:print_df does not pin tbl_formatting; configure_polars_display sets ASCII, and the S2.T1 and S2.T3 parsers need the default UTF8 table (S2 review A-5).
 
 ## 8. Closure record
 
