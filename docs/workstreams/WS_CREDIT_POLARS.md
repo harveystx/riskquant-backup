@@ -60,6 +60,11 @@ Owner decisions in force:
 - 2026-11-05 (S5, non-finite total): finite loadings whose squares overflow can give a NaN total (for example [1e154, 1e154, 1e154]: inf + (-inf)); the engine check `total > bound` then admits the obligor. S5 changes the engine admission so that a total that is not finite rejects the obligor, and S5.T3 adds that case. Rule 14 is not exposed (loadings in [-1, 1]).
 - 2026-11-05 (S1 mypy baseline): validate.py has 15 mypy errors in untyped functions that exist at 19d097a, on lines that S1 does not change. The S1 mypy gate accepts exactly these 15 errors when the same 15 appear at 19d097a; S5, which rewrites validate.py, removes them.
 - 2026-11-05 (S1 imports): S1 adds the imports that its new calls need (schemas.py: numpy and loading_sum_sq; test_request_contract.py: pathlib.Path).
+- 2026-11-05 (S1 review OD-1 (b)): the Revision 4 line "S5, non-finite total" is withdrawn. Its premise is false: with the C.5 compensation reset the compensation is always finite, so a total is finite or +inf, and `total > bound` already rejects +inf (reviewer sandbox: loading_sum_sq([1e154]*3) = inf, as pandas 3.0.6; 0 NaN totals in 200,000 overflow-scale inputs). An S5.T3 case on it could not fail. S5 adds no such rule.
+- 2026-11-05 (S1 review OD-2 (a)): the D106 pins line keeps `pandas>=2.0,<3.1` in DECISIONS.md until closure of this workstream; pyproject.toml states `pandas>=2.0` from S1. The owner edits the pins line at closure (P-CREDIT_POLARS-001 clause 2).
+- 2026-11-05 (S1 review R-002): the S1 mypy baseline reference v0.2.0 is commit 19d097a (the tag is on that commit), so the S1 mypy baseline decision is met as written.
+- 2026-11-05 (S1 review R-003): S1 also adds the two loading_sum names to src/riskquant/credit/STABLE_API.md (c004f1f), outside the S1 Files list, because S5.T4 of WS_CREDIT_VAR_API requires every __all__ name under riskquant.credit to be listed. A later slice that adds an __all__ name under riskquant.credit lists it there.
+- 2026-11-05 (S2 demo scope): the S2 full demo run covers the demo files that S2 changes (demo_full.py, demo_spot_rc_end_to_end.py); the 15 credit_var demos, which S2 does not change, get the demo import smoke, and the print_df branch for non-Polars objects is covered by a unit test.
 
 Depends on: WS_CREDIT_VAR_API (CLOSED; D106, D107).
 Blocks: WS_PANDAS_REMOVAL.
@@ -211,8 +216,8 @@ Prohibited: `builders/*`; every other pandas use of validate.py (S5); `pandas-st
 Attach: docs/workstreams/WS_CREDIT_POLARS.md ; docs/CLAUDE.md ; docs/DECISIONS.md ; context_riskquant_index.txt ; context_riskquant_credit.txt ; context_riskquant_solutions_credit_var.txt ; context_riskquant_tests_credit.txt ; context_riskquant_tests_solutions_credit_var.txt ; pyproject.toml
 Gates: gate block; `$t = "tests/credit/jtd", "tests/solutions/credit_var"`; demo smoke. Then, in a second environment with the latest pandas 3.1.x (record `pandas.__version__`): `pytest $t -q` and `pytest -q`, raw output. STOP AND ASK for a failure outside the S1 Files under pandas 3.1.x.
 Exit: every S1 test passes in both environments; full suite passes in both environments; `grep -n "groupby" src/riskquant/credit/jtd/ingest/validate.py src/riskquant/solutions/credit_var/schemas.py` returns no hit.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: S1 review ACCEPT 2026-11-05 at c004f1f. gate_output_S1.txt (.venv: pandas 3.0.3, numpy 2.4.6, scipy 1.17.1, numba 0.66.0): ruff check and format exit=0; mypy 5 files Success; validate.py 15 errors identical to v0.2.0 (= 19d097a); slice 610 passed, 1 skipped; full 8036 passed, 37 skipped; S1 Exit grep no hit; S1 files 41 passed and demo smoke exit=0 at 1cfb5bc. gate_output_S1_p31.txt (.venv-p31: pandas 3.1.1): slice 610 passed, 1 skipped; full 8036 passed, 37 skipped. Goldens recorded at v0.2.0 with pandas 3.0.3 (1cfb5bc). Review: R-001 to R-003 P2, recorded in section 1 and the backlog.
 
 | Id | Case | Expected | Defect caught |
 |---|---|---|---|
@@ -362,6 +367,9 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - A Numba `njit` version of the C.5 function: opens when a benchmark shows the Python loop above 1 ms per 10,000 loading rows.
 - A polars upper bound in pyproject.toml: opens on the first polars 2.x incompatibility.
 - The C.4 golden ties to one numpy, scipy and numba triple; a version change needs a new record by owner decision.
+- Gate output records `ruff --version` from .venv in every slice (S1 review R-001).
+- loading_sum_sq is a Python loop: about 0.84 s per 1e6 loading rows against 0.08 s for pandas (S1 review A-2, reviewer sandbox); cost per run, not per scenario. The Numba backlog item above covers it.
+- validate.py casts uids with to_numpy(dtype=np.int64); a uint64 uid >= 2**63 wraps without an error in the message uid list (S1 review A-3). S5 rewrites validate.py and states the uid dtype rule.
 
 ## 8. Closure record
 
