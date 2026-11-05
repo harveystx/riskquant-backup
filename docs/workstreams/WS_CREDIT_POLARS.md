@@ -3,8 +3,8 @@
 Path: docs/workstreams/WS_CREDIT_POLARS.md
 Class: HEAVY
 Status: FROZEN
-Revision: 3
-Revision note: Owner decision of 2026-11-05 on R_FREEZE_RECONCILIATION_R1.md under the tripwire (option: descope): v1 keeps S1 to S6; the market-risk edge, the test-tree sweep and the dependency removal move to WS_PANDAS_REMOVAL; B-1 to B-8 and R-1 to R-17 applied as decided; no audit round 2; the owner freezes this revision by explicit decision.
+Revision: 4
+Revision note: Owner decision of 2026-11-05 (S1 implementer finding): C.5 states the pandas 3.0.x compensation reset and the non-finite input guard; the non-finite total admission defect goes to S5. Revision 3 was frozen by owner decision. No audit round.
 Date: 2026-11-05
 Branch: ws/credit-polars
 Snapshot: SNAPSHOT commit=19d097a dirty=false content_hash=c00f240898f32d74. The index read by the round 1 audit shows commit=1ae80e3 with the same content_hash; the two snapshots hold the same content.
@@ -56,6 +56,10 @@ Owner decisions in force:
 - 2026-11-05 (B-2, B-3, B-7, R-1 to R-8, R-11 to R-16): applied as the report states, where they concern S1 to S6.
 - 2026-11-05 (P-CREDIT_POLARS-001): keeps only the clauses that v1 delivers.
 - 2026-11-05 (freeze): the owner freezes Revision 3 by explicit decision under the tripwire, with no audit round 2; round 1 covered every clause that v1 keeps. Accepted deviations of the Revision 3 author: the change list stays outside the file (WS_TEMPLATE 1.3); C.12 admits CreditExposureRequest.from_dataframe cells by dtype, as C.11 does; the S1 gate also runs under pandas 3.1.x; the C.4 request set is named Q; A_INVENTORY.md stays at Revision 1. The S1 golden records are made on the owner machine with a recorder tool outside the repository (_gates), on a v0.2.0 worktree.
+- 2026-11-05 (S1, C.5 reset and guard; Revision 4): the C.5 function applies the pandas 3.0.x reset of a non-finite compensation to 0.0, and raises ValueError for a NaN or infinite loading. Reason (S1 implementer, Observed in the sandbox): without the reset, loadings [1e154, 1e154, 0.1] give NaN and the obligor is admitted; pandas 3.0.6 gives inf and rejects it; with the reset the function equals pandas 3.0.6 bit for bit on 20,000 near-bound groups. The guard is stricter than pandas, on a path that no caller reaches.
+- 2026-11-05 (S5, non-finite total): finite loadings whose squares overflow can give a NaN total (for example [1e154, 1e154, 1e154]: inf + (-inf)); the engine check `total > bound` then admits the obligor. S5 changes the engine admission so that a total that is not finite rejects the obligor, and S5.T3 adds that case. Rule 14 is not exposed (loadings in [-1, 1]).
+- 2026-11-05 (S1 mypy baseline): validate.py has 15 mypy errors in untyped functions that exist at 19d097a, on lines that S1 does not change. The S1 mypy gate accepts exactly these 15 errors when the same 15 appear at 19d097a; S5, which rewrites validate.py, removes them.
+- 2026-11-05 (S1 imports): S1 adds the imports that its new calls need (schemas.py: numpy and loading_sum_sq; test_request_contract.py: pathlib.Path).
 
 Depends on: WS_CREDIT_VAR_API (CLOSED; D106, D107).
 Blocks: WS_PANDAS_REMOVAL.
@@ -101,7 +105,7 @@ Results (S1 to S6). R is `pydantic.ValidationError` and E is `CreditVarEngineErr
 - C.4 For the request set Q, the JSON of `run_credit_var` without `provenance.generated_at` and `provenance.engine_version` (F-27) is byte-equal to the record made at tag v0.2.0. Q is `test_result_contract.py:_book(key)` for each key of `_BOOK_KEYS` (F-29), plus mf_gaussian with one obligor at sum(loading^2) = 1 + 0.5e-9 (the WS_CREDIT_VAR_API S2.T6 accepted case). The record stores `numpy_version`, `scipy_version` and `numba_version` of `RunProvenance`; the test compares only when the runtime versions equal the recorded versions, and otherwise fails with a message that names each difference (D-C15). [Proposed] Test: S1.T3; the full suite of S2 to S6 runs it
 
 Loading sum (S1):
-- C.5 One function in `src/riskquant/credit/jtd/ingest/loading_sum.py` (O-4) computes the per-obligor loading sum of squares for admission. Input: `obligor_uid` int64 (n,), `loading` float64 (n,), in row order. Per uid the state (total, compensation) starts at (0.0, 0.0); for each row y = x * x - compensation, t = total + y, compensation = (t - total) - y, total = t. Output: the running total after each row (n,), the uids in first-seen order and their final totals. The bound comparison stays in the callers. `validate.py:_semantic_mf_gaussian` and `schemas.py:_check_loading_sum_sq` call this function and hold no other summation of loading squares. The engine caller reports the rejected uids in ascending order (F-28). `builders/mf_gaussian.py` and `builders/mf_students_t.py` keep `np.add.reduceat` (F-7). [Proposed] Test: S1.T1, S1.T2, S1.T4
+- C.5 One function in `src/riskquant/credit/jtd/ingest/loading_sum.py` (O-4) computes the per-obligor loading sum of squares for admission. Input: `obligor_uid` int64 (n,), `loading` float64 (n,), in row order. Per uid the state (total, compensation) starts at (0.0, 0.0); for each row y = x * x - compensation, t = total + y, compensation = (t - total) - y, total = t; when the compensation is not finite it is set to 0.0 (the pandas 3.0.x group_sum rule, GH#53606, GH#60303). A NaN or infinite loading raises ValueError: both callers admit finite loadings only. Output: the running total after each row (n,), the uids in first-seen order and their final totals. The bound comparison stays in the callers. `validate.py:_semantic_mf_gaussian` and `schemas.py:_check_loading_sum_sq` call this function and hold no other summation of loading squares. The engine caller reports the rejected uids in ascending order (F-28). `builders/mf_gaussian.py` and `builders/mf_students_t.py` keep `np.add.reduceat` (F-7). [Proposed] Test: S1.T1, S1.T2, S1.T4
 - C.6 The function output equals, under `float.hex()`, the pandas `groupby().sum()` record made with pandas 3.0.x on the owner machine for 2,000 groups near 1 + 1e-9, including groups whose rows in two orders give two different totals. [Proposed] Test: S1.T1
 - C.18 After S1, pyproject.toml declares `pandas>=2.0` with no upper bound; `pandas-stubs>=2.0` does not change. No test or src code compares a value with the pandas group sum. [Proposed] Test: S1.T5, S1.T6; S1 gate under pandas 3.1.x
 
@@ -137,7 +141,9 @@ dtype rules of the credit edge, and the IngestBatch debug adapter.
    polars.DataFrame tables and admit columns by dtype (C.11, C.12).
 2. The per-obligor loading sum of squares that admits or rejects a book is one
    function (C.5). Its arithmetic is the Kahan compensated sum in row order that
-   pandas 2.2.3 to 3.0.x used in groupby().sum(). The engine admission check and
+   pandas 3.0.x used in groupby().sum(), including its reset of a non-finite
+   compensation to 0.0 (pandas 2.2.3 resets on NaN only and differs only for
+   overflowing squares). The engine admission check and
    the credit_var request rule 14 both call it. The builder sum that gives
    idio_weight is np.add.reduceat and does not change. The pins line of D106
    reads pandas>=2.0 (no upper bound) until WS_PANDAS_REMOVAL.
