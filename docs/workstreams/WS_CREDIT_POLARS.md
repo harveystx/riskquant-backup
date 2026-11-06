@@ -304,8 +304,8 @@ Prohibited: `credit/jtd/**` (S5); `run._loadings_frame`; `recipes._mf_universe_a
 Attach: docs/workstreams/WS_CREDIT_POLARS.md ; docs/workstreams/WS_CREDIT_POLARS/A_INVENTORY.md ; docs/CLAUDE.md ; docs/DECISIONS.md ; context_riskquant_index.txt ; context_riskquant_credit.txt ; context_riskquant_solutions_credit_var.txt ; context_riskquant_ingest_fixtures.txt ; context_riskquant_tests_credit.txt ; context_riskquant_tests_solutions_credit_var.txt
 Gates: gate block; `$t = "tests/credit", "tests/solutions/credit_var"`; demo full over the 12 changed JTD demos and the 15 credit_var demos.
 Exit: every S4 test passes; full suite passes; S1.T3 passes unchanged.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: S4+S5 review ACCEPT 2026-11-06 at 620d710 (fix round, base a0287af; S4+S5 delivery a0287af, base f3a2f34). gate_output_CP_S45.txt at a0287af (.venv: polars 1.42.1, pandas 3.0.3, numpy 2.4.6, scipy 1.17.1, numba 0.66.0, ruff 0.15.21): format exit 0 (51 files); ruff 21 messages against 32 at f3a2f34, no new message; mypy 4 errors against 19, no new message; S4+S5 files 112 passed; slice 941 passed, 1 skipped; full 8234 passed, 37 skipped; 12 JTD demos full exit 0; demo import smoke 15 and 12. gate_output_CP_S45_fix.txt at 620d710: ruff and format exit 0 (2 files); mypy recipes.py Success; S4+S5 files 115 passed; slice 944 passed, 1 skipped (S1.T3 against the owner record); full 8237 passed, 37 skipped; demo import smoke 15 of 15. C.9 records made at v0.2.0 by the owner with _gates/record_s45_goldens.py (exit 0). Review: FULL; R-001 (OD-1 (a)), R-002 (fix round) and R-003 (OD-2 (a)) closed; backlog R-004, R-005, A-1.
 
 | Id | Case | Expected | Defect caught |
 |---|---|---|---|
@@ -327,8 +327,8 @@ Prohibited: the `np.add.reduceat` lines and the CSR packing of `builders/mf_gaus
 Attach: docs/workstreams/WS_CREDIT_POLARS.md ; docs/workstreams/WS_CREDIT_POLARS/A_INVENTORY.md ; docs/CLAUDE.md ; docs/DECISIONS.md ; context_riskquant_index.txt ; context_riskquant_credit.txt ; context_riskquant_solutions_credit_var.txt ; context_riskquant_ingest_fixtures.txt ; context_riskquant_tests_credit.txt ; context_riskquant_tests_solutions_credit_var.txt
 Gates: gate block; `$t = "tests/credit", "tests/solutions/credit_var"`; `python scripts/tests/credit/jtd/test_ingest_bundle_validation.py`; demo full over the 12 changed JTD demos and the 15 credit_var demos.
 Exit: every S5 test passes; full suite passes; S1.T3 passes unchanged; `grep -rln "import pandas" src/riskquant/credit src/riskquant/solutions/credit_var` returns only `solutions/credit_var/schemas.py`.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: S4+S5 review ACCEPT 2026-11-06 at 620d710 (fix round, base a0287af; S4+S5 delivery a0287af, base f3a2f34). gate_output_CP_S45.txt at a0287af (.venv: polars 1.42.1, pandas 3.0.3, numpy 2.4.6, scipy 1.17.1, numba 0.66.0, ruff 0.15.21): format exit 0 (51 files); ruff 21 messages against 32 at f3a2f34, no new message; mypy 4 errors against 19, no new message; S4+S5 files 112 passed; slice 941 passed, 1 skipped; full 8234 passed, 37 skipped; 12 JTD demos full exit 0; demo import smoke 15 and 12. gate_output_CP_S45_fix.txt at 620d710: ruff and format exit 0 (2 files); mypy recipes.py Success; S4+S5 files 115 passed; slice 944 passed, 1 skipped (S1.T3 against the owner record); full 8237 passed, 37 skipped; demo import smoke 15 of 15. C.9 records made at v0.2.0 by the owner with _gates/record_s45_goldens.py (exit 0). Review: FULL; R-001 (OD-1 (a)), R-002 (fix round) and R-003 (OD-2 (a)) closed; backlog R-004, R-005, A-1. S5 also: scripts test "ALL STRUCTURAL VALIDATION TESTS PASS" exit 0 at a0287af and at 620d710; S5 Exit grep only src/riskquant/solutions/credit_var/schemas.py at a0287af and at 620d710; validate.py mypy errors 15 to 0 (S1 mypy baseline decision met); S5.T2 and S5.T3 records made at v0.2.0 (pandas 3.0.3) by the owner recorder.
 
 | Id | Case | Expected | Defect caught |
 |---|---|---|---|
