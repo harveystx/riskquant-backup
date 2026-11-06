@@ -2,17 +2,17 @@
 
 Path: docs/workstreams/WS_CREDIT_POLARS.md
 Class: HEAVY
-Status: FROZEN
+Status: CLOSED
 Revision: 4
 Revision note: Owner decision of 2026-11-05 (S1 implementer finding): C.5 states the pandas 3.0.x compensation reset and the non-finite input guard; the non-finite total admission defect goes to S5. Revision 3 was frozen by owner decision. No audit round.
 Date: 2026-11-05
 Branch: ws/credit-polars
 Snapshot: SNAPSHOT commit=19d097a dirty=false content_hash=c00f240898f32d74. The index read by the round 1 audit shows commit=1ae80e3 with the same content_hash; the two snapshots hold the same content.
 Drafted by: investigator
-Independent review: PENDING (round 1 NOT READY; the owner freezes Revision 3 without round 2, decision 2026-11-05)
+Independent review: freeze round 1 NOT READY, Revision 3 frozen by owner decision (2026-11-05); slice reviews S1 to S6 ACCEPT (S2 to S6 at FULL depth)
 Audit rounds used: 1 of 2
-Code merged: no
-DECISIONS.md reconciled: NO
+Code merged: yes
+DECISIONS.md reconciled: YES (D108; D096 superseded; D106 pins line)
 Evidence limits: No repository gate, test, demo or benchmark ran. Code facts come from the 19d097a profiles (src, scripts, lab) rebuilt in the investigator sandbox. Facts F-21 to F-29 come from R_FREEZE_RECONCILIATION_R1.md, which read context_riskquant_tests_credit.txt and context_riskquant_tests_solutions_credit_var.txt; the drafter did not read those profiles. Other tests profiles were read by no chat; each slice has a FIRST step with STOP AND ASK. Facts marked "sandbox" ran with Python 3.12.3, numpy 2.5.4, polars 2.1.0, pandas 3.0.6, and venvs with pandas 2.2.3, 3.0.2 and 3.1.1; numba and pydantic were not installed, so no engine ran. The v0.2.0 tag is not visible in the snapshot; the WS_CREDIT_VAR_API closure record names it. riskquant-emissary and riskquant-excel were not read.
 
 ## 1. Goal and scope
@@ -81,6 +81,11 @@ Owner decisions in force:
 - 2026-11-05 (S4+S5 review OD-1 (a), amends the last sentence of C.7): the S3 OD-1 rule extends to the validate.py checks: a required column of dtype pl.Null raises TypeError; every other refusal keeps the v0.2.0 exception type (ValueError). One pl.Null rule then covers the request edge, the C.8 readers and JTD admission. Reason: at v0.2.0 an all-None pandas column was an object column with isna True (ValueError); a pl.Null column has no value dtype.
 - 2026-11-05 (S4+S5 review OD-2 (a)): "loading_sum.py and its call sites" in the S4 and S5 Prohibited lists protects the call, the values and row order of its arguments, and the bound arithmetic; the frame reads that produce the arguments move to Polars (the S5 Exit grep and C.7 require it). S1.T2 and the S5.T3 records prove the equal values.
 - 2026-11-05 (S4+S5 review R-002): a NaN cell in a Float64 rho column means no explicit rho for that obligor, as a null cell does (B-5, B-8); fix round of S4 in recipes._per_obligor_rho with an S4.T4 case.
+- 2026-11-06 (O-6 result): riskquant-excel (prod b5b5e07) imports only riskquant.solutions.credit_var.api names and calls no from_dataframe and no internal entry; riskquant-emissary (prod 072cf20) has no credit_var use. No consumer impact; 0.2.1 under D106.2 holds.
+- 2026-11-06 (S6 review OD-1 (a)): the group and factor columns of CreditVarRequest.from_dataframe admit pl.Utf8 only in v1 (C.11); B-8 (Utf8, Categorical, Enum) covers the C.7 JTD factor names only. Categorical and Enum for from_dataframe stay in the backlog.
+- 2026-11-06 (S6 review OD-2 (a)): the owner writes the 0.2.1 release note at closure (the D entry and the tag annotation); it names pl.from_pandas as the conversion path.
+- 2026-11-06 (S6 review OD-3): accepted deviations: tests/solutions/credit_var/test_polars_edge_contract.py created outside the S6 Files list (S3, S4+S5 precedent); the S6.T4 metadata assertion in that file; print_df(index=False) in the two mf_* demos (factor is a column).
+- 2026-11-06 (closure): all slices S1 to S6 VALIDATED; P-CREDIT_POLARS-001 locked as D108; D096 superseded; the D106 pins line reads pandas>=2.0; release 0.2.1; Status CLOSED.
 
 Depends on: WS_CREDIT_VAR_API (CLOSED; D106, D107).
 Blocks: WS_PANDAS_REMOVAL.
@@ -150,7 +155,7 @@ Release (S6):
 
 Decisions relied on: D001, D002, D006, D094, D095, D096, D097, D098, D100, D106, D107, D-C15. Each checked against `DECISIONS.md`: yes (text at 19d097a; R1 section B).
 
-### P-CREDIT_POLARS-001: Credit edge on Polars and one admission loading sum (PROPOSED)
+### P-CREDIT_POLARS-001: Credit edge on Polars and one admission loading sum (LOCKED as D108, 2026-11-06)
 
 ```text
 Related: D006, D094, D095, D096 (superseded), D098, D100, D106 (pins line), D-C15
@@ -349,8 +354,8 @@ Prohibited: every other `schemas.py` member; `api.py` names; result models; the 
 Attach: docs/workstreams/WS_CREDIT_POLARS.md ; docs/CLAUDE.md ; docs/DECISIONS.md ; context_riskquant_index.txt ; context_riskquant_solutions_credit_var.txt ; context_riskquant_lab.txt ; context_riskquant_tests_solutions_credit_var.txt ; context_riskquant_tests_credit.txt ; context_riskquant_scripts.txt (the 15 credit_var demos only) ; pyproject.toml
 Gates: gate block; `$t = "tests/solutions/credit_var", "tests/credit"`; demo full over the 15 credit_var demos; `pip install -e .` and `python -c "import importlib.metadata as m; print(m.version('riskquant'))"`, raw output of both.
 Exit: every S6 test passes; full suite passes; 15 of 15 demos exit=0; WS_CREDIT_VAR_API S5.T1 and S5.T2 pass unchanged; installed version prints 0.2.1.
-Status: NOT_STARTED
-Evidence: none
+Status: VALIDATED
+Evidence: S6 review ACCEPT 2026-11-06 at 1224f92 (base 60e2181). gate_output_CP_S6.txt (.venv: riskquant 0.2.1, polars 1.42.1, pandas 3.0.3, numpy 2.4.6, scipy 1.17.1, numba 0.66.0, pydantic 2.13.4, ruff 0.15.21): pyproject version 0.2.1, pandas>=2.0; ruff and format exit 0 (24 files); mypy 27 errors in 4 test files against 27 at 60e2181, no new message; S6 file 53 passed; slice 997 passed, 1 skipped; full 8290 passed, 37 skipped; Exit grep (credit, solutions/credit_var, solutions/credit_exposure, ingest_fixtures/credit) no hit; demo import smoke 15 of 15; 15 credit_var demos full exit 0; S6.T4 metadata 0.2.1. O-6: riskquant-excel b5b5e07 and riskquant-emissary 072cf20 have no from_dataframe caller. Accepted deviations: tests/solutions/credit_var/test_polars_edge_contract.py (created), S6.T4 in that file, print_df index=False in the two mf_* demos. Review: FULL; R-001, R-002 P2 backlog.
 
 | Id | Case | Expected | Defect caught |
 |---|---|---|---|
@@ -403,22 +408,31 @@ Backlog (REFINEMENT findings and items that v1 omits):
 - credit/masters/{obligors,netting_set,factor_universe}/ingest.py, credit/exposure/{obligor_ead,saccr}/ingest.py and solutions/credit_var/recipes.py import the private C.8 readers of credit/exposure/add_on/ingest.py; move them to one shared private module (S4+S5 review R-004, Q5).
 - WS_PANDAS_REMOVAL: tests/credit/masters/test_polars_edge_contract.py and tests/credit/jtd/test_polars_edge_contract.py import pandas at module level for the negative cases (S4+S5 review R-005).
 - ingest_fixtures/credit/credit_factors/minimal_factor_data.py: the frames hold the date in a date column in place of the pandas index; script consumers are not checked (S4+S5 review A-1).
+- WS_PANDAS_REMOVAL: tests/solutions/credit_var/test_polars_edge_contract.py:_wrong_tables runs pytest.importorskip("pandas") for every S6.T1 case, so the LazyFrame and dict cases skip without pandas; only the pandas case may depend on pandas (S6 review R-001).
+- Gate logs print each command line and the raw pip install output (S6 review R-002).
+- CreditVarRequest.from_dataframe ignores in_stress_test and force_default columns without an error (v0.2.0 behavior, "extra columns are ignored"; S6 review A-1).
 
 ## 8. Closure record
 
-Fill this section when the status becomes CLOSED. Leave no placeholder.
-
 | Item | Value |
 |---|---|
-| Final commit | |
-| Release tag | |
-| Decisions locked | |
-| Independent validation | |
+| Final commit | Branch head merged into prod: the commit that adds this record (its parent is 1224f92, the S6 commit, or the S6 status commit after it), dirty=false. Last code commit: 1224f92. |
+| Release tag | v0.2.1 on the prod merge commit; prod_20261106_1433 on prod before the merge (rollback point) |
+| Decisions locked | D108 (credit edge on Polars and one admission loading sum; promotes P-CREDIT_POLARS-001); D096 superseded by D108; D106 pins line edited to pandas>=2.0 |
+| Independent validation | Freeze round 1 (NOT READY) and owner freeze of Revision 3 (2026-11-05). Slice reviews ACCEPT: S1 (c004f1f, FULL), S2 (3a6e5d6, FULL), S3 (97cadac, FULL, fix round), S4 and S5 (620d710, FULL, one delivery and fix round), S6 (1224f92, FULL). |
 
 Delivered:
--
+- riskquant 0.2.1: the credit edge on Polars. No module under credit, solutions/credit_var, solutions/credit_exposure or ingest_fixtures/credit imports pandas (S6 Exit grep). The D106.1 surface, the C.4 results and the golden schemas do not change.
+- One admission loading sum (S1, loading_sum.py) bit-equal to the v0.2.0 pandas 3.0.x group sum; the pandas <3.1 cap removed; the suite passes under pandas 3.1.1 (S1 second environment).
+- Utilities (S2): print_df and print_dict_of_dfs on Polars with a legacy branch; IngestBatch.to_df and .df return polars.DataFrame (D096 superseded); the config audit on Polars; utils/dataframes.py removed; scripts/tools/demo_import_smoke.py.
+- Credit exposure chain (S3), credit masters and obligor EAD (S4), JTD ingest (S5) and from_dataframe (S6) on Polars, with v0.2.0 records made by owner recorders and dtype admission that refuses bool, Decimal, str and overflow cells.
+- Evidence: owner full suite at 1224f92 8290 passed, 37 skipped; 15 credit_var demos and 12 JTD demos exit 0.
+- Release note 0.2.1: CreditVarRequest.from_dataframe and CreditExposureRequest.from_dataframe accept polars.DataFrame only; convert a pandas frame with pl.from_pandas (needs pyarrow for string columns) or build the frame in Polars. IngestBatch.to_df and .df return polars.DataFrame.
 
 Deferred:
--
+- WS_PANDAS_REMOVAL (follow-up): the market-risk edge (RiskFactorMatrix and snapshots, O-7), the remaining pandas importers, the test-tree sweep, the removal of pandas and pandas-stubs from pyproject.toml, and the enforcement test; the section 7 items marked WS_PANDAS_REMOVAL (rc demo line 204, compile.py strike_ccy truncation, SPOT uid 11, module-level pandas imports of the new test files).
+- Section 7 backlog, as listed there, with the PRIORITY item first: allow_inf_nan=False for the credit_exposure request models before an external client uses credit_exposure.
+- Categorical and Enum for the group and factor columns of CreditVarRequest.from_dataframe (S6 review OD-1).
+- polars 2.x compatibility and an upper bound (owner environment polars 1.42.1).
 
 Open work: none
