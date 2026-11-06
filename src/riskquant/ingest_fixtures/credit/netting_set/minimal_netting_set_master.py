@@ -17,7 +17,7 @@ netting-set-to-obligor mappings across the full PD spectrum.
 
 from __future__ import annotations
 
-import pandas as pd
+import polars as pl
 
 from riskquant.ingest_fixtures.credit.obligors.minimal_obligors_master import (
     CANONICAL_OBLIGOR_UIDS,
@@ -65,7 +65,7 @@ CANONICAL_NETTING_SET_MASTER_INGEST_DATA: NettingSetMasterIngestData = _get_data
 
 validate_column_lengths(CANONICAL_NETTING_SET_MASTER_INGEST_DATA)
 
-CANONICAL_NETTING_SET_MASTER_INGEST_DF = pd.DataFrame(
+CANONICAL_NETTING_SET_MASTER_INGEST_DF = pl.DataFrame(
     CANONICAL_NETTING_SET_MASTER_INGEST_DATA
 )
 

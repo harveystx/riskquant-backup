@@ -173,6 +173,7 @@ import time
 
 import numpy as np
 import pandas as pd
+import polars as pl
 
 from riskquant.constants import RNG_SEED
 from riskquant.credit.factors.simulate.base import build_credit_factor_matrix
@@ -294,17 +295,15 @@ def run_demo() -> None:
     obligor_uids = np.arange(1, NUM_OBLIGORS + 1, dtype=np.int64)
     rng.shuffle(obligor_uids)  # Shuffle to prove the compiler sorts it
 
-    obligor_df = pd.DataFrame(
-        {
-            "uid": obligor_uids,
-            "pd": rng.uniform(0.001, 0.05, NUM_OBLIGORS),
-            "lgd": rng.uniform(0.4, 0.8, NUM_OBLIGORS),
-            "rating_id": 0,
-            "sector_id": 0,
-            "country_id": 0,
-            "parent_uid": None,  # Ultimates
-        }
-    )
+    obligor_df = pl.DataFrame({
+        "uid": obligor_uids,
+        "pd": rng.uniform(0.001, 0.05, NUM_OBLIGORS),
+        "lgd": rng.uniform(0.4, 0.8, NUM_OBLIGORS),
+        "rating_id": 0,
+        "sector_id": 0,
+        "country_id": 0,
+        "parent_uid": None,  # Ultimates
+    })
 
     # The master is compiled into SoA. UIDs are strictly sorted ascending
     # to allow for lightning-fast `np.searchsorted` joins later.
@@ -353,44 +352,38 @@ def run_demo() -> None:
     # factor per obligor) rather than the minimal canonical fixture, but it
     # flows through the SAME master contract: name -> UIX resolution and chi-dof
     # reconciliation now read from `universe`, never an ad-hoc {name: i} dict.
-    factor_universe_df = pd.DataFrame(
-        {
-            "factor_id": range(len(factor_names)),
-            "factor_name": factor_names,
-            "factor_kind": [
-                "SYSTEMIC"
-                if n == "GLOBAL_CREDIT"
-                else "CHI"
-                if (n == "GLOBAL_CHI" or n.startswith("CHI_"))
-                else "UNIFORM"
-                if n.startswith("U_")
-                else "STRESS_INDICATOR"
-                if n == "GLOBAL_STRESS_REGIME"
-                else "IDIOSYNCRATIC"
-                for n in factor_names
-            ],
-            "nu": [
-                GLOBAL_T_COP_NU if (n == "GLOBAL_CHI" or n.startswith("CHI_")) else None
-                for n in factor_names
-            ],
-        }
-    )
+    factor_universe_df = pl.DataFrame({
+        "factor_id": range(len(factor_names)),
+        "factor_name": factor_names,
+        "factor_kind": [
+            "SYSTEMIC"
+            if n == "GLOBAL_CREDIT"
+            else "CHI"
+            if (n == "GLOBAL_CHI" or n.startswith("CHI_"))
+            else "UNIFORM"
+            if n.startswith("U_")
+            else "STRESS_INDICATOR"
+            if n == "GLOBAL_STRESS_REGIME"
+            else "IDIOSYNCRATIC"
+            for n in factor_names
+        ],
+        "nu": [
+            GLOBAL_T_COP_NU if (n == "GLOBAL_CHI" or n.startswith("CHI_")) else None
+            for n in factor_names
+        ],
+    })
     universe = compile_credit_factor_universe(factor_universe_df)
 
-    jtd_df = pd.DataFrame(
-        {
-            "uid": obligor_uids,  # Unsorted, matches the raw frame
-            "instrument": models,
-            "beta": rng.uniform(0.1, 0.5, NUM_OBLIGORS),
-            "systemic_factor": "GLOBAL_CREDIT",
-            "idiosyncratic_factor": [
-                f"IDIO_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)
-            ],
-            "uniform_factor": [f"U_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)],
-            "stress_regime_factor": "GLOBAL_STRESS_REGIME",
-            "stress_pd_multiplier": rng.uniform(1.25, 3.0, NUM_OBLIGORS),
-        }
-    )
+    jtd_df = pl.DataFrame({
+        "uid": obligor_uids,  # Unsorted, matches the raw frame
+        "instrument": models,
+        "beta": rng.uniform(0.1, 0.5, NUM_OBLIGORS),
+        "systemic_factor": "GLOBAL_CREDIT",
+        "idiosyncratic_factor": [f"IDIO_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)],
+        "uniform_factor": [f"U_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)],
+        "stress_regime_factor": "GLOBAL_STRESS_REGIME",
+        "stress_pd_multiplier": rng.uniform(1.25, 3.0, NUM_OBLIGORS),
+    })
 
     # Add T-Copula specific columns (pandas allows NaNs for non-applicable rows)
     chi_factors = (
@@ -408,11 +401,13 @@ def run_demo() -> None:
         + [None] * N_STRESS_REGIME_BERNOULLI
     )
 
-    jtd_df["chi_squared_factor"] = chi_factors
-    jtd_df["nu"] = nus
+    jtd_df = jtd_df.with_columns(
+        pl.Series("chi_squared_factor", chi_factors, dtype=pl.String),
+        pl.Series("nu", nus, dtype=pl.Float64),
+    )
 
     print_df(
-        jtd_df.sample(n=25, random_state=RNG_SEED),
+        jtd_df.sample(n=25, seed=RNG_SEED),
         title="Sample JTD Portfolio DataFrame (Unsorted)",
     )
 
@@ -571,20 +566,16 @@ def run_demo() -> None:
     # Explicitly joining by UID avoids subtle validation bugs.
     # ------------------------------------------------------------------
 
-    validation_df = pd.DataFrame(
-        {
-            "uid": compiled_portfolio.obligor_uids,
-            "empirical_pd": empirical_pd,
-        }
-    )
+    validation_df = pd.DataFrame({
+        "uid": compiled_portfolio.obligor_uids,
+        "empirical_pd": empirical_pd,
+    })
 
     validation_df = validation_df.merge(
-        pd.DataFrame(
-            {
-                "uid": obligor_master.uid,
-                "target_pd": obligor_master.pd,
-            }
-        ),
+        pd.DataFrame({
+            "uid": obligor_master.uid,
+            "target_pd": obligor_master.pd,
+        }),
         on="uid",
         how="inner",
     )
@@ -715,12 +706,14 @@ def run_demo() -> None:
     # ============================================================
 
     # 1. Create a fast lookup series from the raw dataframe
-    model_series = jtd_df.set_index("uid")["instrument"]
+    model_by_uid = dict(
+        zip(jtd_df["uid"].to_list(), jtd_df["instrument"].to_list(), strict=True)
+    )
 
     # 2. Align the model labels to the exact memory order of the loss matrix
-    aligned_models = model_series.loc[
-        compiled_portfolio.obligor_uids.tolist()
-    ].to_numpy()
+    aligned_models = np.array([
+        model_by_uid[int(u)] for u in compiled_portfolio.obligor_uids
+    ])
 
     # 3. Generate the boolean masks
     forced_default_mask = aligned_models == JtdModel.FORCED_DEFAULT.name

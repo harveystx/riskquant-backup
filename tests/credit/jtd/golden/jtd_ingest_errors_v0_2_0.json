@@ -1,0 +1,798 @@
+{
+ "recorded_with": {
+  "python": "3.11.9",
+  "numpy": "2.4.6",
+  "pandas": "3.0.3"
+ },
+ "cases": [
+  {
+   "id": "S01_empty_bundle",
+   "stage": "structural",
+   "slots": {},
+   "loadings": null,
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "JtdIngestBundle is empty: no per-model master frame is populated."
+  },
+  {
+   "id": "S02_missing_column",
+   "stage": "structural",
+   "slots": {
+    "independent_bernoulli_df": {
+     "uid": [
+      1,
+      2
+     ]
+    }
+   },
+   "loadings": null,
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "jtd_ingest[INDEPENDENT_BERNOULLI]: master for INDEPENDENT_BERNOULLI is missing required column(s) ['uniform_factor']. Required: ['uid', 'uniform_factor']."
+  },
+  {
+   "id": "S03_null_factor_name",
+   "stage": "structural",
+   "slots": {
+    "independent_bernoulli_df": {
+     "uid": [
+      1,
+      2
+     ],
+     "uniform_factor": [
+      "U_01",
+      null
+     ]
+    }
+   },
+   "loadings": null,
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "jtd_ingest[INDEPENDENT_BERNOULLI]: INDEPENDENT_BERNOULLI column 'uniform_factor' has 1 null value(s); per-model masters are dense by contract."
+  },
+  {
+   "id": "S04_nan_required_float",
+   "stage": "structural",
+   "slots": {
+    "stress_regime_bernoulli_df": {
+     "uid": [
+      1
+     ],
+     "uniform_factor": [
+      "U_01"
+     ],
+     "stress_regime_factor": [
+      "STRESS_GLOBAL"
+     ],
+     "stress_pd_multiplier": [
+      NaN
+     ]
+    }
+   },
+   "loadings": null,
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "jtd_ingest[STRESS_REGIME_BERNOULLI]: STRESS_REGIME_BERNOULLI column 'stress_pd_multiplier' has 1 null value(s); per-model masters are dense by contract."
+  },
+  {
+   "id": "S05_float_key",
+   "stage": "structural",
+   "slots": {
+    "independent_bernoulli_df": {
+     "uid": [
+      1.0,
+      2.0
+     ],
+     "uniform_factor": [
+      "U_01",
+      "U_02"
+     ]
+    }
+   },
+   "loadings": null,
+   "compare": "prefix",
+   "exception_type": "ValueError",
+   "message": "jtd_ingest[INDEPENDENT_BERNOULLI]: INDEPENDENT_BERNOULLI 'uid' must be an integer dtype, got float64."
+  },
+  {
+   "id": "S06_text_float_column",
+   "stage": "structural",
+   "slots": {
+    "stress_regime_bernoulli_df": {
+     "uid": [
+      1
+     ],
+     "uniform_factor": [
+      "U_01"
+     ],
+     "stress_regime_factor": [
+      "STRESS_GLOBAL"
+     ],
+     "stress_pd_multiplier": [
+      "x"
+     ]
+    }
+   },
+   "loadings": null,
+   "compare": "prefix",
+   "exception_type": "ValueError",
+   "message": "jtd_ingest[STRESS_REGIME_BERNOULLI]: STRESS_REGIME_BERNOULLI 'stress_pd_multiplier' must be numeric, got str."
+  },
+  {
+   "id": "S07_integer_factor_name",
+   "stage": "structural",
+   "slots": {
+    "independent_bernoulli_df": {
+     "uid": [
+      1,
+      2
+     ],
+     "uniform_factor": [
+      1,
+      2
+     ]
+    }
+   },
+   "loadings": null,
+   "compare": "prefix",
+   "exception_type": "ValueError",
+   "message": "jtd_ingest[INDEPENDENT_BERNOULLI]: INDEPENDENT_BERNOULLI factor-name column 'uniform_factor' must be string-like, got int64."
+  },
+  {
+   "id": "S08_duplicate_uid",
+   "stage": "structural",
+   "slots": {
+    "independent_bernoulli_df": {
+     "uid": [
+      1,
+      1
+     ],
+     "uniform_factor": [
+      "U_01",
+      "U_02"
+     ]
+    }
+   },
+   "loadings": null,
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "jtd_ingest[INDEPENDENT_BERNOULLI]: INDEPENDENT_BERNOULLI has duplicate obligor uid(s) [1]; each obligor must appear at most once per model frame."
+  },
+  {
+   "id": "S09_uid_not_in_master",
+   "stage": "structural",
+   "slots": {
+    "independent_bernoulli_df": {
+     "uid": [
+      1,
+      99
+     ],
+     "uniform_factor": [
+      "U_01",
+      "U_02"
+     ]
+    }
+   },
+   "loadings": null,
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "jtd_ingest[INDEPENDENT_BERNOULLI]: INDEPENDENT_BERNOULLI references obligor uid(s) [99] absent from the obligor master (the single source of truth for PD/LGD)."
+  },
+  {
+   "id": "S10_uid_in_two_frames",
+   "stage": "structural",
+   "slots": {
+    "forced_default_df": {
+     "uid": [
+      1
+     ]
+    },
+    "independent_bernoulli_df": {
+     "uid": [
+      1
+     ],
+     "uniform_factor": [
+      "U_01"
+     ]
+    }
+   },
+   "loadings": null,
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "jtd_ingest: obligor uid 1 appears in both FORCED_DEFAULT and INDEPENDENT_BERNOULLI. Each obligor must be routed to exactly one JTD model."
+  },
+  {
+   "id": "S11_mf_without_loadings",
+   "stage": "structural",
+   "slots": {
+    "mf_gaussian_copula_df": {
+     "uid": [
+      1
+     ],
+     "idiosyncratic_factor": [
+      "IDIO_01"
+     ]
+    }
+   },
+   "loadings": null,
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "jtd_ingest: a multi-factor model frame is present but mf_loadings is missing."
+  },
+  {
+   "id": "S12_loadings_missing_column",
+   "stage": "structural",
+   "slots": {
+    "mf_gaussian_copula_df": {
+     "uid": [
+      1
+     ],
+     "idiosyncratic_factor": [
+      "IDIO_01"
+     ]
+    }
+   },
+   "loadings": {
+    "obligor_uid": [
+     1
+    ],
+    "factor_name": [
+     "GLOBAL_CREDIT"
+    ]
+   },
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "jtd_ingest[mf_loadings]: mf_loadings missing required column(s) ['factor_loading']."
+  },
+  {
+   "id": "S13_loadings_null_key",
+   "stage": "structural",
+   "slots": {
+    "mf_gaussian_copula_df": {
+     "uid": [
+      1
+     ],
+     "idiosyncratic_factor": [
+      "IDIO_01"
+     ]
+    }
+   },
+   "loadings": {
+    "obligor_uid": [
+     1,
+     null
+    ],
+    "factor_name": [
+     "GLOBAL_CREDIT",
+     "SECTOR_ENERGY"
+    ],
+    "factor_loading": [
+     0.3,
+     0.3
+    ]
+   },
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "jtd_ingest[mf_loadings]: mf_loadings 'obligor_uid' has null value(s)."
+  },
+  {
+   "id": "S14_loadings_float_key",
+   "stage": "structural",
+   "slots": {
+    "mf_gaussian_copula_df": {
+     "uid": [
+      1
+     ],
+     "idiosyncratic_factor": [
+      "IDIO_01"
+     ]
+    }
+   },
+   "loadings": {
+    "obligor_uid": [
+     1.0
+    ],
+    "factor_name": [
+     "GLOBAL_CREDIT"
+    ],
+    "factor_loading": [
+     0.3
+    ]
+   },
+   "compare": "prefix",
+   "exception_type": "ValueError",
+   "message": "jtd_ingest[mf_loadings]: mf_loadings 'obligor_uid' must be an integer dtype, got float64."
+  },
+  {
+   "id": "S15_loadings_null_name",
+   "stage": "structural",
+   "slots": {
+    "mf_gaussian_copula_df": {
+     "uid": [
+      1
+     ],
+     "idiosyncratic_factor": [
+      "IDIO_01"
+     ]
+    }
+   },
+   "loadings": {
+    "obligor_uid": [
+     1,
+     1
+    ],
+    "factor_name": [
+     "GLOBAL_CREDIT",
+     null
+    ],
+    "factor_loading": [
+     0.3,
+     0.3
+    ]
+   },
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "jtd_ingest[mf_loadings]: mf_loadings 'factor_name' has null value(s)."
+  },
+  {
+   "id": "S16_loadings_integer_name",
+   "stage": "structural",
+   "slots": {
+    "mf_gaussian_copula_df": {
+     "uid": [
+      1
+     ],
+     "idiosyncratic_factor": [
+      "IDIO_01"
+     ]
+    }
+   },
+   "loadings": {
+    "obligor_uid": [
+     1
+    ],
+    "factor_name": [
+     7
+    ],
+    "factor_loading": [
+     0.3
+    ]
+   },
+   "compare": "prefix",
+   "exception_type": "ValueError",
+   "message": "jtd_ingest[mf_loadings]: mf_loadings 'factor_name' must be string-like, got int64."
+  },
+  {
+   "id": "S17_loadings_text_loading",
+   "stage": "structural",
+   "slots": {
+    "mf_gaussian_copula_df": {
+     "uid": [
+      1
+     ],
+     "idiosyncratic_factor": [
+      "IDIO_01"
+     ]
+    }
+   },
+   "loadings": {
+    "obligor_uid": [
+     1
+    ],
+    "factor_name": [
+     "GLOBAL_CREDIT"
+    ],
+    "factor_loading": [
+     "a"
+    ]
+   },
+   "compare": "prefix",
+   "exception_type": "ValueError",
+   "message": "jtd_ingest[mf_loadings]: mf_loadings 'factor_loading' must be numeric, got str."
+  },
+  {
+   "id": "S18_loadings_nan_loading",
+   "stage": "structural",
+   "slots": {
+    "mf_gaussian_copula_df": {
+     "uid": [
+      1
+     ],
+     "idiosyncratic_factor": [
+      "IDIO_01"
+     ]
+    }
+   },
+   "loadings": {
+    "obligor_uid": [
+     1
+    ],
+    "factor_name": [
+     "GLOBAL_CREDIT"
+    ],
+    "factor_loading": [
+     NaN
+    ]
+   },
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "jtd_ingest[mf_loadings]: mf_loadings 'factor_loading' contains NaN/inf."
+  },
+  {
+   "id": "S19_loadings_unroutable",
+   "stage": "structural",
+   "slots": {
+    "forced_default_df": {
+     "uid": [
+      1
+     ]
+    }
+   },
+   "loadings": {
+    "obligor_uid": [
+     1
+    ],
+    "factor_name": [
+     "GLOBAL_CREDIT"
+    ],
+    "factor_loading": [
+     0.3
+    ]
+   },
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "jtd_ingest[mf_loadings]: mf_loadings supplied but the bundle has no multi-factor obligors; the loadings are unroutable."
+  },
+  {
+   "id": "S20_loadings_stray_uid",
+   "stage": "structural",
+   "slots": {
+    "mf_gaussian_copula_df": {
+     "uid": [
+      1
+     ],
+     "idiosyncratic_factor": [
+      "IDIO_01"
+     ]
+    }
+   },
+   "loadings": {
+    "obligor_uid": [
+     1,
+     2
+    ],
+    "factor_name": [
+     "GLOBAL_CREDIT",
+     "GLOBAL_CREDIT"
+    ],
+    "factor_loading": [
+     0.3,
+     0.3
+    ]
+   },
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "jtd_ingest[mf_loadings]: mf_loadings references obligor_uid(s) [2] that are not multi-factor obligors in any bundle frame (silent-drop guard)."
+  },
+  {
+   "id": "M01_wrong_factor_kind",
+   "stage": "semantic",
+   "slots": {
+    "independent_bernoulli_df": {
+     "uid": [
+      1
+     ],
+     "uniform_factor": [
+      "GLOBAL_CREDIT"
+     ]
+    }
+   },
+   "loadings": null,
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "jtd_semantic[INDEPENDENT_BERNOULLI].uniform_factor: factor(s) at UIX [0] must be kind UNIFORM, but resolve to kind(s) {0: 'SYSTEMIC'}."
+  },
+  {
+   "id": "M02_shared_uniform",
+   "stage": "semantic",
+   "slots": {
+    "independent_bernoulli_df": {
+     "uid": [
+      1,
+      2
+     ],
+     "uniform_factor": [
+      "U_01",
+      "U_01"
+     ]
+    }
+   },
+   "loadings": null,
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "jtd_semantic[INDEPENDENT_BERNOULLI].uniform_factor: uniform factor UIX [8] are shared across obligors. Each obligor requires a distinct uniform factor; sharing one introduces dependence the model's correlation contract does not account for."
+  },
+  {
+   "id": "M03_unknown_factor",
+   "stage": "semantic",
+   "slots": {
+    "independent_bernoulli_df": {
+     "uid": [
+      1
+     ],
+     "uniform_factor": [
+      "U_99"
+     ]
+    }
+   },
+   "loadings": null,
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "Unknown credit factor(s) for 'jtd_semantic[INDEPENDENT_BERNOULLI].uniform_factor': ['U_99']"
+  },
+  {
+   "id": "M04_loading_out_of_range",
+   "stage": "semantic",
+   "slots": {
+    "sf_gaussian_copula_df": {
+     "uid": [
+      1,
+      2
+     ],
+     "factor_loading": [
+      0.4,
+      1.5
+     ],
+     "systemic_factor": [
+      "GLOBAL_CREDIT",
+      "GLOBAL_CREDIT"
+     ],
+     "idiosyncratic_factor": [
+      "IDIO_01",
+      "IDIO_02"
+     ]
+    }
+   },
+   "loadings": null,
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "compile_jtd_portfolio: factor_loading outside [-1, 1] for obligor(s) [2]."
+  },
+  {
+   "id": "M05_nu_not_positive",
+   "stage": "semantic",
+   "slots": {
+    "sf_students_t_copula_df": {
+     "uid": [
+      1
+     ],
+     "factor_loading": [
+      0.4
+     ],
+     "systemic_factor": [
+      "GLOBAL_CREDIT"
+     ],
+     "idiosyncratic_factor": [
+      "IDIO_01"
+     ],
+     "chi_squared_factor": [
+      "GLOBAL_CHI"
+     ],
+     "nu": [
+      0.0
+     ]
+    }
+   },
+   "loadings": null,
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "compile_jtd_portfolio: nu must be > 0 (finite) for obligor(s) [1]."
+  },
+  {
+   "id": "M06_chi_group_nu",
+   "stage": "semantic",
+   "slots": {
+    "sf_students_t_copula_df": {
+     "uid": [
+      1,
+      2
+     ],
+     "factor_loading": [
+      0.4,
+      0.4
+     ],
+     "systemic_factor": [
+      "GLOBAL_CREDIT",
+      "GLOBAL_CREDIT"
+     ],
+     "idiosyncratic_factor": [
+      "IDIO_01",
+      "IDIO_02"
+     ],
+     "chi_squared_factor": [
+      "CHI_SECTOR_01",
+      "CHI_SECTOR_01"
+     ],
+     "nu": [
+      7.0,
+      9.0
+     ]
+    }
+   },
+   "loadings": null,
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "COPULA_SF_T: obligors sharing a chi_squared_factor must declare the same nu (one W ~ chi^2(nu) per scenario cannot match multiple dof). Offending chi group(s): 'CHI_SECTOR_01': nu=[7.0, 9.0] across obligor(s) [1, 2]."
+  },
+  {
+   "id": "M07_chi_nu_mismatch",
+   "stage": "semantic",
+   "slots": {
+    "sf_students_t_copula_df": {
+     "uid": [
+      1
+     ],
+     "factor_loading": [
+      0.4
+     ],
+     "systemic_factor": [
+      "GLOBAL_CREDIT"
+     ],
+     "idiosyncratic_factor": [
+      "IDIO_01"
+     ],
+     "chi_squared_factor": [
+      "GLOBAL_CHI"
+     ],
+     "nu": [
+      6.0
+     ]
+    }
+   },
+   "loadings": null,
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "COPULA_SF_T: obligor nu disagrees with the dof its chi column is drawn with (the t-marginal would be miscalibrated). uid 1 (GLOBAL_CHI): declared nu=6.0, generator draws nu=5.0."
+  },
+  {
+   "id": "M08_mf_coverage",
+   "stage": "semantic",
+   "slots": {
+    "mf_gaussian_copula_df": {
+     "uid": [
+      1,
+      2
+     ],
+     "idiosyncratic_factor": [
+      "IDIO_01",
+      "IDIO_02"
+     ]
+    }
+   },
+   "loadings": {
+    "obligor_uid": [
+     1
+    ],
+    "factor_name": [
+     "GLOBAL_CREDIT"
+    ],
+    "factor_loading": [
+     0.3
+    ]
+   },
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "jtd_semantic[COPULA_MF_GAUSSIAN]: obligor(s) [2] have no systemic loadings."
+  },
+  {
+   "id": "M09_mf_duplicate_factor",
+   "stage": "semantic",
+   "slots": {
+    "mf_gaussian_copula_df": {
+     "uid": [
+      1,
+      2
+     ],
+     "idiosyncratic_factor": [
+      "IDIO_01",
+      "IDIO_02"
+     ]
+    }
+   },
+   "loadings": {
+    "obligor_uid": [
+     2,
+     1,
+     1,
+     2
+    ],
+    "factor_name": [
+     "GLOBAL_CREDIT",
+     "GLOBAL_CREDIT",
+     "GLOBAL_CREDIT",
+     "GLOBAL_CREDIT"
+    ],
+    "factor_loading": [
+     0.3,
+     0.3,
+     0.3,
+     0.3
+    ]
+   },
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "jtd_semantic[COPULA_MF_GAUSSIAN]: obligor(s) [1, 2] load on the same systemic factor twice."
+  },
+  {
+   "id": "M10_mf_sum_sq_above_bound",
+   "stage": "semantic",
+   "slots": {
+    "mf_gaussian_copula_df": {
+     "uid": [
+      3,
+      1,
+      2
+     ],
+     "idiosyncratic_factor": [
+      "IDIO_03",
+      "IDIO_01",
+      "IDIO_02"
+     ]
+    }
+   },
+   "loadings": {
+    "obligor_uid": [
+     3,
+     3,
+     1,
+     1,
+     2,
+     2
+    ],
+    "factor_name": [
+     "GLOBAL_CREDIT",
+     "SECTOR_ENERGY",
+     "GLOBAL_CREDIT",
+     "SECTOR_ENERGY",
+     "GLOBAL_CREDIT",
+     "SECTOR_ENERGY"
+    ],
+    "factor_loading": [
+     0.8,
+     0.8,
+     0.8,
+     0.8,
+     0.8,
+     0.8
+    ]
+   },
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "jtd_semantic[COPULA_MF_GAUSSIAN]: sum of squared loadings exceeds 1 for obligor(s) [1, 2, 3]."
+  },
+  {
+   "id": "M11_marshall_olkin_systemic_pd",
+   "stage": "semantic",
+   "slots": {
+    "marshall_olkin_df": {
+     "uid": [
+      1
+     ],
+     "uniform_factor": [
+      "U_01"
+     ],
+     "systemic_uniform_factor": [
+      "U_02"
+     ],
+     "systemic_pd": [
+      1.0
+     ]
+    }
+   },
+   "loadings": null,
+   "compare": "message",
+   "exception_type": "ValueError",
+   "message": "jtd_semantic[MARSHALL_OLKIN]: 'systemic_pd' must be in [0.0, 1.0) for obligor(s) [1] to prevent infinite survival probabilities."
+  }
+ ]
+}

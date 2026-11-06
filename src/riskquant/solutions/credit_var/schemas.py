@@ -86,10 +86,12 @@ consumer.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Annotated, Any, Final, Literal
+from typing import Annotated, Any, Final, Literal, cast
 
-import pandas as pd
+import numpy as np
+import polars as pl
 
 __all__ = [
     "DEFAULT_N_SCENARIOS",
@@ -124,6 +126,7 @@ from pydantic import (
 )
 from pydantic_core import InitErrorDetails, PydanticCustomError, PydanticKnownError
 
+from riskquant.credit.jtd.ingest.loading_sum import loading_sum_sq
 from riskquant.credit.jtd.models import VALID_JTD_MODEL_NAMES
 from riskquant.solutions.credit_var.catalog import MODEL_CATALOG, model_entry
 from riskquant.solutions.credit_var.provenance import ScenarioConstructionId
@@ -153,8 +156,9 @@ _INT64_MAX: Final[int] = 2**63 - 1
 
 #: Tolerance of the per-obligor rule sum(loading^2) <= 1 + tolerance. It is the
 #: tolerance of the engine check `credit.jtd.ingest.validate._semantic_mf_gaussian`.
-#: `CreditVarRequest._check_loading_sum_sq` also uses the arithmetic of that check,
-#: so the request rule and the engine rule accept the same loadings.
+#: `CreditVarRequest._check_loading_sum_sq` and that check call the same sum,
+#: `credit.jtd.ingest.loading_sum.loading_sum_sq` (WS_CREDIT_POLARS C.5), so the
+#: request rule and the engine rule accept the same loadings.
 LOADING_SUM_SQ_TOLERANCE: Final[float] = 1e-9
 
 #: Default scenario count of a request. `CreditVarRequest.from_dataframe` uses
@@ -284,18 +288,81 @@ def _second_occurrence(values: Sequence[object]) -> int | None:
     return None
 
 
-def _dataframe_uid(value: Any) -> Any:
-    """An ``obligor_uid`` cell of a `from_dataframe` table, cast to int.
+def _dataframe_uid(value: object) -> object:
+    """An ``obligor_uid`` cell of a `from_dataframe` table, ready for the int field.
 
-    A float column holds an integral uid as, for example, ``7.0``; the cast
-    keeps it. A float that is not integral (``7.9``, NaN, +/-inf) is returned
-    unchanged, so the strict int field raises R. ``int(7.9)`` would give 7: a
-    uid that the author did not write. The types are ``Any`` because a cell
-    has no static type and the non-integral case returns the cell unchanged.
+    An integer cell is an int already. A float cell that is integral (``7.0``)
+    becomes its int (B-4 (ii)). A float that is not integral (``7.9``, NaN,
+    +/-inf) and a null cell (``None``) are returned unchanged, so the strict
+    int field raises R at ``("obligor_uid",)``. ``int(7.9)`` would give 7: a
+    uid that the author did not write.
     """
-    if isinstance(value, float) and not value.is_integer():
-        return value
-    return int(value)
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+_ColumnKind = Literal["uid", "float", "str"]
+
+
+def _table_cells(
+    frame: pl.DataFrame,
+    table: str,
+    column: str,
+    kind: _ColumnKind,
+    *,
+    optional: bool,
+) -> list[object]:
+    """Read one column of a `from_dataframe` table as Python cells, by dtype.
+
+    The dtype decides admission (WS_CREDIT_POLARS C.11, O-5 (b)); a cell is
+    never cast from a type that the column rule does not admit. ``uid`` and
+    ``float`` columns admit an integer or a float dtype; a ``str`` column
+    admits ``pl.Utf8``. An optional column also admits ``pl.Null`` (absent for
+    every row). A required ``pl.Null`` column has no value dtype and raises
+    TypeError (S3 OD-1, OD-C). In a float column, null means null or NaN (B-8):
+    such a cell becomes ``None``, which means absent for an optional field and
+    raises R at the field path for a required field (S3 OD-A (b)).
+    """
+    series = frame.get_column(column)
+    dtype = series.dtype
+    if optional and dtype == pl.Null:
+        return [None] * series.len()
+    if kind == "str":
+        admitted = dtype == pl.Utf8
+        rule = "pl.Utf8"
+    else:
+        admitted = dtype.is_integer() or dtype.is_float()
+        rule = "an integer or a float dtype"
+    if not admitted:
+        rule += " or pl.Null" if optional else ""
+        raise TypeError(
+            f"from_dataframe: {table} column '{column}' has dtype {dtype!s}; "
+            f"the field admits {rule}."
+        )
+    values: list[object] = series.to_list()
+    if kind == "str":
+        return values
+    if kind == "uid":
+        return [_dataframe_uid(v) for v in values]
+    return [
+        None
+        if v is None or (isinstance(v, float) and math.isnan(v))
+        else float(cast("float", v))
+        for v in values
+    ]
+
+
+def _require_frame(table: object, name: str) -> pl.DataFrame:
+    """Return `table` when it is a ``pl.DataFrame``; raise TypeError otherwise."""
+    if not isinstance(table, pl.DataFrame):
+        kind = f"{type(table).__module__}.{type(table).__qualname__}"
+        raise TypeError(
+            f"from_dataframe: '{name}' must be a pl.DataFrame (polars.DataFrame); "
+            f"got {kind}. Convert at the call boundary (pl.from_pandas, "
+            "pl.from_dict)."
+        )
+    return table
 
 
 class ObligorRow(BaseModel):
@@ -519,56 +586,53 @@ class CreditVarRequest(BaseModel):
         The idiosyncratic weight is sqrt(1 - sum loading^2); above 1 there is
         no real residual.
 
-        The decision uses the arithmetic of the engine check
-        `credit.jtd.ingest.validate._semantic_mf_gaussian`, not a more accurate
-        sum. Near the bound, two summations of the same squares can round to
-        adjacent floats on the two sides of 1 + 1e-9 (``math.fsum`` and the
-        engine sum differ in both directions), so only the same arithmetic
-        gives the same decision. The engine arithmetic is:
+        The sum is `riskquant.credit.jtd.ingest.loading_sum.loading_sum_sq`,
+        the function that the engine check
+        `credit.jtd.ingest.validate._semantic_mf_gaussian` also calls
+        (WS_CREDIT_POLARS C.5). Near the bound, two summations of the same
+        squares can round to adjacent floats on the two sides of 1 + 1e-9
+        (``math.fsum`` and the Kahan sum differ in both directions), so only
+        one arithmetic gives one decision. The rows go in request order: the
+        engine rows also arrive in request order, because
+        `run._loadings_frame` and `recipes._mf_universe_and_bundle` keep the
+        order and only drop the rows of other obligors, which does not change
+        the sum of an obligor.
 
-        * each square is the float64 ``x ** 2``, equal to ``x * x``;
-        * the sum is ``pandas.Series.groupby(uid).sum()``, which pandas
-          evaluates as a Kahan compensated sum over the rows of each group,
-          in row order, from ``sum = compensation = 0.0``;
-        * the rows arrive in request order: `run._loadings_frame` and
-          `recipes._mf_universe_and_bundle` keep the order and only drop the
-          rows of other obligors, which does not change a group's sum.
-
-        One pass over the rows, linear in the row count: per obligor, the
-        Kahan state and the first row at which the running sum exceeds the
-        bound. The decision uses the final sum of each obligor. The loc is,
-        over the rejected obligors, the lowest such row. A rejected obligor
-        always has such a row, because its last row holds the final sum.
+        One pass over the rows, linear in the row count. The decision uses the
+        final sum of each obligor. The loc is, over the rejected obligors, the
+        lowest row at which the running sum of the row's obligor exceeds the
+        bound. A rejected obligor always has such a row, because its last row
+        holds the final sum.
         """
         bound = 1.0 + LOADING_SUM_SQ_TOLERANCE
-        # uid -> [running sum, compensation]: the state of pandas group_sum.
-        state: dict[int, list[float]] = {}
-        first_over: dict[int, int] = {}
-        for j, row in enumerate(loadings):
-            uid = row.obligor_uid
-            kahan = state.get(uid)
-            if kahan is None:
-                kahan = state[uid] = [0.0, 0.0]
-            total, compensation = kahan
-            y = row.loading * row.loading - compensation
-            t = total + y
-            kahan[1] = (t - total) - y
-            kahan[0] = t
-            if t > bound and uid not in first_over:
-                first_over[uid] = j
-        rejected = [j for uid, j in first_over.items() if state[uid][0] > bound]
-        if rejected:
-            j = min(rejected)
-            row = loadings[j]
-            raise _request_fault(
-                ("loadings", j, "loading"),
-                f"obligor {row.obligor_uid}: sum of squared loadings "
-                f"{state[row.obligor_uid][0]!r} exceeds 1 + "
-                f"{LOADING_SUM_SQ_TOLERANCE!r}; the running sum first exceeds "
-                "the bound at this row. The idiosyncratic weight sqrt(1 - sum) "
-                "is undefined.",
-                row.loading,
-            )
+        n = len(loadings)
+        uids = np.fromiter(
+            (row.obligor_uid for row in loadings), dtype=np.int64, count=n
+        )
+        sums = loading_sum_sq(
+            obligor_uid=uids,
+            loading=np.fromiter(
+                (row.loading for row in loadings), dtype=np.float64, count=n
+            ),
+        )
+        rejected = sums.uids[sums.totals > bound]
+        if rejected.size == 0:
+            return
+        over = (sums.running > bound) & np.isin(uids, rejected)
+        j = int(np.flatnonzero(over)[0])
+        row = loadings[j]
+        total = dict(zip(sums.uids.tolist(), sums.totals.tolist(), strict=True))[
+            row.obligor_uid
+        ]
+        raise _request_fault(
+            ("loadings", j, "loading"),
+            f"obligor {row.obligor_uid}: sum of squared loadings "
+            f"{total!r} exceeds 1 + "
+            f"{LOADING_SUM_SQ_TOLERANCE!r}; the running sum first exceeds "
+            "the bound at this row. The idiosyncratic weight sqrt(1 - sum) "
+            "is undefined.",
+            row.loading,
+        )
 
     def _check_reserved_factor_names(self, loadings: tuple[LoadingRow, ...]) -> None:
         """Rule 15: no loadings factor takes a name that the recipe adds.
@@ -738,17 +802,17 @@ class CreditVarRequest(BaseModel):
     @classmethod
     def from_dataframe(
         cls,
-        obligor_table: pd.DataFrame,
+        obligor_table: pl.DataFrame,
         *,
         model: str,
-        loadings_table: pd.DataFrame | None = None,
+        loadings_table: pl.DataFrame | None = None,
         group_params: dict[str, dict[str, float]] | None = None,
         n_scenarios: int = DEFAULT_N_SCENARIOS,
         alphas: list[float] | None = None,
         seed: int = 12345,
         **params: float,
     ) -> CreditVarRequest:
-        """Build a request from a flat obligor DataFrame (notebook ergonomics).
+        """Build a request from a flat obligor ``pl.DataFrame`` (notebook ergonomics).
 
         Outside the stable surface (P-CREDIT_VAR_API-001 clause 1, O-7).
 
@@ -773,37 +837,73 @@ class CreditVarRequest(BaseModel):
                               "HY": {"alpha": 2.0, "beta": 18.0}})
 
         The default `n_scenarios` is the request default, `DEFAULT_N_SCENARIOS`.
-        Each cell is cast with ``int``, ``float`` or ``str`` before validation;
-        the request rules then apply as on the dict/JSON path. An
-        ``obligor_uid`` cell that is a float with a fractional part (or NaN or
-        +/-inf) is not cast: it reaches the strict int field and raises
-        ``pydantic.ValidationError``.
+
+        Column admission by dtype (WS_CREDIT_POLARS C.11). ``obligor_uid`` (both
+        tables) admits an integer dtype, or a float dtype: an integral float
+        cell (``7.0``) becomes its int; a fractional, NaN or infinite cell
+        reaches the strict int field unchanged and raises
+        ``pydantic.ValidationError`` at ``("obligor_uid",)``. ``ead``, ``pd``,
+        ``lgd``, ``rho`` and ``loading`` admit an integer or a float dtype.
+        ``group`` and ``factor`` admit ``pl.Utf8``. ``group`` and ``rho`` also
+        admit ``pl.Null``, which means absent for every row. In a float column,
+        null means null or NaN. A null cell in ``group`` or ``rho`` means absent
+        for that obligor (``rho`` then takes the fill). A null cell in a
+        required column reaches the row model as ``None`` and raises
+        ``pydantic.ValidationError`` at the field path, for example
+        ``("ead",)``. Any other dtype (``pl.Boolean``, ``pl.Decimal`` included)
+        raises TypeError that names the column. The request rules then apply as
+        on the dict/JSON path.
+
+        Raises
+        ------
+        TypeError
+            A table is not a ``pl.DataFrame`` (both tables are checked before
+            any read), or a read column has a dtype that its rule does not admit.
+        ValueError
+            A required column is missing.
+        pydantic.ValidationError
+            A cell or the request fails the request rules.
         """
+        obligor_frame = _require_frame(obligor_table, "obligor_table")
+        loadings_frame = (
+            None
+            if loadings_table is None
+            else _require_frame(loadings_table, "loadings_table")
+        )
         required = ("obligor_uid", "ead", "pd", "lgd")
-        missing = [c for c in required if c not in obligor_table.columns]
+        missing = [c for c in required if c not in obligor_frame.columns]
         if missing:
             raise ValueError(
                 f"from_dataframe: obligor_table missing column(s) {missing}."
             )
-        has_group = "group" in obligor_table.columns
-        has_rho = "rho" in obligor_table.columns
-        read_cols = (
-            list(required)
-            + (["group"] if has_group else [])
-            + (["rho"] if has_rho else [])
+        table = "obligor_table"
+        uids = _table_cells(obligor_frame, table, "obligor_uid", "uid", optional=False)
+        eads = _table_cells(obligor_frame, table, "ead", "float", optional=False)
+        pds = _table_cells(obligor_frame, table, "pd", "float", optional=False)
+        lgds = _table_cells(obligor_frame, table, "lgd", "float", optional=False)
+        absent: list[object] = [None] * obligor_frame.height
+        groups = (
+            _table_cells(obligor_frame, table, "group", "str", optional=True)
+            if "group" in obligor_frame.columns
+            else absent
+        )
+        rhos = (
+            _table_cells(obligor_frame, table, "rho", "float", optional=True)
+            if "rho" in obligor_frame.columns
+            else absent
         )
         obligors = [
             ObligorRow(
-                obligor_uid=_dataframe_uid(rec["obligor_uid"]),
-                ead=float(rec["ead"]),
-                pd=float(rec["pd"]),
-                lgd=float(rec["lgd"]),
-                group=(
-                    str(rec["group"]) if has_group and pd.notna(rec["group"]) else None
-                ),
-                rho=(float(rec["rho"]) if has_rho and pd.notna(rec["rho"]) else None),
+                obligor_uid=cast("int", uid),
+                ead=cast("float", ead),
+                pd=cast("float", pd),
+                lgd=cast("float", lgd),
+                group=cast("str | None", group),
+                rho=cast("float | None", rho),
             )
-            for rec in obligor_table.loc[:, read_cols].to_dict("records")
+            for uid, ead, pd, lgd, group, rho in zip(
+                uids, eads, pds, lgds, groups, rhos, strict=True
+            )
         ]
         kwargs: dict[str, Any] = {
             "model": model,
@@ -817,20 +917,30 @@ class CreditVarRequest(BaseModel):
                 GroupRow(name=str(name), params={k: float(v) for k, v in gp.items()})
                 for name, gp in group_params.items()
             ]
-        if loadings_table is not None:
+        if loadings_frame is not None:
             lcols = ("obligor_uid", "factor", "loading")
-            lmissing = [c for c in lcols if c not in loadings_table.columns]
+            lmissing = [c for c in lcols if c not in loadings_frame.columns]
             if lmissing:
                 raise ValueError(
                     f"from_dataframe: loadings_table missing column(s) {lmissing}."
                 )
+            ltable = "loadings_table"
+            luids = _table_cells(
+                loadings_frame, ltable, "obligor_uid", "uid", optional=False
+            )
+            factors = _table_cells(
+                loadings_frame, ltable, "factor", "str", optional=False
+            )
+            values = _table_cells(
+                loadings_frame, ltable, "loading", "float", optional=False
+            )
             kwargs["loadings"] = [
                 LoadingRow(
-                    obligor_uid=_dataframe_uid(rec["obligor_uid"]),
-                    factor=str(rec["factor"]),
-                    loading=float(rec["loading"]),
+                    obligor_uid=cast("int", uid),
+                    factor=cast("str", factor),
+                    loading=cast("float", value),
                 )
-                for rec in loadings_table.loc[:, list(lcols)].to_dict("records")
+                for uid, factor, value in zip(luids, factors, values, strict=True)
             ]
         if alphas is not None:
             kwargs["alphas"] = list(alphas)

@@ -12,7 +12,7 @@ the canonical obligor master at compile time.
 
 from __future__ import annotations
 
-import pandas as pd
+import polars as pl
 
 from riskquant.credit.jtd.models import JtdModel
 from riskquant.ingest_fixtures.schemas import StressRegimeBernoulliJTDIngestData
@@ -33,13 +33,11 @@ def _get_data() -> StressRegimeBernoulliJTDIngestData:
     }
 
 
-CANONICAL_STRESS_REGIME_BERNOULLI_JTD_INGEST_DATA: (
-    StressRegimeBernoulliJTDIngestData
-) = _get_data()
+CANONICAL_STRESS_REGIME_BERNOULLI_JTD_INGEST_DATA: StressRegimeBernoulliJTDIngestData = _get_data()
 
 validate_column_lengths(CANONICAL_STRESS_REGIME_BERNOULLI_JTD_INGEST_DATA)
 
-CANONICAL_STRESS_REGIME_BERNOULLI_JTD_INGEST_DF = pd.DataFrame(
+CANONICAL_STRESS_REGIME_BERNOULLI_JTD_INGEST_DF = pl.DataFrame(
     CANONICAL_STRESS_REGIME_BERNOULLI_JTD_INGEST_DATA
 )
 

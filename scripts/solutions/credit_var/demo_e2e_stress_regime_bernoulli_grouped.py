@@ -1,7 +1,7 @@
 # scripts/solutions/credit_var/demo_e2e_stress_regime_bernoulli_grouped.py
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.solutions.credit_var.api import CreditVarRequest, run_credit_var
 from riskquant.solutions.credit_var.run import simulate_portfolio_losses
@@ -41,7 +41,7 @@ def main() -> None:
     # ----------------------------------------------------------------------------------
     rng = np.random.default_rng(RNG_SEED)
 
-    obligor_df = pd.DataFrame(
+    obligor_df = pl.DataFrame(
         generate_credit_portfolio_data(
             n_obligors=NUM_OBLIGORS,
             rng=rng,
@@ -50,10 +50,18 @@ def main() -> None:
 
     # 1b. Assign obligors to regimes by sector cyclicality
     # ----------------------------------------------------------------------------------
-    obligor_df["group"] = np.where(
-        obligor_df["sector"].isin(["ENERGY", "FINANCIALS", "INDUSTRIAL"]),
-        "CYCLICAL",
-        "DEFENSIVE",
+    obligor_df = obligor_df.with_columns(
+        pl.Series(
+            "group",
+            np.where(
+                obligor_df["sector"]
+                .is_in(["ENERGY", "FINANCIALS", "INDUSTRIAL"])
+                .to_numpy(),
+                "CYCLICAL",
+                "DEFENSIVE",
+            ),
+            dtype=pl.Utf8,
+        )
     )
 
     # 2. Construct the request
@@ -124,14 +132,15 @@ def main() -> None:
     # ----------------------------------------------------------------------------------
     # Per obligor the effective PD is a regime mixture:
     #   (1 - q_g) * PD_i + q_g * min(PD_i * m_g, 1),  with q_g, m_g per group.
-    lgd_exposure = obligor_df["ead"] * obligor_df["lgd"]
-    q = obligor_df["group"].map(lambda g: GROUP_PARAMS[g]["stress_prob"]).to_numpy()
-    m = (
-        obligor_df["group"]
-        .map(lambda g: GROUP_PARAMS[g]["stress_pd_multiplier"])
-        .to_numpy()
+    lgd_exposure = obligor_df["ead"].to_numpy() * obligor_df["lgd"].to_numpy()
+    groups = obligor_df["group"].to_list()
+    q = np.array([GROUP_PARAMS[g]["stress_prob"] for g in groups], dtype=np.float64)
+    m = np.array(
+        [GROUP_PARAMS[g]["stress_pd_multiplier"] for g in groups], dtype=np.float64
     )
-    pd_eff = (1.0 - q) * obligor_df["pd"] + q * np.minimum(obligor_df["pd"] * m, 1.0)
+    pd_eff = (1.0 - q) * obligor_df["pd"].to_numpy() + q * np.minimum(
+        obligor_df["pd"].to_numpy() * m, 1.0
+    )
     mean_analytical = float(np.sum(lgd_exposure * pd_eff))
 
     el_engine = result.summary.loss_mean

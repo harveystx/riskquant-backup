@@ -4902,7 +4902,7 @@ Closed-form, prior to implementation: identity default (`80 → 82` gives `82`);
 **Verification:** `test_copy_parameter_removed`; `test_caller_frame_is_not_mutated`; pandas-blocked execution test compares the frame before and after.
 
 ## D096 — `IngestBatch.to_df()` and `.df` are an optional pandas output adapter
-**Status:** LOCKED (2026-09-30, owner approval). Implemented and verified 2026-09-30.
+**Status:** LOCKED (2026-09-30, owner approval). Implemented and verified 2026-09-30. **Superseded by D108 (2026-11-06):** IngestBatch.to_df() and .df return polars.DataFrame; batch.py imports no pandas (WS_CREDIT_POLARS S2, C.14).
 **Scope:** `riskquant.portfolio.ingest.batch.IngestBatch.to_df` and `.df`.
 **Decision:** retained (Option B) as an isolated legacy pandas output adapter. It is not part of the ingest production path. `batch.py` imports pandas only under `TYPE_CHECKING` and inside `to_df`.
 **Rationale:** one repository caller uses it (`scripts/demos/credit/rc/demo_spot_rc_end_to_end.py`, `.df`, debug print). Removal is not needed for a pandas-free production path.
@@ -5113,7 +5113,7 @@ Historical snapshot references are retained for evidence lineage. The final cert
 * **D106.7 Pins.** pyproject.toml keeps NumPy and SciPy ranges with an upper bound on the next major version. Each consuming environment locks exact versions.
 * **D106.8 Errors.** The public entry points raise only pydantic.ValidationError for a request fault and CreditVarEngineError(RiskQuantError) for an engine fault. RiskSummary.at raises KeyError for a level that the run did not compute.
 * **D106.9 Concurrency.** credit_var serializes entry into its parallel kernels with one process lock. Calls on separate threads of one process give the results of serial calls. The lock does not serialize parallel kernels that other riskquant modules enter.
-**Pins in force (C.30, O-11, owner decision 2026-11-03):** numpy>=1.26,<3; scipy>=1.15,<2; pydantic>=2.0,<3; numba>=0.59,<0.67 (tested 0.66.0); pandas>=2.0,<3.1 (temporary, removed with pandas in WS_CREDIT_POLARS).
+**Pins in force (C.30, O-11, owner decision 2026-11-03):** numpy>=1.26,<3; scipy>=1.15,<2; pydantic>=2.0,<3; numba>=0.59,<0.67 (tested 0.66.0); pandas>=2.0 (the <3.1 cap is removed by WS_CREDIT_POLARS S1, D108; pandas itself is removed in WS_PANDAS_REMOVAL).
 **Reason:** one public import surface lets the engine change without a change for callers (same principle as D104.2). SemVer, a result schema version and a build identity let a consumer state which contract and which build produced a result. The error and concurrency clauses make faults and threaded calls predictable at the API boundary.
 **Implementation:** `src/riskquant/solutions/credit_var/` (`api`, `schemas`, `run`, `errors`, `provenance`, `catalog`, `recipes`); `pyproject.toml` (version 0.2.0, pins); `src/riskquant/credit/STABLE_API.md` (internal status, O-4).
 **Evidence:** S1.T1 to S1.T15, S2.T1 to S2.T12, S3.T1 to S3.T4, S4.T1 to S4.T14, S5.T1 to S5.T4 in `tests/solutions/credit_var/`. Owner gate at 64a531e: full suite 7875 passed, 36 skipped.
@@ -5134,6 +5134,22 @@ Historical snapshot references are retained for evidence lineage. The final cert
 **Reason:** D106.3 counts a result value change or a newly rejected payload as breaking unless a D entry records it as a defect fix. No 0.2.x release exists; 0.1.0 users can trace the changes here.
 **Evidence:** S7.T1 to S7.T6 in `tests/solutions/credit_var/test_audit_fixes.py`. Owner gate at 6c792ce: full suite 7995 passed, 37 skipped; audit probe `_gates/audit_credit_var.py --skip G` with the Exit lines PASS. S7 re-review ACCEPT 2026-11-04.
 **Evidence limits:** C.34 holds only inside loss_mean / loss_std_dev <= 1e10. Admitted values outside the engine numeric domain can still give E (WS backlog R-004, R-005; api.py docstring "Numeric domain").
+
+---
+
+## D108 - Credit edge on Polars and one admission loading sum
+**Status:** LOCKED (2026-11-06, owner approval). Implemented in `docs/workstreams/WS_CREDIT_POLARS.md`, slices S1 to S6 (Revision 4 and the section 1 owner decisions). Promotes P-CREDIT_POLARS-001.
+**Related:** D006, D094, D095, D096 (superseded), D098, D100, D106 (pins line), D107, D-C15.
+**Scope:** the frame type of the credit edge (credit ingest, credit masters, JTD ingest, solutions.credit_var and solutions.credit_exposure), the admission loading sum, the null and dtype rules of the credit edge, and the IngestBatch debug adapter.
+**Decision:**
+* **D108.1 Frame type.** The credit ingest entries accept polars.DataFrame only; any other type raises TypeError before any column read; the caller's frame is never changed. CreditVarRequest.from_dataframe and CreditExposureRequest.from_dataframe take polars.DataFrame tables and admit columns by dtype. No module under src/riskquant/credit, solutions/credit_var, solutions/credit_exposure or ingest_fixtures/credit imports pandas. Engine arrays that cross into core are new, writeable, C-contiguous copies.
+* **D108.2 Loading sum.** The per-obligor loading sum of squares that admits or rejects a book is one function (credit/jtd/ingest/loading_sum.py). Its arithmetic is the Kahan compensated sum in row order that pandas 3.0.x used in groupby().sum(), including its reset of a non-finite compensation to 0.0; a NaN or infinite loading raises ValueError. The engine admission check and the credit_var request rule 14 both call it. The builder sum that gives idio_weight stays np.add.reduceat. pyproject.toml declares pandas>=2.0 with no upper bound until WS_PANDAS_REMOVAL removes pandas.
+* **D108.3 Null and dtype rules.** An integer column admits an integer dtype or integral floats; a fractional value or an int overflow raises TypeError (request uid columns: R at the field, B-4 (ii)). A column of dtype pl.Null in a required field raises TypeError; in an optional field it means absent for every row. A null cell in a typed required column raises ValueError at ingest and R at the field at the request edge. In a float column null means null or NaN: a NaN in a required float raises like a null; a NaN or null in rho means no explicit rho (the fill). A null in an optional integer column compiles to its sentinel. Boolean and Decimal are not numeric. Name columns admit pl.Utf8 (JTD factor names also pl.Categorical and pl.Enum); the group and factor columns of CreditVarRequest.from_dataframe admit pl.Utf8 only in v0.2.1. Every other refusal keeps its v0.2.0 exception type and message.
+* **D108.4 D096 superseded.** IngestBatch.to_df() and .df return polars.DataFrame; .df shares the SoA buffers, to_df() copies; each sentinel maps to null.
+**Reason:** D006 and D094 put Polars at the edge; pandas 3.1 changed the group sum that admission copied, so the admission sum became a pinned dependency; one frame library at the credit edge removes the pin and the dual code paths.
+**Release:** riskquant 0.2.1 (D106.2: the D106.1 surface, the result values, the golden schemas and the error types do not change; from_dataframe is outside the surface). Release note: CreditVarRequest.from_dataframe and CreditExposureRequest.from_dataframe accept polars.DataFrame only; convert a pandas frame with pl.from_pandas (needs pyarrow for string columns) or build the frame in Polars.
+**Evidence:** S1.T1 to S1.T6, S2.T1 to S2.T4, S3.T1 to S3.T4, S4.T1 to S4.T5, S5.T1 to S5.T4, S6.T1 to S6.T4; C.4 record (S1.T3) unchanged in every slice; v0.2.0 records of credit_exposure (S3), the masters (C.9) and JTD ingest (S5.T2, S5.T3) made by owner recorders. Owner gate at 1224f92: full suite 8290 passed, 37 skipped; 15 credit_var demos and 12 JTD demos exit 0. Slice reviews S1 to S6 ACCEPT.
+**Evidence limits:** pandas stays a declared dependency (riskquant.market_data, the config tests and other modules still import it; WS_PANDAS_REMOVAL). polars 2.x is not tested (owner environment polars 1.42.1).
 
 ---
 

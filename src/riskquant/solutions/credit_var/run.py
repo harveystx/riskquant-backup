@@ -76,7 +76,7 @@ from typing import Annotated, Any, Final
 
 import numpy as np
 import numpy.typing as npt
-import pandas as pd
+import polars as pl
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from riskquant.credit.aggregate.summary import (
@@ -160,14 +160,22 @@ _PREVIEW: Final[int] = 10
 _PARALLEL_KERNEL_LOCK: Final[threading.Lock] = threading.Lock()
 
 
-def _obligor_frame(obligors: Sequence[ObligorRow]) -> pd.DataFrame:
-    return pd.DataFrame({
-        "uid": [o.obligor_uid for o in obligors],
-        "ead": [o.ead for o in obligors],
-        "pd": [o.pd for o in obligors],
-        "lgd": [o.lgd for o in obligors],
-        "group": [o.group for o in obligors],
-        "rho": [o.rho for o in obligors],
+def _obligor_frame(obligors: Sequence[ObligorRow]) -> pl.DataFrame:
+    """The obligor table of `assemble_inputs`, column by column (C.10).
+
+    Each column has a stated dtype: ``uid`` Int64; ``ead``, ``pd``, ``lgd``,
+    ``rho`` Float64; ``group`` String. No schema is inferred from the first
+    rows (F-23), so 120 rows of ``rho`` None before a float read the same as
+    any other order. A None ``rho`` or ``group`` is a null cell: absent for that
+    obligor (B-5).
+    """
+    return pl.DataFrame({
+        "uid": pl.Series(values=[o.obligor_uid for o in obligors], dtype=pl.Int64),
+        "ead": pl.Series(values=[o.ead for o in obligors], dtype=pl.Float64),
+        "pd": pl.Series(values=[o.pd for o in obligors], dtype=pl.Float64),
+        "lgd": pl.Series(values=[o.lgd for o in obligors], dtype=pl.Float64),
+        "group": pl.Series(values=[o.group for o in obligors], dtype=pl.String),
+        "rho": pl.Series(values=[o.rho for o in obligors], dtype=pl.Float64),
     })
 
 
@@ -224,17 +232,19 @@ def _distribution_metrics(losses: _F64, expected_loss: float) -> dict[str, float
 
 def _loadings_frame(
     request: CreditVarRequest, keep_uids: set[int]
-) -> pd.DataFrame | None:
+) -> pl.DataFrame | None:
+    """The loadings table of `assemble_inputs` in request order (F-6, C.10):
+    ``uid`` Int64, ``factor`` String, ``loading`` Float64."""
     # Only loadings for modeled obligors; forced-default names bypass the model.
     if not request.loadings:
         return None
     rows = [lo for lo in request.loadings if lo.obligor_uid in keep_uids]
     if not rows:
         return None
-    return pd.DataFrame({
-        "uid": [lo.obligor_uid for lo in rows],
-        "factor": [lo.factor for lo in rows],
-        "loading": [lo.loading for lo in rows],
+    return pl.DataFrame({
+        "uid": pl.Series(values=[lo.obligor_uid for lo in rows], dtype=pl.Int64),
+        "factor": pl.Series(values=[lo.factor for lo in rows], dtype=pl.String),
+        "loading": pl.Series(values=[lo.loading for lo in rows], dtype=pl.Float64),
     })
 
 

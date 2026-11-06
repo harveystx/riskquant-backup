@@ -318,7 +318,7 @@ def test_recipe_direction_mapping_rejects_unexpected_values() -> None:
     value that is not exactly 'long' or 'short', rather than folding it to short.
     Exercised directly on the recipe helper, bypassing the Pydantic Literal that
     guards the normal public path."""
-    import pandas as pd
+    import polars as pl
 
     from riskquant.solutions.credit_exposure.recipes import _saccr_effective_notional
 
@@ -329,15 +329,15 @@ def test_recipe_direction_mapping_rejects_unexpected_values() -> None:
     }
 
     # legal values map to the right sign
-    long_d = _saccr_effective_notional(pd.DataFrame({**base, "direction": ["long"]}))
-    short_d = _saccr_effective_notional(pd.DataFrame({**base, "direction": ["short"]}))
+    long_d = _saccr_effective_notional(pl.DataFrame({**base, "direction": ["long"]}))
+    short_d = _saccr_effective_notional(pl.DataFrame({**base, "direction": ["short"]}))
     assert long_d[0] == 1000.0
     assert short_d[0] == -1000.0
 
     # anything else fails fast, and NOT as a silent short
     for bad in ("SHORT", "sideways", "l", ""):
         with pytest.raises(ValueError, match="must be 'long' or 'short'"):
-            _saccr_effective_notional(pd.DataFrame({**base, "direction": [bad]}))
+            _saccr_effective_notional(pl.DataFrame({**base, "direction": [bad]}))
 
 
 def test_public_boundary_still_rejects_unexpected_direction() -> None:
@@ -353,11 +353,11 @@ def test_public_boundary_still_rejects_unexpected_direction() -> None:
 def test_from_dataframe_carries_direction_and_maturity() -> None:
     """The desk/notebook ergonomics path must forward the new SA-CCR columns, or
     every SA-CCR request built via from_dataframe fails validation."""
-    import pandas as pd
+    import polars as pl
 
     from riskquant.solutions.credit_exposure.run import run_credit_exposure
 
-    trades = pd.DataFrame({
+    trades = pl.DataFrame({
         "trade_uid": [1, 2],
         "netting_set_uid": [1, 1],
         "mtm": [0.0, 0.0],
@@ -367,14 +367,14 @@ def test_from_dataframe_carries_direction_and_maturity() -> None:
         "direction": ["long", "short"],
         "remaining_maturity_years": [5.0, 5.0],
     })
-    netting_sets = pd.DataFrame({
+    netting_sets = pl.DataFrame({
         "netting_set_uid": [1],
         "obligor_uid": [9],
         "net_collateral": [0.0],
     })
-    add_on = pd.DataFrame({"subclass_uix": [0], "factor": [SF]})
-    hedging = pd.DataFrame({"subclass_uix": [0], "hedging_set_uix": [0]})
-    rho = pd.DataFrame({"hedging_set_uix": [0], "rho": [RHO]})
+    add_on = pl.DataFrame({"subclass_uix": [0], "factor": [SF]})
+    hedging = pl.DataFrame({"subclass_uix": [0], "hedging_set_uix": [0]})
+    rho = pl.DataFrame({"hedging_set_uix": [0], "rho": [RHO]})
 
     req = CreditExposureRequest.from_dataframe(
         trades,

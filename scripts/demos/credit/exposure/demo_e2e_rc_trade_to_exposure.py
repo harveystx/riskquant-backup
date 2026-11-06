@@ -19,7 +19,11 @@ from riskquant.credit.exposure.compile import compile_exposure_rc
 from riskquant.credit.exposure.engine import run_exposure
 from riskquant.credit.jtd.bridge import aggregate_ead_to_obligor
 from riskquant.credit.masters.netting_set.compiled import CompiledNettingSetMaster
-from riskquant.utils.printer import print_calling_file, print_success_message
+from riskquant.utils.printer import (
+    print_calling_file,
+    print_df,
+    print_success_message,
+)
 from riskquant_lab.fixtures.credit_exposure import (
     generate_canonical_exposure_book,
 )
@@ -46,7 +50,7 @@ def main() -> None:
     # ------------------------------------------------------------------ CONTRACT A
     _rule("CONTRACT A:  RC INPUT  (trade level)")
     print("\n  Human edge (authored trade table):\n")
-    print(book.trades_frame().to_string(index=False))
+    print_df(book.trades_frame(), add_space_before=False, add_space_after=False)
 
     _contract(
         "trade SoA -> engine",

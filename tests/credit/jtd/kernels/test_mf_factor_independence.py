@@ -315,11 +315,11 @@ def test_every_copula_model_requires_a_private_idiosyncratic_factor(model) -> No
 def test_ingest_rejects_a_shared_idiosyncratic_factor(model) -> None:
     """The guard must actually fire on the contract's declared column, naming
     the role rather than calling an epsilon a 'uniform'."""
-    import pandas as pd
+    import polars as pl
 
     from riskquant.credit.jtd.ingest.validate import _assert_distinct_columns
 
-    frame = pd.DataFrame({
+    frame = pl.DataFrame({
         "uid": [1, 2],
         "idiosyncratic_factor": ["EPS_SHARED", "EPS_SHARED"],
     })
@@ -329,7 +329,7 @@ def test_ingest_rejects_a_shared_idiosyncratic_factor(model) -> None:
             frame, JTD_MODEL_CONTRACTS[model], mapping, ctx=model.name
         )
 
-    private = pd.DataFrame({"uid": [1, 2], "idiosyncratic_factor": ["EPS_1", "EPS_2"]})
+    private = pl.DataFrame({"uid": [1, 2], "idiosyncratic_factor": ["EPS_1", "EPS_2"]})
     _assert_distinct_columns(
         private, JTD_MODEL_CONTRACTS[model], {"EPS_1": 7, "EPS_2": 8}, ctx=model.name
     )
@@ -338,11 +338,11 @@ def test_ingest_rejects_a_shared_idiosyncratic_factor(model) -> None:
 def test_the_uniform_guard_still_names_uniforms() -> None:
     """The shared validator is reused, not repurposed: the Bernoulli-family
     message must not start calling uniforms 'idiosyncratic'."""
-    import pandas as pd
+    import polars as pl
 
     from riskquant.credit.jtd.ingest.validate import _assert_distinct_columns
 
-    frame = pd.DataFrame({"uid": [1, 2], "uniform_factor": ["U_SHARED", "U_SHARED"]})
+    frame = pl.DataFrame({"uid": [1, 2], "uniform_factor": ["U_SHARED", "U_SHARED"]})
     with pytest.raises(ValueError, match="uniform factor UIX"):
         _assert_distinct_columns(
             frame,

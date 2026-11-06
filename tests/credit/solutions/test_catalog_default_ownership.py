@@ -29,7 +29,7 @@ import ast
 import inspect
 import pathlib
 
-import pandas as pd
+import polars as pl
 import pytest
 
 from riskquant.solutions.credit_var import catalog, recipes
@@ -56,8 +56,8 @@ def _published_defaults() -> dict[str, float]:
     return out
 
 
-def _table(n: int = 3) -> pd.DataFrame:
-    return pd.DataFrame({
+def _table(n: int = 3) -> pl.DataFrame:
+    return pl.DataFrame({
         "uid": list(range(1, n + 1)),
         "ead": [1_000_000.0] * n,
         "pd": [0.30] * n,  # high enough for every model's own constraints
@@ -140,7 +140,7 @@ def _assembled_universe(model_key: str, params: dict[str, float]):
         (
             "marshall_olkin",
             "systemic_pd",
-            lambda u, b: float(b.marshall_olkin_df["systemic_pd"].iloc[0]),
+            lambda u, b: float(b.marshall_olkin_df["systemic_pd"][0]),
         ),
     ],
 )
@@ -158,7 +158,7 @@ def test_omitted_rho_is_modelled_with_the_published_default() -> None:
     assembled = _assembled_universe("sf_gaussian", {})
     frame = assembled.bundle.sf_gaussian_copula_df
     assert frame is not None
-    loading = float(frame["factor_loading"].iloc[0])
+    loading = float(frame["factor_loading"][0])
     assert loading**2 == pytest.approx(_published_defaults()["rho"], rel=1e-12)
 
 
@@ -166,7 +166,7 @@ def test_omitted_rho_is_modelled_with_the_published_default() -> None:
 def test_explicit_rho_is_not_replaced_by_any_default(explicit) -> None:
     assembled = _assembled_universe("sf_gaussian", {"rho": explicit})
     frame = assembled.bundle.sf_gaussian_copula_df
-    loading = float(frame["factor_loading"].iloc[0])
+    loading = float(frame["factor_loading"][0])
     assert loading**2 == pytest.approx(explicit, rel=1e-12)
     assert loading**2 != pytest.approx(_published_defaults()["rho"], rel=1e-9)
 
@@ -209,7 +209,7 @@ def test_grouped_request_requires_every_param_per_group() -> None:
 
     from riskquant.solutions.credit_var.schemas import CreditVarRequest
 
-    book = pd.DataFrame({
+    book = pl.DataFrame({
         "obligor_uid": [1, 2],
         "ead": [1e6, 1e6],
         "pd": [0.3, 0.3],
@@ -235,6 +235,6 @@ def test_rho_no_longer_advertises_a_value_the_engine_will_not_use() -> None:
     validated and displayed against one correlation and modelled with another."""
     published = _published_defaults()["rho"]
     assembled = _assembled_universe("sf_gaussian", {})
-    loading = float(assembled.bundle.sf_gaussian_copula_df["factor_loading"].iloc[0])
+    loading = float(assembled.bundle.sf_gaussian_copula_df["factor_loading"][0])
     assert loading**2 == pytest.approx(published, rel=1e-12)
     assert published == pytest.approx(recipes._DEFAULT_RHO, rel=1e-12)

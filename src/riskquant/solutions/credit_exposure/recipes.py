@@ -13,7 +13,8 @@ hedging-set-aggregated add-on, with alpha and the multiplier floor as knobs.
 
 This is solution-tier, not core: the core engine takes fully-compiled masters and
 views; "construct them from flat tables" is authoring sugar that belongs with the
-solution. Plain DataFrames + params in, engine objects out, fail-fast. Adding a
+solution. Plain ``pl.DataFrame`` tables + params in, engine objects out,
+fail-fast. Adding a
 model is one assembler here plus a catalog entry.
 """
 
@@ -31,7 +32,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 import numpy as np
-import pandas as pd
+import numpy.typing as npt
+import polars as pl
 
 from riskquant.credit.exposure.add_on.compiled import CompiledAddOnFactors
 from riskquant.credit.exposure.add_on.ingest import compile_add_on_factors
@@ -63,43 +65,52 @@ class AssembledExposureInputs:
 # --------------------------------------------------------------------------
 
 
-def _trade_uids(trades: pd.DataFrame) -> np.ndarray:
-    return np.ascontiguousarray(trades["trade_uid"].to_numpy(dtype=np.int64))
+def _array(frame: pl.DataFrame, col: str, dtype: npt.DTypeLike) -> np.ndarray:
+    """One column as a new writeable, C-contiguous array of ``dtype``.
+
+    ``copy=True``: ``pl.Series.to_numpy`` can return a read-only view (F-25),
+    and the compiled views keep these arrays.
+    """
+    return np.array(frame.get_column(col).to_numpy(), dtype=dtype, order="C", copy=True)
 
 
-def _trade_netting_set(trades: pd.DataFrame) -> np.ndarray:
-    return np.ascontiguousarray(trades["netting_set_uid"].to_numpy(dtype=np.int64))
+def _trade_uids(trades: pl.DataFrame) -> np.ndarray:
+    return _array(trades, "trade_uid", np.int64)
 
 
-def _master(netting_sets: pd.DataFrame) -> CompiledNettingSetMaster:
+def _trade_netting_set(trades: pl.DataFrame) -> np.ndarray:
+    return _array(trades, "netting_set_uid", np.int64)
+
+
+def _master(netting_sets: pl.DataFrame) -> CompiledNettingSetMaster:
     """Compile the netting-set master (ascending by uid, the master invariant)."""
-    uid = netting_sets["netting_set_uid"].to_numpy(dtype=np.int64)
+    uid = _array(netting_sets, "netting_set_uid", np.int64)
     order = np.argsort(uid, kind="stable")
     return CompiledNettingSetMaster(
         uid=np.ascontiguousarray(uid[order]),
         obligor_uid=np.ascontiguousarray(
-            netting_sets["obligor_uid"].to_numpy(dtype=np.int64)[order]
+            _array(netting_sets, "obligor_uid", np.int64)[order]
         ),
         net_collateral=np.ascontiguousarray(
-            netting_sets["net_collateral"].to_numpy(dtype=np.float64)[order]
+            _array(netting_sets, "net_collateral", np.float64)[order]
         ),
     )
 
 
-def _add_on(add_on_factors: pd.DataFrame | None, *, ctx: str) -> CompiledAddOnFactors:
+def _add_on(add_on_factors: pl.DataFrame | None, *, ctx: str) -> CompiledAddOnFactors:
     if add_on_factors is None:
         raise ValueError(f"{ctx}: 'add_on_factors' table is required.")
     return compile_add_on_factors(add_on_factors)
 
 
-def _effective_notional(trades: pd.DataFrame) -> np.ndarray:
+def _effective_notional(trades: pl.DataFrame) -> np.ndarray:
     return resolve_quantity_price_effective_notional(
-        volume=trades["volume"].to_numpy(dtype=np.float64),
-        current_price=trades["current_price"].to_numpy(dtype=np.float64),
+        volume=_array(trades, "volume", np.float64),
+        current_price=_array(trades, "current_price", np.float64),
     )
 
 
-def _saccr_effective_notional(trades: pd.DataFrame) -> np.ndarray:
+def _saccr_effective_notional(trades: pl.DataFrame) -> np.ndarray:
     """SA-CCR signed effective notional D_i = d_i * MF_i * delta_i (P2-11A/B).
 
     Direction string dies here: it is mapped to the canonical +-1 sign before the
@@ -107,7 +118,7 @@ def _saccr_effective_notional(trades: pd.DataFrame) -> np.ndarray:
     request validator has already guaranteed both columns are present and typed
     for SA-CCR (fail-fast at the boundary); this reads them as canonical arrays.
     """
-    direction = trades["direction"].to_numpy()
+    direction = trades.get_column("direction").to_numpy()
     # Explicit long/short mapping. `np.where(=="long", +1, -1)` would silently
     # turn any non-"long" value (typo, None-as-object, "SHORT") into a short;
     # map only the two legal literals and reject everything else. TradeRow's
@@ -123,17 +134,32 @@ def _saccr_effective_notional(trades: pd.DataFrame) -> np.ndarray:
         )
     direction_sign = np.where(is_long, 1.0, -1.0).astype(np.float64)
     return resolve_saccr_effective_notional(
-        volume=trades["volume"].to_numpy(dtype=np.float64),
-        current_price=trades["current_price"].to_numpy(dtype=np.float64),
+        volume=_array(trades, "volume", np.float64),
+        current_price=_array(trades, "current_price", np.float64),
         direction_sign=np.ascontiguousarray(direction_sign),
-        remaining_maturity_years=trades["remaining_maturity_years"].to_numpy(
-            dtype=np.float64
-        ),
+        remaining_maturity_years=_array(trades, "remaining_maturity_years", np.float64),
     )
 
 
-def _subclass_uix(trades: pd.DataFrame) -> np.ndarray:
-    return np.ascontiguousarray(trades["asset_subclass_uix"].to_numpy(dtype=np.int32))
+def _subclass_uix(trades: pl.DataFrame) -> np.ndarray:
+    """Trade ``asset_subclass_uix`` as a new int32 array; outside int32 raises.
+
+    The request field is a Python int and the request frame column is Int64. A
+    direct int64 -> int32 cast wraps without an error (2**32 + 2 becomes 2, a
+    subclass the author did not write), so the range is checked first and an
+    overflow raises TypeError (R-9 form, S3 review OD-B (b1)). This runs before
+    any engine call on the dict path and on the from_dataframe path.
+    """
+    uix = _array(trades, "asset_subclass_uix", np.int64)
+    info = np.iinfo(np.int32)
+    outside = (uix < info.min) | (uix > info.max)
+    if outside.any():
+        raise TypeError(
+            "assemble_exposure_inputs: trade asset_subclass_uix "
+            f"{int(uix[outside][0])} is outside the int32 range "
+            f"[{info.min}, {info.max}]."
+        )
+    return np.ascontiguousarray(uix.astype(np.int32))
 
 
 def _overrides(params: Mapping[str, float], keys: tuple[str, ...]) -> dict[str, float]:
@@ -147,12 +173,12 @@ def _overrides(params: Mapping[str, float], keys: tuple[str, ...]) -> dict[str, 
 
 
 def _assemble_replacement_cost(
-    trades: pd.DataFrame,
-    netting_sets: pd.DataFrame,
+    trades: pl.DataFrame,
+    netting_sets: pl.DataFrame,
     params: Mapping[str, float],
-    add_on_factors: pd.DataFrame | None = None,
-    subclass_hedging_sets: pd.DataFrame | None = None,
-    hedging_set_correlations: pd.DataFrame | None = None,
+    add_on_factors: pl.DataFrame | None = None,
+    subclass_hedging_sets: pl.DataFrame | None = None,
+    hedging_set_correlations: pl.DataFrame | None = None,
 ) -> AssembledExposureInputs:
     master = _master(netting_sets)
     compiled = compile_exposure_rc(
@@ -164,12 +190,12 @@ def _assemble_replacement_cost(
 
 
 def _assemble_current_exposure_method(
-    trades: pd.DataFrame,
-    netting_sets: pd.DataFrame,
+    trades: pl.DataFrame,
+    netting_sets: pl.DataFrame,
     params: Mapping[str, float],
-    add_on_factors: pd.DataFrame | None = None,
-    subclass_hedging_sets: pd.DataFrame | None = None,
-    hedging_set_correlations: pd.DataFrame | None = None,
+    add_on_factors: pl.DataFrame | None = None,
+    subclass_hedging_sets: pl.DataFrame | None = None,
+    hedging_set_correlations: pl.DataFrame | None = None,
 ) -> AssembledExposureInputs:
     master = _master(netting_sets)
     add_on = _add_on(add_on_factors, ctx="current_exposure_method")
@@ -192,12 +218,12 @@ class _SaccrConfigKwargs(TypedDict):
 
 
 def _assemble_saccr(
-    trades: pd.DataFrame,
-    netting_sets: pd.DataFrame,
+    trades: pl.DataFrame,
+    netting_sets: pl.DataFrame,
     params: Mapping[str, float],
-    add_on_factors: pd.DataFrame | None = None,
-    subclass_hedging_sets: pd.DataFrame | None = None,
-    hedging_set_correlations: pd.DataFrame | None = None,
+    add_on_factors: pl.DataFrame | None = None,
+    subclass_hedging_sets: pl.DataFrame | None = None,
+    hedging_set_correlations: pl.DataFrame | None = None,
 ) -> AssembledExposureInputs:
     master = _master(netting_sets)
     add_on = _add_on(add_on_factors, ctx="saccr")
@@ -239,12 +265,12 @@ SUPPORTED_EXPOSURE_RECIPES: dict[str, object] = {
 def assemble_exposure_inputs(
     *,
     model_key: str,
-    trades: pd.DataFrame,
-    netting_sets: pd.DataFrame,
+    trades: pl.DataFrame,
+    netting_sets: pl.DataFrame,
     params: Mapping[str, float] | None = None,
-    add_on_factors: pd.DataFrame | None = None,
-    subclass_hedging_sets: pd.DataFrame | None = None,
-    hedging_set_correlations: pd.DataFrame | None = None,
+    add_on_factors: pl.DataFrame | None = None,
+    subclass_hedging_sets: pl.DataFrame | None = None,
+    hedging_set_correlations: pl.DataFrame | None = None,
 ) -> AssembledExposureInputs:
     """Build compiled engine inputs for `model_key` from flat tables + params.
 

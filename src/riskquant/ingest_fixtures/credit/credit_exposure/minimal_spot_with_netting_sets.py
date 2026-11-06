@@ -17,7 +17,7 @@ cost-specific parameters live on the netting-set master
 
 from __future__ import annotations
 
-import pandas as pd
+import polars as pl
 
 from riskquant.ingest_fixtures.schemas import MarketRiskIngestData
 from riskquant.ingest_fixtures.utils import validate_column_lengths
@@ -65,7 +65,10 @@ CANONICAL_CREDIT_EXPOSURE_INGEST_DATA: MarketRiskIngestData = _get_data()
 
 validate_column_lengths(CANONICAL_CREDIT_EXPOSURE_INGEST_DATA)
 
-CANONICAL_CREDIT_EXPOSURE_INGEST_DF = pd.DataFrame(
+# Polars at the edge (D094: the portfolio ingest takes pl.DataFrame only). The
+# frame is built column by column, so every column dtype comes from its full
+# list; the all-None columns are pl.Null.
+CANONICAL_CREDIT_EXPOSURE_INGEST_DF = pl.DataFrame(
     CANONICAL_CREDIT_EXPOSURE_INGEST_DATA
 )
 

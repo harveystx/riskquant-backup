@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.credit.jtd.blocks.marshall_olkin import MarshallOlkinJtdBlock
 from riskquant.credit.jtd.ingest._shared import (
     _f64,
     _i64,
     _join_pd_lgd_from_master,
+    _names,
     _resolve_factor_uix,
 )
 from riskquant.credit.masters.obligors.compiled import CompiledObligorCredit
@@ -17,7 +18,7 @@ _PREVIEW = 10
 
 
 def build_marshall_olkin_block(
-    df: pd.DataFrame,
+    df: pl.DataFrame,
     obligor_master: CompiledObligorCredit,
     factor_name_to_uix: dict[str, int],
 ) -> MarshallOlkinJtdBlock:
@@ -61,13 +62,13 @@ def build_marshall_olkin_block(
     # Factor Resolution
     # -------------------------------------------------------------------------
     uniform_uix = _resolve_factor_uix(
-        df["uniform_factor"].to_numpy(copy=False),
+        _names(df, "uniform_factor"),
         factor_name_to_uix,
         ctx="MARSHALL_OLKIN.uniform_factor",
     )
 
     systemic_uix = _resolve_factor_uix(
-        df["systemic_uniform_factor"].to_numpy(copy=False),
+        _names(df, "systemic_uniform_factor"),
         factor_name_to_uix,
         ctx="MARSHALL_OLKIN.systemic_uniform_factor",
     )

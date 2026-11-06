@@ -1,7 +1,7 @@
 # scripts/solutions/credit_var/demo_e2e_independent_bernoulli.py
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.solutions.credit_var.api import CreditVarRequest, run_credit_var
 from riskquant.solutions.credit_var.run import simulate_portfolio_losses
@@ -38,7 +38,7 @@ def main() -> None:
     # ----------------------------------------------------------------------------------
     rng = np.random.default_rng(RNG_SEED)
 
-    obligor_df = pd.DataFrame(
+    obligor_df = pl.DataFrame(
         generate_credit_portfolio_data(
             n_obligors=NUM_OBLIGORS,
             rng=rng,
@@ -114,11 +114,17 @@ def main() -> None:
     # ----------------------------------------------------------------------------------
 
     # 1. Calculate Analytical Metrics
-    mean_analytical = np.sum(obligor_df["ead"] * obligor_df["lgd"] * obligor_df["pd"])
+    mean_analytical = np.sum(
+        obligor_df["ead"].to_numpy()
+        * obligor_df["lgd"].to_numpy()
+        * obligor_df["pd"].to_numpy()
+    )
 
-    loss_given_default = obligor_df["ead"] * obligor_df["lgd"]
+    loss_given_default = obligor_df["ead"].to_numpy() * obligor_df["lgd"].to_numpy()
     variance_analytical = np.sum(
-        (loss_given_default**2) * obligor_df["pd"] * (1 - obligor_df["pd"])
+        (loss_given_default**2)
+        * obligor_df["pd"].to_numpy()
+        * (1 - obligor_df["pd"].to_numpy())
     )
     std_dev_analytical = np.sqrt(variance_analytical)
 

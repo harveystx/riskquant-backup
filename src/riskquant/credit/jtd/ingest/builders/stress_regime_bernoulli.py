@@ -6,7 +6,7 @@ stress factors (block-diagonal regimes) or share one (the global-stress case).""
 
 from __future__ import annotations
 
-import pandas as pd
+import polars as pl
 
 from riskquant.credit.jtd.blocks.stress_regime_bernoulli import (
     StressRegimeBernoulliJtdBlock,
@@ -15,13 +15,14 @@ from riskquant.credit.jtd.ingest._shared import (
     _f64,
     _i64,
     _join_pd_lgd_from_master,
+    _names,
     _resolve_factor_uix,
 )
 from riskquant.credit.masters.obligors.compiled import CompiledObligorCredit
 
 
 def build_stress_regime_bernoulli_block(
-    df: pd.DataFrame,
+    df: pl.DataFrame,
     obligor_master: CompiledObligorCredit,
     factor_name_to_uix: dict[str, int],
 ) -> StressRegimeBernoulliJtdBlock:
@@ -33,12 +34,12 @@ def build_stress_regime_bernoulli_block(
         lgd=lgd_arr,
         pd=pd_arr,
         uniform_uix=_resolve_factor_uix(
-            df["uniform_factor"].to_numpy(copy=False),
+            _names(df, "uniform_factor"),
             factor_name_to_uix,
             ctx="uniform_factor",
         ),
         stress_regime_indicator_uix=_resolve_factor_uix(
-            df["stress_regime_factor"].to_numpy(copy=False),
+            _names(df, "stress_regime_factor"),
             factor_name_to_uix,
             ctx="stress_regime_factor",
         ),

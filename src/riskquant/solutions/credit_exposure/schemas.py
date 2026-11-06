@@ -31,9 +31,9 @@ __all__ = [
     "TradeRow",
 ]
 
-from collections.abc import Hashable, Mapping
+import math
+from collections.abc import Mapping
 
-import pandas as pd
 import polars as pl
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -202,89 +202,132 @@ class CreditExposureRequest(BaseModel):
     @classmethod
     def from_dataframe(
         cls,
-        trades: pd.DataFrame,
-        netting_sets: pd.DataFrame,
+        trades: pl.DataFrame,
+        netting_sets: pl.DataFrame,
         *,
         model: str,
-        add_on_factors: pd.DataFrame | None = None,
+        add_on_factors: pl.DataFrame | None = None,
         pfe_floor: float | None = None,
         pfe_coefficient: float | None = None,
-        subclass_hedging_sets: pd.DataFrame | None = None,
-        hedging_set_correlations: pd.DataFrame | None = None,
+        subclass_hedging_sets: pl.DataFrame | None = None,
+        hedging_set_correlations: pl.DataFrame | None = None,
         saccr_alpha: float | None = None,
         saccr_multiplier_floor: float | None = None,
     ) -> CreditExposureRequest:
-        """Build a request from flat DataFrames (notebook / desk ergonomics).
+        """Build a request from flat ``pl.DataFrame`` tables (notebook / desk ergonomics).
 
         ``trades`` needs ``trade_uid, netting_set_uid, mtm`` (plus ``volume,
         current_price, asset_subclass_uix`` for CEM, and additionally
         ``direction`` in {"long","short"} and ``remaining_maturity_years`` > 0
         for SA-CCR); ``netting_sets`` needs ``netting_set_uid, obligor_uid,
-        net_collateral``; ``add_on_factors`` needs ``subclass_uix, factor``.
-        Extra columns are ignored.
+        net_collateral``; ``add_on_factors`` needs ``subclass_uix, factor``;
+        ``subclass_hedging_sets`` needs ``subclass_uix, hedging_set_uix``;
+        ``hedging_set_correlations`` needs ``hedging_set_uix, rho``. Extra
+        columns are ignored.
+
+        Column admission by dtype (WS_CREDIT_POLARS C.12, the C.11 rule of each
+        field type). An int field admits an integer dtype, or a float dtype: an
+        integral float cell (``7.0``) becomes its int; a fractional, NaN or
+        infinite cell reaches the int field unchanged and raises
+        ``pydantic.ValidationError`` (``int(7.9)`` would give a uid that the
+        author did not write). A float field admits an integer or a float
+        dtype. ``direction`` admits ``pl.Utf8``. In a float column, null means
+        null or NaN. An optional field also admits ``pl.Null``, and its null
+        cell means absent. A null cell in a required field reaches the row model
+        as ``None`` and raises ``pydantic.ValidationError`` at that field. Any
+        other dtype (``pl.Boolean``, ``pl.Decimal`` included) raises TypeError
+        that names the column.
+
+        Raises
+        ------
+        TypeError
+            A table is not a ``pl.DataFrame`` (all tables are checked before
+            any read), or a read column has a dtype that its field rule does not
+            admit.
+        ValueError
+            A required column is missing.
+        pydantic.ValidationError
+            A cell or the request fails the request rules.
         """
-        _require(trades, ("trade_uid", "netting_set_uid", "mtm"), "trades")
-        _require(
-            netting_sets,
-            ("netting_set_uid", "obligor_uid", "net_collateral"),
-            "netting_sets",
+        tables: dict[str, object] = {
+            "trades": trades,
+            "netting_sets": netting_sets,
+            "add_on_factors": add_on_factors,
+            "subclass_hedging_sets": subclass_hedging_sets,
+            "hedging_set_correlations": hedging_set_correlations,
+        }
+        for name, table in tables.items():
+            optional = name not in ("trades", "netting_sets")
+            if table is None and optional:
+                continue
+            if not isinstance(table, pl.DataFrame):
+                kind = f"{type(table).__module__}.{type(table).__qualname__}"
+                raise TypeError(
+                    f"from_dataframe: '{name}' must be a pl.DataFrame "
+                    f"(polars.DataFrame); got {kind}. Convert at the call "
+                    "boundary (pl.from_pandas, pl.from_dict)."
+                )
+
+        trade_cols = _read(
+            trades,
+            "trades",
+            required={"trade_uid": int, "netting_set_uid": int, "mtm": float},
+            optional={
+                "volume": float,
+                "current_price": float,
+                "asset_subclass_uix": int,
+                "direction": str,
+                "remaining_maturity_years": float,
+            },
         )
         trade_rows = [
-            TradeRow(
-                trade_uid=int(r["trade_uid"]),
-                netting_set_uid=int(r["netting_set_uid"]),
-                mtm=float(r["mtm"]),
-                volume=_opt_float(r, "volume"),
-                current_price=_opt_float(r, "current_price"),
-                asset_subclass_uix=_opt_int(r, "asset_subclass_uix"),
-                direction=_opt_direction(r, "direction"),
-                remaining_maturity_years=_opt_float(r, "remaining_maturity_years"),
-            )
-            for r in trades.to_dict("records")
+            TradeRow(**cast("dict[str, Any]", cells)) for cells in _records(trade_cols)
         ]
+        ns_cols = _read(
+            netting_sets,
+            "netting_sets",
+            required={
+                "netting_set_uid": int,
+                "obligor_uid": int,
+                "net_collateral": float,
+            },
+        )
         ns_rows = [
-            NettingSetRow(
-                netting_set_uid=int(r["netting_set_uid"]),
-                obligor_uid=int(r["obligor_uid"]),
-                net_collateral=float(r["net_collateral"]),
-            )
-            for r in netting_sets.to_dict("records")
+            NettingSetRow(**cast("dict[str, Any]", cells))
+            for cells in _records(ns_cols)
         ]
         addon_rows: list[AddOnFactorRow] | None = None
         if add_on_factors is not None:
-            _require(add_on_factors, ("subclass_uix", "factor"), "add_on_factors")
+            cols = _read(
+                add_on_factors,
+                "add_on_factors",
+                required={"subclass_uix": int, "factor": float},
+            )
             addon_rows = [
-                AddOnFactorRow(
-                    subclass_uix=int(r["subclass_uix"]), factor=float(r["factor"])
-                )
-                for r in add_on_factors.to_dict("records")
+                AddOnFactorRow(**cast("dict[str, Any]", cells))
+                for cells in _records(cols)
             ]
         hedging_rows: list[SubclassHedgingSetRow] | None = None
         if subclass_hedging_sets is not None:
-            _require(
+            cols = _read(
                 subclass_hedging_sets,
-                ("subclass_uix", "hedging_set_uix"),
                 "subclass_hedging_sets",
+                required={"subclass_uix": int, "hedging_set_uix": int},
             )
             hedging_rows = [
-                SubclassHedgingSetRow(
-                    subclass_uix=int(r["subclass_uix"]),
-                    hedging_set_uix=int(r["hedging_set_uix"]),
-                )
-                for r in subclass_hedging_sets.to_dict("records")
+                SubclassHedgingSetRow(**cast("dict[str, Any]", cells))
+                for cells in _records(cols)
             ]
         rho_rows: list[HedgingSetRhoRow] | None = None
         if hedging_set_correlations is not None:
-            _require(
+            cols = _read(
                 hedging_set_correlations,
-                ("hedging_set_uix", "rho"),
                 "hedging_set_correlations",
+                required={"hedging_set_uix": int, "rho": float},
             )
             rho_rows = [
-                HedgingSetRhoRow(
-                    hedging_set_uix=int(r["hedging_set_uix"]), rho=float(r["rho"])
-                )
-                for r in hedging_set_correlations.to_dict("records")
+                HedgingSetRhoRow(**cast("dict[str, Any]", cells))
+                for cells in _records(cols)
             ]
         return cls(
             model=model,
@@ -371,32 +414,83 @@ class CreditExposureResult(BaseModel):
         })
 
 
-def _require(df: pd.DataFrame, cols: tuple[str, ...], name: str) -> None:
-    missing = [c for c in cols if c not in df.columns]
+_FieldType = type[int] | type[float] | type[str]
+
+
+def _read(
+    frame: pl.DataFrame,
+    name: str,
+    *,
+    required: Mapping[str, _FieldType],
+    optional: Mapping[str, _FieldType] | None = None,
+) -> dict[str, list[object]]:
+    """Read the field columns of one table as Python cells, admitted by dtype.
+
+    Returns one list of cells per field; an optional field whose column is
+    absent gives ``None`` cells. See `CreditExposureRequest.from_dataframe`
+    for the dtype and cell rules.
+    """
+    missing = [c for c in required if c not in frame.columns]
     if missing:
         raise ValueError(f"from_dataframe: {name} missing column(s) {missing}.")
+    fields = {c: (t, False) for c, t in required.items()}
+    fields.update({c: (t, True) for c, t in (optional or {}).items()})
+    out: dict[str, list[object]] = {}
+    for col, (kind, is_optional) in fields.items():
+        if col not in frame.columns:
+            out[col] = [None] * frame.height
+            continue
+        out[col] = _cells(frame.get_column(col), name, kind, optional=is_optional)
+    return out
 
 
-def _opt_float(rec: Mapping[Hashable, Any], key: str) -> float | None:
-    if key not in rec or pd.isna(rec[key]):
-        return None
-    return float(rec[key])
+def _cells(
+    series: pl.Series, name: str, kind: _FieldType, *, optional: bool
+) -> list[object]:
+    dtype = series.dtype
+    if optional and dtype == pl.Null:
+        return [None] * series.len()
+    if kind is str:
+        admitted = dtype == pl.Utf8
+        rule = "pl.Utf8" + (" or pl.Null" if optional else "")
+    else:
+        admitted = dtype.is_integer() or dtype.is_float()
+        rule = "an integer or a float dtype" + (" or pl.Null" if optional else "")
+    if not admitted:
+        raise TypeError(
+            f"from_dataframe: {name} column '{series.name}' has dtype {dtype!s}; "
+            f"the field admits {rule}."
+        )
+    values: list[object] = series.to_list()
+    if kind is str:
+        return values
+    # A NaN cell in a float column is a null (B-8): absent for an optional
+    # field; for a required float field it reaches the row model as None and
+    # raises R at the field path, as a null cell does (S3 review OD-A (b)).
+    # A NaN in a required int field reaches the int field unchanged (R).
+    nan_is_null = dtype.is_float() and (optional or kind is float)
+    out: list[object] = []
+    for v in values:
+        if v is None or (nan_is_null and math.isnan(cast("float", v))):
+            out.append(None)  # absent (optional) or None -> R (required)
+        elif kind is int:
+            out.append(_int_cell(v))
+        else:
+            out.append(float(cast("float", v)))
+    return out
 
 
-def _opt_int(rec: Mapping[Hashable, Any], key: str) -> int | None:
-    if key not in rec or pd.isna(rec[key]):
-        return None
-    return int(rec[key])
+def _int_cell(value: object) -> object:
+    """An int-field cell: an integral float becomes its int; a fractional, NaN
+    or infinite float is returned unchanged, so the int field raises R."""
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else value
+    return value
 
 
-def _opt_direction(
-    rec: Mapping[Hashable, Any], key: str
-) -> Literal["long", "short"] | None:
-    """Optional SA-CCR direction column. Absent / NA -> None (TradeRow requires
-    it for saccr via _validate_method); a present value passes through untouched
-    so TradeRow's Literal["long", "short"] validates it and rejects anything
-    else. The cast expresses "TradeRow will validate this at construction"; an
-    invalid string still fails there, never silently."""
-    if key not in rec or pd.isna(rec[key]):
-        return None
-    return cast("Literal['long', 'short']", str(rec[key]))
+def _records(columns: dict[str, list[object]]) -> list[dict[str, object]]:
+    names = list(columns)
+    return [
+        dict(zip(names, row, strict=True))
+        for row in zip(*columns.values(), strict=True)
+    ]

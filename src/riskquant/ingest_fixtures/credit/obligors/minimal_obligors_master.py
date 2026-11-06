@@ -17,7 +17,7 @@ default 0.005 threshold, including:
 
 from __future__ import annotations
 
-import pandas as pd
+import polars as pl
 
 from riskquant.ingest_fixtures.schemas import ObligorCreditIngestData
 from riskquant.ingest_fixtures.utils import validate_column_lengths
@@ -101,7 +101,7 @@ CANONICAL_OBLIGOR_CREDIT_INGEST_DATA: ObligorCreditIngestData = _get_data()
 
 validate_column_lengths(CANONICAL_OBLIGOR_CREDIT_INGEST_DATA)
 
-CANONICAL_OBLIGOR_CREDIT_INGEST_DF = pd.DataFrame(CANONICAL_OBLIGOR_CREDIT_INGEST_DATA)
+CANONICAL_OBLIGOR_CREDIT_INGEST_DF = pl.DataFrame(CANONICAL_OBLIGOR_CREDIT_INGEST_DATA)
 
 
 def _debug_print() -> None:

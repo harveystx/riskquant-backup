@@ -15,7 +15,7 @@ from __future__ import annotations
 import time
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.constants import RNG_SEED
 from riskquant.credit.factors.simulate.base import build_credit_factor_matrix
@@ -23,10 +23,10 @@ from riskquant.credit.factors.simulate.mixed import MixedCreditFactorGenerator
 from riskquant.credit.jtd.engine import run_jtd
 from riskquant.credit.jtd.ingest.bundle import JtdIngestBundle
 from riskquant.credit.jtd.ingest.compile import compile_jtd_portfolio
+from riskquant.credit.jtd.models import JtdModel
 from riskquant.credit.masters.cross_master.compiled import (
     CompiledCreditMasters,
 )
-from riskquant.credit.jtd.models import JtdModel
 from riskquant.credit.masters.factor_universe.ingest import (
     compile_credit_factor_universe,
 )
@@ -174,17 +174,15 @@ def run_demo() -> None:
 
     _obligor_lgds = rng.uniform(0.25, 0.75, NUM_OBLIGORS)
 
-    obligor_df = pd.DataFrame(
-        {
-            "uid": obligor_uids,
-            "pd": _obligor_pds,
-            "lgd": _obligor_lgds,
-            "rating_id": 0,
-            "sector_id": 0,
-            "country_id": 0,
-            "parent_uid": None,  # Ultimates
-        }
-    )
+    obligor_df = pl.DataFrame({
+        "uid": obligor_uids,
+        "pd": _obligor_pds,
+        "lgd": _obligor_lgds,
+        "rating_id": 0,
+        "sector_id": 0,
+        "country_id": 0,
+        "parent_uid": None,  # Ultimates
+    })
 
     obligor_master = compile_obligor_master(obligor_df)
 
@@ -236,52 +234,44 @@ def run_demo() -> None:
         f"\n- beta:  {beta_mom:>8.2f}"
     )
 
-    factor_universe_df = pd.DataFrame(
-        {
-            "factor_id": range(len(factor_names)),
-            "factor_name": factor_names,
-            "factor_kind": [
-                "SYSTEMIC"
-                if n == "GLOBAL_CREDIT"
-                else "CHI"
-                if (n == "GLOBAL_CHI" or n.startswith("CHI_"))
-                else "UNIFORM"
-                if n.startswith("U_")
-                else "STRESS_INDICATOR"
-                if n == "GLOBAL_STRESS_REGIME"
-                else "BETA_PD"
-                if n == "GLOBAL_BETA_PD"
-                else "IDIOSYNCRATIC"
-                for n in factor_names
-            ],
-            "nu": [
-                GLOBAL_T_COP_NU if (n == "GLOBAL_CHI" or n.startswith("CHI_")) else None
-                for n in factor_names
-            ],
-            # Use the new shape parameters we locked in earlier to avoid beta naming collision
-            "alpha": [
-                alpha_mom if n == "GLOBAL_BETA_PD" else None for n in factor_names
-            ],
-            "beta": [beta_mom if n == "GLOBAL_BETA_PD" else None for n in factor_names],
-        }
-    )
+    factor_universe_df = pl.DataFrame({
+        "factor_id": range(len(factor_names)),
+        "factor_name": factor_names,
+        "factor_kind": [
+            "SYSTEMIC"
+            if n == "GLOBAL_CREDIT"
+            else "CHI"
+            if (n == "GLOBAL_CHI" or n.startswith("CHI_"))
+            else "UNIFORM"
+            if n.startswith("U_")
+            else "STRESS_INDICATOR"
+            if n == "GLOBAL_STRESS_REGIME"
+            else "BETA_PD"
+            if n == "GLOBAL_BETA_PD"
+            else "IDIOSYNCRATIC"
+            for n in factor_names
+        ],
+        "nu": [
+            GLOBAL_T_COP_NU if (n == "GLOBAL_CHI" or n.startswith("CHI_")) else None
+            for n in factor_names
+        ],
+        # Use the new shape parameters we locked in earlier to avoid beta naming collision
+        "alpha": [alpha_mom if n == "GLOBAL_BETA_PD" else None for n in factor_names],
+        "beta": [beta_mom if n == "GLOBAL_BETA_PD" else None for n in factor_names],
+    })
     universe = compile_credit_factor_universe(factor_universe_df)
 
-    jtd_df = pd.DataFrame(
-        {
-            "uid": obligor_uids,  # Unsorted, matches the raw frame
-            "instrument": models,
-            "factor_loading": rng.uniform(0.1, 0.5, NUM_OBLIGORS),
-            "systemic_factor": "GLOBAL_CREDIT",
-            "idiosyncratic_factor": [
-                f"IDIO_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)
-            ],
-            "uniform_factor": [f"U_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)],
-            "stress_regime_factor": "GLOBAL_STRESS_REGIME",
-            "stress_pd_multiplier": rng.uniform(1.25, 3.0, NUM_OBLIGORS),
-            "beta_factor": "GLOBAL_BETA_PD",  # Will broadcast. Non-Beta-Binomial builders safely ignore it.
-        }
-    )
+    jtd_df = pl.DataFrame({
+        "uid": obligor_uids,  # Unsorted, matches the raw frame
+        "instrument": models,
+        "factor_loading": rng.uniform(0.1, 0.5, NUM_OBLIGORS),
+        "systemic_factor": "GLOBAL_CREDIT",
+        "idiosyncratic_factor": [f"IDIO_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)],
+        "uniform_factor": [f"U_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)],
+        "stress_regime_factor": "GLOBAL_STRESS_REGIME",
+        "stress_pd_multiplier": rng.uniform(1.25, 3.0, NUM_OBLIGORS),
+        "beta_factor": "GLOBAL_BETA_PD",  # Will broadcast. Non-Beta-Binomial builders safely ignore it.
+    })
 
     # Add T-Copula specific columns
     chi_factors = (
@@ -301,8 +291,10 @@ def run_demo() -> None:
         + [None] * N_BETA_BINOMIAL
     )
 
-    jtd_df["chi_squared_factor"] = chi_factors
-    jtd_df["nu"] = nus
+    jtd_df = jtd_df.with_columns(
+        pl.Series("chi_squared_factor", chi_factors, dtype=pl.String),
+        pl.Series("nu", nus, dtype=pl.Float64),
+    )
 
     print_df(
         jtd_df.head(n=10),

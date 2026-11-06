@@ -1,7 +1,7 @@
 # scripts/solutions/credit_var/demo_e2e_stress_regime_bernoulli_params.py
 
 import numpy as np
-import pandas as pd
+import polars as pl
 from matplotlib import pyplot as plt
 
 from riskquant.solutions.credit_var.api import (
@@ -53,7 +53,7 @@ def main() -> None:
     # ----------------------------------------------------------------------------------
     rng = np.random.default_rng(RNG_SEED)
 
-    obligor_df = pd.DataFrame(
+    obligor_df = pl.DataFrame(
         generate_credit_portfolio_data(
             n_obligors=NUM_OBLIGORS,
             rng=rng,

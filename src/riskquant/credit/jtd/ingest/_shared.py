@@ -4,13 +4,18 @@ Shared low-level ingest primitives: factor-name -> UIX resolution, typed column
 extraction, Gaussian / Student-t default thresholds, and the obligor-master
 PD/LGD join. Used by the per-model builders (and, for resolution, indirectly via
 the builders feeding the semantic validators). No model-specific logic here.
+
+The column readers take a ``pl.DataFrame`` that `validate.py` has admitted
+(WS_CREDIT_POLARS C.7). Each returns a NEW, writeable, C-contiguous array:
+``pl.Series.to_numpy`` can return a read-only view (F-25), and the Numba kernels
+are typed for writeable ``[::1]`` arrays.
 """
 
 from __future__ import annotations
 
 import numpy as np
 import numpy.typing as npt
-import pandas as pd
+import polars as pl
 from scipy.special import ndtri
 from scipy.stats import t as scipy_student_t
 
@@ -47,19 +52,28 @@ def _resolve_factor_uix(
     return out
 
 
-def _i64(df: pd.DataFrame, col: str) -> npt.NDArray[np.int64]:
-    return np.ascontiguousarray(df[col].to_numpy(dtype=np.int64))
+def _i64(df: pl.DataFrame, col: str) -> npt.NDArray[np.int64]:
+    """An admitted integer column as a new writeable, C-contiguous int64 array."""
+    return np.array(df.get_column(col).to_numpy(), dtype=np.int64, order="C", copy=True)
 
 
-def _f64(df: pd.DataFrame, col: str) -> npt.NDArray[np.float64]:
-    arr = np.ascontiguousarray(df[col].to_numpy(dtype=np.float64))
-    # `to_numpy` can hand back a read-only view of the column block, which
-    # `ascontiguousarray` passes through unchanged. Numba kernels are typed
-    # `float64[::1]` (writable) and reject `readonly` arrays, so guarantee a
-    # writable buffer; copy only when the view is actually read-only.
-    if not arr.flags.writeable:
-        arr = arr.copy()
-    return arr
+def _f64(df: pl.DataFrame, col: str) -> npt.NDArray[np.float64]:
+    """An admitted numeric column as a new writeable, C-contiguous float64 array."""
+    return np.array(
+        df.get_column(col).to_numpy(), dtype=np.float64, order="C", copy=True
+    )
+
+
+def _names(df: pl.DataFrame, col: str) -> npt.NDArray[np.object_]:
+    """An admitted factor-name column as an object array of Python str.
+
+    ``pl.Categorical`` and ``pl.Enum`` columns are read through ``pl.String``,
+    so every name reaches `_resolve_factor_uix` as the same str key.
+    """
+    values = df.get_column(col).cast(pl.String).to_list()
+    out = np.empty(len(values), dtype=np.object_)
+    out[:] = values
+    return out
 
 
 def _gaussian_thresholds(pd_arr: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:

@@ -13,16 +13,29 @@ homogeneity) is model-specific and lands separately; this layer answers only
 
 Every check fails fast with a specific, actionable message. After this passes,
 the builders may treat their input as structurally valid.
+
+Frame admission (WS_CREDIT_POLARS C.7, P-CREDIT_POLARS-001 clause 3). Every
+frame is a ``pl.DataFrame`` (the bundle refuses any other type).
+
+* The key column (``uid``, ``obligor_uid``) is an integer dtype whose values fit
+  int64; a value above the int64 range (a ``pl.UInt64`` uid >= 2**63) raises
+  TypeError instead of a silent wrap in the uid lists of the messages (R-9).
+* A value column (``float_columns``, ``factor_loading``) is an integer or a
+  float dtype. ``pl.Boolean`` is not numeric and raises ValueError (B-8).
+* A factor-name column is ``pl.Utf8``, ``pl.Categorical`` or ``pl.Enum`` (D094).
+* In a float column, null means null or NaN (F-24): both raise the null error.
+* A required column of dtype ``pl.Null`` (all null) raises TypeError (owner
+  decision OD-1 of S3). Every other refusal keeps its v0.2.0 type, ValueError.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Mapping
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import numpy.typing as npt
-import pandas as pd
+import polars as pl
 
 from riskquant.credit.jtd.ingest.bundle import JtdIngestBundle
 from riskquant.credit.jtd.ingest.contracts import (
@@ -32,12 +45,54 @@ from riskquant.credit.jtd.ingest.contracts import (
     JtdModelContract,
     MfLoadingsContract,
 )
+from riskquant.credit.jtd.ingest.loading_sum import loading_sum_sq
 from riskquant.credit.masters.enums.credit_factor_kind import CreditFactorKind
 
 if TYPE_CHECKING:
+    from riskquant.credit.masters.factor_universe.compiled import (
+        CompiledCreditFactorUniverse,
+    )
     from riskquant.credit.masters.obligors.compiled import CompiledObligorCredit
 
 _PREVIEW = 10
+_INT64_MAX = int(np.iinfo(np.int64).max)
+
+
+# -------------------------------------------------------------------------
+# Column predicates (dtype families of C.7)
+# -------------------------------------------------------------------------
+
+
+def _is_numeric(dtype: pl.DataType) -> bool:
+    """Integer or float; pl.Boolean and pl.Decimal are not numeric here (B-8)."""
+    return bool(dtype.is_integer() or dtype.is_float())
+
+
+def _is_string_like(dtype: pl.DataType) -> bool:
+    return isinstance(dtype, pl.String | pl.Categorical | pl.Enum)
+
+
+def _missing_count(series: pl.Series) -> int:
+    """Nulls, plus NaN in a float column (pandas isna semantics, F-24)."""
+    n = int(series.null_count())
+    if series.dtype.is_float():
+        n += int(series.is_nan().sum() or 0)
+    return n
+
+
+def _uid_array(series: pl.Series) -> npt.NDArray[np.int64]:
+    """An admitted integer key column as int64 (range already checked)."""
+    return np.array(series.to_numpy(), dtype=np.int64, order="C", copy=True)
+
+
+def _check_int64_range(series: pl.Series, *, ctx: str, what: str) -> None:
+    if series.dtype == pl.UInt64 and series.len():
+        high = series.max()
+        if high is not None and int(high) > _INT64_MAX:  # type: ignore[arg-type]
+            raise TypeError(
+                f"{ctx}: {what} holds a value above the int64 range ({high!r}); "
+                "obligor uids are int64."
+            )
 
 
 # -------------------------------------------------------------------------
@@ -46,7 +101,7 @@ _PREVIEW = 10
 
 
 def validate_required_columns(
-    df: pd.DataFrame, contract: JtdModelContract, *, ctx: str
+    df: pl.DataFrame, contract: JtdModelContract, *, ctx: str
 ) -> None:
     missing = sorted(contract.required_columns - set(df.columns))
     if missing:
@@ -57,44 +112,50 @@ def validate_required_columns(
 
 
 def validate_no_required_nulls(
-    df: pd.DataFrame, contract: JtdModelContract, *, ctx: str
+    df: pl.DataFrame, contract: JtdModelContract, *, ctx: str
 ) -> None:
     for col in sorted(contract.required_columns):
-        if df[col].isna().any():
-            n = int(df[col].isna().sum())
+        series = df.get_column(col)
+        if series.dtype == pl.Null and series.len():
+            raise TypeError(
+                f"{ctx}: {contract.model.name} column '{col}' is all null "
+                "(dtype Null); per-model masters are dense by contract."
+            )
+        n = _missing_count(series)
+        if n:
             raise ValueError(
                 f"{ctx}: {contract.model.name} column '{col}' has {n} null "
                 "value(s); per-model masters are dense by contract."
             )
 
 
-def validate_dtypes(df: pd.DataFrame, contract: JtdModelContract, *, ctx: str) -> None:
-    if not pd.api.types.is_integer_dtype(df[OBLIGOR_KEY]):
+def validate_dtypes(df: pl.DataFrame, contract: JtdModelContract, *, ctx: str) -> None:
+    key = df.get_column(OBLIGOR_KEY)
+    if not key.dtype.is_integer():
         raise ValueError(
             f"{ctx}: {contract.model.name} '{OBLIGOR_KEY}' must be an integer "
-            f"dtype, got {df[OBLIGOR_KEY].dtype}."
+            f"dtype, got {key.dtype}."
         )
+    _check_int64_range(key, ctx=ctx, what=f"{contract.model.name} '{OBLIGOR_KEY}'")
     for col in sorted(contract.float_columns):
-        if not pd.api.types.is_numeric_dtype(df[col]):
+        dtype = df.get_column(col).dtype
+        if not _is_numeric(dtype):
             raise ValueError(
-                f"{ctx}: {contract.model.name} '{col}' must be numeric, got "
-                f"{df[col].dtype}."
+                f"{ctx}: {contract.model.name} '{col}' must be numeric, got {dtype}."
             )
     for col in sorted(contract.factor_name_columns):
-        if not (
-            pd.api.types.is_object_dtype(df[col])
-            or pd.api.types.is_string_dtype(df[col])
-        ):
+        dtype = df.get_column(col).dtype
+        if not _is_string_like(dtype):
             raise ValueError(
                 f"{ctx}: {contract.model.name} factor-name column '{col}' must be "
-                f"string-like, got {df[col].dtype}."
+                f"string-like, got {dtype}."
             )
 
 
 def validate_uid_unique_within_frame(
-    df: pd.DataFrame, contract: JtdModelContract, *, ctx: str
+    df: pl.DataFrame, contract: JtdModelContract, *, ctx: str
 ) -> None:
-    uids = df[OBLIGOR_KEY].to_numpy()
+    uids = _uid_array(df.get_column(OBLIGOR_KEY))
     vals, counts = np.unique(uids, return_counts=True)
     dups = vals[counts > 1][:_PREVIEW].tolist()
     if dups:
@@ -105,13 +166,13 @@ def validate_uid_unique_within_frame(
 
 
 def validate_uids_in_master(
-    df: pd.DataFrame,
+    df: pl.DataFrame,
     obligor_master: CompiledObligorCredit,
     contract: JtdModelContract,
     *,
     ctx: str,
 ) -> None:
-    uids = df[OBLIGOR_KEY].to_numpy()
+    uids = _uid_array(df.get_column(OBLIGOR_KEY))
     known = np.isin(uids, obligor_master.uid)
     if not known.all():
         unknown = np.unique(uids[~known])[:_PREVIEW].tolist()
@@ -133,7 +194,7 @@ def validate_uid_disjoint_across_bundle(bundle: JtdIngestBundle, *, ctx: str) ->
     per uid); per-model frames must enforce it explicitly."""
     seen: dict[int, str] = {}
     for model, frame in bundle.frames_by_model().items():
-        for uid in frame[OBLIGOR_KEY].tolist():
+        for uid in frame.get_column(OBLIGOR_KEY).to_list():
             uid_i = int(uid)
             if uid_i in seen:
                 raise ValueError(
@@ -150,40 +211,45 @@ def validate_uid_disjoint_across_bundle(bundle: JtdIngestBundle, *, ctx: str) ->
 
 
 def validate_mf_loadings_structural(
-    mf_loadings_df: pd.DataFrame, contract: MfLoadingsContract, *, ctx: str
+    mf_loadings_df: pl.DataFrame, contract: MfLoadingsContract, *, ctx: str
 ) -> None:
     missing = sorted(contract.required_columns - set(mf_loadings_df.columns))
     if missing:
         raise ValueError(f"{ctx}: mf_loadings missing required column(s) {missing}.")
+    for col in sorted(contract.required_columns):
+        series = mf_loadings_df.get_column(col)
+        if series.dtype == pl.Null and series.len():
+            raise TypeError(f"{ctx}: mf_loadings '{col}' is all null (dtype Null).")
 
     key = contract.obligor_key
-    if mf_loadings_df[key].isna().any():
+    key_series = mf_loadings_df.get_column(key)
+    if key_series.null_count():
         raise ValueError(f"{ctx}: mf_loadings '{key}' has null value(s).")
-    if not pd.api.types.is_integer_dtype(mf_loadings_df[key]):
+    if not key_series.dtype.is_integer():
         raise ValueError(
             f"{ctx}: mf_loadings '{key}' must be an integer dtype, got "
-            f"{mf_loadings_df[key].dtype}."
+            f"{key_series.dtype}."
         )
+    _check_int64_range(key_series, ctx=ctx, what=f"mf_loadings '{key}'")
 
     name_col = contract.factor_name_column
-    if mf_loadings_df[name_col].isna().any():
+    name_series = mf_loadings_df.get_column(name_col)
+    if name_series.null_count():
         raise ValueError(f"{ctx}: mf_loadings '{name_col}' has null value(s).")
-    if not (
-        pd.api.types.is_object_dtype(mf_loadings_df[name_col])
-        or pd.api.types.is_string_dtype(mf_loadings_df[name_col])
-    ):
+    if not _is_string_like(name_series.dtype):
         raise ValueError(
             f"{ctx}: mf_loadings '{name_col}' must be string-like, got "
-            f"{mf_loadings_df[name_col].dtype}."
+            f"{name_series.dtype}."
         )
 
     load_col = contract.loading_column
-    if not pd.api.types.is_numeric_dtype(mf_loadings_df[load_col]):
+    load_series = mf_loadings_df.get_column(load_col)
+    if not _is_numeric(load_series.dtype):
         raise ValueError(
-            f"{ctx}: mf_loadings '{load_col}' must be numeric, got "
-            f"{mf_loadings_df[load_col].dtype}."
+            f"{ctx}: mf_loadings '{load_col}' must be numeric, got {load_series.dtype}."
         )
-    loadings = mf_loadings_df[load_col].to_numpy(dtype=np.float64)
+    # A null reads as NaN here (F-12), so null, NaN and inf share one message.
+    loadings = np.asarray(load_series.to_numpy(), dtype=np.float64)
     if not np.all(np.isfinite(loadings)):
         raise ValueError(f"{ctx}: mf_loadings '{load_col}' contains NaN/inf.")
 
@@ -200,7 +266,7 @@ def validate_mf_loadings_routable(
     mf_uids: set[int] = set()
     for model, frame in bundle.frames_by_model().items():
         if JTD_MODEL_CONTRACTS[model].uses_mf_loadings:
-            mf_uids.update(int(u) for u in frame[OBLIGOR_KEY].tolist())
+            mf_uids.update(int(u) for u in frame.get_column(OBLIGOR_KEY).to_list())
 
     if not mf_uids:
         raise ValueError(
@@ -209,7 +275,9 @@ def validate_mf_loadings_routable(
         )
 
     key = contract.obligor_key
-    stray = sorted({int(u) for u in bundle.mf_loadings_df[key].tolist()} - mf_uids)
+    stray = sorted(
+        {int(u) for u in bundle.mf_loadings_df.get_column(key).to_list()} - mf_uids
+    )
     if stray:
         raise ValueError(
             f"{ctx}: mf_loadings references obligor_uid(s) {stray[:_PREVIEW]} that "
@@ -504,18 +572,34 @@ def validate_chi_nu_against_reference(
 # here is ingest-time and vectorized; the builders re-resolve for construction
 # (cheap, and keeps validation and construction decoupled).
 
-from riskquant.credit.jtd.ingest._shared import _resolve_factor_uix  # noqa: E402
+from riskquant.credit.jtd.ingest._shared import (  # noqa: E402
+    _f64,
+    _i64,
+    _names,
+    _resolve_factor_uix,
+)
 from riskquant.credit.jtd.ingest.contracts import FACTOR_COLUMN_KIND  # noqa: E402
 from riskquant.credit.jtd.registry import JTD_MODEL_SPECS  # noqa: E402
 
+_SemanticFn = Callable[..., None]
 
-def _resolve(frame: pd.DataFrame, col: str, factor_name_to_uix, *, ctx: str):
+
+def _resolve(
+    frame: pl.DataFrame, col: str, factor_name_to_uix: dict[str, int], *, ctx: str
+) -> npt.NDArray[np.int32]:
     return _resolve_factor_uix(
-        frame[col].to_numpy(copy=False), factor_name_to_uix, ctx=f"{ctx}.{col}"
+        _names(frame, col), factor_name_to_uix, ctx=f"{ctx}.{col}"
     )
 
 
-def _assert_column_kinds(frame, contract, factor_name_to_uix, factor_kind, *, ctx):
+def _assert_column_kinds(
+    frame: pl.DataFrame,
+    contract: JtdModelContract,
+    factor_name_to_uix: dict[str, int],
+    factor_kind: npt.NDArray[np.int8],
+    *,
+    ctx: str,
+) -> None:
     """Every factor-name column must resolve to the kind its role requires."""
     for col in sorted(contract.factor_name_columns):
         uix = _resolve(frame, col, factor_name_to_uix, ctx=ctx)
@@ -524,7 +608,13 @@ def _assert_column_kinds(frame, contract, factor_name_to_uix, factor_kind, *, ct
         )
 
 
-def _assert_distinct_columns(frame, contract, factor_name_to_uix, *, ctx):
+def _assert_distinct_columns(
+    frame: pl.DataFrame,
+    contract: JtdModelContract,
+    factor_name_to_uix: dict[str, int],
+    *,
+    ctx: str,
+) -> None:
     for col in sorted(contract.distinct_columns):
         uix = _resolve(frame, col, factor_name_to_uix, ctx=ctx)
         role = col.removesuffix("_factor")
@@ -532,28 +622,29 @@ def _assert_distinct_columns(frame, contract, factor_name_to_uix, *, ctx):
 
 
 def _semantic_sf_gaussian(
-    frame,
+    frame: pl.DataFrame,
     *,
-    factor_name_to_uix,
-    factor_kind,
-    chi_nu_by_uix,
-    bundle,
-    ctx,
-):
-    validate_factor_loading_range(
-        frame["uid"].to_numpy(dtype=np.int64),
-        frame["factor_loading"].to_numpy(dtype=np.float64),
-    )
+    factor_name_to_uix: dict[str, int],
+    factor_kind: npt.NDArray[np.int8],
+    chi_nu_by_uix: Mapping[int, float],
+    bundle: JtdIngestBundle,
+    ctx: str,
+) -> None:
+    validate_factor_loading_range(_i64(frame, "uid"), _f64(frame, "factor_loading"))
 
 
 def _semantic_sf_students_t(
-    frame, *, factor_name_to_uix, factor_kind, chi_nu_by_uix, bundle, ctx
-):
-    uids = frame["uid"].to_numpy(dtype=np.int64)
-    validate_factor_loading_range(
-        uids, frame["factor_loading"].to_numpy(dtype=np.float64)
-    )
-    nu = frame["nu"].to_numpy(dtype=np.float64)
+    frame: pl.DataFrame,
+    *,
+    factor_name_to_uix: dict[str, int],
+    factor_kind: npt.NDArray[np.int8],
+    chi_nu_by_uix: Mapping[int, float],
+    bundle: JtdIngestBundle,
+    ctx: str,
+) -> None:
+    uids = _i64(frame, "uid")
+    validate_factor_loading_range(uids, _f64(frame, "factor_loading"))
+    nu = _f64(frame, "nu")
     validate_nu_positive(uids, nu)
     chi_uix = _resolve(frame, "chi_squared_factor", factor_name_to_uix, ctx=ctx)
     validate_chi_group_nu_homogeneity(uids, chi_uix, nu, factor_name_to_uix)
@@ -563,21 +654,24 @@ def _semantic_sf_students_t(
 
 
 def _semantic_mf_gaussian(
-    frame,
+    frame: pl.DataFrame,
     *,
-    factor_name_to_uix,
-    factor_kind,
-    chi_nu_by_uix,
-    bundle,
-    ctx,
-):
+    factor_name_to_uix: dict[str, int],
+    factor_kind: npt.NDArray[np.int8],
+    chi_nu_by_uix: Mapping[int, float],
+    bundle: JtdIngestBundle,
+    ctx: str,
+) -> None:
     """Systemic-kind, coverage, no-duplicate, and sum-beta^2 <= 1 — all checked
     on the long-format loadings relation (the builder then packs CSR)."""
     loadings = bundle.mf_loadings_df  # structural validation guarantees presence
-    sub = loadings[loadings["obligor_uid"].isin(set(frame["uid"].tolist()))]
+    assert loadings is not None
+    frame_uids = frame.get_column("uid").to_list()
+    # filter keeps the row order of the loadings relation (C.5 input order).
+    sub = loadings.filter(pl.col("obligor_uid").is_in(frame_uids))
 
     sys_uix = _resolve_factor_uix(
-        sub["factor_name"].to_numpy(copy=False),
+        _names(sub, "factor_name"),
         factor_name_to_uix,
         ctx=f"{ctx}.systemic_factor",
     )
@@ -589,29 +683,41 @@ def _semantic_mf_gaussian(
     )
 
     # Coverage: every MF obligor needs >= 1 loading row.
-    have = set(int(u) for u in sub["obligor_uid"].tolist())
-    missing = sorted(set(int(u) for u in frame["uid"].tolist()) - have)
+    have = {int(u) for u in sub.get_column("obligor_uid").to_list()}
+    missing = sorted({int(u) for u in frame_uids} - have)
     if missing:
         raise ValueError(
             f"{ctx}: obligor(s) {missing[:_PREVIEW]} have no systemic loadings."
         )
 
-    # No factor referenced twice for one obligor.
-    if sub.duplicated(subset=["obligor_uid", "factor_name"]).any():
+    # No factor referenced twice for one obligor. A row is a duplicate when its
+    # (obligor_uid, factor_name) pair appeared on an earlier row; the reported
+    # uids are those rows' uids in first-seen order (pandas duplicated(),
+    # keep="first", then unique()).
+    pair = pl.struct(
+        pl.col("obligor_uid"), pl.col("factor_name").cast(pl.String)
+    ).is_first_distinct()
+    dup_rows = sub.filter(~pair)
+    if dup_rows.height:
         dups = (
-            sub
-            .loc[sub.duplicated(subset=["obligor_uid", "factor_name"]), "obligor_uid"]
-            .unique()
-            .tolist()[:_PREVIEW]
+            dup_rows
+            .get_column("obligor_uid")
+            .unique(maintain_order=True)
+            .to_list()[:_PREVIEW]
         )
         raise ValueError(
             f"{ctx}: obligor(s) {dups} load on the same systemic factor twice."
         )
 
-    # sum beta^2 <= 1 (room for a real idiosyncratic component).
-    sum_sq = sub["factor_loading"].to_numpy(dtype=np.float64) ** 2
-    by = pd.Series(sum_sq).groupby(sub["obligor_uid"].to_numpy()).sum()
-    over = by[by > 1.0 + 1e-9].index.tolist()[:_PREVIEW]
+    # sum beta^2 <= 1 (room for a real idiosyncratic component). One shared
+    # arithmetic with request rule 14 (C.5); uids reported in ascending order.
+    # The arguments are the int64 uid and float64 loading arrays of `sub`, in
+    # its row order (unchanged values and order against the pandas reads).
+    sums = loading_sum_sq(
+        obligor_uid=_i64(sub, "obligor_uid"),
+        loading=_f64(sub, "factor_loading"),
+    )
+    over = sorted(sums.uids[sums.totals > 1.0 + 1e-9].tolist())[:_PREVIEW]
     if over:
         raise ValueError(
             f"{ctx}: sum of squared loadings exceeds 1 for obligor(s) {over}."
@@ -619,14 +725,14 @@ def _semantic_mf_gaussian(
 
 
 def _semantic_mf_students_t(
-    frame,
+    frame: pl.DataFrame,
     *,
-    factor_name_to_uix,
-    factor_kind,
-    chi_nu_by_uix,
-    bundle,
-    ctx,
-):
+    factor_name_to_uix: dict[str, int],
+    factor_kind: npt.NDArray[np.int8],
+    chi_nu_by_uix: Mapping[int, float],
+    bundle: JtdIngestBundle,
+    ctx: str,
+) -> None:
     """MF systemic loadings checks (coverage / no-dup / sum-beta^2 / systemic
     kind) plus the Student-t chi/nu reconciliation. The systemic side lives on
     the shared loadings relation; nu and the chi factor live on this frame."""
@@ -638,8 +744,8 @@ def _semantic_mf_students_t(
         bundle=bundle,
         ctx=ctx,
     )
-    uids = frame["uid"].to_numpy(dtype=np.int64)
-    nu = frame["nu"].to_numpy(dtype=np.float64)
+    uids = _i64(frame, "uid")
+    nu = _f64(frame, "nu")
     validate_nu_positive(uids, nu)
     chi_uix = _resolve(frame, "chi_squared_factor", factor_name_to_uix, ctx=ctx)
     validate_chi_group_nu_homogeneity(uids, chi_uix, nu, factor_name_to_uix)
@@ -649,25 +755,25 @@ def _semantic_mf_students_t(
 
 
 def _semantic_marshall_olkin(
-    frame,
+    frame: pl.DataFrame,
     *,
-    factor_name_to_uix,
-    factor_kind,
-    chi_nu_by_uix,
-    bundle,
-    ctx,
-):
+    factor_name_to_uix: dict[str, int],
+    factor_kind: npt.NDArray[np.int8],
+    chi_nu_by_uix: Mapping[int, float],
+    bundle: JtdIngestBundle,
+    ctx: str,
+) -> None:
     """
     Semantic validation for the Marshall-Olkin Common Shock model.
     """
-    sys_pd = frame["systemic_pd"].to_numpy(dtype=np.float64)
+    sys_pd = _f64(frame, "systemic_pd")
 
     # systemic_pd must be bounded [0.0, 1.0).
     # It must be strictly less than 1.0 to prevent division by zero during the
     # idiosyncratic decoupling step in the builder: (1 - pd_total) / (1 - systemic_pd)
     bad = ~((sys_pd >= 0.0) & (sys_pd < 1.0))
     if bad.any():
-        uids = frame["uid"].to_numpy(dtype=np.int64)
+        uids = _i64(frame, "uid")
         raise ValueError(
             f"{ctx}: 'systemic_pd' must be in [0.0, 1.0) for obligor(s) "
             f"{uids[bad][:_PREVIEW].tolist()} to prevent infinite survival probabilities."
@@ -679,8 +785,8 @@ def _semantic_marshall_olkin(
 # here, co-located with the predicates it calls. Adding a model means declaring
 # the name in its spec — no edit to a parallel dict here. A declared-but-missing
 # name fails fast at import.
-def _resolve_semantic_extra() -> dict:
-    table: dict = {}
+def _resolve_semantic_extra() -> dict[Any, _SemanticFn]:
+    table: dict[Any, _SemanticFn] = {}
     for spec in JTD_MODEL_SPECS:
         attr = spec.semantic_validator_attr
         if attr is None:
@@ -698,7 +804,9 @@ def _resolve_semantic_extra() -> dict:
 _SEMANTIC_EXTRA = _resolve_semantic_extra()
 
 
-def validate_ingest_bundle_semantics(bundle, factor_universe) -> None:
+def validate_ingest_bundle_semantics(
+    bundle: JtdIngestBundle, factor_universe: CompiledCreditFactorUniverse
+) -> None:
     """Semantic / wiring validation over a structurally-valid bundle.
 
     Resolves factor-name columns to UIX and asserts: every role resolves to its

@@ -28,7 +28,7 @@ from typing import Final
 
 import numpy as np
 import numpy.typing as npt
-import pandas as pd
+import polars as pl
 
 # House-defined environmental subclasses:
 # --> (name, uix, supervisory add-on factor).
@@ -69,8 +69,12 @@ class CanonicalExposureBook:
         """Distinct obligors, ascending — the JTD aggregation target order."""
         return np.unique(self.netting_set_obligor_uid)
 
-    def trades_frame(self) -> pd.DataFrame:
-        """Human-readable trade table (the authoring edge of Contract A)."""
+    def trades_frame(self) -> pl.DataFrame:
+        """Human-readable trade table (the authoring edge of Contract A).
+
+        Columns: ``trade_uid`` Int64, ``netting_set_id`` Int64,
+        ``asset_subclass`` Utf8, ``volume``, ``current_price``, ``mtm`` Float64.
+        """
         name_by_uix = dict(
             zip(
                 self.subclass_uix.tolist(),
@@ -78,7 +82,7 @@ class CanonicalExposureBook:
                 strict=True,
             )
         )
-        return pd.DataFrame(
+        return pl.DataFrame(
             {
                 "trade_uid": self.trade_uid,
                 "netting_set_id": self.trade_netting_set_id,
@@ -88,7 +92,15 @@ class CanonicalExposureBook:
                 "volume": self.volume,
                 "current_price": self.current_price,
                 "mtm": self.mtm,
-            }
+            },
+            schema={
+                "trade_uid": pl.Int64(),
+                "netting_set_id": pl.Int64(),
+                "asset_subclass": pl.Utf8(),
+                "volume": pl.Float64(),
+                "current_price": pl.Float64(),
+                "mtm": pl.Float64(),
+            },
         )
 
 

@@ -17,7 +17,7 @@ case, supply EAD externally via the obligor-keyed stress overlay
 
 from __future__ import annotations
 
-import pandas as pd
+import polars as pl
 
 from riskquant.credit.jtd.models import JtdModel
 from riskquant.ingest_fixtures.schemas import DeterministicJTDIngestData
@@ -39,7 +39,7 @@ CANONICAL_FORCED_DEFAULT_JTD_INGEST_DATA: DeterministicJTDIngestData = _get_data
 
 validate_column_lengths(CANONICAL_FORCED_DEFAULT_JTD_INGEST_DATA)
 
-CANONICAL_FORCED_DEFAULT_JTD_INGEST_DF = pd.DataFrame(
+CANONICAL_FORCED_DEFAULT_JTD_INGEST_DF = pl.DataFrame(
     CANONICAL_FORCED_DEFAULT_JTD_INGEST_DATA
 )
 

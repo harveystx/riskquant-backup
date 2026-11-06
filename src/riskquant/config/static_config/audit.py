@@ -2,8 +2,9 @@
 """
 Tabular audit of a compiled RiskStaticConfig.
 
-Imports Pandas deliberately — auditing is an edge-only diagnostic, not a
-runtime path. Never imported by valuation, simlab, or any kernel.
+Auditing is an edge-only diagnostic, not a runtime path. Never imported by
+valuation, simlab, or any kernel. The tables are Polars frames (D006) and print
+through ``riskquant.utils.printer.print_df``.
 
 Layout: one DataFrame per logical table the 7-table schema exposes,
 plus reverse-mapped derived structures (FX spot lookup, discount-curve
@@ -13,10 +14,12 @@ with a configurable row cap.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import asdict
+from typing import Any
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.config.enums.container_topology import ContainerTopologyType
 from riskquant.config.enums.discount_basis import DiscountBasis
@@ -25,6 +28,7 @@ from riskquant.config.static_config.compile import (
     compile_risk_static_config_from_xlsx,
 )
 from riskquant.config.static_config.static_config import RiskStaticConfig
+from riskquant.utils.printer import print_df
 
 
 def _print_title(title: str) -> None:
@@ -42,10 +46,27 @@ def _print_subheader(title: str) -> None:
     print(f"{ruler}")
 
 
-def _df_from_dataclass_values(values) -> pd.DataFrame:
-    """Build a DataFrame from an iterable of frozen dataclasses."""
-    rows = [asdict(v) for v in values]
-    return pd.DataFrame(rows) if rows else pd.DataFrame()
+def _df_from_rows(rows: list[dict[str, Any]]) -> pl.DataFrame:
+    """
+    Build a frame from row dicts; no rows give an empty frame.
+
+    ``infer_schema_length=None`` reads every row for the schema. The Polars
+    default reads 100 rows and fails on a later value of another type.
+    ``pl.from_dicts`` raises ``NoDataError`` for an empty list.
+    """
+    if not rows:
+        return pl.DataFrame()
+    return pl.from_dicts(rows, infer_schema_length=None)
+
+
+def _df_from_dataclass_values(values: Iterable[Any]) -> pl.DataFrame:
+    """Build a frame from an iterable of frozen dataclasses."""
+    return _df_from_rows([asdict(v) for v in values])
+
+
+def _print_table(df: pl.DataFrame) -> None:
+    """Print one audit table: every cell as its native text, no index."""
+    print_df(df, float_format=None, add_space_before=False, add_space_after=False)
 
 
 # ============================================================
@@ -56,10 +77,10 @@ def _df_from_dataclass_values(values) -> pd.DataFrame:
 def _audit_ccy(rsc: RiskStaticConfig, n: int) -> None:
     _print_subheader("1. Currencies (ccy)")
     df = _df_from_dataclass_values(rsc.ccy_dict.values())
-    if df.empty:
+    if df.is_empty():
         print("(empty)")
         return
-    print(df.head(n).to_string(index=False))
+    _print_table(df.head(n))
     print(f"  Total: {rsc.num_ccys}")
 
 
@@ -78,11 +99,11 @@ def _audit_holiday_calendars(rsc: RiskStaticConfig, n: int) -> None:
         }
         for name, cal in rsc.holiday_calendars_dict.items()
     ]
-    df = pd.DataFrame(rows)
-    if df.empty:
+    df = _df_from_rows(rows)
+    if df.is_empty():
         print("(empty)")
         return
-    print(df.head(n).to_string(index=False))
+    _print_table(df.head(n))
     print(f"  Total calendars: {len(rsc.holiday_calendars_dict)}")
 
 
@@ -91,10 +112,10 @@ def _audit_node_meta(rsc: RiskStaticConfig, n: int) -> None:
         "3. Node meta (scalar risk factors; FX + equity + credit single names)"
     )
     df = _df_from_dataclass_values(rsc.node_meta_dict.values())
-    if df.empty:
+    if df.is_empty():
         print("(empty)")
         return
-    print(df.head(n).to_string(index=False))
+    _print_table(df.head(n))
     print(
         f"  Total nodes: {rsc.num_nodes}  (FX: {sum(1 for n_ in rsc.node_meta_dict.values() if n_.fx_base_ccy is not None)})"
     )
@@ -103,15 +124,15 @@ def _audit_node_meta(rsc: RiskStaticConfig, n: int) -> None:
 def _audit_curve_meta(rsc: RiskStaticConfig, n: int) -> None:
     _print_subheader("4. Curve meta (1D functions; discount + non-discount)")
     df = _df_from_dataclass_values(rsc.curve_meta_dict.values())
-    if df.empty:
+    if df.is_empty():
         print("(empty)")
         return
-    print(df.head(n).to_string(index=False))
-    is_disc = df["discount_basis"] != DiscountBasis.NOT_A_DISCOUNT_CURVE.name
+    _print_table(df.head(n))
+    is_disc = df.get_column("discount_basis") != DiscountBasis.NOT_A_DISCOUNT_CURVE.name
     print(
         f"  Total curves: {rsc.num_curves}  "
         f"(discount: {int(is_disc.sum())}, "
-        f"default-flagged: {int(df['is_default_discount_for_ccy'].sum())})"
+        f"default-flagged: {int(df.get_column('is_default_discount_for_ccy').sum())})"
     )
 
 
@@ -122,29 +143,27 @@ def _audit_curve_point_meta(rsc: RiskStaticConfig, n: int) -> None:
         counts[pt.curve_id] = counts.get(pt.curve_id, 0) + 1
     rows = []
     for cid, cm in rsc.curve_meta_dict.items():
-        rows.append(
-            {
-                "curve_id": cid,
-                "curve_name": cm.curve_name,
-                "x_axis_kind": cm.x_axis_kind,
-                "n_points": counts.get(cid, 0),
-            }
-        )
-    df = pd.DataFrame(rows)
-    if df.empty:
+        rows.append({
+            "curve_id": cid,
+            "curve_name": cm.curve_name,
+            "x_axis_kind": cm.x_axis_kind,
+            "n_points": counts.get(cid, 0),
+        })
+    df = _df_from_rows(rows)
+    if df.is_empty():
         print("(empty)")
         return
-    print(df.head(n).to_string(index=False))
+    _print_table(df.head(n))
     print(f"  Total curve points: {rsc.num_curve_points}")
 
 
 def _audit_surface_meta(rsc: RiskStaticConfig, n: int) -> None:
     _print_subheader("6. Surface meta (2D functions; vol surfaces)")
     df = _df_from_dataclass_values(rsc.surface_meta_dict.values())
-    if df.empty:
+    if df.is_empty():
         print("(empty)")
         return
-    print(df.head(n).to_string(index=False))
+    _print_table(df.head(n))
     print(f"  Total surfaces: {rsc.num_surfaces}")
 
 
@@ -155,20 +174,18 @@ def _audit_surface_point_meta(rsc: RiskStaticConfig, n: int) -> None:
         counts[pt.surface_id] = counts.get(pt.surface_id, 0) + 1
     rows = []
     for sid, sm in rsc.surface_meta_dict.items():
-        rows.append(
-            {
-                "surface_id": sid,
-                "surface_name": sm.surface_name,
-                "x_axis_kind": sm.x_axis_kind,
-                "y_axis_kind": sm.y_axis_kind,
-                "n_points": counts.get(sid, 0),
-            }
-        )
-    df = pd.DataFrame(rows)
-    if df.empty:
+        rows.append({
+            "surface_id": sid,
+            "surface_name": sm.surface_name,
+            "x_axis_kind": sm.x_axis_kind,
+            "y_axis_kind": sm.y_axis_kind,
+            "n_points": counts.get(sid, 0),
+        })
+    df = _df_from_rows(rows)
+    if df.is_empty():
         print("(empty)")
         return
-    print(df.head(n).to_string(index=False))
+    _print_table(df.head(n))
     print(f"  Total surface points: {rsc.num_surface_points}")
 
 
@@ -195,20 +212,16 @@ def _audit_fx_spot_lookup(rsc: RiskStaticConfig, n: int) -> None:
             else "?"
         )
         node = rsc.node_meta_dict.get(int(rf_id))
-        rows.append(
-            {
-                "base_ccy_id": int(base_id),
-                "base_ccy": base_name,
-                "quote_ccy_id": int(quote_id),
-                "quote_ccy": quote_name,
-                "rf_id": int(rf_id),
-                "node_name": node.node_name if node else "?",
-            }
-        )
-    df = (
-        pd.DataFrame(rows).sort_values(["base_ccy", "quote_ccy"]).reset_index(drop=True)
-    )
-    print(df.head(n).to_string(index=False))
+        rows.append({
+            "base_ccy_id": int(base_id),
+            "base_ccy": base_name,
+            "quote_ccy_id": int(quote_id),
+            "quote_ccy": quote_name,
+            "rf_id": int(rf_id),
+            "node_name": node.node_name if node else "?",
+        })
+    df = _df_from_rows(rows).sort(["base_ccy", "quote_ccy"], maintain_order=True)
+    _print_table(df.head(n))
     print(f"  Total FX pairs: {rsc.num_fx_pairs}")
 
 
@@ -222,20 +235,18 @@ def _audit_discount_curves(rsc: RiskStaticConfig, n: int) -> None:
         cm = rsc.curve_meta_dict[int(curve_id)]
         ccy_name = rsc.ccy_id_to_name[int(ccy_id)]
         basis_name = DiscountBasis(int(basis_id)).name
-        rows.append(
-            {
-                "ccy_id": int(ccy_id),
-                "ccy": ccy_name,
-                "basis_id": int(basis_id),
-                "basis": basis_name,
-                "curve_id": int(curve_id),
-                "curve_name": cm.curve_name,
-                "is_default": cm.is_default_discount_for_ccy,
-            }
-        )
+        rows.append({
+            "ccy_id": int(ccy_id),
+            "ccy": ccy_name,
+            "basis_id": int(basis_id),
+            "basis": basis_name,
+            "curve_id": int(curve_id),
+            "curve_name": cm.curve_name,
+            "is_default": cm.is_default_discount_for_ccy,
+        })
     if rows:
-        df = pd.DataFrame(rows).sort_values(["ccy", "basis"]).reset_index(drop=True)
-        print(df.head(n).to_string(index=False))
+        df = _df_from_rows(rows).sort(["ccy", "basis"], maintain_order=True)
+        _print_table(df.head(n))
     else:
         print("  (no discount curves)")
 
@@ -248,18 +259,16 @@ def _audit_discount_curves(rsc: RiskStaticConfig, n: int) -> None:
             continue
         ccy_name = rsc.ccy_id_to_name[ccy_id_int]
         cm = rsc.curve_meta_dict[cid]
-        rows.append(
-            {
-                "ccy_id": ccy_id_int,
-                "ccy": ccy_name,
-                "curve_id": cid,
-                "curve_name": cm.curve_name,
-                "basis": cm.discount_basis,
-            }
-        )
+        rows.append({
+            "ccy_id": ccy_id_int,
+            "ccy": ccy_name,
+            "curve_id": cid,
+            "curve_name": cm.curve_name,
+            "basis": cm.discount_basis,
+        })
     if rows:
-        df = pd.DataFrame(rows).sort_values("ccy").reset_index(drop=True)
-        print(df.head(n).to_string(index=False))
+        df = _df_from_rows(rows).sort("ccy", maintain_order=True)
+        _print_table(df.head(n))
     else:
         print("  (no default-flagged discount curves)")
 
@@ -273,18 +282,16 @@ def _audit_dense_rf_arrays(rsc: RiskStaticConfig, n: int) -> None:
         print("(no risk factors)")
         return
 
-    df = pd.DataFrame(
-        {
-            "rf_id": np.arange(n_total, dtype=np.int32),
-            "parent_topology_type": rsc.rf_id_to_parent_topology_type,
-            "parent_id": rsc.rf_id_to_parent_id,
-            "ccy_id": rsc.rf_id_to_ccy_id,
-            "shift_type_id": rsc.rf_id_to_shift_type_id,
-            "unit_scale_x": rsc.rf_id_to_unit_scale_factor,
-        }
-    )
-    df = df.loc[occupied].reset_index(drop=True)
-    print(df.head(n).to_string(index=False))
+    df = pl.DataFrame({
+        "rf_id": np.arange(n_total, dtype=np.int32),
+        "parent_topology_type": rsc.rf_id_to_parent_topology_type,
+        "parent_id": rsc.rf_id_to_parent_id,
+        "ccy_id": rsc.rf_id_to_ccy_id,
+        "shift_type_id": rsc.rf_id_to_shift_type_id,
+        "unit_scale_x": rsc.rf_id_to_unit_scale_factor,
+    })
+    df = df.filter(pl.Series(occupied))
+    _print_table(df.head(n))
     print(f"  Occupied rf_id slots: {int(occupied.sum())} / {n_total} array length")
 
 
@@ -311,21 +318,19 @@ def _audit_dense_container_arrays(rsc: RiskStaticConfig, n: int) -> None:
     roll_method_col = [
         roll_by_container.get(int(cid), "-") for cid in rsc.container_ids
     ]
-    df = pd.DataFrame(
-        {
-            "container_id": rsc.container_ids,
-            "topology_type": rsc.container_topology_type,  # 1=curve, 2=surface
-            "ccy_id": rsc.container_ccy_id,
-            "interp_x_id": rsc.container_interp_x_id,
-            "extrap_x_id": rsc.container_extrap_x_id,
-            "interp_y_id": rsc.container_interp_y_id,
-            "extrap_y_id": rsc.container_extrap_y_id,
-            "x_axis_kind": x_kind_names,
-            "roll_method": roll_method_col,
-        }
-    )
-    df = df.loc[occupied].reset_index(drop=True)
-    print(df.head(n).to_string(index=False))
+    df = pl.DataFrame({
+        "container_id": rsc.container_ids,
+        "topology_type": rsc.container_topology_type,  # 1=curve, 2=surface
+        "ccy_id": rsc.container_ccy_id,
+        "interp_x_id": rsc.container_interp_x_id,
+        "extrap_x_id": rsc.container_extrap_x_id,
+        "interp_y_id": rsc.container_interp_y_id,
+        "extrap_y_id": rsc.container_extrap_y_id,
+        "x_axis_kind": x_kind_names,
+        "roll_method": roll_method_col,
+    })
+    df = df.filter(pl.Series(occupied))
+    _print_table(df.head(n))
     print(f"  Containers: {int(occupied.sum())} / {n_total} slots")
 
 
@@ -334,26 +339,24 @@ def _audit_tenor_index(rsc: RiskStaticConfig, n: int) -> None:
     rows = []
     for curve_id, idx in rsc.curve_id_to_tenor_index.items():
         cm = rsc.curve_meta_dict[curve_id]
-        rows.append(
-            {
-                "curve_id": curve_id,
-                "curve_name": cm.curve_name,
-                "x_axis_kind": cm.x_axis_kind,
-                "n_offsets": int(idx.sorted_offsets.size),
-                "n_labels": len(idx.label_to_rf_id),
-                "min_offset": int(idx.sorted_offsets[0])
-                if idx.sorted_offsets.size
-                else None,
-                "max_offset": int(idx.sorted_offsets[-1])
-                if idx.sorted_offsets.size
-                else None,
-            }
-        )
-    df = pd.DataFrame(rows)
-    if df.empty:
+        rows.append({
+            "curve_id": curve_id,
+            "curve_name": cm.curve_name,
+            "x_axis_kind": cm.x_axis_kind,
+            "n_offsets": int(idx.sorted_offsets.size),
+            "n_labels": len(idx.label_to_rf_id),
+            "min_offset": int(idx.sorted_offsets[0])
+            if idx.sorted_offsets.size
+            else None,
+            "max_offset": int(idx.sorted_offsets[-1])
+            if idx.sorted_offsets.size
+            else None,
+        })
+    df = _df_from_rows(rows)
+    if df.is_empty():
         print("(empty)")
         return
-    print(df.head(n).to_string(index=False))
+    _print_table(df.head(n))
 
 
 # ============================================================

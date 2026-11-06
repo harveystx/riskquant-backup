@@ -11,7 +11,7 @@ are joined off the canonical obligor master at compile time.
 
 from __future__ import annotations
 
-import pandas as pd
+import polars as pl
 
 from riskquant.credit.jtd.models import JtdModel
 from riskquant.ingest_fixtures.schemas import IndependentBernoulliJTDIngestData
@@ -36,7 +36,7 @@ CANONICAL_INDEPENDENT_BERNOULLI_JTD_INGEST_DATA: IndependentBernoulliJTDIngestDa
 
 validate_column_lengths(CANONICAL_INDEPENDENT_BERNOULLI_JTD_INGEST_DATA)
 
-CANONICAL_INDEPENDENT_BERNOULLI_JTD_INGEST_DF = pd.DataFrame(
+CANONICAL_INDEPENDENT_BERNOULLI_JTD_INGEST_DF = pl.DataFrame(
     CANONICAL_INDEPENDENT_BERNOULLI_JTD_INGEST_DATA
 )
 

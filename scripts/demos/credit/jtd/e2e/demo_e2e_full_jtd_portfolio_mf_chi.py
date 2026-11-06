@@ -15,7 +15,7 @@ from __future__ import annotations
 import time
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.constants import RNG_SEED
 from riskquant.credit.factors.simulate.base import build_credit_factor_matrix
@@ -296,17 +296,15 @@ def run_demo() -> None:
     _obligor_pds[non_fd_mask] = shared_pd
     _obligor_lgds[non_fd_mask] = shared_lgd
 
-    obligor_df = pd.DataFrame(
-        {
-            "uid": obligor_uids,
-            "pd": _obligor_pds,
-            "lgd": _obligor_lgds,
-            "rating_id": 0,
-            "sector_id": 0,
-            "country_id": 0,
-            "parent_uid": None,  # Ultimates
-        }
-    )
+    obligor_df = pl.DataFrame({
+        "uid": obligor_uids,
+        "pd": _obligor_pds,
+        "lgd": _obligor_lgds,
+        "rating_id": 0,
+        "sector_id": 0,
+        "country_id": 0,
+        "parent_uid": None,  # Ultimates
+    })
 
     obligor_master = compile_obligor_master(obligor_df)
 
@@ -363,52 +361,44 @@ def run_demo() -> None:
         f"\n- beta:  {beta_mom:>8.2f}"
     )
 
-    factor_universe_df = pd.DataFrame(
-        {
-            "factor_id": range(len(factor_names)),
-            "factor_name": factor_names,
-            "factor_kind": [
-                "SYSTEMIC"
-                if (n == "GLOBAL_CREDIT" or n.startswith("SECTOR_"))
-                else "CHI"
-                if (n == "GLOBAL_CHI" or n.startswith("CHI_"))
-                else "UNIFORM"
-                if n.startswith("U_")
-                else "STRESS_INDICATOR"
-                if n == "GLOBAL_STRESS_REGIME"
-                else "BETA_PD"
-                if n == "GLOBAL_BETA_PD"
-                else "IDIOSYNCRATIC"
-                for n in factor_names
-            ],
-            "nu": [
-                GLOBAL_T_COP_NU if n == "GLOBAL_CHI" else MF_CHI_SECTOR_NUS.get(n)
-                for n in factor_names
-            ],
-            # Use the new shape parameters we locked in earlier to avoid beta naming collision
-            "alpha": [
-                alpha_mom if n == "GLOBAL_BETA_PD" else None for n in factor_names
-            ],
-            "beta": [beta_mom if n == "GLOBAL_BETA_PD" else None for n in factor_names],
-        }
-    )
+    factor_universe_df = pl.DataFrame({
+        "factor_id": range(len(factor_names)),
+        "factor_name": factor_names,
+        "factor_kind": [
+            "SYSTEMIC"
+            if (n == "GLOBAL_CREDIT" or n.startswith("SECTOR_"))
+            else "CHI"
+            if (n == "GLOBAL_CHI" or n.startswith("CHI_"))
+            else "UNIFORM"
+            if n.startswith("U_")
+            else "STRESS_INDICATOR"
+            if n == "GLOBAL_STRESS_REGIME"
+            else "BETA_PD"
+            if n == "GLOBAL_BETA_PD"
+            else "IDIOSYNCRATIC"
+            for n in factor_names
+        ],
+        "nu": [
+            GLOBAL_T_COP_NU if n == "GLOBAL_CHI" else MF_CHI_SECTOR_NUS.get(n)
+            for n in factor_names
+        ],
+        # Use the new shape parameters we locked in earlier to avoid beta naming collision
+        "alpha": [alpha_mom if n == "GLOBAL_BETA_PD" else None for n in factor_names],
+        "beta": [beta_mom if n == "GLOBAL_BETA_PD" else None for n in factor_names],
+    })
     universe = compile_credit_factor_universe(factor_universe_df)
 
-    jtd_df = pd.DataFrame(
-        {
-            "uid": obligor_uids,  # Unsorted, matches the raw frame
-            "instrument": models,
-            "factor_loading": rng.uniform(0.1, 0.5, NUM_OBLIGORS),
-            "systemic_factor": "GLOBAL_CREDIT",  # Broadcast to all
-            "idiosyncratic_factor": [
-                f"IDIO_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)
-            ],
-            "uniform_factor": [f"U_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)],
-            "stress_regime_factor": "GLOBAL_STRESS_REGIME",
-            "stress_pd_multiplier": rng.uniform(1.25, 3.0, NUM_OBLIGORS),
-            "beta_factor": "GLOBAL_BETA_PD",  # Will broadcast. Non-Beta-Binomial builders safely ignore it.
-        }
-    )
+    jtd_df = pl.DataFrame({
+        "uid": obligor_uids,  # Unsorted, matches the raw frame
+        "instrument": models,
+        "factor_loading": rng.uniform(0.1, 0.5, NUM_OBLIGORS),
+        "systemic_factor": "GLOBAL_CREDIT",  # Broadcast to all
+        "idiosyncratic_factor": [f"IDIO_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)],
+        "uniform_factor": [f"U_{i:03d}" for i in range(1, NUM_OBLIGORS + 1)],
+        "stress_regime_factor": "GLOBAL_STRESS_REGIME",
+        "stress_pd_multiplier": rng.uniform(1.25, 3.0, NUM_OBLIGORS),
+        "beta_factor": "GLOBAL_BETA_PD",  # Will broadcast. Non-Beta-Binomial builders safely ignore it.
+    })
 
     # Multi-factor Student-t obligors: each gets the sector chi-square factor for
     # the sector it loads on (per-sector tail dependence), with nu reconciling to
@@ -441,15 +431,20 @@ def run_demo() -> None:
         + _mft_nu
     )
 
-    jtd_df["chi_squared_factor"] = chi_factors
-    jtd_df["nu"] = nus
+    jtd_df = jtd_df.with_columns(
+        pl.Series("chi_squared_factor", chi_factors, dtype=pl.String),
+        pl.Series("nu", nus, dtype=pl.Float64),
+    )
 
     # --- MULTI-FACTOR LOADINGS (long format, one row per obligor x systemic) ---
     # Every MF obligor loads on GLOBAL_CREDIT plus one sector; sum beta^2 < 1
     # (room for the idiosyncratic residual), with the sector assigned round-robin.
-    mf_uids = jtd_df.loc[
-        jtd_df["instrument"] == JtdModel.COPULA_MF_GAUSSIAN.name, "uid"
-    ].to_numpy()
+    mf_uids = (
+        jtd_df
+        .filter(pl.col("instrument") == JtdModel.COPULA_MF_GAUSSIAN.name)
+        .get_column("uid")
+        .to_numpy()
+    )
     _n_mf = mf_uids.shape[0]
     _global_betas = rng.uniform(0.20, 0.40, _n_mf)
     _sector_betas = rng.uniform(0.30, 0.60, _n_mf)
@@ -457,35 +452,36 @@ def run_demo() -> None:
         [MF_SECTOR_FACTORS[i % len(MF_SECTOR_FACTORS)] for i in range(_n_mf)],
         dtype=object,
     )
-    mf_loadings_df = pd.DataFrame(
-        {
-            "obligor_uid": np.concatenate([mf_uids, mf_uids]),
-            "factor_name": np.concatenate(
-                [np.array(["GLOBAL_CREDIT"] * _n_mf, dtype=object), _sectors]
-            ),
-            "factor_loading": np.concatenate([_global_betas, _sector_betas]),
-        }
-    )
+    mf_loadings_df = pl.DataFrame({
+        "obligor_uid": np.concatenate([mf_uids, mf_uids]),
+        "factor_name": np.concatenate([
+            np.array(["GLOBAL_CREDIT"] * _n_mf, dtype=object),
+            _sectors,
+        ]),
+        "factor_loading": np.concatenate([_global_betas, _sector_betas]),
+    })
 
     # Multi-factor Student-t obligors load the same way (GLOBAL_CREDIT + one
     # sector); their sector here must match the one driving their chi factor.
-    mft_uids = jtd_df.loc[
-        jtd_df["instrument"] == JtdModel.COPULA_MF_STUDENTS_T.name, "uid"
-    ].to_numpy()
+    mft_uids = (
+        jtd_df
+        .filter(pl.col("instrument") == JtdModel.COPULA_MF_STUDENTS_T.name)
+        .get_column("uid")
+        .to_numpy()
+    )
     _n_mft = mft_uids.shape[0]
     _mft_global_betas = rng.uniform(0.20, 0.40, _n_mft)
     _mft_sector_betas = rng.uniform(0.30, 0.60, _n_mft)
     _mft_sectors_arr = np.array(_mft_sectors, dtype=object)
-    mft_loadings_df = pd.DataFrame(
-        {
-            "obligor_uid": np.concatenate([mft_uids, mft_uids]),
-            "factor_name": np.concatenate(
-                [np.array(["GLOBAL_CREDIT"] * _n_mft, dtype=object), _mft_sectors_arr]
-            ),
-            "factor_loading": np.concatenate([_mft_global_betas, _mft_sector_betas]),
-        }
-    )
-    mf_loadings_df = pd.concat([mf_loadings_df, mft_loadings_df], ignore_index=True)
+    mft_loadings_df = pl.DataFrame({
+        "obligor_uid": np.concatenate([mft_uids, mft_uids]),
+        "factor_name": np.concatenate([
+            np.array(["GLOBAL_CREDIT"] * _n_mft, dtype=object),
+            _mft_sectors_arr,
+        ]),
+        "factor_loading": np.concatenate([_mft_global_betas, _mft_sector_betas]),
+    })
+    mf_loadings_df = pl.concat([mf_loadings_df, mft_loadings_df])
 
     print_df(
         jtd_df.head(n=10),
@@ -650,10 +646,12 @@ def run_demo() -> None:
     # MODEL COMPARISON: FORCED-DEFAULT VS OTHERS
     # ============================================================
 
-    model_series = jtd_df.set_index("uid")["instrument"]
-    aligned_models = model_series.loc[
-        compiled_portfolio.obligor_uids.tolist()
-    ].to_numpy()
+    model_by_uid = dict(
+        zip(jtd_df["uid"].to_list(), jtd_df["instrument"].to_list(), strict=True)
+    )
+    aligned_models = np.array([
+        model_by_uid[int(u)] for u in compiled_portfolio.obligor_uids
+    ])
 
     forced_default_mask = aligned_models == JtdModel.FORCED_DEFAULT.name
     independent_bernoulli_mask = aligned_models == JtdModel.INDEPENDENT_BERNOULLI.name

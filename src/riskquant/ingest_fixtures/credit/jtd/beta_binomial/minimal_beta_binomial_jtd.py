@@ -13,7 +13,7 @@ only LGD is joined off the canonical obligor master at compile time.
 
 from __future__ import annotations
 
-import pandas as pd
+import polars as pl
 
 from riskquant.credit.jtd.models import JtdModel
 from riskquant.ingest_fixtures.schemas import BetaBinomialJTDIngestData
@@ -37,7 +37,7 @@ CANONICAL_BETA_BINOMIAL_JTD_INGEST_DATA: BetaBinomialJTDIngestData = _get_data()
 
 validate_column_lengths(CANONICAL_BETA_BINOMIAL_JTD_INGEST_DATA)
 
-CANONICAL_BETA_BINOMIAL_JTD_INGEST_DF = pd.DataFrame(
+CANONICAL_BETA_BINOMIAL_JTD_INGEST_DF = pl.DataFrame(
     CANONICAL_BETA_BINOMIAL_JTD_INGEST_DATA
 )
 

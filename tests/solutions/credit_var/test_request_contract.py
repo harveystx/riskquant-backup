@@ -22,10 +22,11 @@ import math
 import re
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pandas as pd
+import polars as pl
 import pytest
 from pydantic import BaseModel, ValidationError
 
@@ -366,13 +367,13 @@ def _engine_accepts(book: dict[str, Any], *, target: str) -> bool:
     test: an engine rejection for a different reason is not evidence that the
     engine applies the rule (S2 review R-005).
     """
-    obligor_table = pd.DataFrame({
+    obligor_table = pl.DataFrame({
         "uid": [row["obligor_uid"] for row in book["obligors"]],
         "ead": [row["ead"] for row in book["obligors"]],
         "pd": [row["pd"] for row in book["obligors"]],
         "lgd": [row["lgd"] for row in book["obligors"]],
     })
-    loadings_table = pd.DataFrame({
+    loadings_table = pl.DataFrame({
         "uid": [row["obligor_uid"] for row in book["loadings"]],
         "factor": [row["factor"] for row in book["loadings"]],
         "loading": [row["loading"] for row in book["loadings"]],
@@ -478,11 +479,23 @@ def _book_with_obligor_20_vector(hex_loadings: tuple[str, ...]) -> dict[str, Any
 
 
 def _engine_grouped_sum(loadings: list[float]) -> float:
-    """The engine expression of `_semantic_mf_gaussian` on one obligor:
-    float64 squares, then a pandas group sum."""
-    squares = np.asarray(loadings, dtype=np.float64) ** 2
-    uids = np.full(len(loadings), 20, dtype=np.int64)
-    return float(pd.Series(squares).groupby(uids).sum().iloc[0])
+    """The v0.2.0 engine sum of `loadings` on one obligor: the pandas 3.0.x
+    group sum of the float64 squares, as recorded at tag v0.2.0 in the
+    WS_CREDIT_POLARS C.6 record (``named`` entries). The oracle reads the
+    record; it does not depend on pandas or on the code under test (S1.T6)."""
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "credit"
+        / "jtd"
+        / "golden"
+        / "loading_sum_kahan.json"
+    )
+    named = json.loads(path.read_text(encoding="utf-8"))["named"]
+    wanted = [x.hex() for x in loadings]
+    for entry in named.values():
+        if entry["loading"] == wanted:
+            return float.fromhex(entry["total"])
+    pytest.fail(f"no recorded engine sum for loadings {wanted}")
 
 
 def test_s2_t6_fsum_over_engine_within_is_accepted_as_in_the_engine() -> None:
@@ -820,7 +833,7 @@ def test_s2_t12_from_dataframe_default_scenarios_equal_the_request_default() -> 
         .default
     )
     assert default == CreditVarRequest.model_fields["n_scenarios"].default
-    table = pd.DataFrame({
+    table = pl.DataFrame({
         "obligor_uid": [1],
         "ead": [1.0],
         "pd": [0.01],
@@ -851,8 +864,8 @@ def test_s2_t12_from_dataframe_docstring_names_the_required_columns() -> None:
     assert ("obligor_uid", "factor", "loading") in lists
     assert not any("uid" in names for names in lists)
 
-    table = pd.DataFrame({"obligor_uid": [1], "ead": [1.0], "pd": [0.01], "lgd": [1.0]})
-    loadings = pd.DataFrame({"obligor_uid": [1], "factor": ["F1"], "loading": [0.5]})
+    table = pl.DataFrame({"obligor_uid": [1], "ead": [1.0], "pd": [0.01], "lgd": [1.0]})
+    loadings = pl.DataFrame({"obligor_uid": [1], "factor": ["F1"], "loading": [0.5]})
     request = CreditVarRequest.from_dataframe(
         table, model="mf_gaussian", loadings_table=loadings, n_scenarios=1_000
     )
@@ -860,19 +873,19 @@ def test_s2_t12_from_dataframe_docstring_names_the_required_columns() -> None:
     for name in ("obligor_uid", "ead", "pd", "lgd"):
         with pytest.raises(ValueError, match=name):
             CreditVarRequest.from_dataframe(
-                table.drop(columns=[name]), model="independent_bernoulli"
+                table.drop(name), model="independent_bernoulli"
             )
     for name in ("obligor_uid", "factor", "loading"):
         with pytest.raises(ValueError, match=name):
             CreditVarRequest.from_dataframe(
-                table, model="mf_gaussian", loadings_table=loadings.drop(columns=[name])
+                table, model="mf_gaussian", loadings_table=loadings.drop(name)
             )
 
 
 def test_s2_t12_from_dataframe_non_integral_uid_raises() -> None:
     """A float uid with a fractional part raises R; it is not cast to 7. An
     integral float uid (a float column) is still accepted as an int."""
-    table = pd.DataFrame({
+    table = pl.DataFrame({
         "obligor_uid": [1.0, 7.9],
         "ead": [1.0, 1.0],
         "pd": [0.01, 0.01],
@@ -884,7 +897,7 @@ def test_s2_t12_from_dataframe_non_integral_uid_raises() -> None:
     assert error["loc"] == ("obligor_uid",)
     assert error["input"] == 7.9
 
-    table.loc[1, "obligor_uid"] = 7.0
+    table = table.with_columns(pl.Series("obligor_uid", [1.0, 7.0]))
     request = CreditVarRequest.from_dataframe(table, model="independent_bernoulli")
     assert [o.obligor_uid for o in request.obligors] == [1, 7]
     assert all(type(o.obligor_uid) is int for o in request.obligors)
@@ -892,8 +905,8 @@ def test_s2_t12_from_dataframe_non_integral_uid_raises() -> None:
 
 def test_s2_t12_from_dataframe_non_integral_loadings_uid_raises() -> None:
     """The same rule for the loadings_table obligor_uid column."""
-    table = pd.DataFrame({"obligor_uid": [1], "ead": [1.0], "pd": [0.01], "lgd": [1.0]})
-    loadings = pd.DataFrame({
+    table = pl.DataFrame({"obligor_uid": [1], "ead": [1.0], "pd": [0.01], "lgd": [1.0]})
+    loadings = pl.DataFrame({
         "obligor_uid": [1.5],
         "factor": ["F1"],
         "loading": [0.5],
