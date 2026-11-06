@@ -1,7 +1,7 @@
 # scripts/solutions/credit_var/demo_e2e_all_models.py
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.solutions.credit_var.api import (
     CreditVarRequest,
@@ -70,9 +70,9 @@ def _alpha_label(alpha: float) -> str:
     return f"{alpha * 100:.2f}%"
 
 
-def _assign_groups(obligor_df: pd.DataFrame) -> np.ndarray:
+def _assign_groups(obligor_df: pl.DataFrame) -> np.ndarray:
     """Split the book into IG / HY pools by rating (used by all grouped models)."""
-    return np.where(obligor_df["rating"].isin(_IG_RATINGS), "IG", "HY")
+    return np.where(obligor_df["rating"].is_in(_IG_RATINGS).to_numpy(), "IG", "HY")
 
 
 def _beta_params(mean_pd: float, concentration: float) -> dict[str, float]:
@@ -80,14 +80,15 @@ def _beta_params(mean_pd: float, concentration: float) -> dict[str, float]:
     return {"alpha": mean_pd * concentration, "beta": (1.0 - mean_pd) * concentration}
 
 
-def _weighted_avg_pd(frame: pd.DataFrame) -> float:
-    weight = frame["ead"] * frame["lgd"]
-    return float((weight * frame["pd"]).sum() / weight.sum())
+def _weighted_avg_pd(frame: pl.DataFrame) -> float:
+    # numpy sums: the same float64 reduction as the pandas Series.sum of v0.2.0.
+    weight = frame["ead"].to_numpy() * frame["lgd"].to_numpy()
+    return float((weight * frame["pd"].to_numpy()).sum() / weight.sum())
 
 
-def _build_loadings(obligor_df: pd.DataFrame) -> pd.DataFrame:
+def _build_loadings(obligor_df: pl.DataFrame) -> pl.DataFrame:
     """Common MARKET factor + each obligor's sector factor (genuine multi-loading)."""
-    return pd.DataFrame(
+    return pl.DataFrame(
         [
             {"obligor_uid": int(u), "factor": "MARKET", "loading": 0.30}
             for u in obligor_df["obligor_uid"]
@@ -97,29 +98,32 @@ def _build_loadings(obligor_df: pd.DataFrame) -> pd.DataFrame:
             for u, s in zip(
                 obligor_df["obligor_uid"], obligor_df["sector"], strict=True
             )
-        ]
+        ],
+        schema={"obligor_uid": pl.Int64, "factor": pl.Utf8, "loading": pl.Float64},
     )
 
 
 def _build_request(
     model_key: str,
-    obligor_df: pd.DataFrame,
-    loadings_df: pd.DataFrame,
+    obligor_df: pl.DataFrame,
+    loadings_df: pl.DataFrame,
 ) -> CreditVarRequest:
     """Construct a request for one model on the shared book, honouring its flags."""
     entry = model_entry(model_key)
     frame = obligor_df
     params = dict(MODEL_PARAMS[model_key])
     group_params: dict[str, dict[str, float]] | None = None
-    loadings_table: pd.DataFrame | None = None
+    loadings_table: pl.DataFrame | None = None
 
     if entry.requires_groups:
-        frame = obligor_df.copy()
-        frame["group"] = _assign_groups(frame)
+        frame = obligor_df.with_columns(
+            pl.Series("group", _assign_groups(obligor_df), dtype=pl.Utf8)
+        )
         if model_key == "beta_binomial_grouped":
             group_params = {
                 grp: _beta_params(
-                    _weighted_avg_pd(frame[frame["group"] == grp]), BETA_CONCENTRATION
+                    _weighted_avg_pd(frame.filter(pl.col("group") == grp)),
+                    BETA_CONCENTRATION,
                 )
                 for grp in ("IG", "HY")
             }
@@ -182,7 +186,7 @@ def main() -> None:
     # 1. One shared obligor portfolio (identical EAD / PD / LGD for every model)
     # ----------------------------------------------------------------------------------
     rng = np.random.default_rng(RNG_SEED)
-    obligor_df = pd.DataFrame(
+    obligor_df = pl.DataFrame(
         generate_credit_portfolio_data(n_obligors=NUM_OBLIGORS, rng=rng)
     )
     loadings_df = _build_loadings(obligor_df)

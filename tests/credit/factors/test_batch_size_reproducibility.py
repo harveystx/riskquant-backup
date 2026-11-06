@@ -18,7 +18,7 @@ pass.
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
+import polars as pl
 import pytest
 from scipy import stats
 
@@ -134,7 +134,7 @@ def test_public_credit_var_is_invariant_to_the_internal_factor_batch(
     WS_CREDIT_VAR_API S1.T15: read on `summary.by_alpha` (one record per alpha)
     and compared as `float.hex`, so the equality is bitwise, not `==` (which
     would equate 0.0 and -0.0)."""
-    obligors = pd.DataFrame({
+    obligors = pl.DataFrame({
         "obligor_uid": [1, 2, 3, 4, 5],
         "ead": [1e6, 2e6, 3e6, 1.5e6, 5e5],
         "pd": [0.01, 0.02, 0.05, 0.03, 0.10],

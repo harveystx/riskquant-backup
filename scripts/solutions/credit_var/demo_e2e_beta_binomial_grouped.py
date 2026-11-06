@@ -1,7 +1,7 @@
 # scripts/solutions/credit_var/demo_e2e_beta_binomial_grouped.py
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.solutions.credit_var.api import CreditVarRequest, run_credit_var
 from riskquant.solutions.credit_var.run import simulate_portfolio_losses
@@ -42,7 +42,7 @@ def main() -> None:
     # ----------------------------------------------------------------------------------
     rng = np.random.default_rng(RNG_SEED)
 
-    obligor_df = pd.DataFrame(
+    obligor_df = pl.DataFrame(
         generate_credit_portfolio_data(
             n_obligors=NUM_OBLIGORS,
             rng=rng,
@@ -51,8 +51,16 @@ def main() -> None:
 
     # 1b. Assign obligors to pools by credit quality (IG vs HY)
     # ----------------------------------------------------------------------------------
-    obligor_df["group"] = np.where(
-        obligor_df["rating"].isin(["AAA", "AA", "A", "BBB"]), "IG", "HY"
+    obligor_df = obligor_df.with_columns(
+        pl.Series(
+            "group",
+            np.where(
+                obligor_df["rating"].is_in(["AAA", "AA", "A", "BBB"]).to_numpy(),
+                "IG",
+                "HY",
+            ),
+            dtype=pl.Utf8,
+        )
     )
 
     # 2. Construct the request
@@ -123,11 +131,13 @@ def main() -> None:
     # ----------------------------------------------------------------------------------
     # Per pool g the default rate is alpha_g / (alpha_g + beta_g); per-obligor PD is
     # NOT used. EL = sum_g (rate_g * sum_{i in g} EAD_i * LGD_i).
-    lgd_exposure = obligor_df["ead"] * obligor_df["lgd"]
+    lgd_exposure = obligor_df["ead"].to_numpy() * obligor_df["lgd"].to_numpy()
     mean_analytical = 0.0
     for grp, prm in GROUP_PARAMS.items():
         rate = prm["alpha"] / (prm["alpha"] + prm["beta"])
-        mean_analytical += rate * lgd_exposure[obligor_df["group"] == grp].sum()
+        mean_analytical += (
+            rate * lgd_exposure[obligor_df["group"].to_numpy() == grp].sum()
+        )
 
     el_engine = result.summary.loss_mean
     abs_error = abs(mean_analytical - el_engine)

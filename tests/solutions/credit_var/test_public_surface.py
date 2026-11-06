@@ -15,7 +15,7 @@ file becomes LF before the comparison, so a git checkout with autocrlf does not
 fail the test. A failure needs a new golden file and a version decision under
 D106; do not regenerate the file only to make the test pass.
 
-S5.T3 (C.30, O-11): `tomllib` reads `pyproject.toml`. The version is "0.2.0".
+S5.T3 (C.30, O-11): `tomllib` reads `pyproject.toml`. The version is "0.2.1".
 The numpy, scipy and pydantic entries are exact strings. The numba entry is
 ``numba>=0.59,<0.N`` with an integer N, and the installed numba satisfies it.
 The installed version comes from the distribution metadata, so the test does
@@ -163,7 +163,7 @@ def _dependencies_by_name(project: dict[str, Any]) -> dict[str, str]:
 def test_s5_t3_pyproject_version_and_pins() -> None:
     with _PYPROJECT.open("rb") as handle:
         project = tomllib.load(handle)["project"]
-    assert project["version"] == "0.2.0"
+    assert project["version"] == "0.2.1"
 
     dependencies = _dependencies_by_name(project)
     for name, expected in _EXACT_PINS.items():

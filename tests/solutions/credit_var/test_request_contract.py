@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pandas as pd
 import polars as pl
 import pytest
 from pydantic import BaseModel, ValidationError
@@ -834,7 +833,7 @@ def test_s2_t12_from_dataframe_default_scenarios_equal_the_request_default() -> 
         .default
     )
     assert default == CreditVarRequest.model_fields["n_scenarios"].default
-    table = pd.DataFrame({
+    table = pl.DataFrame({
         "obligor_uid": [1],
         "ead": [1.0],
         "pd": [0.01],
@@ -865,8 +864,8 @@ def test_s2_t12_from_dataframe_docstring_names_the_required_columns() -> None:
     assert ("obligor_uid", "factor", "loading") in lists
     assert not any("uid" in names for names in lists)
 
-    table = pd.DataFrame({"obligor_uid": [1], "ead": [1.0], "pd": [0.01], "lgd": [1.0]})
-    loadings = pd.DataFrame({"obligor_uid": [1], "factor": ["F1"], "loading": [0.5]})
+    table = pl.DataFrame({"obligor_uid": [1], "ead": [1.0], "pd": [0.01], "lgd": [1.0]})
+    loadings = pl.DataFrame({"obligor_uid": [1], "factor": ["F1"], "loading": [0.5]})
     request = CreditVarRequest.from_dataframe(
         table, model="mf_gaussian", loadings_table=loadings, n_scenarios=1_000
     )
@@ -874,19 +873,19 @@ def test_s2_t12_from_dataframe_docstring_names_the_required_columns() -> None:
     for name in ("obligor_uid", "ead", "pd", "lgd"):
         with pytest.raises(ValueError, match=name):
             CreditVarRequest.from_dataframe(
-                table.drop(columns=[name]), model="independent_bernoulli"
+                table.drop(name), model="independent_bernoulli"
             )
     for name in ("obligor_uid", "factor", "loading"):
         with pytest.raises(ValueError, match=name):
             CreditVarRequest.from_dataframe(
-                table, model="mf_gaussian", loadings_table=loadings.drop(columns=[name])
+                table, model="mf_gaussian", loadings_table=loadings.drop(name)
             )
 
 
 def test_s2_t12_from_dataframe_non_integral_uid_raises() -> None:
     """A float uid with a fractional part raises R; it is not cast to 7. An
     integral float uid (a float column) is still accepted as an int."""
-    table = pd.DataFrame({
+    table = pl.DataFrame({
         "obligor_uid": [1.0, 7.9],
         "ead": [1.0, 1.0],
         "pd": [0.01, 0.01],
@@ -898,7 +897,7 @@ def test_s2_t12_from_dataframe_non_integral_uid_raises() -> None:
     assert error["loc"] == ("obligor_uid",)
     assert error["input"] == 7.9
 
-    table.loc[1, "obligor_uid"] = 7.0
+    table = table.with_columns(pl.Series("obligor_uid", [1.0, 7.0]))
     request = CreditVarRequest.from_dataframe(table, model="independent_bernoulli")
     assert [o.obligor_uid for o in request.obligors] == [1, 7]
     assert all(type(o.obligor_uid) is int for o in request.obligors)
@@ -906,8 +905,8 @@ def test_s2_t12_from_dataframe_non_integral_uid_raises() -> None:
 
 def test_s2_t12_from_dataframe_non_integral_loadings_uid_raises() -> None:
     """The same rule for the loadings_table obligor_uid column."""
-    table = pd.DataFrame({"obligor_uid": [1], "ead": [1.0], "pd": [0.01], "lgd": [1.0]})
-    loadings = pd.DataFrame({
+    table = pl.DataFrame({"obligor_uid": [1], "ead": [1.0], "pd": [0.01], "lgd": [1.0]})
+    loadings = pl.DataFrame({
         "obligor_uid": [1.5],
         "factor": ["F1"],
         "loading": [0.5],

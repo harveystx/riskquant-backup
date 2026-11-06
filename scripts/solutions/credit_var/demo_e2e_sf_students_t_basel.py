@@ -1,7 +1,7 @@
 # scripts/solutions/credit_var/demo_e2e_sf_students_t_basel.py
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.solutions.credit_var.api import CreditVarRequest, run_credit_var
 from riskquant.solutions.credit_var.run import simulate_portfolio_losses
@@ -41,7 +41,7 @@ def main() -> None:
     # ----------------------------------------------------------------------------------
     rng = np.random.default_rng(RNG_SEED)
 
-    obligor_df = pd.DataFrame(
+    obligor_df = pl.DataFrame(
         generate_credit_portfolio_data(
             n_obligors=NUM_OBLIGORS,
             rng=rng,
@@ -118,7 +118,11 @@ def main() -> None:
     # PD_i, so EL = sum(EAD * LGD * PD) exactly -- independent of the correlation.
     # (Std dev is correlation-inflated and has no simple closed form, so only the
     # mean is checked here.)
-    mean_analytical = np.sum(obligor_df["ead"] * obligor_df["lgd"] * obligor_df["pd"])
+    mean_analytical = np.sum(
+        obligor_df["ead"].to_numpy()
+        * obligor_df["lgd"].to_numpy()
+        * obligor_df["pd"].to_numpy()
+    )
     el_engine = result.summary.loss_mean
     abs_error = abs(mean_analytical - el_engine)
     rel_error = (abs_error / mean_analytical) if mean_analytical != 0 else 0.0

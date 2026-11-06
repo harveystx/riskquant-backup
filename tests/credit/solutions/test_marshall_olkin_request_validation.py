@@ -19,7 +19,6 @@ accepted — it means the obligor defaults through the shared shock alone.
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 import polars as pl
 import pytest
 from pydantic import ValidationError
@@ -37,15 +36,15 @@ DEFAULT_SYSTEMIC_PD = next(
 ).default
 
 
-def _table(pds: list[float], groups: list[str] | None = None) -> pd.DataFrame:
-    frame = pd.DataFrame({
+def _table(pds: list[float], groups: list[str] | None = None) -> pl.DataFrame:
+    frame = pl.DataFrame({
         "obligor_uid": list(range(1, len(pds) + 1)),
         "ead": [1_000_000.0] * len(pds),
         "pd": pds,
         "lgd": [0.5] * len(pds),
     })
     if groups is not None:
-        frame["group"] = groups
+        frame = frame.with_columns(pl.Series("group", groups, dtype=pl.Utf8))
     return frame
 
 

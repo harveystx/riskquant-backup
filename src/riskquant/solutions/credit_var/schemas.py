@@ -86,11 +86,12 @@ consumer.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Annotated, Any, Final, Literal
+from typing import Annotated, Any, Final, Literal, cast
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 __all__ = [
     "DEFAULT_N_SCENARIOS",
@@ -287,18 +288,81 @@ def _second_occurrence(values: Sequence[object]) -> int | None:
     return None
 
 
-def _dataframe_uid(value: Any) -> Any:
-    """An ``obligor_uid`` cell of a `from_dataframe` table, cast to int.
+def _dataframe_uid(value: object) -> object:
+    """An ``obligor_uid`` cell of a `from_dataframe` table, ready for the int field.
 
-    A float column holds an integral uid as, for example, ``7.0``; the cast
-    keeps it. A float that is not integral (``7.9``, NaN, +/-inf) is returned
-    unchanged, so the strict int field raises R. ``int(7.9)`` would give 7: a
-    uid that the author did not write. The types are ``Any`` because a cell
-    has no static type and the non-integral case returns the cell unchanged.
+    An integer cell is an int already. A float cell that is integral (``7.0``)
+    becomes its int (B-4 (ii)). A float that is not integral (``7.9``, NaN,
+    +/-inf) and a null cell (``None``) are returned unchanged, so the strict
+    int field raises R at ``("obligor_uid",)``. ``int(7.9)`` would give 7: a
+    uid that the author did not write.
     """
-    if isinstance(value, float) and not value.is_integer():
-        return value
-    return int(value)
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+_ColumnKind = Literal["uid", "float", "str"]
+
+
+def _table_cells(
+    frame: pl.DataFrame,
+    table: str,
+    column: str,
+    kind: _ColumnKind,
+    *,
+    optional: bool,
+) -> list[object]:
+    """Read one column of a `from_dataframe` table as Python cells, by dtype.
+
+    The dtype decides admission (WS_CREDIT_POLARS C.11, O-5 (b)); a cell is
+    never cast from a type that the column rule does not admit. ``uid`` and
+    ``float`` columns admit an integer or a float dtype; a ``str`` column
+    admits ``pl.Utf8``. An optional column also admits ``pl.Null`` (absent for
+    every row). A required ``pl.Null`` column has no value dtype and raises
+    TypeError (S3 OD-1, OD-C). In a float column, null means null or NaN (B-8):
+    such a cell becomes ``None``, which means absent for an optional field and
+    raises R at the field path for a required field (S3 OD-A (b)).
+    """
+    series = frame.get_column(column)
+    dtype = series.dtype
+    if optional and dtype == pl.Null:
+        return [None] * series.len()
+    if kind == "str":
+        admitted = dtype == pl.Utf8
+        rule = "pl.Utf8"
+    else:
+        admitted = dtype.is_integer() or dtype.is_float()
+        rule = "an integer or a float dtype"
+    if not admitted:
+        rule += " or pl.Null" if optional else ""
+        raise TypeError(
+            f"from_dataframe: {table} column '{column}' has dtype {dtype!s}; "
+            f"the field admits {rule}."
+        )
+    values: list[object] = series.to_list()
+    if kind == "str":
+        return values
+    if kind == "uid":
+        return [_dataframe_uid(v) for v in values]
+    return [
+        None
+        if v is None or (isinstance(v, float) and math.isnan(v))
+        else float(cast("float", v))
+        for v in values
+    ]
+
+
+def _require_frame(table: object, name: str) -> pl.DataFrame:
+    """Return `table` when it is a ``pl.DataFrame``; raise TypeError otherwise."""
+    if not isinstance(table, pl.DataFrame):
+        kind = f"{type(table).__module__}.{type(table).__qualname__}"
+        raise TypeError(
+            f"from_dataframe: '{name}' must be a pl.DataFrame (polars.DataFrame); "
+            f"got {kind}. Convert at the call boundary (pl.from_pandas, "
+            "pl.from_dict)."
+        )
+    return table
 
 
 class ObligorRow(BaseModel):
@@ -738,17 +802,17 @@ class CreditVarRequest(BaseModel):
     @classmethod
     def from_dataframe(
         cls,
-        obligor_table: pd.DataFrame,
+        obligor_table: pl.DataFrame,
         *,
         model: str,
-        loadings_table: pd.DataFrame | None = None,
+        loadings_table: pl.DataFrame | None = None,
         group_params: dict[str, dict[str, float]] | None = None,
         n_scenarios: int = DEFAULT_N_SCENARIOS,
         alphas: list[float] | None = None,
         seed: int = 12345,
         **params: float,
     ) -> CreditVarRequest:
-        """Build a request from a flat obligor DataFrame (notebook ergonomics).
+        """Build a request from a flat obligor ``pl.DataFrame`` (notebook ergonomics).
 
         Outside the stable surface (P-CREDIT_VAR_API-001 clause 1, O-7).
 
@@ -773,37 +837,73 @@ class CreditVarRequest(BaseModel):
                               "HY": {"alpha": 2.0, "beta": 18.0}})
 
         The default `n_scenarios` is the request default, `DEFAULT_N_SCENARIOS`.
-        Each cell is cast with ``int``, ``float`` or ``str`` before validation;
-        the request rules then apply as on the dict/JSON path. An
-        ``obligor_uid`` cell that is a float with a fractional part (or NaN or
-        +/-inf) is not cast: it reaches the strict int field and raises
-        ``pydantic.ValidationError``.
+
+        Column admission by dtype (WS_CREDIT_POLARS C.11). ``obligor_uid`` (both
+        tables) admits an integer dtype, or a float dtype: an integral float
+        cell (``7.0``) becomes its int; a fractional, NaN or infinite cell
+        reaches the strict int field unchanged and raises
+        ``pydantic.ValidationError`` at ``("obligor_uid",)``. ``ead``, ``pd``,
+        ``lgd``, ``rho`` and ``loading`` admit an integer or a float dtype.
+        ``group`` and ``factor`` admit ``pl.Utf8``. ``group`` and ``rho`` also
+        admit ``pl.Null``, which means absent for every row. In a float column,
+        null means null or NaN. A null cell in ``group`` or ``rho`` means absent
+        for that obligor (``rho`` then takes the fill). A null cell in a
+        required column reaches the row model as ``None`` and raises
+        ``pydantic.ValidationError`` at the field path, for example
+        ``("ead",)``. Any other dtype (``pl.Boolean``, ``pl.Decimal`` included)
+        raises TypeError that names the column. The request rules then apply as
+        on the dict/JSON path.
+
+        Raises
+        ------
+        TypeError
+            A table is not a ``pl.DataFrame`` (both tables are checked before
+            any read), or a read column has a dtype that its rule does not admit.
+        ValueError
+            A required column is missing.
+        pydantic.ValidationError
+            A cell or the request fails the request rules.
         """
+        obligor_frame = _require_frame(obligor_table, "obligor_table")
+        loadings_frame = (
+            None
+            if loadings_table is None
+            else _require_frame(loadings_table, "loadings_table")
+        )
         required = ("obligor_uid", "ead", "pd", "lgd")
-        missing = [c for c in required if c not in obligor_table.columns]
+        missing = [c for c in required if c not in obligor_frame.columns]
         if missing:
             raise ValueError(
                 f"from_dataframe: obligor_table missing column(s) {missing}."
             )
-        has_group = "group" in obligor_table.columns
-        has_rho = "rho" in obligor_table.columns
-        read_cols = (
-            list(required)
-            + (["group"] if has_group else [])
-            + (["rho"] if has_rho else [])
+        table = "obligor_table"
+        uids = _table_cells(obligor_frame, table, "obligor_uid", "uid", optional=False)
+        eads = _table_cells(obligor_frame, table, "ead", "float", optional=False)
+        pds = _table_cells(obligor_frame, table, "pd", "float", optional=False)
+        lgds = _table_cells(obligor_frame, table, "lgd", "float", optional=False)
+        absent: list[object] = [None] * obligor_frame.height
+        groups = (
+            _table_cells(obligor_frame, table, "group", "str", optional=True)
+            if "group" in obligor_frame.columns
+            else absent
+        )
+        rhos = (
+            _table_cells(obligor_frame, table, "rho", "float", optional=True)
+            if "rho" in obligor_frame.columns
+            else absent
         )
         obligors = [
             ObligorRow(
-                obligor_uid=_dataframe_uid(rec["obligor_uid"]),
-                ead=float(rec["ead"]),
-                pd=float(rec["pd"]),
-                lgd=float(rec["lgd"]),
-                group=(
-                    str(rec["group"]) if has_group and pd.notna(rec["group"]) else None
-                ),
-                rho=(float(rec["rho"]) if has_rho and pd.notna(rec["rho"]) else None),
+                obligor_uid=cast("int", uid),
+                ead=cast("float", ead),
+                pd=cast("float", pd),
+                lgd=cast("float", lgd),
+                group=cast("str | None", group),
+                rho=cast("float | None", rho),
             )
-            for rec in obligor_table.loc[:, read_cols].to_dict("records")
+            for uid, ead, pd, lgd, group, rho in zip(
+                uids, eads, pds, lgds, groups, rhos, strict=True
+            )
         ]
         kwargs: dict[str, Any] = {
             "model": model,
@@ -817,20 +917,30 @@ class CreditVarRequest(BaseModel):
                 GroupRow(name=str(name), params={k: float(v) for k, v in gp.items()})
                 for name, gp in group_params.items()
             ]
-        if loadings_table is not None:
+        if loadings_frame is not None:
             lcols = ("obligor_uid", "factor", "loading")
-            lmissing = [c for c in lcols if c not in loadings_table.columns]
+            lmissing = [c for c in lcols if c not in loadings_frame.columns]
             if lmissing:
                 raise ValueError(
                     f"from_dataframe: loadings_table missing column(s) {lmissing}."
                 )
+            ltable = "loadings_table"
+            luids = _table_cells(
+                loadings_frame, ltable, "obligor_uid", "uid", optional=False
+            )
+            factors = _table_cells(
+                loadings_frame, ltable, "factor", "str", optional=False
+            )
+            values = _table_cells(
+                loadings_frame, ltable, "loading", "float", optional=False
+            )
             kwargs["loadings"] = [
                 LoadingRow(
-                    obligor_uid=_dataframe_uid(rec["obligor_uid"]),
-                    factor=str(rec["factor"]),
-                    loading=float(rec["loading"]),
+                    obligor_uid=cast("int", uid),
+                    factor=cast("str", factor),
+                    loading=cast("float", value),
                 )
-                for rec in loadings_table.loc[:, list(lcols)].to_dict("records")
+                for uid, factor, value in zip(luids, factors, values, strict=True)
             ]
         if alphas is not None:
             kwargs["alphas"] = list(alphas)

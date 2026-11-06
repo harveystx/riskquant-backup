@@ -1,7 +1,7 @@
 # scripts/solutions/credit_var/demo_e2e_forced_default.py
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.solutions.credit_var.api import CreditVarRequest, run_credit_var
 from riskquant.solutions.credit_var.run import simulate_portfolio_losses
@@ -38,7 +38,7 @@ def main() -> None:
     # ----------------------------------------------------------------------------------
     rng = np.random.default_rng(RNG_SEED)
 
-    obligor_df = pd.DataFrame(
+    obligor_df = pl.DataFrame(
         generate_credit_portfolio_data(
             n_obligors=NUM_OBLIGORS,
             rng=rng,
@@ -112,7 +112,9 @@ def main() -> None:
     # ----------------------------------------------------------------------------------
     # Every obligor defaults with certainty -> loss = sum(EAD * LGD) in every
     # scenario. The distribution is a point mass: std = 0 and VaR = ES = EL.
-    total_lgd_exposure = np.sum(obligor_df["ead"] * obligor_df["lgd"])
+    total_lgd_exposure = np.sum(
+        obligor_df["ead"].to_numpy() * obligor_df["lgd"].to_numpy()
+    )
     el_engine = result.summary.loss_mean
     abs_error = abs(total_lgd_exposure - el_engine)
     rel_error = (abs_error / total_lgd_exposure) if total_lgd_exposure != 0 else 0.0

@@ -1,7 +1,7 @@
 # scripts/solutions/credit_var/demo_e2e_stress_regime_bernoulli.py
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.solutions.credit_var.api import CreditVarRequest, run_credit_var
 from riskquant.solutions.credit_var.run import simulate_portfolio_losses
@@ -46,7 +46,7 @@ def main() -> None:
     # ----------------------------------------------------------------------------------
     rng = np.random.default_rng(RNG_SEED)
 
-    obligor_df = pd.DataFrame(
+    obligor_df = pl.DataFrame(
         generate_credit_portfolio_data(
             n_obligors=NUM_OBLIGORS,
             rng=rng,
@@ -121,13 +121,13 @@ def main() -> None:
     # simulated losses
     # ----------------------------------------------------------------------------------
 
-    lgd_exposure = obligor_df["ead"] * obligor_df["lgd"]
+    lgd_exposure = obligor_df["ead"].to_numpy() * obligor_df["lgd"].to_numpy()
 
     pd_stress = MODEL_PARAMS["stress_prob"]
     pd_stress_multiplier = MODEL_PARAMS["stress_pd_multiplier"]
 
     pd_normal = 1.0 - pd_stress
-    obligor_pd_normal = obligor_df["pd"]
+    obligor_pd_normal = obligor_df["pd"].to_numpy()
     obligor_pd_stressed = pd_stress_multiplier * obligor_pd_normal
 
     pd_eff = pd_normal * obligor_pd_normal + pd_stress * obligor_pd_stressed

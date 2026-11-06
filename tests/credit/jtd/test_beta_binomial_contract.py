@@ -23,7 +23,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
-import pandas as pd
+import polars as pl
 import pytest
 
 from riskquant.credit.jtd.ingest.contracts import JTD_MODEL_CONTRACTS
@@ -126,9 +126,9 @@ def test_catalog_discloses_that_master_pd_is_unused() -> None:
     assert "alpha/(alpha+beta)" in model_entry("beta_binomial").description.lower()
 
 
-def _mismatched_book() -> pd.DataFrame:
+def _mismatched_book() -> pl.DataFrame:
     """Master PDs 60x apart and both far from the Beta mean of 0.05."""
-    return pd.DataFrame({
+    return pl.DataFrame({
         "obligor_uid": [1, 2],
         "ead": [1_000_000.0, 1_000_000.0],
         "pd": [0.001, 0.300],
@@ -178,7 +178,7 @@ def test_both_obligors_receive_the_same_marginal_despite_60x_pd_spread() -> None
 # 4. PUBLIC PATH — analytic EL follows the Beta mean, not the PD column
 # ==========================================================================
 def test_public_expected_loss_matches_the_beta_mean_contract() -> None:
-    book = pd.DataFrame({
+    book = pl.DataFrame({
         "obligor_uid": [1, 2, 3, 4, 5],
         "ead": [1e6, 2e6, 3e6, 1.5e6, 5e5],
         "pd": [0.01, 0.02, 0.05, 0.03, 0.10],
@@ -230,7 +230,7 @@ GROUPS = {"IG": (1.0, 99.0), "HY": (4.0, 16.0)}  # means 0.01 and 0.20
 
 
 def test_grouped_pools_carry_different_marginals_and_preserve_membership() -> None:
-    book = pd.DataFrame({
+    book = pl.DataFrame({
         "obligor_uid": [1, 2, 3, 4],
         "ead": [1_000_000.0] * 4,
         "pd": [0.07, 0.07, 0.07, 0.07],  # identical and wrong for both pools
@@ -264,7 +264,7 @@ def test_grouped_pools_carry_different_marginals_and_preserve_membership() -> No
 
 
 def test_grouped_portfolio_expected_loss_is_the_pool_weighted_sum() -> None:
-    book = pd.DataFrame({
+    book = pl.DataFrame({
         "obligor_uid": [1, 2, 3],
         "ead": [1e6, 2e6, 4e6],
         "pd": [0.5, 0.5, 0.5],  # deliberately absurd, and ignored

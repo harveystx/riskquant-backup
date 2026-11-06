@@ -29,7 +29,6 @@ import ast
 import inspect
 import pathlib
 
-import pandas as pd
 import polars as pl
 import pytest
 
@@ -210,7 +209,7 @@ def test_grouped_request_requires_every_param_per_group() -> None:
 
     from riskquant.solutions.credit_var.schemas import CreditVarRequest
 
-    book = pd.DataFrame({
+    book = pl.DataFrame({
         "obligor_uid": [1, 2],
         "ead": [1e6, 1e6],
         "pd": [0.3, 0.3],

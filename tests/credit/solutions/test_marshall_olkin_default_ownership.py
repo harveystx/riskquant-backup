@@ -27,7 +27,6 @@ import inspect
 import pathlib
 
 import numpy as np
-import pandas as pd
 import polars as pl
 import pytest
 from pydantic import ValidationError
@@ -146,7 +145,7 @@ def test_explicit_value_is_not_overridden_by_the_default() -> None:
 # ==========================================================================
 def _request(pds: list[float], **kwargs) -> CreditVarRequest:
     return CreditVarRequest.from_dataframe(
-        obligor_table=pd.DataFrame({
+        obligor_table=pl.DataFrame({
             "obligor_uid": list(range(1, len(pds) + 1)),
             "ead": [1_000_000.0] * len(pds),
             "pd": pds,

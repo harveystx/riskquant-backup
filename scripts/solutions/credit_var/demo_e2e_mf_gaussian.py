@@ -1,7 +1,7 @@
 # scripts/solutions/credit_var/demo_e2e_mf_gaussian.py
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from riskquant.solutions.credit_var.api import CreditVarRequest, run_credit_var
 from riskquant.solutions.credit_var.run import simulate_portfolio_losses
@@ -38,7 +38,7 @@ def main() -> None:
     # ----------------------------------------------------------------------------------
     rng = np.random.default_rng(RNG_SEED)
 
-    obligor_df = pd.DataFrame(
+    obligor_df = pl.DataFrame(
         generate_credit_portfolio_data(
             n_obligors=NUM_OBLIGORS,
             rng=rng,
@@ -49,7 +49,7 @@ def main() -> None:
     # sector factor (this is the genuine multi-factor case -- names load on more
     # than one systematic factor).
     # ----------------------------------------------------------------------------------
-    loadings_df = pd.DataFrame(
+    loadings_df = pl.DataFrame(
         [
             {
                 "obligor_uid": int(uid),
@@ -67,22 +67,28 @@ def main() -> None:
             for uid, sector in zip(
                 obligor_df["obligor_uid"], obligor_df["sector"], strict=True
             )
-        ]
+        ],
+        schema={"obligor_uid": pl.Int64, "factor": pl.Utf8, "loading": pl.Float64},
     )
 
-    grouped_loadings_df = loadings_df.groupby(["factor"]).agg(
-        num_obligors=pd.NamedAgg(column="obligor_uid", aggfunc="count"),
-        loading_mean=pd.NamedAgg(column="loading", aggfunc="mean"),
-        loading_std_dev=pd.NamedAgg(column="loading", aggfunc="std"),
-        loading_min=pd.NamedAgg(column="loading", aggfunc="min"),
-        loading_max=pd.NamedAgg(column="loading", aggfunc="max"),
+    # pandas groupby sorted by key and std used ddof=1; polars std uses ddof=1.
+    grouped_loadings_df = (
+        loadings_df
+        .group_by("factor")
+        .agg(
+            pl.col("obligor_uid").count().alias("num_obligors"),
+            pl.col("loading").mean().alias("loading_mean"),
+            pl.col("loading").std().alias("loading_std_dev"),
+            pl.col("loading").min().alias("loading_min"),
+            pl.col("loading").max().alias("loading_max"),
+        )
+        .sort("factor")
     )
 
     print_df(
         grouped_loadings_df,
         title="Factor Loadings Table",
         float_format="_.2f",
-        index=True,
         add_space_before=False,
     )
 
@@ -156,7 +162,11 @@ def main() -> None:
     # PD_i, so EL = sum(EAD * LGD * PD) exactly -- independent of the correlation.
     # (Std dev is correlation-inflated and has no simple closed form, so only the
     # mean is checked here.)
-    mean_analytical = np.sum(obligor_df["ead"] * obligor_df["lgd"] * obligor_df["pd"])
+    mean_analytical = np.sum(
+        obligor_df["ead"].to_numpy()
+        * obligor_df["lgd"].to_numpy()
+        * obligor_df["pd"].to_numpy()
+    )
     el_engine = result.summary.loss_mean
     abs_error = abs(mean_analytical - el_engine)
     rel_error = (abs_error / mean_analytical) if mean_analytical != 0 else 0.0
