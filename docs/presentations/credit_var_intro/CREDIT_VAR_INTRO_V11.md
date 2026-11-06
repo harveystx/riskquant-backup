@@ -140,7 +140,7 @@ LGD, PD and default dependence exist today. Exposure at default exists in part.
 
 | # | Input | Status |
 |---|---|---|
-| 1 | EAD | **Partial** · The current EAD input is stressed Replacement Cost (RC): net MTM per netting set after any collateral, floored at zero. SA-CCR EAD is separate: 1.4 × (RC + PFE), where PFE (potential future exposure) is a supervisory add-on. SA-CCR covers unmargined linear equity and commodity trades only. |
+| 1 | EAD | **Partial** · The current EAD input is stressed Replacement Cost (RC): net MTM per netting set after any collateral, floored at zero. SA-CCR EAD is separate: alpha × (RC + PFE), where PFE (potential future exposure) is a supervisory add-on. SA-CCR covers unmargined linear trades only. |
 | 2 | LGD | **Have** · input per counterparty |
 | 3 | PD | **Have** · input per counterparty |
 | 4 | Default dependence | **Have** · the `riskquant` model suite is built |
@@ -357,7 +357,7 @@ Repeat for many scenarios (250,000 by default). The result is the portfolio loss
 
 Exposure is the net mark-to-market that a counterparty owes us, after any collateral. Trades offset only inside the same legally enforceable netting set. Exposures of different netting sets add up. Netting sets are not yet clearly defined.
 
-**Each scenario:** take the EAD of each counterparty, decide which counterparties default, apply the LGD, and sum the losses. Repeat for 250,000 scenarios (default). The result is the portfolio loss distribution.
+**Each scenario:** take the EAD of each counterparty, decide which counterparties default, apply the LGD, and sum the losses. Repeat for many scenarios. The result is the portfolio loss distribution.
 
 > The model must state how likely another counterparty is to default in the same scenario as the first.
 
@@ -388,9 +388,9 @@ It does not answer:
 | **Expected Loss** | **The tail: VaR and ES** |
 | Same for every model that keeps each counterparty's PD | Can differ strongly between models |
 
-Example: €100m exposure, 40% recovery → **€60m loss if it defaults.**
+Example: EUR 100m exposure, 40% recovery → **EUR 60m loss if it defaults.**
 
-Models that keep the counterparty's PD give it the same expected loss. They differ on how often it defaults in the same scenario as twenty others.
+Models that keep the counterparty's PD give it the same expected loss. They differ in how often it defaults in the same scenario as other counterparties.
 
 ---
 
@@ -439,9 +439,9 @@ The common question: **when one counterparty defaults, how likely are others to 
 | Simple, fast, gives a full distribution | Does not allow default clustering |
 | Captures single-counterparty concentration | **Understates the tail and overstates diversification** |
 
-**Use it for:** granular, homogeneous (sub)portfolios, and as the baseline for the other models.
+**Use it for:** a baseline without default clustering. Compare the other models with it.
 
-> Counterparties share common drivers, so this model overstates diversification.
+> Counterparties often depend on the same economic conditions. This model ignores that, so it overstates diversification.
 
 ---
 
@@ -488,7 +488,7 @@ The common question: **when one counterparty defaults, how likely are others to 
 | Strengths | Weaknesses |
 |---|---|
 | Standard market model (Vasicek, Basel ASRF) | One shared factor only |
-| One correlation parameter (ρ) controls clustering | Gaussian tails understate joint extreme defaults |
+| Asset correlation (ρ) controls clustering: one value by default, optional per-counterparty values | Gaussian tails understate joint extreme defaults |
 
 **Use it for:** portfolio tail risk measurement and counterparty risk capital.
 
@@ -513,9 +513,9 @@ The common question: **when one counterparty defaults, how likely are others to 
 
 ---
 
-# Comparing the Models
+<!-- # Comparing the Models
 
-| Model | Realism | Transparency | Tail capture | Data need | Business fit |
+| Model | Realism | Transparency | Tail Capture | Data Need | Business Fit |
 |---|---|---|---|---|---|
 | Forced Default (bound) | n/a | High | n/a | Minimal | Stress bound |
 | Independent Bernoulli | Low | High | Low | Low | Baseline view |
@@ -526,20 +526,41 @@ The common question: **when one counterparty defaults, how likely are others to 
 
 > Simple models are easier to explain. Richer models capture more dependence. No single model is best in every column, so we run several.
 
+--- -->
+
+# Comparing the Models
+
+| Model | Dependence Structure | Transparency | Parameter Inputs | Typical Use |
+|---|---|---|---|---|
+| Forced Default | All counterparties default together | High | EAD and LGD | Upper-bound stress |
+| Independent Bernoulli | No default dependence | High | Individual PDs | Baseline risk |
+| Beta-Binomial | Common random default probability | High | Beta distribution parameters | Simplified default clustering |
+| Stress-Regime | Common discrete stress state | High | Stress probability and PD multiplier | Scenario analysis |
+| Gaussian Copula | One shared systematic factor; common or per-counterparty asset correlations (ρᵢ). No asymptotic tail dependence. | Medium | Global ρ (default 0.15), optional per-counterparty ρᵢ, or Basel R(PDᵢ) | Systematic default dependence |
+| Student-t Copula | Same factor structure as Gaussian, plus a shared random scale. Symmetric tail dependence. | Medium | Same ρ inputs as Gaussian, plus degrees of freedom (ν, default 7.0) | Joint extreme-default scenarios |
+
+> Parameter values are configured by the user or derived from a specified formula. The copula parameters are not empirically calibrated within RiskQuant. Each model makes different assumptions about how defaults occur together.
+
+<style scoped>
+  table { font-size: 14px; }
+  th, td { padding: 7px 12px; }
+  blockquote { font-size: 18px; }
+</style>
+
 ---
 
 # Which Model Answers Which Question?
 
 | The question we need to answer | Model |
 |---|---|
-| What is the largest default loss for the given EAD and LGD? | Forced Default (bound) |
+| What is the loss if every counterparty defaults? | Forced Default (bound) |
 | What if defaults are independent? | Independent Bernoulli |
-| What if the portfolio default rate is higher or lower than expected? | Beta-Binomial |
-| What happens in a defined stress scenario? | Stress-Regime Bernoulli |
-| What if counterparties are exposed to the same economic drivers? | Gaussian Copula |
-| What if extreme events create unusually strong clustering? | Student-t Copula |
+| What if the portfolio's default probability varies between scenarios? | Beta-Binomial |
+| What if a shared stress regime raises default probabilities? | Stress-Regime Bernoulli |
+| What if counterparties share a common source of default risk? | Gaussian Copula |
+| What if defaults become more strongly clustered in extreme scenarios? | Student-t Copula |
 
-> Compare the models to see how much the dependence assumption changes the tail.
+> Compare the models to understand how different assumptions about default probabilities and default dependence affect the loss distribution and its tail.
 
 ---
 
@@ -553,9 +574,9 @@ The common question: **when one counterparty defaults, how likely are others to 
 
 ---
 
-# The Metrics Every Model Returns
+# Risk Metrics
 
-| Metric | Reads as | Feeds |
+| Metric | Reads As | Typically Feeds |
 |---|---|---|
 | **Expected Loss (EL)** | average counterparty default loss | expected credit cost |
 | **Loss volatility (σ)** | how much the portfolio loss varies | unexpected loss |
@@ -582,7 +603,11 @@ Hold the portfolio constant, remove one counterparty and re-measure the tail. Th
 | Computed for both VaR and ES | Same simulated losses, so no new simulation run |
 | **Not additive** | Incremental values do not sum to portfolio risk |
 
-**Use it for:** limit discussions, novation and unwind decisions for existing counterparties. A new counterparty or trade needs a new run with the changed EAD.
+<!-- **Use it for:** limit discussions, novation and unwind decisions for existing counterparties. A new counterparty or trade needs a new run with the changed EAD. -->
+
+**Use it for:** counterparty limit discussions, assessing potential exits or unwinds, and identifying counterparties whose exposure may warrant transfer through novation.
+
+A proposed novation requires a new run reflecting the receiving counterparty and its resulting EAD.
 
 ---
 
@@ -598,9 +623,18 @@ Contribution ES splits today's ES across the counterparties. The contributions a
 
 <!-- _class: lead -->
 
-# RiskQuant · Credit VaR
+<style scoped>
+  section {
+    background-color: #E30076;
+    text-align: center;
+  }
+  h1, em {
+    color: #0F1114 !important;
+    text-align: center;
+  }
+</style>
 
-> Credit VaR measures the tail of the credit loss distribution. Default dependence changes that tail and can make it larger.
+# APPENDIX
 
 
 
@@ -608,7 +642,7 @@ Contribution ES splits today's ES across the counterparties. The contributions a
 
 <!-- _class: lead -->
 
-# Appendix: STX Credit VaR
+# Appendix A: STX Credit VaR
 
 
 ---
