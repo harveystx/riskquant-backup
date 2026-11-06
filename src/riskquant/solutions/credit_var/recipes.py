@@ -344,17 +344,20 @@ def _per_obligor_rho(
 
     if "rho" in obligor_table.columns:
         col = obligor_table.get_column("rho")
-        # A pl.Null column means no explicit rho for any row; a null cell means
-        # no explicit rho for that obligor (B-5, C.10).
+        # A pl.Null column means no explicit rho for any row. A null cell, and in
+        # a float column a NaN cell, means no explicit rho for that obligor: it
+        # takes the fill (B-5, B-8, C.10, S4+S5 review R-002).
         if col.dtype != pl.Null:
             if not (col.dtype.is_integer() or col.dtype.is_float()):
                 raise TypeError(
                     f"{ctx}: column 'rho' has dtype {col.dtype!s}; it admits an "
                     "integer or a float dtype, or pl.Null."
                 )
-            explicit_mask = ~col.is_null().to_numpy()
+            # Series.to_numpy maps a null to NaN for a Float64 series (F-12), so
+            # one isnan mask covers the null cells and the NaN cells.
+            explicit = np.asarray(col.cast(pl.Float64).to_numpy(), dtype=np.float64)
+            explicit_mask = ~np.isnan(explicit)
             if explicit_mask.any():
-                explicit = np.asarray(col.cast(pl.Float64).to_numpy(), dtype=np.float64)
                 rho = np.where(explicit_mask, explicit, rho)
 
     if not np.all((rho >= 0.0) & (rho < 1.0)):

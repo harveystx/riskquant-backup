@@ -298,6 +298,53 @@ def test_s4_t4_explicit_rho_wins_and_null_rows_take_the_fill() -> None:
     np.testing.assert_allclose(rho, [0.2, 0.05, 0.2, 0.33, 0.2], rtol=1e-15)
 
 
+@pytest.mark.parametrize(
+    "model_key,params", [("sf_gaussian", {"rho": 0.2}), ("sf_gaussian_basel", {})]
+)
+def test_s4_t4_nan_rho_cell_takes_the_fill_as_a_null_cell_does(
+    model_key: str, params: dict[str, float]
+) -> None:
+    """B-5, B-8, S4+S5 review R-002: in a Float64 rho column, null means null or
+    NaN. The null row and the NaN row take the fill (the global rho, or the Basel
+    R(PD) when regulatory); the finite row keeps its value."""
+    pds = [0.01, 0.03, 0.05]
+    table = pl.DataFrame({
+        "uid": [1, 2, 3],
+        "ead": [10.0, 20.0, 30.0],
+        "pd": pds,
+        "lgd": [0.5, 0.5, 0.5],
+        "rho": pl.Series([None, float("nan"), 0.33], dtype=pl.Float64),
+    })
+    reference = assemble_inputs(
+        model_key=model_key, obligor_table=table.drop("rho"), params=params
+    )
+    inputs = assemble_inputs(model_key=model_key, obligor_table=table, params=params)
+    ref_frame = reference.bundle.sf_gaussian_copula_df
+    frame = inputs.bundle.sf_gaussian_copula_df
+    assert ref_frame is not None
+    assert frame is not None
+    fill = np.asarray(ref_frame["factor_loading"].to_numpy(), dtype=np.float64)
+    loading = np.asarray(frame["factor_loading"].to_numpy(), dtype=np.float64)
+    assert np.isfinite(loading).all()
+    assert loading[0] == fill[0]
+    assert loading[1] == fill[1]
+    assert loading[2] == np.sqrt(0.33)
+
+
+def test_s4_t4_finite_rho_outside_the_unit_interval_still_raises() -> None:
+    table = pl.DataFrame({
+        "uid": [1, 2],
+        "ead": [10.0, 20.0],
+        "pd": [0.1, 0.2],
+        "lgd": [0.5, 0.5],
+        "rho": pl.Series([float("nan"), 1.0], dtype=pl.Float64),
+    })
+    with pytest.raises(ValueError, match=r"per-obligor rho out of \[0, 1\): \[1\.0\]"):
+        assemble_inputs(
+            model_key="sf_gaussian", obligor_table=table, params={"rho": 0.2}
+        )
+
+
 def test_s4_t4_pl_null_group_and_rho_columns_are_accepted() -> None:
     table = pl.DataFrame({
         "uid": [1, 2],
